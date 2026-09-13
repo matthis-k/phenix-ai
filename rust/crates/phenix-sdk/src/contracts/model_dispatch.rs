@@ -1,4 +1,4 @@
-use super::{ModelInferenceResponse, ModelTurnUsage, RouteDecision};
+use super::{ModelInferenceResponse, RouteDecision};
 use phenix_core::{Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ServiceId};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,6 @@ pub enum ModelDispatchResponse {
     Inference {
         decision: RouteDecision,
         response: ModelInferenceResponse,
-        usage: ModelTurnUsage,
     },
 }
 
