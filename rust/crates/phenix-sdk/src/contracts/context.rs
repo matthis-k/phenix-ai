@@ -1,3 +1,4 @@
+use super::context_admission::{ContextAdmissionRequest, ContextAdmissionResult};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
     RoutingProfileId, ServiceId, SessionId,
@@ -108,6 +109,9 @@ pub enum ContextCommand {
     Project {
         execution_id: String,
     },
+    Admit {
+        request: ContextAdmissionRequest,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -131,6 +135,9 @@ pub enum ContextResponse {
     },
     Projection {
         projection: ExecutionContextProjection,
+    },
+    Admission {
+        result: ContextAdmissionResult,
     },
 }
 
