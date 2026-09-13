@@ -8,7 +8,7 @@ use phenix_core::{
     ModelToolDescriptor, PhenixValue, PluginId, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{cmp::Ordering, collections::{BTreeMap, BTreeSet}};
 
 pub const MODEL_ROUTING_SERVICE: &str = "phenix.models.routing@1";
 
@@ -24,6 +24,8 @@ pub struct ModelTarget {
 pub struct RoutingProfile {
     pub id: RoutingProfileId,
     pub default_target: ModelTarget,
+    #[serde(default)]
+    pub fallback_targets: Vec<ModelTarget>,
     #[serde(default)]
     pub callable_targets: BTreeMap<CallableId, ModelTarget>,
 }
@@ -118,6 +120,24 @@ pub struct RoutingEstimate {
 pub struct RoutingCandidate {
     pub capabilities: EffectiveModelCapabilities,
     pub estimate: Option<RoutingEstimate>,
+    pub ordinal: u32,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RoutingEstimateMode {
+    Ignore,
+    PreferTrusted { min_confidence_millis: u16 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct RouteSelectionPolicy {
+    pub revision: String,
+    pub estimates: RoutingEstimateMode,
+    pub max_candidate_attempts: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -126,7 +146,36 @@ pub struct RouteDecision {
     pub target: ModelTarget,
     pub capability_generation: CapabilityGenerationId,
     pub policy_revision: String,
+    pub candidate_ordinal: u32,
     pub estimate: Option<RoutingEstimate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct RejectedRoutingCandidate {
+    pub target: ModelTarget,
+    pub ordinal: u32,
+    pub reason: RouteEligibility,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct RouteSelection {
+    pub decision: RouteDecision,
+    #[serde(default)]
+    pub rejected: Vec<RejectedRoutingCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RouteSelectionError {
+    NoEligibleCandidates {
+        rejected: Vec<RejectedRoutingCandidate>,
+    },
+    CandidateAttemptLimitExceeded {
+        eligible: u32,
+        allowed: u32,
+    },
 }
 
 #[derive(
@@ -137,6 +186,101 @@ pub struct RoutingEvidence {
     pub success: bool,
     pub latency_ms: Option<u64>,
     pub usage: ModelTurnUsage,
+}
+
+#[must_use]
+pub fn select_route(
+    candidates: &[RoutingCandidate],
+    requirements: &RoutingRequirements,
+    policy: &RouteSelectionPolicy,
+) -> Result<RouteSelection, RouteSelectionError> {
+    let mut rejected = Vec::new();
+    let mut eligible: Vec<&RoutingCandidate> = Vec::new();
+
+    for candidate in candidates {
+        match requirements.evaluate(&candidate.capabilities) {
+            RouteEligibility::Eligible => eligible.push(candidate),
+            reason => rejected.push(RejectedRoutingCandidate {
+                target: candidate.capabilities.target.clone(),
+                ordinal: candidate.ordinal,
+                reason,
+            }),
+        }
+    }
+
+    if eligible.is_empty() {
+        return Err(RouteSelectionError::NoEligibleCandidates { rejected });
+    }
+
+    let eligible_count = u32::try_from(eligible.len()).unwrap_or(u32::MAX);
+    if eligible_count > policy.max_candidate_attempts {
+        eligible.sort_by_key(|candidate| candidate.ordinal);
+        eligible.truncate(policy.max_candidate_attempts as usize);
+        if eligible.is_empty() {
+            return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
+                eligible: eligible_count,
+                allowed: policy.max_candidate_attempts,
+            });
+        }
+    }
+
+    eligible.sort_by(|left, right| compare_candidates(left, right, policy.estimates));
+    let winner = eligible[0];
+    Ok(RouteSelection {
+        decision: RouteDecision {
+            target: winner.capabilities.target.clone(),
+            capability_generation: winner.capabilities.generation.clone(),
+            policy_revision: policy.revision.clone(),
+            candidate_ordinal: winner.ordinal,
+            estimate: winner.estimate.clone(),
+        },
+        rejected,
+    })
+}
+
+fn compare_candidates(
+    left: &RoutingCandidate,
+    right: &RoutingCandidate,
+    mode: RoutingEstimateMode,
+) -> Ordering {
+    match mode {
+        RoutingEstimateMode::Ignore => left.ordinal.cmp(&right.ordinal),
+        RoutingEstimateMode::PreferTrusted {
+            min_confidence_millis,
+        } => {
+            let left_estimate = trusted_estimate(left, min_confidence_millis);
+            let right_estimate = trusted_estimate(right, min_confidence_millis);
+            match (left_estimate, right_estimate) {
+                (Some(left_estimate), Some(right_estimate)) => right_estimate
+                    .expected_quality_millis
+                    .unwrap_or(0)
+                    .cmp(&left_estimate.expected_quality_millis.unwrap_or(0))
+                    .then_with(|| {
+                        left_estimate
+                            .expected_cost_microunits
+                            .unwrap_or(u64::MAX)
+                            .cmp(&right_estimate.expected_cost_microunits.unwrap_or(u64::MAX))
+                    })
+                    .then_with(|| {
+                        left_estimate
+                            .expected_latency_ms
+                            .unwrap_or(u64::MAX)
+                            .cmp(&right_estimate.expected_latency_ms.unwrap_or(u64::MAX))
+                    })
+                    .then_with(|| left.ordinal.cmp(&right.ordinal)),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => left.ordinal.cmp(&right.ordinal),
+            }
+        }
+    }
+}
+
+fn trusted_estimate(candidate: &RoutingCandidate, minimum: u16) -> Option<&RoutingEstimate> {
+    candidate
+        .estimate
+        .as_ref()
+        .filter(|estimate| estimate.confidence_millis.unwrap_or(0) >= minimum)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -153,9 +297,26 @@ pub enum ModelCommand {
         provider_plugin: PluginId,
         authenticated: bool,
     },
+    PublishCapabilities {
+        capabilities: EffectiveModelCapabilities,
+    },
+    ListCandidates {
+        profile_id: RoutingProfileId,
+        callable_id: Option<CallableId>,
+    },
     Resolve {
         profile_id: RoutingProfileId,
         callable_id: Option<CallableId>,
+    },
+    ResolveWithRequirements {
+        profile_id: RoutingProfileId,
+        callable_id: Option<CallableId>,
+        requirements: RoutingRequirements,
+        policy: RouteSelectionPolicy,
+    },
+    RecordEvidence {
+        decision: RouteDecision,
+        evidence: RoutingEvidence,
     },
     Invoke {
         profile_id: RoutingProfileId,
@@ -179,9 +340,19 @@ pub enum ModelResponse {
         provider_plugin: PluginId,
         authenticated: bool,
     },
+    Capabilities {
+        capabilities: EffectiveModelCapabilities,
+    },
+    Candidates {
+        candidates: Vec<RoutingCandidate>,
+    },
     Target {
         target: ModelTarget,
     },
+    Decision {
+        selection: RouteSelection,
+    },
+    EvidenceRecorded,
     Inference {
         target: ModelTarget,
         response: ModelInferenceResponse,
@@ -211,11 +382,11 @@ mod tests {
     use super::*;
     use crate::contracts::{ContextControl, ModelLimits};
 
-    fn capabilities(capacity: CapacityKnowledge) -> EffectiveModelCapabilities {
+    fn capabilities(model: &str, capacity: CapacityKnowledge) -> EffectiveModelCapabilities {
         EffectiveModelCapabilities {
             target: ModelTarget {
                 provider_plugin: PluginId::parse("provider.fixture").unwrap(),
-                model: ModelId::parse("model.fixture").unwrap(),
+                model: ModelId::parse(model).unwrap(),
                 options: BTreeMap::new(),
             },
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
@@ -225,9 +396,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn hard_capacity_is_checked_before_ranking() {
-        let requirements = RoutingRequirements {
+    fn requirements() -> RoutingRequirements {
+        RoutingRequirements {
             context: ContextDemand {
                 mandatory_input_tokens: 800,
                 reducible_input_tokens: 100,
@@ -236,29 +406,129 @@ mod tests {
             },
             required_capabilities: BTreeSet::new(),
             require_known_capacity: true,
-        };
+        }
+    }
+
+    #[test]
+    fn hard_capacity_is_checked_before_ranking() {
         assert_eq!(
-            requirements.evaluate(&capabilities(CapacityKnowledge::Known {
-                limits: ModelLimits {
-                    context_window_tokens: 1_000,
-                    max_output_tokens: Some(500),
+            requirements().evaluate(&capabilities(
+                "model.fixture",
+                CapacityKnowledge::Known {
+                    limits: ModelLimits {
+                        context_window_tokens: 1_000,
+                        max_output_tokens: Some(500),
+                    },
                 },
-            })),
+            )),
             RouteEligibility::InsufficientContextCapacity
         );
     }
 
     #[test]
-    fn unknown_capacity_is_only_rejected_when_policy_requires_knowledge() {
-        let mut requirements = RoutingRequirements::default();
-        assert_eq!(
-            requirements.evaluate(&capabilities(CapacityKnowledge::Unknown)),
-            RouteEligibility::Eligible
-        );
-        requirements.require_known_capacity = true;
-        assert_eq!(
-            requirements.evaluate(&capabilities(CapacityKnowledge::Unknown)),
-            RouteEligibility::UnknownContextCapacity
-        );
+    fn deterministic_default_uses_profile_order_not_estimates() {
+        let candidates = vec![
+            RoutingCandidate {
+                capabilities: capabilities(
+                    "first",
+                    CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 2_000,
+                            max_output_tokens: Some(500),
+                        },
+                    },
+                ),
+                estimate: Some(RoutingEstimate {
+                    source: RoutingEstimateSource::Historical,
+                    expected_quality_millis: Some(100),
+                    expected_latency_ms: Some(100),
+                    expected_cost_microunits: Some(100),
+                    confidence_millis: Some(1_000),
+                }),
+                ordinal: 0,
+            },
+            RoutingCandidate {
+                capabilities: capabilities(
+                    "second",
+                    CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 2_000,
+                            max_output_tokens: Some(500),
+                        },
+                    },
+                ),
+                estimate: Some(RoutingEstimate {
+                    source: RoutingEstimateSource::Historical,
+                    expected_quality_millis: Some(900),
+                    expected_latency_ms: Some(10),
+                    expected_cost_microunits: Some(10),
+                    confidence_millis: Some(1_000),
+                }),
+                ordinal: 1,
+            },
+        ];
+        let selection = select_route(
+            &candidates,
+            &requirements(),
+            &RouteSelectionPolicy {
+                revision: "deterministic".into(),
+                estimates: RoutingEstimateMode::Ignore,
+                max_candidate_attempts: 8,
+            },
+        )
+        .unwrap();
+        assert_eq!(selection.decision.target.model.as_str(), "first");
+    }
+
+    #[test]
+    fn estimates_only_rank_candidates_that_pass_hard_admission() {
+        let candidates = vec![
+            RoutingCandidate {
+                capabilities: capabilities(
+                    "high-quality-too-small",
+                    CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 500,
+                            max_output_tokens: Some(500),
+                        },
+                    },
+                ),
+                estimate: Some(RoutingEstimate {
+                    source: RoutingEstimateSource::Learned,
+                    expected_quality_millis: Some(1_000),
+                    expected_latency_ms: Some(1),
+                    expected_cost_microunits: Some(1),
+                    confidence_millis: Some(1_000),
+                }),
+                ordinal: 0,
+            },
+            RoutingCandidate {
+                capabilities: capabilities(
+                    "eligible",
+                    CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 2_000,
+                            max_output_tokens: Some(500),
+                        },
+                    },
+                ),
+                estimate: None,
+                ordinal: 1,
+            },
+        ];
+        let selection = select_route(
+            &candidates,
+            &requirements(),
+            &RouteSelectionPolicy {
+                revision: "adaptive".into(),
+                estimates: RoutingEstimateMode::PreferTrusted {
+                    min_confidence_millis: 800,
+                },
+                max_candidate_attempts: 8,
+            },
+        )
+        .unwrap();
+        assert_eq!(selection.decision.target.model.as_str(), "eligible");
+        assert_eq!(selection.rejected.len(), 1);
     }
 }
