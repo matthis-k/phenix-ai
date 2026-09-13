@@ -1,5 +1,5 @@
 ---
-status: planned
+status: partial
 parent: pull/514
 ---
 
@@ -9,17 +9,16 @@ parent: pull/514
 
 Move generic directed-graph mechanics to `petgraph` while keeping Phenix graph semantics, ordering policy, authority, provider selection, lifecycle rules, and diagnostics repo-owned.
 
-This supersedes PR #514's narrow `petgraph` rejection. That decision evaluated only `ComponentGraph`; the same DFS, topological-order, and reachability mechanics are currently reimplemented across core and plugins.
+#514 intentionally kept `ComponentGraph` representation and deterministic domain policy Phenix-owned. #519 does not reverse that decision. It applies `petgraph` only to repeated generic traversal, cycle, reachability, and topological mechanics inside Core and first-party plugins.
 
 ## Theoretical problem
 
 The shared problem is a directed graph with some graphs constrained to be acyclic:
 
 - cycle detection and concrete cycle witnesses
-- topological ordering
-- ready-frontier calculation
+- topological ordering and ready-frontier calculation
 - reachability and reverse reachability
-- dependency completion and readiness
+- dependency completion as a structural predicate
 - topological levelization
 
 Phenix-specific meaning stays outside the graph library.
@@ -36,12 +35,12 @@ Do not build a second generic graph framework around petgraph.
 
 ## Scope
 
-Migrate all generic graph traversal found in this audit.
+Migrate the repeated generic graph mechanics identified by the #514 audit follow-up.
 
 ### Core
 
-- component import/provider dependency cycle validation
-- plugin activation dependency ordering
+- required component-import dependency cycle validation inside `ComponentGraph`
+- plugin activation dependency ordering, including structural runtime-provider dependencies
 - event subscription dependency ordering and levelization
 - persistence bootstrap dependency cycle validation
 - reconciliation dependency and reverse-reachability traversals where they are purely structural
@@ -50,19 +49,20 @@ Migrate all generic graph traversal found in this audit.
 
 - hooks dependency ordering
 - planning DAG validation
-- execution worker-task cycle and readiness traversal
-- repository-worker dependency traversal and eligibility graph mechanics
+- execution worker-task cycle detection and dependency-completion queries used by `runnable_tasks`
+- repository-worker dependency blocker and closure traversal used by selection
 
 ## Keep Phenix-owned
 
+- `ComponentGraph` domain representation and resolved component/import/provider semantics
 - `ComponentId`, `PluginId`, service and interface identities
 - provider selection and fallback policy
 - authority attenuation and gates
 - listener and event semantics and receipt causality
-- execution task state transitions
+- execution task state transitions and runnable eligibility beyond dependency completion
 - hook failure policy
 - planning semantics
-- repository work-priority policy
+- repository-worker PR evidence, merged-predecessor semantics, eligibility, and work-priority policy
 - reconciliation actions and reload or migration policy
 - exact public error taxonomy and semantic diagnostics
 
@@ -80,12 +80,12 @@ Migrate all generic graph traversal found in this audit.
 ## Migration order
 
 1. Harden the Core helper and persistence-bootstrap pilot.
-2. Migrate Core component validation and activation ordering.
+2. Migrate Core required-import validation and plugin activation ordering.
 3. Migrate event ordering and levelization.
 4. Migrate reconciliation reachability.
 5. Migrate hooks and planning.
-6. Migrate execution worker-task validation and readiness.
-7. Migrate repository-worker dependency mechanics last because dependency state is combined with PR evidence and work-priority policy.
+6. Migrate execution worker-task cycle validation and structural dependency completion.
+7. Migrate repository-worker dependency blocker/closure mechanics last because dependency state is combined with PR evidence and work-priority policy.
 8. Remove leftover generic traversal code, run permutation coverage, verify graph-generation identity, and measure the Rust LOC delta.
 
 ## Acceptance criteria
@@ -103,6 +103,7 @@ Migrate all generic graph traversal found in this audit.
 
 ## Non-goals
 
+- Replacing `ComponentGraph` with a petgraph public/domain type.
 - Replacing reconciliation policy with an incremental-computation framework such as Salsa.
 - Replacing Phenix state machines with graph-library state.
 - Changing public graph or domain DTOs.
