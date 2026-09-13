@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1::{
 };
 use parking_lot::Mutex;
 use phenix_backend::{
-    BackendError, PreparedToolSurface, ToolInvocation, ToolPresentation, ToolResult,
+    BackendError, PreparedToolSurface, ToolCancellation, ToolInvocation, ToolPresentation, ToolResult,
 };
 use phenix_domain::{CallableDescriptor, PhenixSchema};
 use rmcp::model::{
@@ -20,8 +20,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, value::RawValue, Map, Value};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 const SERVER_ID: &str = "phenix-tools";
@@ -49,13 +49,12 @@ struct ToolBridgeState {
     next_connection: u64,
 }
 
-/// Per-connection MCP lifecycle. A connection owns one MCP session: it starts
-/// uninitialized, becomes initialized once the client sends
-/// `notifications/initialized`, and may hold at most one in-flight tool call
-/// (the bridge dispatches synchronously).
+/// Per-connection MCP lifecycle. ACP strips the inner MCP request id, so one
+/// connection accepts at most one in-flight tool call. That keeps cancellation
+/// correlation exact at the carrier boundary.
 struct ConnectionState {
     initialized: bool,
-    in_flight: Option<Arc<AtomicBool>>,
+    in_flight: Option<ToolCancellation>,
 }
 
 impl ToolBridge {
@@ -234,7 +233,7 @@ impl ToolBridge {
         let name = request.name.to_string();
         let arguments = request.arguments.clone().unwrap_or_default();
 
-        let (callable, worker, cancel) = {
+        let (callable, worker, cancellation) = {
             let mut state = self.state.lock();
             let callable = state
                 .callables
@@ -254,33 +253,40 @@ impl ToolBridge {
                 .connections
                 .get_mut(connection_id.0.as_ref())
                 .ok_or_else(|| unknown_connection(connection_id))?;
-            let cancel = Arc::new(AtomicBool::new(false));
-            connection.in_flight = Some(cancel.clone());
-            (callable, worker, cancel)
+            if connection.in_flight.is_some() {
+                return Err(acp_error(ErrorData::invalid_request(
+                    "MCP connection already has an in-flight tool call",
+                    None,
+                )));
+            }
+            let cancellation = ToolCancellation::new();
+            connection.in_flight = Some(cancellation.clone());
+            (callable, worker, cancellation)
         };
 
         let arguments_json = serde_json::to_string(&arguments)
             .map_err(agent_client_protocol::Error::into_internal_error)?;
         let (response_tx, response_rx) = mpsc::sync_channel(1);
-        worker
-            .send(WorkerMessage::ToolCall(BridgeToolRequest {
-                invocation: ToolInvocation {
-                    callable,
-                    arguments_json,
-                },
-                cancelled: Arc::clone(&cancel),
-                response: response_tx,
-            }))
-            .map_err(|error| {
-                agent_client_protocol::Error::internal_error()
-                    .data(format!("conductor tool host is unavailable: {error}"))
-            })?;
+        let tool_request = BridgeToolRequest {
+            invocation: ToolInvocation {
+                callable,
+                arguments_json,
+                cancellation: cancellation.clone(),
+            },
+            cancelled: cancellation.clone(),
+            response: response_tx,
+        };
+        if let Err(error) = worker.send(WorkerMessage::ToolCall(tool_request)) {
+            self.clear_in_flight(connection_id);
+            return Err(agent_client_protocol::Error::internal_error()
+                .data(format!("conductor tool host is unavailable: {error}")));
+        }
 
         let result = loop {
             match response_rx.recv_timeout(CANCELLATION_POLL_INTERVAL) {
                 Ok(result) => break Ok(result),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if cancel.load(Ordering::SeqCst) {
+                    if cancellation.is_cancelled() {
                         break Err(BackendError::Protocol(
                             "MCP tool call was cancelled".to_owned(),
                         ));
@@ -294,6 +300,15 @@ impl ToolBridge {
             }
         };
 
+        self.clear_in_flight(connection_id);
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => Err(error),
+        };
+        to_value(&call_tool_result(result))
+    }
+
+    fn clear_in_flight(&self, connection_id: &McpConnectionId) {
         if let Some(connection) = self
             .state
             .lock()
@@ -302,12 +317,6 @@ impl ToolBridge {
         {
             connection.in_flight = None;
         }
-
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => Err(error),
-        };
-        to_value(&call_tool_result(result))
     }
 
     fn cancel_in_flight_call(
@@ -316,11 +325,8 @@ impl ToolBridge {
         params: Option<&Map<String, Value>>,
     ) -> Result<(), agent_client_protocol::Error> {
         // The ACP MCP-over-ACP carrier does not carry the inner MCP JSON-RPC
-        // request id, so `notifications/cancelled` cannot be correlated to a
-        // specific `tools/call` request by id. The bridge dispatches tool calls
-        // synchronously, so at most one call is in flight per connection;
-        // cancellation is therefore correlated at connection granularity while
-        // still parsing the typed cancellation params.
+        // request id. One in-flight call per connection makes cancellation
+        // correlation exact without inventing an id the peer never sent here.
         let _cancel: CancelledNotificationParam = parse_params(params)?;
         if let Some(connection) = self.state.lock().connections.get(connection_id.0.as_ref()) {
             cancel_in_flight(connection);
@@ -365,8 +371,8 @@ impl ToolBridge {
 }
 
 fn cancel_in_flight(connection: &ConnectionState) {
-    if let Some(cancel) = connection.in_flight.as_ref() {
-        cancel.store(true, Ordering::SeqCst);
+    if let Some(cancellation) = connection.in_flight.as_ref() {
+        cancellation.cancel();
     }
 }
 
@@ -378,7 +384,7 @@ fn unknown_connection(connection_id: &McpConnectionId) -> agent_client_protocol:
 #[derive(Debug)]
 pub(super) struct BridgeToolRequest {
     pub(super) invocation: ToolInvocation,
-    pub(super) cancelled: Arc<AtomicBool>,
+    pub(super) cancelled: ToolCancellation,
     pub(super) response: mpsc::SyncSender<Result<ToolResult, BackendError>>,
 }
 
@@ -686,6 +692,7 @@ mod tests {
             };
             assert_eq!(request.invocation.callable.as_str(), "phenix.echo");
             assert_eq!(request.invocation.arguments_json, r#"{"value":"from-acp"}"#);
+            assert!(!request.invocation.cancellation.is_cancelled());
             request
                 .response
                 .send(Ok(ToolResult {
@@ -710,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_aborts_in_flight_tool_call_without_delivering_result() {
+    fn cancellation_reaches_execution_and_rejects_overlapping_calls() {
         let bridge = ToolBridge::default();
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerMessage>();
         bridge.bind_execution(&surface(), worker_tx).unwrap();
@@ -731,21 +738,19 @@ mod tests {
             ))
             .unwrap();
 
+        let (started_tx, started_rx) = mpsc::channel();
         let (observed_tx, observed_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let WorkerMessage::ToolCall(request) = worker_rx.recv().unwrap() else {
                 panic!("expected a tool call");
             };
-            std::thread::sleep(Duration::from_millis(50));
-            observed_tx
-                .send(request.cancelled.load(Ordering::SeqCst))
-                .unwrap();
-            if !request.cancelled.load(Ordering::SeqCst) {
-                let _ = request.response.send(Ok(ToolResult {
-                    output: "too-late".to_owned(),
-                    success: true,
-                }));
+            started_tx.send(()).unwrap();
+            while !request.invocation.cancellation.is_cancelled() {
+                std::thread::yield_now();
             }
+            observed_tx
+                .send(request.cancelled.is_cancelled())
+                .unwrap();
         });
 
         let caller = {
@@ -759,7 +764,17 @@ mod tests {
             })
         };
 
-        std::thread::sleep(Duration::from_millis(10));
+        started_rx.recv().unwrap();
+        let overlapping = bridge
+            .message(
+                MessageMcpRequest::new(connection.clone(), "tools/call")
+                    .params(params(json!({"name": "phenix.echo", "arguments": {}}))),
+            )
+            .unwrap_err();
+        assert!(overlapping
+            .to_string()
+            .contains("already has an in-flight tool call"));
+
         bridge
             .notification(
                 MessageMcpNotification::new(connection, "notifications/cancelled")
