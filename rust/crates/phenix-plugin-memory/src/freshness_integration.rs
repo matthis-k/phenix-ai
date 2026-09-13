@@ -175,6 +175,7 @@ fn configure_revalidation_routing(
             profile: RoutingProfile {
                 id: profile_id.clone(),
                 default_target: target("unexpected-default"),
+                fallback_targets: Vec::new(),
                 callable_targets: BTreeMap::from([
                     (memory_validate_callable(), target(validate_model)),
                     (memory_resolve_callable(), target(resolve_model)),
