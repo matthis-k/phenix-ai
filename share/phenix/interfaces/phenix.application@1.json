@@ -73,6 +73,12 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.inspection@1"
     },
+    "phenix.application.interaction-handlers-set@1": {
+      "input": "phenix.application.type.set-interaction-handlers-input@1",
+      "output": "phenix.application.type.acknowledged@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.interaction@1"
+    },
     "phenix.application.model-list@1": {
       "input": "phenix.application.type.session-input@1",
       "output": "phenix.application.type.models@1",
@@ -114,6 +120,12 @@
       "output": "phenix.application.type.prompt-result@1",
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.prompt@1"
+    },
+    "phenix.application.review-decide@1": {
+      "input": "phenix.application.type.review-decision-input@1",
+      "output": "phenix.application.type.review-record@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.review@1"
     },
     "phenix.application.routing-list@1": {
       "input": "phenix.application.type.session-input@1",
@@ -259,6 +271,11 @@
         "phenix.application.capability.sessions@1"
       ]
     },
+    "phenix.application.capability.interaction@1": {
+      "dependencies": [
+        "phenix.application.capability.capabilities@1"
+      ]
+    },
     "phenix.application.capability.lineage@1": {
       "dependencies": [
         "phenix.application.capability.sessions@1"
@@ -280,6 +297,11 @@
       ]
     },
     "phenix.application.capability.prompt@1": {
+      "dependencies": [
+        "phenix.application.capability.sessions@1"
+      ]
+    },
+    "phenix.application.capability.review@1": {
       "dependencies": [
         "phenix.application.capability.sessions@1"
       ]
@@ -2046,6 +2068,93 @@
                 },
                 "output": {
                   "type": "any"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.interaction-handlers@1": {
+      "type": "table",
+      "value": {
+        "elicitation": {
+          "type": "option",
+          "value": {
+            "type": "callable",
+            "value": {
+              "contract": "phenix.application.elicitation@1",
+              "input": {
+                "type": "table",
+                "value": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "schema": {
+                    "type": "any"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  }
+                }
+              },
+              "output": {
+                "type": "variant",
+                "value": {
+                  "Accepted": {
+                    "type": "table",
+                    "value": {
+                      "value": {
+                        "type": "any"
+                      }
+                    }
+                  },
+                  "Cancelled": {
+                    "type": "unit"
+                  },
+                  "Declined": {
+                    "type": "unit"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "permission": {
+          "type": "option",
+          "value": {
+            "type": "callable",
+            "value": {
+              "contract": "phenix.application.permission@1",
+              "input": {
+                "type": "table",
+                "value": {
+                  "call_id": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "execution_id": {
+                    "type": "string"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  }
+                }
+              },
+              "output": {
+                "type": "variant",
+                "value": {
+                  "AllowOnce": {
+                    "type": "unit"
+                  },
+                  "Cancelled": {
+                    "type": "unit"
+                  },
+                  "Deny": {
+                    "type": "unit"
+                  }
                 }
               }
             }
@@ -3965,6 +4074,212 @@
         }
       }
     },
+    "phenix.application.type.review-decision-input@1": {
+      "type": "table",
+      "value": {
+        "decision": {
+          "type": "variant",
+          "value": {
+            "Accept": {
+              "type": "unit"
+            },
+            "Reject": {
+              "type": "unit"
+            }
+          }
+        },
+        "expected_revision": {
+          "type": "u64"
+        },
+        "review_id": {
+          "type": "string"
+        }
+      }
+    },
+    "phenix.application.type.review-decision@1": {
+      "type": "variant",
+      "value": {
+        "Accept": {
+          "type": "unit"
+        },
+        "Reject": {
+          "type": "unit"
+        }
+      }
+    },
+    "phenix.application.type.review-file@1": {
+      "type": "table",
+      "value": {
+        "conflict": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        },
+        "expected_version": {
+          "type": "string"
+        },
+        "hunks": {
+          "type": "list",
+          "value": {
+            "type": "table",
+            "value": {
+              "id": {
+                "type": "string"
+              },
+              "new_count": {
+                "type": "u64"
+              },
+              "new_start": {
+                "type": "u64"
+              },
+              "old_count": {
+                "type": "u64"
+              },
+              "old_start": {
+                "type": "u64"
+              },
+              "unified_diff": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "uri": {
+          "type": "string"
+        }
+      }
+    },
+    "phenix.application.type.review-hunk@1": {
+      "type": "table",
+      "value": {
+        "id": {
+          "type": "string"
+        },
+        "new_count": {
+          "type": "u64"
+        },
+        "new_start": {
+          "type": "u64"
+        },
+        "old_count": {
+          "type": "u64"
+        },
+        "old_start": {
+          "type": "u64"
+        },
+        "unified_diff": {
+          "type": "string"
+        }
+      }
+    },
+    "phenix.application.type.review-record@1": {
+      "type": "table",
+      "value": {
+        "execution_id": {
+          "type": "string"
+        },
+        "files": {
+          "type": "list",
+          "value": {
+            "type": "table",
+            "value": {
+              "conflict": {
+                "type": "option",
+                "value": {
+                  "type": "string"
+                }
+              },
+              "expected_version": {
+                "type": "string"
+              },
+              "hunks": {
+                "type": "list",
+                "value": {
+                  "type": "table",
+                  "value": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "new_count": {
+                      "type": "u64"
+                    },
+                    "new_start": {
+                      "type": "u64"
+                    },
+                    "old_count": {
+                      "type": "u64"
+                    },
+                    "old_start": {
+                      "type": "u64"
+                    },
+                    "unified_diff": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "uri": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "u64"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "variant",
+          "value": {
+            "Accepted": {
+              "type": "unit"
+            },
+            "Conflicted": {
+              "type": "table",
+              "value": {
+                "message": {
+                  "type": "string"
+                }
+              }
+            },
+            "Pending": {
+              "type": "unit"
+            },
+            "Rejected": {
+              "type": "unit"
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.review-state@1": {
+      "type": "variant",
+      "value": {
+        "Accepted": {
+          "type": "unit"
+        },
+        "Conflicted": {
+          "type": "table",
+          "value": {
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "Pending": {
+          "type": "unit"
+        },
+        "Rejected": {
+          "type": "unit"
+        }
+      }
+    },
     "phenix.application.type.routing-info@1": {
       "type": "table",
       "value": {
@@ -4486,6 +4801,96 @@
             }
           }
         },
+        "Review": {
+          "type": "table",
+          "value": {
+            "review": {
+              "type": "table",
+              "value": {
+                "execution_id": {
+                  "type": "string"
+                },
+                "files": {
+                  "type": "list",
+                  "value": {
+                    "type": "table",
+                    "value": {
+                      "conflict": {
+                        "type": "option",
+                        "value": {
+                          "type": "string"
+                        }
+                      },
+                      "expected_version": {
+                        "type": "string"
+                      },
+                      "hunks": {
+                        "type": "list",
+                        "value": {
+                          "type": "table",
+                          "value": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "new_count": {
+                              "type": "u64"
+                            },
+                            "new_start": {
+                              "type": "u64"
+                            },
+                            "old_count": {
+                              "type": "u64"
+                            },
+                            "old_start": {
+                              "type": "u64"
+                            },
+                            "unified_diff": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "uri": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "id": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "u64"
+                },
+                "session_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "variant",
+                  "value": {
+                    "Accepted": {
+                      "type": "unit"
+                    },
+                    "Conflicted": {
+                      "type": "table",
+                      "value": {
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "Pending": {
+                      "type": "unit"
+                    },
+                    "Rejected": {
+                      "type": "unit"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "TextDelta": {
           "type": "table",
           "value": {
@@ -4583,6 +4988,1224 @@
               },
               "working_directory": {
                 "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.session-projection-state@1": {
+      "type": "table",
+      "value": {
+        "sessions": {
+          "type": "map",
+          "value": {
+            "type": "table",
+            "value": {
+              "session": {
+                "type": "table",
+                "value": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "option",
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "working_directory": {
+                    "type": "string"
+                  }
+                }
+              },
+              "through_sequence": {
+                "type": "u64"
+              },
+              "updates": {
+                "type": "list",
+                "value": {
+                  "type": "table",
+                  "value": {
+                    "sequence": {
+                      "type": "u64"
+                    },
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "update": {
+                      "type": "variant",
+                      "value": {
+                        "Closed": {
+                          "type": "unit"
+                        },
+                        "Diagnostic": {
+                          "type": "table",
+                          "value": {
+                            "diagnostic": {
+                              "type": "table",
+                              "value": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "resource": {
+                                  "type": "option",
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "severity": {
+                                  "type": "variant",
+                                  "value": {
+                                    "Error": {
+                                      "type": "unit"
+                                    },
+                                    "Info": {
+                                      "type": "unit"
+                                    },
+                                    "Warning": {
+                                      "type": "unit"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "Execution": {
+                          "type": "table",
+                          "value": {
+                            "execution_id": {
+                              "type": "string"
+                            },
+                            "update": {
+                              "type": "variant",
+                              "value": {
+                                "Progress": {
+                                  "type": "table",
+                                  "value": {
+                                    "fraction": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "f64"
+                                      }
+                                    },
+                                    "message": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "State": {
+                                  "type": "table",
+                                  "value": {
+                                    "state": {
+                                      "type": "variant",
+                                      "value": {
+                                        "Cancelled": {
+                                          "type": "unit"
+                                        },
+                                        "Completed": {
+                                          "type": "unit"
+                                        },
+                                        "Failed": {
+                                          "type": "table",
+                                          "value": {
+                                            "error": {
+                                              "type": "variant",
+                                              "value": {
+                                                "Cancelled": {
+                                                  "type": "unit"
+                                                },
+                                                "Closed": {
+                                                  "type": "unit"
+                                                },
+                                                "Conflict": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "Disconnected": {
+                                                  "type": "unit"
+                                                },
+                                                "Failed": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "InvalidInput": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "InvalidPath": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "InvalidResponse": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "NotFound": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "resource": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "PermissionDenied": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "SchemaMismatch": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "StaleReference": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "value": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "SubscriptionCapacity": {
+                                                  "type": "unit"
+                                                },
+                                                "TransactionConflict": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "Unauthenticated": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "UnknownValue": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "value": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "UnsupportedCapability": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "capability": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                },
+                                                "UnsupportedSnapshotPolicy": {
+                                                  "type": "table",
+                                                  "value": {
+                                                    "message": {
+                                                      "type": "string"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "Pending": {
+                                          "type": "unit"
+                                        },
+                                        "Running": {
+                                          "type": "unit"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "ToolCall": {
+                                  "type": "table",
+                                  "value": {
+                                    "call_id": {
+                                      "type": "string"
+                                    },
+                                    "callable_id": {
+                                      "type": "string"
+                                    },
+                                    "input": {
+                                      "type": "any"
+                                    }
+                                  }
+                                },
+                                "ToolFailed": {
+                                  "type": "table",
+                                  "value": {
+                                    "call_id": {
+                                      "type": "string"
+                                    },
+                                    "error": {
+                                      "type": "variant",
+                                      "value": {
+                                        "Cancelled": {
+                                          "type": "unit"
+                                        },
+                                        "Closed": {
+                                          "type": "unit"
+                                        },
+                                        "Conflict": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "Disconnected": {
+                                          "type": "unit"
+                                        },
+                                        "Failed": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "InvalidInput": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "InvalidPath": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "InvalidResponse": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "NotFound": {
+                                          "type": "table",
+                                          "value": {
+                                            "resource": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "PermissionDenied": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "SchemaMismatch": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "StaleReference": {
+                                          "type": "table",
+                                          "value": {
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "SubscriptionCapacity": {
+                                          "type": "unit"
+                                        },
+                                        "TransactionConflict": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "Unauthenticated": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "UnknownValue": {
+                                          "type": "table",
+                                          "value": {
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "UnsupportedCapability": {
+                                          "type": "table",
+                                          "value": {
+                                            "capability": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "UnsupportedSnapshotPolicy": {
+                                          "type": "table",
+                                          "value": {
+                                            "message": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "ToolResult": {
+                                  "type": "table",
+                                  "value": {
+                                    "call_id": {
+                                      "type": "string"
+                                    },
+                                    "output": {
+                                      "type": "any"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "Message": {
+                          "type": "table",
+                          "value": {
+                            "message": {
+                              "type": "table",
+                              "value": {
+                                "content": {
+                                  "type": "list",
+                                  "value": {
+                                    "type": "variant",
+                                    "value": {
+                                      "Image": {
+                                        "type": "table",
+                                        "value": {
+                                          "data": {
+                                            "type": "bytes"
+                                          },
+                                          "mime_type": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "Resource": {
+                                        "type": "table",
+                                        "value": {
+                                          "mime_type": {
+                                            "type": "option",
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "text": {
+                                            "type": "option",
+                                            "value": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "Text": {
+                                        "type": "table",
+                                        "value": {
+                                          "text": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "role": {
+                                  "type": "variant",
+                                  "value": {
+                                    "Assistant": {
+                                      "type": "unit"
+                                    },
+                                    "User": {
+                                      "type": "unit"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "Renamed": {
+                          "type": "table",
+                          "value": {
+                            "title": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "Review": {
+                          "type": "table",
+                          "value": {
+                            "review": {
+                              "type": "table",
+                              "value": {
+                                "execution_id": {
+                                  "type": "string"
+                                },
+                                "files": {
+                                  "type": "list",
+                                  "value": {
+                                    "type": "table",
+                                    "value": {
+                                      "conflict": {
+                                        "type": "option",
+                                        "value": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "expected_version": {
+                                        "type": "string"
+                                      },
+                                      "hunks": {
+                                        "type": "list",
+                                        "value": {
+                                          "type": "table",
+                                          "value": {
+                                            "id": {
+                                              "type": "string"
+                                            },
+                                            "new_count": {
+                                              "type": "u64"
+                                            },
+                                            "new_start": {
+                                              "type": "u64"
+                                            },
+                                            "old_count": {
+                                              "type": "u64"
+                                            },
+                                            "old_start": {
+                                              "type": "u64"
+                                            },
+                                            "unified_diff": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "uri": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "u64"
+                                },
+                                "session_id": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "variant",
+                                  "value": {
+                                    "Accepted": {
+                                      "type": "unit"
+                                    },
+                                    "Conflicted": {
+                                      "type": "table",
+                                      "value": {
+                                        "message": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "Pending": {
+                                      "type": "unit"
+                                    },
+                                    "Rejected": {
+                                      "type": "unit"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "TextDelta": {
+                          "type": "table",
+                          "value": {
+                            "execution_id": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.session-projection@1": {
+      "type": "table",
+      "value": {
+        "session": {
+          "type": "table",
+          "value": {
+            "session_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "option",
+              "value": {
+                "type": "string"
+              }
+            },
+            "working_directory": {
+              "type": "string"
+            }
+          }
+        },
+        "through_sequence": {
+          "type": "u64"
+        },
+        "updates": {
+          "type": "list",
+          "value": {
+            "type": "table",
+            "value": {
+              "sequence": {
+                "type": "u64"
+              },
+              "session_id": {
+                "type": "string"
+              },
+              "update": {
+                "type": "variant",
+                "value": {
+                  "Closed": {
+                    "type": "unit"
+                  },
+                  "Diagnostic": {
+                    "type": "table",
+                    "value": {
+                      "diagnostic": {
+                        "type": "table",
+                        "value": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "option",
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "severity": {
+                            "type": "variant",
+                            "value": {
+                              "Error": {
+                                "type": "unit"
+                              },
+                              "Info": {
+                                "type": "unit"
+                              },
+                              "Warning": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "Execution": {
+                    "type": "table",
+                    "value": {
+                      "execution_id": {
+                        "type": "string"
+                      },
+                      "update": {
+                        "type": "variant",
+                        "value": {
+                          "Progress": {
+                            "type": "table",
+                            "value": {
+                              "fraction": {
+                                "type": "option",
+                                "value": {
+                                  "type": "f64"
+                                }
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "State": {
+                            "type": "table",
+                            "value": {
+                              "state": {
+                                "type": "variant",
+                                "value": {
+                                  "Cancelled": {
+                                    "type": "unit"
+                                  },
+                                  "Completed": {
+                                    "type": "unit"
+                                  },
+                                  "Failed": {
+                                    "type": "table",
+                                    "value": {
+                                      "error": {
+                                        "type": "variant",
+                                        "value": {
+                                          "Cancelled": {
+                                            "type": "unit"
+                                          },
+                                          "Closed": {
+                                            "type": "unit"
+                                          },
+                                          "Conflict": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "Disconnected": {
+                                            "type": "unit"
+                                          },
+                                          "Failed": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "InvalidInput": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "InvalidPath": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "InvalidResponse": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "NotFound": {
+                                            "type": "table",
+                                            "value": {
+                                              "resource": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "PermissionDenied": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "SchemaMismatch": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "StaleReference": {
+                                            "type": "table",
+                                            "value": {
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "SubscriptionCapacity": {
+                                            "type": "unit"
+                                          },
+                                          "TransactionConflict": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "Unauthenticated": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "UnknownValue": {
+                                            "type": "table",
+                                            "value": {
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "UnsupportedCapability": {
+                                            "type": "table",
+                                            "value": {
+                                              "capability": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "UnsupportedSnapshotPolicy": {
+                                            "type": "table",
+                                            "value": {
+                                              "message": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "Pending": {
+                                    "type": "unit"
+                                  },
+                                  "Running": {
+                                    "type": "unit"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "ToolCall": {
+                            "type": "table",
+                            "value": {
+                              "call_id": {
+                                "type": "string"
+                              },
+                              "callable_id": {
+                                "type": "string"
+                              },
+                              "input": {
+                                "type": "any"
+                              }
+                            }
+                          },
+                          "ToolFailed": {
+                            "type": "table",
+                            "value": {
+                              "call_id": {
+                                "type": "string"
+                              },
+                              "error": {
+                                "type": "variant",
+                                "value": {
+                                  "Cancelled": {
+                                    "type": "unit"
+                                  },
+                                  "Closed": {
+                                    "type": "unit"
+                                  },
+                                  "Conflict": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "Disconnected": {
+                                    "type": "unit"
+                                  },
+                                  "Failed": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "InvalidInput": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "InvalidPath": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "InvalidResponse": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "NotFound": {
+                                    "type": "table",
+                                    "value": {
+                                      "resource": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "PermissionDenied": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "SchemaMismatch": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "StaleReference": {
+                                    "type": "table",
+                                    "value": {
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "SubscriptionCapacity": {
+                                    "type": "unit"
+                                  },
+                                  "TransactionConflict": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "Unauthenticated": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "UnknownValue": {
+                                    "type": "table",
+                                    "value": {
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "UnsupportedCapability": {
+                                    "type": "table",
+                                    "value": {
+                                      "capability": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "UnsupportedSnapshotPolicy": {
+                                    "type": "table",
+                                    "value": {
+                                      "message": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "ToolResult": {
+                            "type": "table",
+                            "value": {
+                              "call_id": {
+                                "type": "string"
+                              },
+                              "output": {
+                                "type": "any"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "Message": {
+                    "type": "table",
+                    "value": {
+                      "message": {
+                        "type": "table",
+                        "value": {
+                          "content": {
+                            "type": "list",
+                            "value": {
+                              "type": "variant",
+                              "value": {
+                                "Image": {
+                                  "type": "table",
+                                  "value": {
+                                    "data": {
+                                      "type": "bytes"
+                                    },
+                                    "mime_type": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Resource": {
+                                  "type": "table",
+                                  "value": {
+                                    "mime_type": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "text": {
+                                      "type": "option",
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "uri": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "Text": {
+                                  "type": "table",
+                                  "value": {
+                                    "text": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "role": {
+                            "type": "variant",
+                            "value": {
+                              "Assistant": {
+                                "type": "unit"
+                              },
+                              "User": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "Renamed": {
+                    "type": "table",
+                    "value": {
+                      "title": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "Review": {
+                    "type": "table",
+                    "value": {
+                      "review": {
+                        "type": "table",
+                        "value": {
+                          "execution_id": {
+                            "type": "string"
+                          },
+                          "files": {
+                            "type": "list",
+                            "value": {
+                              "type": "table",
+                              "value": {
+                                "conflict": {
+                                  "type": "option",
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "expected_version": {
+                                  "type": "string"
+                                },
+                                "hunks": {
+                                  "type": "list",
+                                  "value": {
+                                    "type": "table",
+                                    "value": {
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "new_count": {
+                                        "type": "u64"
+                                      },
+                                      "new_start": {
+                                        "type": "u64"
+                                      },
+                                      "old_count": {
+                                        "type": "u64"
+                                      },
+                                      "old_start": {
+                                        "type": "u64"
+                                      },
+                                      "unified_diff": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "uri": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "u64"
+                          },
+                          "session_id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "variant",
+                            "value": {
+                              "Accepted": {
+                                "type": "unit"
+                              },
+                              "Conflicted": {
+                                "type": "table",
+                                "value": {
+                                  "message": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "Pending": {
+                                "type": "unit"
+                              },
+                              "Rejected": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "TextDelta": {
+                    "type": "table",
+                    "value": {
+                      "execution_id": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -5111,6 +6734,96 @@
                       }
                     }
                   },
+                  "Review": {
+                    "type": "table",
+                    "value": {
+                      "review": {
+                        "type": "table",
+                        "value": {
+                          "execution_id": {
+                            "type": "string"
+                          },
+                          "files": {
+                            "type": "list",
+                            "value": {
+                              "type": "table",
+                              "value": {
+                                "conflict": {
+                                  "type": "option",
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "expected_version": {
+                                  "type": "string"
+                                },
+                                "hunks": {
+                                  "type": "list",
+                                  "value": {
+                                    "type": "table",
+                                    "value": {
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "new_count": {
+                                        "type": "u64"
+                                      },
+                                      "new_start": {
+                                        "type": "u64"
+                                      },
+                                      "old_count": {
+                                        "type": "u64"
+                                      },
+                                      "old_start": {
+                                        "type": "u64"
+                                      },
+                                      "unified_diff": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "uri": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "u64"
+                          },
+                          "session_id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "variant",
+                            "value": {
+                              "Accepted": {
+                                "type": "unit"
+                              },
+                              "Conflicted": {
+                                "type": "table",
+                                "value": {
+                                  "message": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "Pending": {
+                                "type": "unit"
+                              },
+                              "Rejected": {
+                                "type": "unit"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
                   "TextDelta": {
                     "type": "table",
                     "value": {
@@ -5601,6 +7314,96 @@
                 }
               }
             },
+            "Review": {
+              "type": "table",
+              "value": {
+                "review": {
+                  "type": "table",
+                  "value": {
+                    "execution_id": {
+                      "type": "string"
+                    },
+                    "files": {
+                      "type": "list",
+                      "value": {
+                        "type": "table",
+                        "value": {
+                          "conflict": {
+                            "type": "option",
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "expected_version": {
+                            "type": "string"
+                          },
+                          "hunks": {
+                            "type": "list",
+                            "value": {
+                              "type": "table",
+                              "value": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "new_count": {
+                                  "type": "u64"
+                                },
+                                "new_start": {
+                                  "type": "u64"
+                                },
+                                "old_count": {
+                                  "type": "u64"
+                                },
+                                "old_start": {
+                                  "type": "u64"
+                                },
+                                "unified_diff": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "uri": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "u64"
+                    },
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "variant",
+                      "value": {
+                        "Accepted": {
+                          "type": "unit"
+                        },
+                        "Conflicted": {
+                          "type": "table",
+                          "value": {
+                            "message": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "Pending": {
+                          "type": "unit"
+                        },
+                        "Rejected": {
+                          "type": "unit"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
             "TextDelta": {
               "type": "table",
               "value": {
@@ -5609,6 +7412,98 @@
                 },
                 "text": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.set-interaction-handlers-input@1": {
+      "type": "table",
+      "value": {
+        "handlers": {
+          "type": "table",
+          "value": {
+            "elicitation": {
+              "type": "option",
+              "value": {
+                "type": "callable",
+                "value": {
+                  "contract": "phenix.application.elicitation@1",
+                  "input": {
+                    "type": "table",
+                    "value": {
+                      "message": {
+                        "type": "string"
+                      },
+                      "schema": {
+                        "type": "any"
+                      },
+                      "session_id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "output": {
+                    "type": "variant",
+                    "value": {
+                      "Accepted": {
+                        "type": "table",
+                        "value": {
+                          "value": {
+                            "type": "any"
+                          }
+                        }
+                      },
+                      "Cancelled": {
+                        "type": "unit"
+                      },
+                      "Declined": {
+                        "type": "unit"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "permission": {
+              "type": "option",
+              "value": {
+                "type": "callable",
+                "value": {
+                  "contract": "phenix.application.permission@1",
+                  "input": {
+                    "type": "table",
+                    "value": {
+                      "call_id": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "execution_id": {
+                        "type": "string"
+                      },
+                      "session_id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "output": {
+                    "type": "variant",
+                    "value": {
+                      "AllowOnce": {
+                        "type": "unit"
+                      },
+                      "Cancelled": {
+                        "type": "unit"
+                      },
+                      "Deny": {
+                        "type": "unit"
+                      }
+                    }
+                  }
                 }
               }
             }
