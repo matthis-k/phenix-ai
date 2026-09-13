@@ -30,7 +30,6 @@ jobs:
       - name: Apply deterministic maintenance fixes
         run: |
           set -euo pipefail
-          python3 .phenix/work/pr-504-session-journal.py
           nix flake update phenix-flake-ci
           printf '%s\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
             nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
@@ -52,7 +51,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "feat(application): persist session update journal"
+          git commit -m "chore: apply CI autofixes"
           git push origin "HEAD:$HEAD_REF"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 

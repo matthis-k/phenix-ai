@@ -3,17 +3,19 @@ use phenix_application_interface::{
     types::{
         Acknowledged, ApplicationError, PageInput, SessionChange, SessionCreateInput, SessionInfo,
         SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
-        SessionProjectionState, SessionRenameInput, SessionSnapshot, SessionUpdate,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate,
     },
-    CloseSession, CreateSession, ListSessions, Operation, RenameSession,
+    CloseSession, CreateSession, ListSessions, Operation, RenameSession, ResumeSession,
 };
 use phenix_core::{
     Authority, ContractId, HasPhenixSchema, ObservableError, ObservableRegistration,
-    ObservableStore, PhenixValue, PluginId, Project, SessionId, SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    ObservableStore, PhenixContract, PhenixValue, PluginId, Project, SessionId, SnapshotPolicy,
+    ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    session_service, SessionCommand, SessionLifecycle, SessionRecord, SessionResponse, SDK_PLUGIN,
+    session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
+    SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use std::collections::BTreeMap;
 
@@ -284,6 +286,9 @@ impl ApplicationWorker {
             ListSessions::ID => self
                 .list_sessions(decode(input)?)
                 .map(|value| value.to_value()),
+            ResumeSession::ID => self
+                .resume_session(decode(input)?)
+                .map(|value| value.to_value()),
             RenameSession::ID => self
                 .rename_session(decode(input)?)
                 .map(|value| value.to_value()),
@@ -338,20 +343,21 @@ impl ApplicationWorker {
         request: SessionRenameInput,
     ) -> Result<SessionInfo, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
-        let response = self.invoke_session(SessionCommand::Rename {
-            id: request.session_id.clone(),
+        let change = SessionChange::Renamed {
             title: request.title.clone(),
+        };
+        let response = self.invoke_session(SessionCommand::Transition {
+            id: request.session_id.clone(),
+            transition: SessionTransition::Rename {
+                title: request.title,
+            },
+            journal: session_change_journal(&change),
         })?;
-        let SessionResponse::Updated { session } = response else {
+        let SessionResponse::Transitioned { session, journal } = response else {
             return Err(unexpected_session_response("rename", response));
         };
         let info = application_session_info(&session)?;
-        self.project_session_change(
-            info.clone(),
-            SessionChange::Renamed {
-                title: request.title,
-            },
-        )?;
+        self.project_journal_entry(info.clone(), journal)?;
         Ok(info)
     }
 
@@ -360,14 +366,17 @@ impl ApplicationWorker {
         request: ApplicationSessionInput,
     ) -> Result<Acknowledged, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
-        let response = self.invoke_session(SessionCommand::Close {
+        let change = SessionChange::Closed;
+        let response = self.invoke_session(SessionCommand::Transition {
             id: request.session_id.clone(),
+            transition: SessionTransition::Close,
+            journal: session_change_journal(&change),
         })?;
-        let SessionResponse::Updated { session } = response else {
+        let SessionResponse::Transitioned { session, journal } = response else {
             return Err(unexpected_session_response("close", response));
         };
         let info = application_session_info(&session)?;
-        self.project_session_change(info, SessionChange::Closed)?;
+        self.project_journal_entry(info, journal)?;
         Ok(Acknowledged {})
     }
 
@@ -420,32 +429,103 @@ impl ApplicationWorker {
         Ok(session)
     }
 
-    fn project_session_change(
+    fn resume_session(
         &mut self,
-        session: SessionInfo,
-        update: SessionChange,
-    ) -> Result<(), ApplicationError> {
-        let key = session.session_id.as_str();
-        if !self.projection.state().sessions.contains_key(key) {
+        request: SessionResumeInput,
+    ) -> Result<SessionSnapshot, ApplicationError> {
+        let replace_projection = request.after_sequence.is_none();
+        let snapshot = self.load_session_snapshot(request)?;
+        if replace_projection {
             self.projection
-                .insert_created(session.clone())
+                .replace_snapshot(snapshot.clone())
                 .map_err(application_projection_error)?;
         }
-        let sequence = self.projection.state().sessions[key]
-            .through_sequence
-            .checked_add(1)
-            .ok_or_else(|| ApplicationError::Failed {
+        Ok(snapshot)
+    }
+
+    fn load_session_snapshot(
+        &mut self,
+        request: SessionResumeInput,
+    ) -> Result<SessionSnapshot, ApplicationError> {
+        let session = self.session_record(&request.session_id)?.ok_or_else(|| {
+            ApplicationError::NotFound {
+                resource: request.session_id.to_string(),
+            }
+        })?;
+        let session = application_session_info(&session)?;
+        let response = self.invoke_session(SessionCommand::Journal {
+            id: request.session_id.clone(),
+            stream: session_change_stream(),
+            after_sequence: request.after_sequence,
+        })?;
+        let SessionResponse::Journal {
+            through_sequence,
+            entries,
+        } = response
+        else {
+            return Err(unexpected_session_response("journal", response));
+        };
+        if request
+            .after_sequence
+            .is_some_and(|sequence| sequence > through_sequence)
+        {
+            return Err(ApplicationError::Conflict {
                 message: format!(
-                    "session projection sequence overflow for {}",
-                    session.session_id
+                    "resume sequence for {} is ahead of runtime watermark {through_sequence}",
+                    request.session_id
                 ),
-            })?;
+            });
+        }
+        let mut expected = request.after_sequence.unwrap_or(0).saturating_add(1);
+        let mut updates = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if entry.sequence != expected {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "session journal gap for {}: expected {expected}, got {}",
+                        request.session_id, entry.sequence
+                    ),
+                });
+            }
+            expected = expected
+                .checked_add(1)
+                .ok_or_else(|| ApplicationError::Failed {
+                    message: "session journal sequence overflow".to_owned(),
+                })?;
+            updates.push(session_update_from_journal(&request.session_id, entry)?);
+        }
+        Ok(SessionSnapshot {
+            session,
+            through_sequence,
+            updates,
+        })
+    }
+
+    fn project_journal_entry(
+        &mut self,
+        session: SessionInfo,
+        journal: SessionJournalEntry,
+    ) -> Result<(), ApplicationError> {
+        let update = session_update_from_journal(&session.session_id, journal)?;
+        let contiguous = self
+            .projection
+            .state()
+            .sessions
+            .get(session.session_id.as_str())
+            .and_then(|projection| projection.through_sequence.checked_add(1))
+            == Some(update.sequence);
+        if contiguous {
+            return self
+                .projection
+                .apply_update(update)
+                .map_err(application_projection_error);
+        }
+        let snapshot = self.load_session_snapshot(SessionResumeInput {
+            session_id: session.session_id,
+            after_sequence: None,
+        })?;
         self.projection
-            .apply_update(SessionUpdate {
-                session_id: session.session_id,
-                sequence,
-                update,
-            })
+            .repair_with_snapshot(snapshot, [update])
             .map_err(application_projection_error)
     }
 
@@ -474,6 +554,42 @@ impl ApplicationWorker {
             }
         })
     }
+}
+
+fn session_change_stream() -> ContractId {
+    SessionChange::contract_id()
+}
+
+fn session_change_journal(change: &SessionChange) -> SessionJournalDraft {
+    SessionJournalDraft {
+        stream: session_change_stream(),
+        payload: change.to_value(),
+    }
+}
+
+fn session_update_from_journal(
+    session_id: &SessionId,
+    entry: SessionJournalEntry,
+) -> Result<SessionUpdate, ApplicationError> {
+    let expected = session_change_stream();
+    if entry.stream != expected {
+        return Err(ApplicationError::InvalidResponse {
+            message: format!(
+                "unexpected session journal stream: expected {expected}, got {}",
+                entry.stream
+            ),
+        });
+    }
+    let update = SessionChange::from_value(&entry.payload).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })?;
+    Ok(SessionUpdate {
+        session_id: session_id.clone(),
+        sequence: entry.sequence,
+        update,
+    })
 }
 
 fn decode<T: ValueCodec>(value: PhenixValue) -> Result<T, ApplicationError> {
@@ -513,8 +629,15 @@ fn application_projection_error(error: SessionProjectionStoreError) -> Applicati
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_application_interface::{CloseSession, CreateSession, ListSessions, RenameSession};
-    use phenix_core::{SessionId, ValueAddress};
+    use phenix_application_interface::{
+        CloseSession, CreateSession, ListSessions, RenameSession, ResumeSession,
+    };
+    use phenix_core::{LocalPersistence, SessionId, ValueAddress};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn session(id: &str, title: Option<&str>) -> SessionInfo {
         SessionInfo {
@@ -538,6 +661,24 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
+    }
+
+    fn persistent_application_worker(path: &PathBuf) -> ApplicationWorker {
+        let persistence = LocalPersistence::open(path).unwrap();
+        let mut harness = PhenixHarness::default_suite_with_persistence(persistence).unwrap();
+        harness.activate().unwrap();
+        ApplicationWorker::new(harness).unwrap()
+    }
+
+    fn temp_db(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "phenix-{name}-{}-{nonce}.sqlite",
+            std::process::id()
+        ))
     }
 
     fn rename(id: &str, sequence: u64, title: &str) -> SessionUpdate {
@@ -596,6 +737,75 @@ mod tests {
         assert_eq!(record.lifecycle, SessionLifecycle::Closed);
         assert_eq!(record.title.as_deref(), Some("renamed"));
         assert_eq!(record.working_directory.as_deref(), Some("/workspace"));
+    }
+
+    #[test]
+    fn worker_resume_reconstructs_durable_journal_after_restart() {
+        let path = temp_db("application-resume");
+        let session_id;
+        {
+            let mut worker = persistent_application_worker(&path);
+            let created = invoke_operation::<CreateSession>(
+                &mut worker,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: Some("initial".into()),
+                },
+            )
+            .unwrap();
+            session_id = created.session_id.clone();
+            invoke_operation::<RenameSession>(
+                &mut worker,
+                SessionRenameInput {
+                    session_id: session_id.clone(),
+                    title: "renamed".into(),
+                },
+            )
+            .unwrap();
+            invoke_operation::<CloseSession>(
+                &mut worker,
+                ApplicationSessionInput {
+                    session_id: session_id.clone(),
+                },
+            )
+            .unwrap();
+        }
+
+        let mut worker = persistent_application_worker(&path);
+        let full = invoke_operation::<ResumeSession>(
+            &mut worker,
+            SessionResumeInput {
+                session_id: session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(full.session.title.as_deref(), Some("renamed"));
+        assert_eq!(full.through_sequence, 2);
+        assert_eq!(full.updates.len(), 2);
+        assert!(matches!(
+            full.updates[0].update,
+            SessionChange::Renamed { ref title } if title == "renamed"
+        ));
+        assert!(matches!(full.updates[1].update, SessionChange::Closed));
+        assert_eq!(
+            worker.projection().state().sessions[session_id.as_str()].through_sequence,
+            2
+        );
+
+        let suffix = invoke_operation::<ResumeSession>(
+            &mut worker,
+            SessionResumeInput {
+                session_id,
+                after_sequence: Some(1),
+            },
+        )
+        .unwrap();
+        assert_eq!(suffix.through_sequence, 2);
+        assert_eq!(suffix.updates.len(), 1);
+        assert_eq!(suffix.updates[0].sequence, 2);
+        assert!(matches!(suffix.updates[0].update, SessionChange::Closed));
+        let _ = fs::remove_file(path);
     }
 
     #[test]

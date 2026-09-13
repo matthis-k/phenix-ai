@@ -116,8 +116,8 @@ pub use phenix_plugin_session_tree::{
 };
 pub use phenix_plugin_sessions::{
     session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
-    SessionInput, SessionInputKind, SessionInterface, SessionLifecycle, SessionRecord,
-    SessionResponse, SESSION_SERVICE,
+    SessionInput, SessionInputKind, SessionInterface, SessionJournalDraft, SessionJournalEntry,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SESSION_SERVICE,
 };
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,

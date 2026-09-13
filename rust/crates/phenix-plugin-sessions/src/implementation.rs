@@ -1,12 +1,12 @@
 use crate::{
     session_service, SessionCommand, SessionInput, SessionInputKind, SessionInterface,
-    SessionRecord, SessionResponse,
+    SessionJournalDraft, SessionJournalEntry, SessionRecord, SessionResponse, SessionTransition,
 };
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, DurableSchema, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution, ServiceId, SessionId,
-    TransactionOp,
+    ComponentManifest, ContractId, DurableSchema, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution, ServiceId,
+    SessionId, TransactionOp,
 };
 use phenix_sdk::{
     session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionLifecycle,
@@ -154,6 +154,17 @@ fn handle_session(
         }),
         SessionCommand::Rename { id, title } => rename_session(context, &id, title),
         SessionCommand::Close { id } => close_session(context, &id),
+        SessionCommand::Transition {
+            id,
+            transition,
+            journal,
+        } => transition_session(context, &id, transition, journal),
+        SessionCommand::AppendJournal { id, entry } => append_journal(context, &id, entry),
+        SessionCommand::Journal {
+            id,
+            stream,
+            after_sequence,
+        } => read_journal_response(context, &id, &stream, after_sequence),
         SessionCommand::Continue { id, kind, content } => {
             continue_session(context, &id, kind, content)
         }
@@ -294,6 +305,128 @@ fn update_session(
         )
         .map_err(|error| error.to_string())?;
     Ok(SessionResponse::Updated { session })
+}
+
+fn transition_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    transition: SessionTransition,
+    journal: SessionJournalDraft,
+) -> Result<SessionResponse, String> {
+    let key = session_key(id);
+    let old = read_raw(context, &key)?.ok_or_else(|| format!("unknown session: {id}"))?;
+    let mut session: SessionRecord =
+        serde_json::from_slice(&old).map_err(|error| error.to_string())?;
+    require_open(&session)?;
+    match transition {
+        SessionTransition::Rename { title } => session.title = Some(title),
+        SessionTransition::Close => session.lifecycle = SessionLifecycle::Closed,
+    }
+    let value = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
+    let (journal, mut journal_operations) = prepare_journal_append(context, id, journal)?;
+    let mut operations = vec![
+        TransactionOp::AssertValue {
+            key: key.clone(),
+            expected: Some(old),
+        },
+        TransactionOp::Put { key, value },
+    ];
+    operations.append(&mut journal_operations);
+    context
+        .kernel
+        .transact_durable(&session_namespace(), &operations)
+        .map_err(|error| error.to_string())?;
+    Ok(SessionResponse::Transitioned { session, journal })
+}
+
+fn append_journal(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    draft: SessionJournalDraft,
+) -> Result<SessionResponse, String> {
+    if read_session(context, id)?.is_none() {
+        return Err(format!("unknown session: {id}"));
+    }
+    let (entry, operations) = prepare_journal_append(context, id, draft)?;
+    context
+        .kernel
+        .transact_durable(&session_namespace(), &operations)
+        .map_err(|error| error.to_string())?;
+    Ok(SessionResponse::JournalAppended { entry })
+}
+
+fn prepare_journal_append(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    draft: SessionJournalDraft,
+) -> Result<(SessionJournalEntry, Vec<TransactionOp>), String> {
+    let key = journal_key(id, &draft.stream);
+    let old = read_raw(context, &key)?;
+    let mut entries = decode_journal(old.as_deref())?;
+    if entries.iter().any(|entry| entry.stream != draft.stream) {
+        return Err(format!(
+            "session journal stream mismatch for {id}: {}",
+            draft.stream
+        ));
+    }
+    let sequence = entries
+        .last()
+        .map(|entry| {
+            entry
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| "session journal sequence overflow".to_owned())
+        })
+        .transpose()?
+        .unwrap_or(1);
+    let entry = SessionJournalEntry {
+        sequence,
+        stream: draft.stream,
+        payload: draft.payload,
+    };
+    entries.push(entry.clone());
+    Ok((
+        entry,
+        vec![
+            TransactionOp::AssertValue {
+                key: key.clone(),
+                expected: old,
+            },
+            TransactionOp::Put {
+                key,
+                value: serde_json::to_vec(&entries).map_err(|error| error.to_string())?,
+            },
+        ],
+    ))
+}
+
+fn read_journal_response(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    stream: &ContractId,
+    after_sequence: Option<u64>,
+) -> Result<SessionResponse, String> {
+    if read_session(context, id)?.is_none() {
+        return Err(format!("unknown session: {id}"));
+    }
+    let entries = decode_journal(read_raw(context, &journal_key(id, stream))?.as_deref())?;
+    if entries.iter().any(|entry| &entry.stream != stream) {
+        return Err(format!(
+            "session journal stream mismatch for {id}: {stream}"
+        ));
+    }
+    let through_sequence = entries.last().map_or(0, |entry| entry.sequence);
+    let entries = match after_sequence {
+        Some(sequence) => entries
+            .into_iter()
+            .filter(|entry| entry.sequence > sequence)
+            .collect(),
+        None => entries,
+    };
+    Ok(SessionResponse::Journal {
+        through_sequence,
+        entries,
+    })
 }
 
 fn require_open(session: &SessionRecord) -> Result<(), String> {
@@ -493,6 +626,12 @@ fn decode_history(value: Option<&[u8]>) -> Result<Vec<SessionHistoryEntry>, Stri
         .unwrap_or_else(|| Ok(Vec::new()))
 }
 
+fn decode_journal(value: Option<&[u8]>) -> Result<Vec<SessionJournalEntry>, String> {
+    value
+        .map(|value| serde_json::from_slice(value).map_err(|error| error.to_string()))
+        .unwrap_or_else(|| Ok(Vec::new()))
+}
+
 fn session_key(id: &SessionId) -> String {
     format!("session/{id}")
 }
@@ -505,10 +644,14 @@ fn history_key(id: &SessionId) -> String {
     format!("history/{id}")
 }
 
+fn journal_key(id: &SessionId, stream: &ContractId) -> String {
+    format!("journal/{id}/{}", stream.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
+    use phenix_core::{ContractId, Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
     use std::{
         fs,
         path::PathBuf,
@@ -789,6 +932,118 @@ mod tests {
             invoke(&mut restored, &SessionCommand::Get { id: root }).unwrap(),
             SessionResponse::Session { session: Some(ref session) }
                 if session.lifecycle == SessionLifecycle::Closed
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn journal_streams_and_transition_are_durable_across_restart() {
+        let path = temp_db("session-journal");
+        let root = SessionId::parse("root").unwrap();
+        let application = ContractId::parse("test.session.application@1").unwrap();
+        let other = ContractId::parse("test.session.other@1").unwrap();
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(root.clone()),
+                },
+            )
+            .unwrap();
+            let response = invoke(
+                &mut kernel,
+                &SessionCommand::AppendJournal {
+                    id: root.clone(),
+                    entry: SessionJournalDraft {
+                        stream: other.clone(),
+                        payload: PhenixValue::String("other-1".into()),
+                    },
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                response,
+                SessionResponse::JournalAppended { ref entry }
+                    if entry.sequence == 1 && entry.stream == other
+            ));
+            let response = invoke(
+                &mut kernel,
+                &SessionCommand::Transition {
+                    id: root.clone(),
+                    transition: SessionTransition::Rename {
+                        title: "renamed".into(),
+                    },
+                    journal: SessionJournalDraft {
+                        stream: application.clone(),
+                        payload: PhenixValue::String("rename".into()),
+                    },
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                response,
+                SessionResponse::Transitioned {
+                    ref session,
+                    ref journal,
+                } if session.title.as_deref() == Some("renamed")
+                    && journal.sequence == 1
+                    && journal.stream == application
+            ));
+            invoke(
+                &mut kernel,
+                &SessionCommand::AppendJournal {
+                    id: root.clone(),
+                    entry: SessionJournalDraft {
+                        stream: application.clone(),
+                        payload: PhenixValue::String("second".into()),
+                    },
+                },
+            )
+            .unwrap();
+        }
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Get { id: root.clone() },
+            )
+            .unwrap(),
+            SessionResponse::Session { session: Some(ref session) }
+                if session.title.as_deref() == Some("renamed")
+        ));
+        let response = invoke(
+            &mut restored,
+            &SessionCommand::Journal {
+                id: root.clone(),
+                stream: application.clone(),
+                after_sequence: Some(1),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            SessionResponse::Journal {
+                through_sequence: 2,
+                ref entries,
+            } if entries.len() == 1 && entries[0].sequence == 2
+        ));
+        let response = invoke(
+            &mut restored,
+            &SessionCommand::Journal {
+                id: root,
+                stream: other,
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            SessionResponse::Journal {
+                through_sequence: 1,
+                ref entries,
+            } if entries.len() == 1 && entries[0].sequence == 1
         ));
         let _ = fs::remove_file(path);
     }
