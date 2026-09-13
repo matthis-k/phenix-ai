@@ -17,10 +17,19 @@ pub(crate) struct ContextProjectionState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectionStateError {
     ExecutionMismatch,
-    StaleAdmissionEpoch { current: u64, incoming: u64 },
-    DuplicatePreparedCheckpoint { checkpoint_id: String },
-    UnknownPreparedCheckpoint { checkpoint_id: String },
-    UnknownContextItem { item_id: String },
+    StaleAdmissionEpoch {
+        current: u64,
+        incoming: u64,
+    },
+    DuplicatePreparedCheckpoint {
+        checkpoint_id: String,
+    },
+    UnknownPreparedCheckpoint {
+        checkpoint_id: String,
+    },
+    UnknownContextItem {
+        item_id: String,
+    },
     RetentionMismatch {
         item_id: String,
         actual: ContextRetention,
@@ -129,7 +138,10 @@ impl ContextProjectionState {
         self.revision.revision = self.revision.revision.saturating_add(1);
     }
 
-    fn apply_transition(&mut self, transition: &RetentionTransition) -> Result<(), ProjectionStateError> {
+    fn apply_transition(
+        &mut self,
+        transition: &RetentionTransition,
+    ) -> Result<(), ProjectionStateError> {
         let Some(item) = self.admitted.get_mut(&transition.item_id) else {
             return Err(ProjectionStateError::UnknownContextItem {
                 item_id: transition.item_id.clone(),
@@ -143,9 +155,14 @@ impl ContextProjectionState {
             });
         }
         item.retention = transition.to;
-        item.recovery = transition.recovery.clone().or_else(|| item.recovery.clone());
+        item.recovery = transition
+            .recovery
+            .clone()
+            .or_else(|| item.recovery.clone());
         item.form = match transition.to {
-            ContextRetention::Pinned | ContextRetention::Full | ContextRetention::Compact => ContextProjectionForm::Full,
+            ContextRetention::Pinned | ContextRetention::Full | ContextRetention::Compact => {
+                ContextProjectionForm::Full
+            }
             ContextRetention::Reference => ContextProjectionForm::Reference,
             ContextRetention::DropAllowed => ContextProjectionForm::Omitted,
         };
@@ -161,24 +178,28 @@ mod tests {
 
     fn state() -> ContextProjectionState {
         let mut state = ContextProjectionState::new("execution-1");
-        state.apply_admission(ContextAdmissionResult {
-            execution_id: "execution-1".into(),
-            policy_revision: "policy-1".into(),
-            cache_epoch: 1,
-            admitted: vec![AdmittedContextItem {
-                id: "item-1".into(),
-                source: ContextSource::Inline { identity: "item-1".into() },
-                content_identity: "sha256:item-1".into(),
-                form: ContextProjectionForm::Full,
-                cache: CachePlacement::Epoch,
-                retention: ContextRetention::Full,
-                estimated_tokens: 100,
-                recovery: None,
-            }],
-            used_input_tokens: 100,
-            omitted_input_tokens: 0,
-            deduplicated_items: 0,
-        }).unwrap();
+        state
+            .apply_admission(ContextAdmissionResult {
+                execution_id: "execution-1".into(),
+                policy_revision: "policy-1".into(),
+                cache_epoch: 1,
+                admitted: vec![AdmittedContextItem {
+                    id: "item-1".into(),
+                    source: ContextSource::Inline {
+                        identity: "item-1".into(),
+                    },
+                    content_identity: "sha256:item-1".into(),
+                    form: ContextProjectionForm::Full,
+                    cache: CachePlacement::Epoch,
+                    retention: ContextRetention::Full,
+                    estimated_tokens: 100,
+                    recovery: None,
+                }],
+                used_input_tokens: 100,
+                omitted_input_tokens: 0,
+                deduplicated_items: 0,
+            })
+            .unwrap();
         state
     }
 
@@ -223,8 +244,14 @@ mod tests {
         state.prepare_compaction(proposal(&state)).unwrap();
         let commit = state.commit_compaction("checkpoint-1").unwrap();
         assert_eq!(commit.committed_projection.revision, original.revision + 1);
-        assert_eq!(commit.committed_projection.cache_epoch, original.cache_epoch + 1);
-        assert_eq!(state.admitted["item-1"].form, ContextProjectionForm::Omitted);
+        assert_eq!(
+            commit.committed_projection.cache_epoch,
+            original.cache_epoch + 1
+        );
+        assert_eq!(
+            state.admitted["item-1"].form,
+            ContextProjectionForm::Omitted
+        );
     }
 
     #[test]

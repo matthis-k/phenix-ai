@@ -64,9 +64,9 @@ impl ContextStateService {
                             .projections
                             .entry(execution_id.clone())
                             .or_insert_with(|| ContextProjectionState::new(&execution_id));
-                        state
-                            .apply_admission(result.clone())
-                            .map_err(|error| format!("context projection update failed: {error:?}"))?;
+                        state.apply_admission(result.clone()).map_err(|error| {
+                            format!("context projection update failed: {error:?}")
+                        })?;
                         Ok(ContextResponse::Admission {
                             result,
                             projection: state.revision.clone(),
@@ -121,7 +121,9 @@ impl ContextStateService {
     }
 
     pub(crate) fn projection_revision(&self, execution_id: &str) -> Option<&ProjectionRevision> {
-        self.projections.get(execution_id).map(|state| &state.revision)
+        self.projections
+            .get(execution_id)
+            .map(|state| &state.revision)
     }
 
     pub(crate) fn invalidate_if_present(
@@ -138,10 +140,10 @@ impl ContextStateService {
         &mut self,
         execution_id: &str,
     ) -> Result<&mut ContextProjectionState, ContextStateServiceError> {
-        self.projections
-            .get_mut(execution_id)
-            .ok_or_else(|| ContextStateServiceError::UnknownExecution {
+        self.projections.get_mut(execution_id).ok_or_else(|| {
+            ContextStateServiceError::UnknownExecution {
                 execution_id: execution_id.to_owned(),
-            })
+            }
+        })
     }
 }

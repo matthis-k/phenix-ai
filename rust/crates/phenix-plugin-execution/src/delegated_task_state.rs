@@ -32,9 +32,7 @@ impl DelegatedTaskStore {
         now_ms: u64,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
         if self.tasks.contains_key(&task.id) {
-            return Err(DelegatedTaskStoreError::DuplicateTask {
-                task_id: task.id,
-            });
+            return Err(DelegatedTaskStoreError::DuplicateTask { task_id: task.id });
         }
         if task.delegated_authority != binding.resources.authority {
             return Err(DelegatedTaskStoreError::BindingAuthorityMismatch);
@@ -101,12 +99,12 @@ impl DelegatedTaskStore {
                 task_id: task_id.to_owned(),
             });
         }
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
+        let record =
+            self.tasks
+                .get_mut(task_id)
+                .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+                    task_id: task_id.to_owned(),
+                })?;
         record
             .binding
             .resources
@@ -122,12 +120,12 @@ impl DelegatedTaskStore {
         execution_id: &str,
         result: DelegatedWorkerResult,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
+        let record =
+            self.tasks
+                .get_mut(task_id)
+                .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+                    task_id: task_id.to_owned(),
+                })?;
         match &record.task.state {
             WorkerTaskState::Running {
                 execution_id: active,
@@ -149,9 +147,7 @@ impl DelegatedTaskStore {
         let result_refs = result
             .evidence
             .iter()
-            .map(|reference| {
-                format!("{}@{}", reference.resource_id, reference.revision)
-            })
+            .map(|reference| format!("{}@{}", reference.resource_id, reference.revision))
             .collect();
         record.result = Some(result);
         record.task.state = WorkerTaskState::Completed {
@@ -167,12 +163,12 @@ impl DelegatedTaskStore {
         execution_id: &str,
         cause: String,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
+        let record =
+            self.tasks
+                .get_mut(task_id)
+                .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+                    task_id: task_id.to_owned(),
+                })?;
         match &record.task.state {
             WorkerTaskState::Running {
                 execution_id: active,
@@ -261,7 +257,13 @@ mod tests {
             state: WorkerTaskState::Pending,
         };
         assert_eq!(
-            store.create(task, binding(child), &authority(&["workspace.read"]), &policy(), 0),
+            store.create(
+                task,
+                binding(child),
+                &authority(&["workspace.read"]),
+                &policy(),
+                0
+            ),
             Err(DelegatedTaskStoreError::AuthorityExpanded)
         );
     }
