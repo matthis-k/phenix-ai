@@ -212,7 +212,8 @@ impl SessionProjectionStore {
                 }
                 .into());
             }
-            let through_sequence = self.reducer.state.sessions[session_id.as_str()].through_sequence;
+            let through_sequence =
+                self.reducer.state.sessions[session_id.as_str()].through_sequence;
             if update.sequence <= through_sequence {
                 continue;
             }
@@ -288,7 +289,9 @@ mod tests {
     fn ordered_rename_updates_history_and_projected_metadata() {
         let mut reducer = SessionProjectionReducer::new();
         reducer.insert_created(session("session-1", None));
-        reducer.apply_update(rename("session-1", 1, "new title")).unwrap();
+        reducer
+            .apply_update(rename("session-1", 1, "new title"))
+            .unwrap();
 
         let projection = &reducer.state().sessions["session-1"];
         assert_eq!(projection.through_sequence, 1);
