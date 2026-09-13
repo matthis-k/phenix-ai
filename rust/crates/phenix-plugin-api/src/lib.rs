@@ -3,7 +3,7 @@
 use phenix_application_interface::types::SessionProjectionState;
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContextResourceId, InterfaceId, PhenixContract, PluginContext,
+    ComponentManifest, ContextResourceId, HasPhenixSchema, InterfaceId, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
     SdkContribution, SdkNamespace, SdkObservableResource, SdkResourceId, ServiceContribution,
     ServiceId, ServiceRole, ValueId, ValuePath,
