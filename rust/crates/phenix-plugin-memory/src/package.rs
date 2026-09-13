@@ -45,7 +45,10 @@ impl PluginInstance for MemoryPackagePlugin {
         let context = PluginContext::new(host, (), (), ());
         let snapshot = context
             .kernel
-            .read_durable(&implementation::memory_namespace(), MEMORY_CONTEXT_STATE_KEY)
+            .read_durable(
+                &implementation::memory_namespace(),
+                MEMORY_CONTEXT_STATE_KEY,
+            )
             .map_err(|error| error.to_string())?;
         self.context_state = MemoryContextServiceState::restore(snapshot.as_deref())
             .map_err(|error| format!("invalid durable memory.context state: {error:?}"))?;
@@ -64,7 +67,10 @@ impl PluginInstance for MemoryPackagePlugin {
         let context = PluginContext::new(host, (), (), ());
         let command = context
             .kernel
-            .decode_projected::<MemoryContextCommand>(&MemoryContextInterface::interface_id(), input)
+            .decode_projected::<MemoryContextCommand>(
+                &MemoryContextInterface::interface_id(),
+                input,
+            )
             .map_err(|error| error.to_string())?;
         let response = self.handle_context(command, host)?;
         context
@@ -107,12 +113,9 @@ impl MemoryPackagePlugin {
         }
 
         match command {
-            MemoryContextCommand::Recall { request } => recall_context(
-                self.core.as_mut(),
-                &self.context_state,
-                host,
-                request,
-            ),
+            MemoryContextCommand::Recall { request } => {
+                recall_context(self.core.as_mut(), &self.context_state, host, request)
+            }
             _ => Err("memory.context command was not handled".into()),
         }
     }
@@ -189,11 +192,11 @@ fn recall_context(
         }
         let exact_anchor = request.known.contains(&association.association.anchor);
         let exact_source = request.known.iter().any(|known| match known {
-            ContextAnchor::Resource { service, resource } => association
-                .association
-                .source_refs
-                .iter()
-                .any(|reference| &reference.service == service && &reference.resource == resource),
+            ContextAnchor::Resource { service, resource } => {
+                association.association.source_refs.iter().any(|reference| {
+                    &reference.service == service && &reference.resource == resource
+                })
+            }
             _ => false,
         });
         let recalled_record = recalled.get(&association.association.memory_id).cloned();
@@ -203,7 +206,8 @@ fn recall_context(
         let record = match recalled_record.clone() {
             Some(record) => record,
             None => {
-                let Some(record) = get_memory(core, host, &association.association.memory_id)? else {
+                let Some(record) = get_memory(core, host, &association.association.memory_id)?
+                else {
                     continue;
                 };
                 record
@@ -377,7 +381,9 @@ fn memory_is_current(
     at: u64,
 ) -> Result<bool, String> {
     if record.valid_from.is_some_and(|valid_from| at < valid_from)
-        || record.valid_until.is_some_and(|valid_until| at >= valid_until)
+        || record
+            .valid_until
+            .is_some_and(|valid_until| at >= valid_until)
     {
         return Ok(false);
     }
@@ -426,7 +432,10 @@ fn invoke_memory(
 fn read_context_snapshot(host: &PluginHost<'_>) -> Result<Option<Vec<u8>>, String> {
     PluginContext::new(host, (), (), ())
         .kernel
-        .read_durable(&implementation::memory_namespace(), MEMORY_CONTEXT_STATE_KEY)
+        .read_durable(
+            &implementation::memory_namespace(),
+            MEMORY_CONTEXT_STATE_KEY,
+        )
         .map_err(|error| error.to_string())
 }
 

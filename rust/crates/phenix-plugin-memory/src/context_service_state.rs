@@ -28,8 +28,9 @@ impl MemoryContextServiceState {
                         allowed: MAX_MEMORY_CONTEXT_STATE_BYTES,
                     });
                 }
-                serde_json::from_slice(bytes)
-                    .map_err(|error| MemoryContextServiceError::InvalidSnapshot(error.to_string()))?
+                serde_json::from_slice(bytes).map_err(|error| {
+                    MemoryContextServiceError::InvalidSnapshot(error.to_string())
+                })?
             }
             None => AssociationStore::default(),
         };

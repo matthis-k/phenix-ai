@@ -2,8 +2,7 @@ use crate::delegated_task_state::{DelegatedTaskStore, DelegatedTaskStoreError};
 use phenix_sdk::{
     BudgetActual, BudgetLedgerError, BudgetReservationPurpose, BudgetReservationRequest,
     DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy,
-    DelegationTaskBinding, ExecutionAuthority, RemainingBudget, RootBudgetLedger,
-    WorkerTaskRecord,
+    DelegationTaskBinding, ExecutionAuthority, RemainingBudget, RootBudgetLedger, WorkerTaskRecord,
 };
 use std::collections::BTreeMap;
 
@@ -51,7 +50,8 @@ impl ExecutionResourceState {
         &self,
         root_execution_id: &str,
     ) -> Result<RemainingBudget, ExecutionResourceError> {
-        self.ledger(root_execution_id).map(RootBudgetLedger::remaining)
+        self.ledger(root_execution_id)
+            .map(RootBudgetLedger::remaining)
     }
 
     /// Reserves the child share and admits the delegated task as one in-memory
@@ -69,9 +69,7 @@ impl ExecutionResourceState {
     ) -> Result<DelegatedWorkerTaskRecord, ExecutionResourceError> {
         validate_reservation_binding(&reservation, &binding)?;
         if self.task_reservations.contains_key(&task.id) {
-            return Err(ExecutionResourceError::DuplicateTaskReservation {
-                task_id: task.id,
-            });
+            return Err(ExecutionResourceError::DuplicateTaskReservation { task_id: task.id });
         }
 
         let task_id = task.id.clone();
@@ -167,22 +165,22 @@ impl ExecutionResourceState {
     }
 
     fn ledger(&self, root_execution_id: &str) -> Result<&RootBudgetLedger, ExecutionResourceError> {
-        self.ledgers
-            .get(root_execution_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownRootBudget {
+        self.ledgers.get(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
                 root_execution_id: root_execution_id.to_owned(),
-            })
+            }
+        })
     }
 
     fn task_reservation(
         &self,
         task_id: &str,
     ) -> Result<&TaskReservationBinding, ExecutionResourceError> {
-        self.task_reservations
-            .get(task_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownTaskReservation {
+        self.task_reservations.get(task_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownTaskReservation {
                 task_id: task_id.to_owned(),
-            })
+            }
+        })
     }
 }
 
