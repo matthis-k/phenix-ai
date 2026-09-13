@@ -226,7 +226,6 @@ impl<'a> PluginHost<'a> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .register_schema(self.plugin, schema)
             .map_err(|error| self.persistence_error(error.to_string()))
     }
@@ -240,7 +239,6 @@ impl<'a> PluginHost<'a> {
         self.require_capability(PERSISTENCE_WRITE)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .migrate_schema(self.plugin, schema, migrations)
             .map_err(|error| self.persistence_error(error.to_string()))
     }
@@ -253,7 +251,6 @@ impl<'a> PluginHost<'a> {
         self.require_persistence_operation(PERSISTENCE_READ, namespace)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .read(self.plugin, namespace, key)
             .map_err(|error| self.persistence_error(error.to_string()))
     }
@@ -267,7 +264,6 @@ impl<'a> PluginHost<'a> {
         self.require_not_cancelled("durable transaction")?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
             .map_err(|error| self.persistence_error(error.to_string()))
     }
@@ -378,7 +374,6 @@ impl<'a> PluginHost<'a> {
             .collect();
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .transact_many(&transactions)
             .map_err(|error| self.persistence_error(error.to_string()))
     }

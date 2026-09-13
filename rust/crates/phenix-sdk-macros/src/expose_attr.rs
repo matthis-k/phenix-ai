@@ -45,14 +45,15 @@ fn expand_struct(mut item: ItemStruct) -> syn::Result<TokenStream> {
 }
 
 pub(crate) fn exposed_fields_impl(name: &syn::Ident, fields: &[ExposedField]) -> TokenStream {
+    let sdk = crate::sdk_crate();
     let export_fields = fields.iter().map(|field| {
         let ty = &field.ty;
         let mount = &field.mount;
         quote! {
             exports.extend(
-                <#ty as ::phenix_sdk::StaticExpose>::exposed_exports()
+                <#ty as #sdk::StaticExpose>::exposed_exports()
                     .into_iter()
-                    .map(|export| ::phenix_sdk::remount_exposed_export(owner, #mount, export)),
+                    .map(|export| #sdk::remount_exposed_export(owner, #mount, export)),
             );
         }
     });
@@ -62,9 +63,9 @@ pub(crate) fn exposed_fields_impl(name: &syn::Ident, fields: &[ExposedField]) ->
         let mount = &field.mount;
         quote! {
             if let Some(service) =
-                ::phenix_sdk::remap_exposed_service::<#ty>(owner, #mount, service)
+                #sdk::remap_exposed_service::<#ty>(owner, #mount, service)
             {
-                return Some(<#ty as ::phenix_sdk::StaticExpose>::dispatch_exposed(
+                return Some(<#ty as #sdk::StaticExpose>::dispatch_exposed(
                     &self.#member,
                     &service,
                     input,
@@ -75,10 +76,10 @@ pub(crate) fn exposed_fields_impl(name: &syn::Ident, fields: &[ExposedField]) ->
     });
 
     quote! {
-        impl ::phenix_sdk::StaticExposeFields for #name {
+        impl #sdk::StaticExposeFields for #name {
             fn exposed_field_exports_for(
                 owner: &str,
-            ) -> Vec<::phenix_sdk::StaticComponentExport> {
+            ) -> Vec<#sdk::StaticComponentExport> {
                 let mut exports = Vec::new();
                 #(#export_fields)*
                 exports
@@ -87,9 +88,9 @@ pub(crate) fn exposed_fields_impl(name: &syn::Ident, fields: &[ExposedField]) ->
             fn dispatch_exposed_field_for(
                 &self,
                 owner: &str,
-                service: &::phenix_sdk::__phenix_plugin::ServiceId,
+                service: &#sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Option<Result<Vec<u8>, String>> {
                 #(#dispatch_fields)*
                 None
@@ -99,6 +100,7 @@ pub(crate) fn exposed_fields_impl(name: &syn::Ident, fields: &[ExposedField]) ->
 }
 
 fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     if item.trait_.is_some() || !item.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &item,
@@ -160,9 +162,9 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
                 #[allow(non_camel_case_types)]
                 struct #marker;
 
-                impl ::phenix_sdk::InterfaceMarker for #marker {
-                    fn interface_id() -> ::phenix_sdk::__phenix_plugin::InterfaceId {
-                        ::phenix_sdk::exposed_interface::<#self_ty>(#public_name)
+                impl #sdk::InterfaceMarker for #marker {
+                    fn interface_id() -> #sdk::__phenix_plugin::InterfaceId {
+                        #sdk::exposed_interface::<#self_ty>(#public_name)
                     }
                 }
             });

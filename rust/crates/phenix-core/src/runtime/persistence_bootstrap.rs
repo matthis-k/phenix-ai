@@ -44,10 +44,7 @@ impl Kernel {
             }
         }
 
-        let mut persistence = self
-            .persistence
-            .lock()
-            .expect("persistence backend mutex poisoned");
+        let mut persistence = self.persistence.lock();
         prepare_durable_schema_set(persistence.as_mut(), registrations).map_err(|error| match error
         {
             PersistenceCandidateError::Schema { plugin, error } => {
