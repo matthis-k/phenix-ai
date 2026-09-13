@@ -1,4 +1,6 @@
-use super::{ContextAnchor, ContextNeed, ContextRecoveryDecision, ContextRecoveryState, ModelTarget};
+use super::{
+    ContextAnchor, ContextNeed, ContextRecoveryDecision, ContextRecoveryState, ModelTarget,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -19,7 +21,9 @@ pub fn recovery_cold_gate(state: &ContextRecoveryState) -> RecoveryColdGate {
     if state.anchors.iter().any(|anchor| {
         matches!(
             anchor,
-            ContextAnchor::Repository { .. } | ContextAnchor::Project { .. } | ContextAnchor::Task { .. }
+            ContextAnchor::Repository { .. }
+                | ContextAnchor::Project { .. }
+                | ContextAnchor::Task { .. }
         )
     }) {
         RecoveryColdGate::CurrentContextSufficient
@@ -170,7 +174,10 @@ mod tests {
             has_durable_session_history: false,
             has_explicit_resource: false,
         };
-        assert_eq!(recovery_cold_gate(&state), RecoveryColdGate::NeedsClassification);
+        assert_eq!(
+            recovery_cold_gate(&state),
+            RecoveryColdGate::NeedsClassification
+        );
     }
 
     #[test]
@@ -193,8 +200,12 @@ mod tests {
     fn duplicate_classifier_needs_are_rejected() {
         let decision = ContextRecoveryDecision::Missing {
             needs: vec![
-                ContextNeed::Repository { query: "prs".into() },
-                ContextNeed::Repository { query: "prs".into() },
+                ContextNeed::Repository {
+                    query: "prs".into(),
+                },
+                ContextNeed::Repository {
+                    query: "prs".into(),
+                },
             ],
         };
         assert_eq!(
