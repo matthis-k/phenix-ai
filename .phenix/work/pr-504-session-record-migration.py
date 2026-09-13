@@ -1,0 +1,207 @@
+from pathlib import Path
+import re
+
+
+def replace_once(path: Path, old: str, new: str) -> None:
+    source = path.read_text()
+    if old not in source:
+        raise SystemExit(f"expected source fragment missing in {path}: {old[:80]!r}")
+    path.write_text(source.replace(old, new, 1))
+
+
+implementation = Path("rust/crates/phenix-plugin-sessions/src/implementation.rs")
+source = implementation.read_text()
+source = source.replace(
+    "    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionMutationCommand,\n    SessionMutationInterface, SessionMutationResponse,\n",
+    "    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionLifecycle,\n    SessionMutationCommand, SessionMutationInterface, SessionMutationResponse,\n",
+    1,
+)
+source = source.replace(
+    "        SessionCommand::Create { id } => create_session(context, id),",
+    "        SessionCommand::Create { session } => create_session(context, session),",
+    1,
+)
+source = source.replace(
+    "        SessionCommand::List => Ok(SessionResponse::Sessions {\n            sessions: read_sessions(context)?,\n        }),\n",
+    "        SessionCommand::List => Ok(SessionResponse::Sessions {\n            sessions: read_sessions(context)?,\n        }),\n        SessionCommand::Rename { id, title } => rename_session(context, &id, title),\n        SessionCommand::Close { id } => close_session(context, &id),\n",
+    1,
+)
+source = source.replace(
+    "    let SessionMutationCommand::PrepareCreate { id } = command;\n    let (session, operations) = prepare_create(context, id)?;",
+    "    let SessionMutationCommand::PrepareCreate { session } = command;\n    let (session, operations) = prepare_create(context, session)?;",
+    1,
+)
+source = source.replace(
+    "fn prepare_create(\n    context: &SessionContext<'_, '_>,\n    id: SessionId,\n) -> Result<(SessionRecord, Vec<TransactionOp>), String> {\n    if read_session(context, &id)?.is_some() {\n        return Err(format!(\"session already exists: {id}\"));\n    }\n\n    let session = SessionRecord { id };\n",
+    "fn prepare_create(\n    context: &SessionContext<'_, '_>,\n    session: SessionRecord,\n) -> Result<(SessionRecord, Vec<TransactionOp>), String> {\n    if !session.is_open() {\n        return Err(\"new sessions must start open\".into());\n    }\n    if read_session(context, &session.id)?.is_some() {\n        return Err(format!(\"session already exists: {}\", session.id));\n    }\n\n",
+    1,
+)
+source = source.replace(
+    "fn create_session(\n    context: &SessionContext<'_, '_>,\n    id: SessionId,\n) -> Result<SessionResponse, String> {\n    let (session, operations) = prepare_create(context, id)?;",
+    "fn create_session(\n    context: &SessionContext<'_, '_>,\n    session: SessionRecord,\n) -> Result<SessionResponse, String> {\n    let (session, operations) = prepare_create(context, session)?;",
+    1,
+)
+marker = "    Ok(SessionResponse::Created { session })\n}\n\nfn continue_session("
+insertion = "\n".join(
+    [
+        "    Ok(SessionResponse::Created { session })",
+        "}",
+        "",
+        "fn rename_session(",
+        "    context: &SessionContext<'_, '_>,",
+        "    id: &SessionId,",
+        "    title: String,",
+        ") -> Result<SessionResponse, String> {",
+        "    update_session(context, id, move |session| {",
+        "        require_open(session)?;",
+        "        session.title = Some(title);",
+        "        Ok(())",
+        "    })",
+        "}",
+        "",
+        "fn close_session(",
+        "    context: &SessionContext<'_, '_>,",
+        "    id: &SessionId,",
+        ") -> Result<SessionResponse, String> {",
+        "    update_session(context, id, |session| {",
+        "        require_open(session)?;",
+        "        session.lifecycle = SessionLifecycle::Closed;",
+        "        Ok(())",
+        "    })",
+        "}",
+        "",
+        "fn update_session(",
+        "    context: &SessionContext<'_, '_>,",
+        "    id: &SessionId,",
+        "    mutate: impl FnOnce(&mut SessionRecord) -> Result<(), String>,",
+        ") -> Result<SessionResponse, String> {",
+        "    let key = session_key(id);",
+        "    let old = read_raw(context, &key)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
+        "    let mut session: SessionRecord =",
+        "        serde_json::from_slice(&old).map_err(|error| error.to_string())?;",
+        "    mutate(&mut session)?;",
+        "    let value = serde_json::to_vec(&session).map_err(|error| error.to_string())?;",
+        "    context",
+        "        .kernel",
+        "        .transact_durable(",
+        "            &session_namespace(),",
+        "            &[",
+        "                TransactionOp::AssertValue {",
+        "                    key: key.clone(),",
+        "                    expected: Some(old),",
+        "                },",
+        "                TransactionOp::Put { key, value },",
+        "            ],",
+        "        )",
+        "        .map_err(|error| error.to_string())?;",
+        "    Ok(SessionResponse::Updated { session })",
+        "}",
+        "",
+        "fn require_open(session: &SessionRecord) -> Result<(), String> {",
+        "    if session.is_open() {",
+        "        Ok(())",
+        "    } else {",
+        "        Err(format!(\"session is closed: {}\", session.id))",
+        "    }",
+        "}",
+        "",
+        "fn require_open_session(",
+        "    context: &SessionContext<'_, '_>,",
+        "    id: &SessionId,",
+        ") -> Result<SessionRecord, String> {",
+        "    let session = read_session(context, id)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
+        "    require_open(&session)?;",
+        "    Ok(session)",
+        "}",
+        "",
+        "fn continue_session(",
+    ]
+)
+if marker not in source:
+    raise SystemExit("create_session insertion marker missing")
+source = source.replace(marker, insertion, 1)
+source = source.replace(
+    "    let session = read_session(context, id)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
+    "    let session = require_open_session(context, id)?;",
+    1,
+)
+source = source.replace(
+    "    if read_session(context, id)?.is_none() {\n        return Err(format!(\"unknown session: {id}\"));\n    }\n    let key = history_key(id);",
+    "    require_open_session(context, id)?;\n    let key = history_key(id);",
+    1,
+)
+implementation.write_text(source)
+
+# Migrate every ordinary session creation to the complete canonical record.
+explicit = re.compile(
+    r"SessionCommand::Create\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
+    re.MULTILINE,
+)
+for path in Path("rust").rglob("*.rs"):
+    source = path.read_text()
+    if path != implementation:
+        source = source.replace(
+            "SessionCommand::Create { id }",
+            "SessionCommand::Create { session: phenix_sdk::SessionRecord::new(id) }",
+        )
+        source = explicit.sub(
+            lambda match: (
+                "SessionCommand::Create { session: phenix_sdk::SessionRecord::new("
+                + match.group(1).strip()
+                + ") }"
+            ),
+            source,
+        )
+    source = re.sub(
+        r"SessionRecord\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
+        lambda match: "SessionRecord::new(" + match.group(1).strip() + ")",
+        source,
+    )
+    source = re.sub(
+        r"SessionRecord\s*\{\s*id\s*\}",
+        "SessionRecord::new(id)",
+        source,
+    )
+    if "crates/phenix-harness/" in path.as_posix():
+        source = source.replace(
+            "phenix_sdk::SessionRecord::new(",
+            "phenix_plugin_catalog::SessionRecord::new(",
+        )
+    path.write_text(source)
+
+# Re-export lifecycle alongside the rest of the session contract.
+for path in [
+    Path("rust/crates/phenix-plugin-sessions/src/lib.rs"),
+    Path("rust/crates/phenix-plugin-catalog/src/lib.rs"),
+]:
+    source = path.read_text()
+    if "SessionLifecycle" not in source:
+        source = source.replace(
+            "SessionInterface, SessionRecord, SessionResponse",
+            "SessionInterface, SessionLifecycle, SessionRecord, SessionResponse",
+        )
+    path.write_text(source)
+
+# Preserve full SDK records instead of throwing canonical metadata away.
+api = Path("rust/crates/phenix-plugin-api/src/lib.rs")
+source = api.read_text()
+source = source.replace(
+    "session: phenix_sdk::SessionRecord::new(session.id),",
+    "session,",
+)
+api.write_text(source)
+
+# Fix the exact-head Clippy failures in passive contract tests.
+interaction = Path("rust/crates/phenix-application-interface/src/types/interaction.rs")
+source = interaction.read_text().replace(
+    "        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, PhenixValue, ReferenceId,\n        ValueCodec,",
+    "        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, HasPhenixSchema,\n        ReferenceId, ValueCodec,",
+)
+interaction.write_text(source)
+
+session_types = Path("rust/crates/phenix-application-interface/src/types/session.rs")
+source = session_types.read_text().replace(
+    "    use phenix_core::PhenixValue;",
+    "    use phenix_core::ValueCodec;",
+)
+session_types.write_text(source)
