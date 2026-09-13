@@ -1,4 +1,5 @@
 pub mod context;
+pub mod delegation;
 pub mod execution;
 pub mod frontend;
 pub mod jobs;
@@ -13,6 +14,7 @@ pub mod usage;
 pub mod workspace;
 
 pub use context::*;
+pub use delegation::*;
 pub use execution::*;
 pub use frontend::*;
 pub use jobs::*;
