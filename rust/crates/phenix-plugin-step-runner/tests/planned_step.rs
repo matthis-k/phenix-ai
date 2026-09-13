@@ -1,8 +1,8 @@
 use phenix_core::{
     Authority, CapabilityGenerationId, ComponentInterface, Kernel, KernelConfig, LocalPersistence,
     ModelId, ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness,
-    ServiceContribution, ServiceId, ValueError,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    ResolvedHarness, ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -22,9 +22,9 @@ use phenix_sdk::{
     EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand,
     ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelLimits, ModelResponse,
     ModelTarget, PlannedStepRequest, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
-    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepRunnerCommand,
-    StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind, UsageAttribution,
-    UsagePolicy,
+    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse,
+    StepRunnerCommand, StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind,
+    UsageAttribution, UsagePolicy,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -342,7 +342,11 @@ fn request(max_input: u64) -> PlannedStepRequest {
     }
 }
 
-fn retry_request(attempt_id: &str, parent_attempt_id: &str, cache_epoch: u64) -> PlannedStepRequest {
+fn retry_request(
+    attempt_id: &str,
+    parent_attempt_id: &str,
+    cache_epoch: u64,
+) -> PlannedStepRequest {
     let mut request = request(1_000);
     request.attribution.attempt_id = attempt_id.into();
     request.attribution.parent_attempt_id = Some(parent_attempt_id.into());
@@ -458,7 +462,10 @@ mod successful_lifecycle {
         } = response;
         assert_eq!(attempt.phase, StepAttemptPhase::Settled);
         assert_eq!(attempt.outcome, Some(AttemptOutcome::Succeeded));
-        assert_eq!(attempt.route.as_ref().unwrap().target.model.as_str(), "large");
+        assert_eq!(
+            attempt.route.as_ref().unwrap().target.model.as_str(),
+            "large"
+        );
         assert_eq!(output.as_ref(), b"hello planned world");
         assert_eq!(settlement_basis, StepSettlementBasis::ReservedMaximum);
         assert_eq!(settled.fresh_input_tokens, 800);

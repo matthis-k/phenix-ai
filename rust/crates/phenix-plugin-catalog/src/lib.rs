@@ -137,7 +137,7 @@ pub use phenix_sdk::{
     ContextDescriptor, ContextInterface, ContextResourceRevision, ContextResponse, DecisionRecord,
     ExecutionAuthority, ExecutionCommand, ExecutionInterface, ExecutionRecord, ExecutionResponse,
     ExecutionState, HistoryEntry, HistoryKind, JobCommand, JobInterface, JobResponse,
-    ModelInferenceInterface, ObjectiveRecord, PlannedStepRequest, PlanRecord, PlanStep,
+    ModelInferenceInterface, ObjectiveRecord, PlanRecord, PlanStep, PlannedStepRequest,
     PlanningCommand, PlanningInterface, PlanningResponse, RepositoryContextSource,
     RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState, StepRunnerCommand,
     StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, WorkerTaskRecord,

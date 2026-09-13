@@ -1,20 +1,20 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ServiceContribution, ServiceId, SdkClient,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
     step_runner_service, AttemptOutcome, BudgetActual, BudgetReservationPurpose,
     BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInterface,
     ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
-    ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface,
-    StepRunnerResponse, StepSettlementBasis, UsageAttemptKind, UsageAttribution,
-    UsagePlanningInput,
+    ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
+    ModelResponse, ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
+    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, UsageAttemptKind,
+    UsageAttribution, UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -57,7 +57,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
         id: step_runner_component_id(),
         owner: PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid"),
         imports: vec![
-            import(ExecutionInterface::interface_id(), ExecutionInterface::schema()),
+            import(
+                ExecutionInterface::interface_id(),
+                ExecutionInterface::schema(),
+            ),
             import(
                 ExecutionResourceInterface::interface_id(),
                 ExecutionResourceInterface::schema(),
@@ -103,7 +106,9 @@ struct StepRunnerSdk<'host, 'runtime> {
 type StepRunnerContext<'host, 'runtime> =
     PluginContext<'host, 'runtime, StepRunnerSdk<'host, 'runtime>>;
 
-fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> StepRunnerContext<'host, 'runtime> {
+fn context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> StepRunnerContext<'host, 'runtime> {
     let component = step_runner_component_id();
     PluginContext::new(
         host,
@@ -169,7 +174,10 @@ fn run(
         now_ms,
     } = request;
 
-    if !matches!(attribution.kind, UsageAttemptKind::Root | UsageAttemptKind::Retry) {
+    if !matches!(
+        attribution.kind,
+        UsageAttemptKind::Root | UsageAttemptKind::Retry
+    ) {
         return Err("planned step runner accepts root and retry attempts only".into());
     }
     if attribution.policy_revision != policy.revision {
@@ -318,28 +326,28 @@ fn run(
         },
     )?;
 
-    let dispatched: ModelDispatchResponse = match context
-        .sdk
-        .dispatch
-        .invoke_projected(&ModelDispatchCommand::InvokeResolved {
-            decision,
-            input,
-            tools,
-        })
-    {
-        Ok(response) => response,
-        Err(error) => {
-            settle_after_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                &plan,
-                &reservation_id,
-                AttemptOutcome::Failed,
-            )?;
-            return Err(format!("resolved model dispatch failed: {error}"));
-        }
-    };
+    let dispatched: ModelDispatchResponse =
+        match context
+            .sdk
+            .dispatch
+            .invoke_projected(&ModelDispatchCommand::InvokeResolved {
+                decision,
+                input,
+                tools,
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                settle_after_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    &plan,
+                    &reservation_id,
+                    AttemptOutcome::Failed,
+                )?;
+                return Err(format!("resolved model dispatch failed: {error}"));
+            }
+        };
     let ModelDispatchResponse::Inference { response, .. } = dispatched;
 
     let settled = conservative_actual(&plan);
@@ -538,6 +546,9 @@ mod tests {
         assert_eq!(component.imports.len(), 6);
         assert!(component.imports.iter().all(|import| import.required));
         assert_eq!(component.exports.len(), 1);
-        assert_eq!(component.exports[0].interface, StepRunnerInterface::interface_id());
+        assert_eq!(
+            component.exports[0].interface,
+            StepRunnerInterface::interface_id()
+        );
     }
 }
