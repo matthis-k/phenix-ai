@@ -1,5 +1,6 @@
 name: PR 519 policy boundary proof
 
+# Rerun after the spec-only head update so the proven patch can fast-forward.
 on:
   push:
     branches:
