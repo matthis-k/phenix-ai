@@ -1,8 +1,8 @@
 use phenix_core::{CallableId, CapabilityGenerationId};
 use phenix_sdk::{
-    select_route, EffectiveModelCapabilities, ModelTarget, RejectedRoutingCandidate, RouteDecision,
-    RouteSelection, RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate,
-    RoutingEvidence, RoutingProfile, RoutingRequirements,
+    select_route, EffectiveModelCapabilities, ModelTarget, RouteDecision, RouteSelection,
+    RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate, RoutingEvidence,
+    RoutingProfile, RoutingRequirements,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,15 +38,6 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
-    pub(crate) fn publish_estimate(
-        &mut self,
-        target: &ModelTarget,
-        estimate: RoutingEstimate,
-    ) -> Result<(), RoutingRuntimeError> {
-        self.estimates.insert(target_key(target)?, estimate);
-        Ok(())
-    }
-
     pub(crate) fn record_evidence(
         &mut self,
         decision: &RouteDecision,
@@ -78,17 +69,6 @@ impl RoutingRuntimeState {
             });
         }
         Ok(current)
-    }
-
-    pub(crate) fn evidence_for(
-        &self,
-        target: &ModelTarget,
-    ) -> Result<&[RoutingEvidence], RoutingRuntimeError> {
-        Ok(self
-            .evidence
-            .get(&target_key(target)?)
-            .map(Vec::as_slice)
-            .unwrap_or_default())
     }
 
     pub(crate) fn candidates(
