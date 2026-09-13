@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+mapfile -d $'\0' staged_paths < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if ! command -v nix >/dev/null 2>&1; then
+  echo "nix is required to run the configured Phenix pre-commit maintenance" >&2
+  exit 1
+fi
+
+printf '%s\n' '{"command":"fix","source":{"hook":"pre-commit","type":"git-hook"}}' |
+  nix run --quiet --no-write-lock-file ".#phenix-maintenance-command-1c6e6c4c02e5" -- invoke
+
+for path in "${staged_paths[@]}"; do
+  if [[ -e "$path" || -L "$path" ]]; then
+    git add -- "$path"
+  fi
+done
+
+git diff --cached --check
