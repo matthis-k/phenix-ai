@@ -135,7 +135,9 @@ fn handle(
         None
     };
 
-    if let Some(response) = routing.handle_state_command(command.clone(), |id| read_profile(context, id)) {
+    if let Some(response) =
+        routing.handle_state_command(command.clone(), |id| read_profile(context, id))
+    {
         let response = response?;
         if mutates_runtime {
             persist_runtime_state(context, routing, previous_runtime)?;
@@ -373,8 +375,8 @@ fn profile_key(id: &RoutingProfileId) -> String {
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, ModelToolDescriptor,
-        PhenixValue, Project,
+        CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+        ModelToolDescriptor, PhenixValue, Project,
     };
     use phenix_sdk::{
         CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities, ModelLimits,

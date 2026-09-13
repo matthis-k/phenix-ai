@@ -116,10 +116,7 @@ impl StepAttemptRecord {
         Ok(())
     }
 
-    fn require_phase(
-        &self,
-        expected: StepAttemptPhase,
-    ) -> Result<(), StepAttemptTransitionError> {
+    fn require_phase(&self, expected: StepAttemptPhase) -> Result<(), StepAttemptTransitionError> {
         if self.phase == expected {
             Ok(())
         } else {
