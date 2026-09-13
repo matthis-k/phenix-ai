@@ -603,20 +603,45 @@ mod tests {
 
     #[test]
     fn hook_cycle_is_rejected_independent_of_registration_order() {
-        let path = temp_db("hooks-cycle");
-        let mut kernel = kernel(&path);
-        let error = invoke(
-            &mut kernel,
-            HookCommand::RegisterConfiguration {
-                configuration: HookConfiguration {
-                    revision: "config-cycle".into(),
-                    hooks: vec![observe("a", &["b"]), observe("b", &["a"])],
+        for (suffix, hooks) in [
+            ("forward", vec![observe("a", &["b"]), observe("b", &["a"])]),
+            ("reverse", vec![observe("b", &["a"]), observe("a", &["b"])]),
+        ] {
+            let path = temp_db(&format!("hooks-cycle-{suffix}"));
+            let mut kernel = kernel(&path);
+            let error = invoke(
+                &mut kernel,
+                HookCommand::RegisterConfiguration {
+                    configuration: HookConfiguration {
+                        revision: format!("config-cycle-{suffix}"),
+                        hooks,
+                    },
                 },
-            },
-        )
-        .unwrap_err();
-        assert!(error.contains("cycle"));
-        let _ = fs::remove_file(path);
+            )
+            .unwrap_err();
+            assert!(error.contains("cycle"));
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn hook_ready_order_is_lexical_independent_of_registration_order() {
+        let expected = vec!["a", "b", "z"];
+        for hooks in [
+            vec![observe("z", &["a"]), observe("b", &[]), observe("a", &[])],
+            vec![observe("a", &[]), observe("z", &["a"]), observe("b", &[])],
+        ] {
+            let configuration = HookConfiguration {
+                revision: "order-proof".into(),
+                hooks,
+            };
+            let ordered = ordered_hooks(&configuration, &LifecycleEvent::ExecutionCompleted)
+                .unwrap()
+                .into_iter()
+                .map(|hook| hook.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ordered, expected);
+        }
     }
 
     #[test]
