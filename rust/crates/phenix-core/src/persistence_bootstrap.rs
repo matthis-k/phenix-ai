@@ -1,6 +1,4 @@
-use crate::{
-    graph_util::DirectedGraph, BackendFeature, DurableSchema, PluginId, SchemaMigration,
-};
+use crate::{graph_util::DirectedGraph, BackendFeature, DurableSchema, PluginId, SchemaMigration};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
