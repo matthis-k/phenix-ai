@@ -1,4 +1,7 @@
-use super::context_admission::{ContextAdmissionRequest, ContextAdmissionResult};
+use super::{
+    context_admission::{ContextAdmissionRequest, ContextAdmissionResult},
+    CompactionCommit, CompactionProposal, ProjectionRevision,
+};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
     RoutingProfileId, ServiceId, SessionId,
@@ -112,6 +115,16 @@ pub enum ContextCommand {
     Admit {
         request: ContextAdmissionRequest,
     },
+    PrepareCompaction {
+        proposal: CompactionProposal,
+    },
+    CommitCompaction {
+        execution_id: String,
+        checkpoint_id: String,
+    },
+    InvalidateProjection {
+        execution_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -138,6 +151,16 @@ pub enum ContextResponse {
     },
     Admission {
         result: ContextAdmissionResult,
+    },
+    CompactionPrepared {
+        checkpoint_id: String,
+        projection: ProjectionRevision,
+    },
+    CompactionCommitted {
+        commit: CompactionCommit,
+    },
+    ProjectionInvalidated {
+        projection: ProjectionRevision,
     },
 }
 
