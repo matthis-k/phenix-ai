@@ -31,10 +31,9 @@ const SERVER_IMPLEMENTATION_NAME: &str = "phenix-conductor";
 const SERVER_IMPLEMENTATION_VERSION: &str = "0.1.0";
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// The newest protocol version this bridge implements. MCP versions are ISO
-/// dates, so lexicographic comparison is chronological and the negotiated
-/// version is derived from the client's `initialize` request rather than a
-/// local constant.
+/// The newest protocol revision this bridge implements. MCP revisions are a
+/// discrete set of dated protocol versions; an arbitrary older date is not
+/// implicitly compatible and must not be echoed as supported.
 const MAX_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_06_18;
 
 #[derive(Clone, Default)]
@@ -50,11 +49,18 @@ struct ToolBridgeState {
     next_connection: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionLifecycle {
+    Connected,
+    InitializeResponded,
+    Initialized,
+}
+
 /// Per-connection MCP lifecycle. ACP strips the inner MCP request id, so one
 /// connection accepts at most one in-flight tool call. That keeps cancellation
 /// correlation exact at the carrier boundary.
 struct ConnectionState {
-    initialized: bool,
+    lifecycle: ConnectionLifecycle,
     in_flight: Option<ToolCancellation>,
 }
 
@@ -94,7 +100,11 @@ impl ToolBridge {
     }
 
     pub(super) fn unbind_execution(&self) {
-        self.state.lock().worker = None;
+        let mut state = self.state.lock();
+        state.worker = None;
+        for connection in state.connections.values() {
+            cancel_in_flight(connection);
+        }
     }
 
     pub(super) fn connect(
@@ -111,7 +121,7 @@ impl ToolBridge {
         state.connections.insert(
             connection_id.clone(),
             ConnectionState {
-                initialized: false,
+                lifecycle: ConnectionLifecycle::Connected,
                 in_flight: None,
             },
         );
@@ -139,7 +149,9 @@ impl ToolBridge {
     ) -> Result<MessageMcpResponse, agent_client_protocol::Error> {
         self.require_connection(&request.connection_id)?;
         let result = match request.method.as_str() {
-            InitializeResultMethod::VALUE => self.initialize(request.params.as_ref())?,
+            InitializeResultMethod::VALUE => {
+                self.initialize(&request.connection_id, request.params.as_ref())?
+            }
             PingRequestMethod::VALUE => {
                 self.require_initialized(&request.connection_id)?;
                 to_value(&EmptyObject {})?
@@ -170,15 +182,7 @@ impl ToolBridge {
         self.require_connection(&notification.connection_id)?;
         match notification.method.as_str() {
             InitializedNotificationMethod::VALUE => {
-                if let Some(connection) = self
-                    .state
-                    .lock()
-                    .connections
-                    .get_mut(notification.connection_id.0.as_ref())
-                {
-                    connection.initialized = true;
-                }
-                Ok(())
+                self.mark_initialized(&notification.connection_id)
             }
             CancelledNotificationMethod::VALUE => self
                 .cancel_in_flight_call(&notification.connection_id, notification.params.as_ref()),
@@ -192,6 +196,7 @@ impl ToolBridge {
 
     fn initialize(
         &self,
+        connection_id: &McpConnectionId,
         params: Option<&Map<String, Value>>,
     ) -> Result<Value, agent_client_protocol::Error> {
         let request: InitializeRequestParams = parse_params(params)?;
@@ -203,7 +208,47 @@ impl ToolBridge {
                 SERVER_IMPLEMENTATION_NAME,
                 SERVER_IMPLEMENTATION_VERSION,
             ));
-        to_value(&result)
+        let result = to_value(&result)?;
+        self.mark_initialize_responded(connection_id)?;
+        Ok(result)
+    }
+
+    fn mark_initialize_responded(
+        &self,
+        connection_id: &McpConnectionId,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let mut state = self.state.lock();
+        let connection = state
+            .connections
+            .get_mut(connection_id.0.as_ref())
+            .ok_or_else(|| unknown_connection(connection_id))?;
+        if connection.lifecycle != ConnectionLifecycle::Connected {
+            return Err(acp_error(ErrorData::invalid_request(
+                "MCP initialize request after initialization started",
+                None,
+            )));
+        }
+        connection.lifecycle = ConnectionLifecycle::InitializeResponded;
+        Ok(())
+    }
+
+    fn mark_initialized(
+        &self,
+        connection_id: &McpConnectionId,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let mut state = self.state.lock();
+        let connection = state
+            .connections
+            .get_mut(connection_id.0.as_ref())
+            .ok_or_else(|| unknown_connection(connection_id))?;
+        if connection.lifecycle != ConnectionLifecycle::InitializeResponded {
+            return Err(acp_error(ErrorData::invalid_request(
+                "MCP initialized notification out of order",
+                None,
+            )));
+        }
+        connection.lifecycle = ConnectionLifecycle::Initialized;
+        Ok(())
     }
 
     fn list_tools(&self) -> Result<Value, agent_client_protocol::Error> {
@@ -283,29 +328,8 @@ impl ToolBridge {
                 .data(format!("conductor tool host is unavailable: {error}")));
         }
 
-        let result = loop {
-            match response_rx.recv_timeout(CANCELLATION_POLL_INTERVAL) {
-                Ok(result) => break Ok(result),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if cancellation.is_cancelled() {
-                        break Err(BackendError::Protocol(
-                            "MCP tool call was cancelled".to_owned(),
-                        ));
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    break Err(BackendError::Protocol(
-                        "conductor tool result channel closed before completion".to_owned(),
-                    ));
-                }
-            }
-        };
-
+        let result = wait_for_tool_result(&response_rx, &cancellation);
         self.clear_in_flight(connection_id);
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => Err(error),
-        };
         to_value(&call_tool_result(result))
     }
 
@@ -360,7 +384,7 @@ impl ToolBridge {
             .connections
             .get(connection_id.0.as_ref())
             .ok_or_else(|| unknown_connection(connection_id))?;
-        if connection.initialized {
+        if connection.lifecycle == ConnectionLifecycle::Initialized {
             Ok(())
         } else {
             Err(acp_error(ErrorData::invalid_request(
@@ -369,6 +393,39 @@ impl ToolBridge {
             )))
         }
     }
+}
+
+fn wait_for_tool_result(
+    response_rx: &mpsc::Receiver<Result<ToolResult, BackendError>>,
+    cancellation: &ToolCancellation,
+) -> Result<ToolResult, BackendError> {
+    loop {
+        match response_rx.recv_timeout(CANCELLATION_POLL_INTERVAL) {
+            Ok(result) => {
+                if cancellation.is_cancelled() {
+                    return Err(cancelled_tool_call());
+                }
+                return result;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancellation.is_cancelled() {
+                    return Err(cancelled_tool_call());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if cancellation.is_cancelled() {
+                    return Err(cancelled_tool_call());
+                }
+                return Err(BackendError::Protocol(
+                    "conductor tool result channel closed before completion".to_owned(),
+                ));
+            }
+        }
+    }
+}
+
+fn cancelled_tool_call() -> BackendError {
+    BackendError::Protocol("MCP tool call was cancelled".to_owned())
 }
 
 fn cancel_in_flight(connection: &ConnectionState) {
@@ -391,12 +448,11 @@ pub(super) struct BridgeToolRequest {
 
 /// Negotiate the MCP protocol version against the client's request. The client
 /// requests its own version; the bridge echoes it when supported and otherwise
-/// downgrades to its newest supported version.
+/// responds with its newest supported revision.
 fn negotiate_protocol_version(requested: ProtocolVersion) -> ProtocolVersion {
-    if requested.as_str() <= MAX_PROTOCOL_VERSION.as_str() {
-        requested
-    } else {
-        MAX_PROTOCOL_VERSION.clone()
+    match requested.as_str() {
+        "2024-11-05" | "2025-03-26" | "2025-06-18" => requested,
+        _ => MAX_PROTOCOL_VERSION.clone(),
     }
 }
 
@@ -560,6 +616,21 @@ mod tests {
         serde_json::from_str(value.0.get()).expect("fixture MCP response is valid JSON")
     }
 
+    fn initialize_response(bridge: &ToolBridge, version: &str) -> Value {
+        let connection = bridge
+            .connect(ConnectMcpRequest::new(SERVER_ID))
+            .unwrap()
+            .connection_id;
+        response(
+            bridge
+                .message(
+                    MessageMcpRequest::new(connection, "initialize")
+                        .params(initialize_params(version)),
+                )
+                .unwrap(),
+        )
+    }
+
     #[test]
     fn server_declaration_uses_native_acp_transport() {
         assert!(matches!(ToolBridge::default().server(), McpServer::Acp(_)));
@@ -576,29 +647,22 @@ mod tests {
     }
 
     #[test]
-    fn initialize_negotiates_protocol_version_from_request() {
+    fn initialize_negotiates_only_supported_protocol_versions() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
-        let connection = bridge
-            .connect(ConnectMcpRequest::new(SERVER_ID))
-            .unwrap()
-            .connection_id;
 
-        let older = bridge
-            .message(
-                MessageMcpRequest::new(connection.clone(), "initialize")
-                    .params(initialize_params("2025-03-26")),
-            )
-            .unwrap();
-        assert_eq!(response(older)["protocolVersion"], "2025-03-26");
-
-        let newer = bridge
-            .message(
-                MessageMcpRequest::new(connection.clone(), "initialize")
-                    .params(initialize_params("2099-01-01")),
-            )
-            .unwrap();
-        assert_eq!(response(newer)["protocolVersion"], "2025-06-18");
+        assert_eq!(
+            initialize_response(&bridge, "2025-03-26")["protocolVersion"],
+            "2025-03-26"
+        );
+        assert_eq!(
+            initialize_response(&bridge, "2025-01-01")["protocolVersion"],
+            "2025-06-18"
+        );
+        assert_eq!(
+            initialize_response(&bridge, "2099-01-01")["protocolVersion"],
+            "2025-06-18"
+        );
     }
 
     #[test]
@@ -609,6 +673,28 @@ mod tests {
             .connect(ConnectMcpRequest::new(SERVER_ID))
             .unwrap()
             .connection_id;
+
+        let error = bridge
+            .message(MessageMcpRequest::new(connection, "tools/list"))
+            .unwrap_err();
+        assert!(error.to_string().contains("before initialization"));
+    }
+
+    #[test]
+    fn initialized_notification_requires_initialize_response() {
+        let bridge = ToolBridge::default();
+        let connection = bridge
+            .connect(ConnectMcpRequest::new(SERVER_ID))
+            .unwrap()
+            .connection_id;
+
+        let error = bridge
+            .notification(MessageMcpNotification::new(
+                connection.clone(),
+                "notifications/initialized",
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("out of order"));
 
         let error = bridge
             .message(MessageMcpRequest::new(connection, "tools/list"))
@@ -663,6 +749,39 @@ mod tests {
             .message(MessageMcpRequest::new(connection, "ping"))
             .unwrap_err();
         assert!(error.to_string().contains("unknown Phenix MCP connection"));
+    }
+
+    #[test]
+    fn cancellation_wins_when_worker_result_channel_closes() {
+        let cancellation = ToolCancellation::new();
+        cancellation.cancel();
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        drop(response_tx);
+
+        let error = match wait_for_tool_result(&response_rx, &cancellation) {
+            Ok(_) => panic!("cancelled call unexpectedly returned a worker result"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("cancelled"));
+    }
+
+    #[test]
+    fn cancellation_wins_over_buffered_worker_success() {
+        let cancellation = ToolCancellation::new();
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        response_tx
+            .send(Ok(ToolResult {
+                output: "late-success".to_owned(),
+                success: true,
+            }))
+            .unwrap();
+        cancellation.cancel();
+
+        let error = match wait_for_tool_result(&response_rx, &cancellation) {
+            Ok(_) => panic!("cancelled call unexpectedly returned a late success"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("cancelled"));
     }
 
     #[test]
