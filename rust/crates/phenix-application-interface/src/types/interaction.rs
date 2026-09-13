@@ -161,7 +161,8 @@ mod tests {
         assert_eq!(
             <PermissionHandlerRef as ValueCodec>::phenix_type(),
             phenix_core::Type::Callable {
-                contract: phenix_core::ContractId::parse("phenix.application.permission@1").unwrap(),
+                contract: phenix_core::ContractId::parse("phenix.application.permission@1")
+                    .unwrap(),
                 input: Box::new(PermissionRequest::phenix_schema()),
                 output: Box::new(PermissionResponse::phenix_schema()),
             }
