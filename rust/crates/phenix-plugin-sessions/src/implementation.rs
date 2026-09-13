@@ -308,7 +308,7 @@ fn require_open_session(
     context: &SessionContext<'_, '_>,
     id: &SessionId,
 ) -> Result<SessionRecord, String> {
-    let session = require_open_session(context, id)?;
+    let session = read_session(context, id)?.ok_or_else(|| format!("unknown session: {id}"))?;
     require_open(&session)?;
     Ok(session)
 }
@@ -319,7 +319,7 @@ fn continue_session(
     kind: SessionInputKind,
     content: Bytes,
 ) -> Result<SessionResponse, String> {
-    let session = read_session(context, id)?.ok_or_else(|| format!("unknown session: {id}"))?;
+    let session = require_open_session(context, id)?;
     let key = inputs_key(id);
     let old_inputs = read_raw(context, &key)?;
     let mut inputs = decode_inputs(old_inputs.as_deref())?;
@@ -559,7 +559,13 @@ mod tests {
         let root = SessionId::parse("root").unwrap();
         {
             let mut kernel = kernel_with(&path);
-            invoke(&mut kernel, &SessionCommand::Create { id: root.clone() }).unwrap();
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(root.clone()),
+                },
+            )
+            .unwrap();
             for (kind, content) in [
                 (SessionInputKind::Root, b"system".to_vec()),
                 (SessionInputKind::User, b"hello".to_vec()),
@@ -609,7 +615,13 @@ mod tests {
         let root = SessionId::parse("root").unwrap();
         {
             let mut kernel = kernel_with(&path);
-            invoke(&mut kernel, &SessionCommand::Create { id: root.clone() }).unwrap();
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(root.clone()),
+                },
+            )
+            .unwrap();
             invoke(
                 &mut kernel,
                 &SessionCommand::Continue {
@@ -659,7 +671,13 @@ mod tests {
         };
         {
             let mut kernel = kernel_with(&path);
-            invoke(&mut kernel, &SessionCommand::Create { id: root.clone() }).unwrap();
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(root.clone()),
+                },
+            )
+            .unwrap();
             let response = invoke(
                 &mut kernel,
                 &SessionCommand::AppendHistory {
@@ -693,6 +711,84 @@ mod tests {
             resolved,
             SessionResponse::HistoryEntry { entry: Some(ref entry) }
                 if entry.sequence == 1 && entry.instruction_revision == "instructions-1"
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn application_metadata_and_closed_lifecycle_are_durable() {
+        let path = temp_db("session-metadata");
+        let root = SessionId::parse("root").unwrap();
+        {
+            let mut kernel = kernel_with(&path);
+            let created = SessionRecord::application(
+                root.clone(),
+                "/workspace".into(),
+                Some("initial".into()),
+            );
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Create {
+                        session: created.clone(),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Created { session } if session == created
+            ));
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Rename {
+                        id: root.clone(),
+                        title: "renamed".into(),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Updated { ref session }
+                    if session.title.as_deref() == Some("renamed")
+                        && session.working_directory.as_deref() == Some("/workspace")
+            ));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Get { id: root.clone() },
+            )
+            .unwrap(),
+            SessionResponse::Session { session: Some(ref session) }
+                if session.title.as_deref() == Some("renamed")
+                    && session.working_directory.as_deref() == Some("/workspace")
+                    && session.lifecycle == SessionLifecycle::Open
+        ));
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Close { id: root.clone() },
+            )
+            .unwrap(),
+            SessionResponse::Updated { ref session }
+                if session.lifecycle == SessionLifecycle::Closed
+        ));
+        let error = invoke(
+            &mut restored,
+            &SessionCommand::Continue {
+                id: root.clone(),
+                kind: SessionInputKind::User,
+                content: b"closed".to_vec().into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("session is closed"));
+        drop(restored);
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(&mut restored, &SessionCommand::Get { id: root }).unwrap(),
+            SessionResponse::Session { session: Some(ref session) }
+                if session.lifecycle == SessionLifecycle::Closed
         ));
         let _ = fs::remove_file(path);
     }
