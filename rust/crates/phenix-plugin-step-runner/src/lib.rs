@@ -246,7 +246,7 @@ fn run(
         UsageAttemptKind::Retry => BudgetReservationPurpose::Retry,
         _ => unreachable!("attempt kind checked above"),
     };
-    let reserved: ExecutionResourceResponse = context
+    let reserved: ExecutionResourceResponse = match context
         .sdk
         .resources
         .invoke_projected(&ExecutionResourceCommand::Reserve {
@@ -259,20 +259,44 @@ fn run(
                 budget: plan.reservation.clone(),
                 attempts: 1,
             },
-        })
-        .map_err(|error| error.to_string())?;
+        }) {
+        Ok(response) => response,
+        Err(error) => {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                None,
+                format!("root budget reservation failed: {error}"),
+            )
+        }
+    };
     if !matches!(reserved, ExecutionResourceResponse::RootBudget { .. }) {
-        return Err("execution resource service returned a non-budget response to reserve".into());
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "execution resource service returned a non-budget response to reserve".into(),
+        );
     }
-    bind_attempt(
+    if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::BindReservation {
             attempt_id: attribution.attempt_id.clone(),
             reservation_id: reservation_id.clone(),
         },
-    )?;
+    ) {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            error,
+        );
+    }
 
-    let routed: ModelResponse = context
+    let routed: ModelResponse = match context
         .sdk
         .routing
         .invoke_projected(&ModelCommand::ResolveWithRequirements {
@@ -280,21 +304,45 @@ fn run(
             callable_id,
             requirements: plan.routing.clone(),
             policy: route_policy,
-        })
-        .map_err(|error| error.to_string())?;
+        }) {
+        Ok(response) => response,
+        Err(error) => {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                format!("model routing failed: {error}"),
+            )
+        }
+    };
     let ModelResponse::Decision { selection } = routed else {
-        return Err("model routing returned a non-decision response".into());
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "model routing returned a non-decision response".into(),
+        );
     };
     let decision = selection.decision;
-    bind_attempt(
+    if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::BindRoute {
             attempt_id: attribution.attempt_id.clone(),
             decision: decision.clone(),
         },
-    )?;
+    ) {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            error,
+        );
+    }
 
-    let admitted: ContextResponse = context
+    let admitted: ContextResponse = match context
         .sdk
         .context
         .invoke_projected(&ContextCommand::Admit {
@@ -304,27 +352,59 @@ fn run(
                 candidates: context_candidates,
                 cache_epoch,
             },
-        })
-        .map_err(|error| error.to_string())?;
-    let ContextResponse::Admission { projection, .. } = admitted else {
-        return Err("context service returned a non-admission response".into());
+        }) {
+        Ok(response) => response,
+        Err(error) => {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                format!("context admission failed: {error}"),
+            )
+        }
     };
-    bind_attempt(
+    let ContextResponse::Admission { projection, .. } = admitted else {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "context service returned a non-admission response".into(),
+        );
+    };
+    if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::BindProjection {
             attempt_id: attribution.attempt_id.clone(),
             projection,
         },
-    )?;
+    ) {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            error,
+        );
+    }
 
     let dispatch_id = format!("dispatch/{}", attribution.attempt_id);
-    bind_attempt(
+    if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::MarkDispatched {
             attempt_id: attribution.attempt_id.clone(),
             dispatch_id,
         },
-    )?;
+    ) {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            error,
+        );
+    }
 
     let dispatched: ModelDispatchResponse =
         match context
@@ -459,6 +539,61 @@ fn bind_attempt(
         Ok(())
     } else {
         Err("step attempt service returned a non-attempt mutation response".into())
+    }
+}
+
+fn fail_before_dispatch<T>(
+    context: &StepRunnerContext<'_, '_>,
+    root_execution_id: &str,
+    attempt_id: &str,
+    reservation_id: Option<&str>,
+    cause: String,
+) -> Result<T, String> {
+    let cleanup = abort_before_dispatch(
+        context,
+        root_execution_id,
+        attempt_id,
+        reservation_id,
+        AttemptOutcome::Failed,
+    );
+    match cleanup {
+        Ok(()) => Err(cause),
+        Err(error) => Err(format!("{cause}; pre-dispatch cleanup failed: {error}")),
+    }
+}
+
+fn abort_before_dispatch(
+    context: &StepRunnerContext<'_, '_>,
+    root_execution_id: &str,
+    attempt_id: &str,
+    reservation_id: Option<&str>,
+    outcome: AttemptOutcome,
+) -> Result<(), String> {
+    if let Some(reservation_id) = reservation_id {
+        let response: ExecutionResourceResponse = context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::ReleaseReservation {
+                root_execution_id: root_execution_id.to_owned(),
+                reservation_id: reservation_id.to_owned(),
+            })
+            .map_err(|error| error.to_string())?;
+        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
+            return Err("execution resource service returned a non-budget response to release".into());
+        }
+    }
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::Abort {
+            attempt_id: attempt_id.to_owned(),
+            outcome,
+        })
+        .map_err(|error| error.to_string())?;
+    if matches!(response, StepAttemptResponse::Attempt { .. }) {
+        Ok(())
+    } else {
+        Err("step attempt service returned a non-attempt abort response".into())
     }
 }
 

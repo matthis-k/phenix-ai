@@ -227,6 +227,14 @@ fn mutate(
                 .mark_dispatched(dispatch_id)
                 .map_err(|error| format!("dispatch binding failed: {error:?}"))
         })?,
+        StepAttemptCommand::Abort {
+            attempt_id,
+            outcome,
+        } => next.mutate(&attempt_id, |attempt| {
+            attempt
+                .abort(outcome)
+                .map_err(|error| format!("attempt abort failed: {error:?}"))
+        })?,
         StepAttemptCommand::Settle {
             attempt_id,
             outcome,
