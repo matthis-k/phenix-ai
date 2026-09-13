@@ -49,8 +49,6 @@ impl ContextStateService {
         Ok(bytes)
     }
 
-    /// Handles projection-owner operations. Resource registration/load/project
-    /// remain on the existing context persistence path.
     pub(crate) fn handle_state_command(
         &mut self,
         command: ContextCommand,
@@ -121,6 +119,16 @@ impl ContextStateService {
 
     pub(crate) fn projection_revision(&self, execution_id: &str) -> Option<&ProjectionRevision> {
         self.projections.get(execution_id).map(|state| &state.revision)
+    }
+
+    pub(crate) fn invalidate_if_present(
+        &mut self,
+        execution_id: &str,
+    ) -> Option<ProjectionRevision> {
+        self.projections.get_mut(execution_id).map(|state| {
+            state.invalidate_for_context_mutation();
+            state.revision.clone()
+        })
     }
 
     fn projection_mut(
