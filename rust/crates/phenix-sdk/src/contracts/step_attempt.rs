@@ -124,7 +124,10 @@ impl StepAttemptRecord {
     }
 
     pub fn abort(&mut self, outcome: AttemptOutcome) -> Result<(), StepAttemptTransitionError> {
-        if matches!(self.phase, StepAttemptPhase::Dispatched | StepAttemptPhase::Settled) {
+        if matches!(
+            self.phase,
+            StepAttemptPhase::Dispatched | StepAttemptPhase::Settled
+        ) {
             return Err(StepAttemptTransitionError::InvalidAbortPhase { actual: self.phase });
         }
         if outcome == AttemptOutcome::Succeeded {

@@ -246,31 +246,32 @@ fn run(
         UsageAttemptKind::Retry => BudgetReservationPurpose::Retry,
         _ => unreachable!("attempt kind checked above"),
     };
-    let reserved: ExecutionResourceResponse = match context
-        .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::Reserve {
-            root_execution_id: attribution.root_execution_id.clone(),
-            reservation: BudgetReservationRequest {
-                reservation_id: reservation_id.clone(),
-                parent_reservation_id: None,
-                policy_revision: plan.policy_revision.clone(),
-                purpose,
-                budget: plan.reservation.clone(),
-                attempts: 1,
-            },
-        }) {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_before_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                None,
-                format!("root budget reservation failed: {error}"),
-            )
-        }
-    };
+    let reserved: ExecutionResourceResponse =
+        match context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::Reserve {
+                root_execution_id: attribution.root_execution_id.clone(),
+                reservation: BudgetReservationRequest {
+                    reservation_id: reservation_id.clone(),
+                    parent_reservation_id: None,
+                    policy_revision: plan.policy_revision.clone(),
+                    purpose,
+                    budget: plan.reservation.clone(),
+                    attempts: 1,
+                },
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    None,
+                    format!("root budget reservation failed: {error}"),
+                )
+            }
+        };
     if !matches!(reserved, ExecutionResourceResponse::RootBudget { .. }) {
         return fail_before_dispatch(
             context,
@@ -296,26 +297,27 @@ fn run(
         );
     }
 
-    let routed: ModelResponse = match context
-        .sdk
-        .routing
-        .invoke_projected(&ModelCommand::ResolveWithRequirements {
-            profile_id,
-            callable_id,
-            requirements: plan.routing.clone(),
-            policy: route_policy,
-        }) {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_before_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                Some(&reservation_id),
-                format!("model routing failed: {error}"),
-            )
-        }
-    };
+    let routed: ModelResponse =
+        match context
+            .sdk
+            .routing
+            .invoke_projected(&ModelCommand::ResolveWithRequirements {
+                profile_id,
+                callable_id,
+                requirements: plan.routing.clone(),
+                policy: route_policy,
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    format!("model routing failed: {error}"),
+                )
+            }
+        };
     let ModelResponse::Decision { selection } = routed else {
         return fail_before_dispatch(
             context,
@@ -342,28 +344,29 @@ fn run(
         );
     }
 
-    let admitted: ContextResponse = match context
-        .sdk
-        .context
-        .invoke_projected(&ContextCommand::Admit {
-            request: ContextAdmissionRequest {
-                execution_id: attribution.execution_id.clone(),
-                step_plan: plan.clone(),
-                candidates: context_candidates,
-                cache_epoch,
-            },
-        }) {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_before_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                Some(&reservation_id),
-                format!("context admission failed: {error}"),
-            )
-        }
-    };
+    let admitted: ContextResponse =
+        match context
+            .sdk
+            .context
+            .invoke_projected(&ContextCommand::Admit {
+                request: ContextAdmissionRequest {
+                    execution_id: attribution.execution_id.clone(),
+                    step_plan: plan.clone(),
+                    candidates: context_candidates,
+                    cache_epoch,
+                },
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    format!("context admission failed: {error}"),
+                )
+            }
+        };
     let ContextResponse::Admission { projection, .. } = admitted else {
         return fail_before_dispatch(
             context,
@@ -579,7 +582,9 @@ fn abort_before_dispatch(
             })
             .map_err(|error| error.to_string())?;
         if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
-            return Err("execution resource service returned a non-budget response to release".into());
+            return Err(
+                "execution resource service returned a non-budget response to release".into(),
+            );
         }
     }
     let response: StepAttemptResponse = context
