@@ -9,8 +9,8 @@ use phenix_core::{
     TransactionOp,
 };
 use phenix_sdk::{
-    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionMutationCommand,
-    SessionMutationInterface, SessionMutationResponse,
+    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionLifecycle,
+    SessionMutationCommand, SessionMutationInterface, SessionMutationResponse,
 };
 
 const SESSION_PLUGIN: &str = "phenix.sessions";
@@ -145,13 +145,15 @@ fn handle_session(
     command: SessionCommand,
 ) -> Result<SessionResponse, String> {
     match command {
-        SessionCommand::Create { id } => create_session(context, id),
+        SessionCommand::Create { session } => create_session(context, session),
         SessionCommand::Get { id } => Ok(SessionResponse::Session {
             session: read_session(context, &id)?,
         }),
         SessionCommand::List => Ok(SessionResponse::Sessions {
             sessions: read_sessions(context)?,
         }),
+        SessionCommand::Rename { id, title } => rename_session(context, &id, title),
+        SessionCommand::Close { id } => close_session(context, &id),
         SessionCommand::Continue { id, kind, content } => {
             continue_session(context, &id, kind, content)
         }
@@ -185,8 +187,8 @@ fn handle_mutation(
     context: &SessionContext<'_, '_>,
     command: SessionMutationCommand,
 ) -> Result<SessionMutationResponse, String> {
-    let SessionMutationCommand::PrepareCreate { id } = command;
-    let (session, operations) = prepare_create(context, id)?;
+    let SessionMutationCommand::PrepareCreate { session } = command;
+    let (session, operations) = prepare_create(context, session)?;
     let mutation = context
         .kernel
         .prepare_durable_transaction(&session_namespace(), &operations)
@@ -196,13 +198,15 @@ fn handle_mutation(
 
 fn prepare_create(
     context: &SessionContext<'_, '_>,
-    id: SessionId,
+    session: SessionRecord,
 ) -> Result<(SessionRecord, Vec<TransactionOp>), String> {
-    if read_session(context, &id)?.is_some() {
-        return Err(format!("session already exists: {id}"));
+    if !session.is_open() {
+        return Err("new sessions must start open".into());
+    }
+    if read_session(context, &session.id)?.is_some() {
+        return Err(format!("session already exists: {}", session.id));
     }
 
-    let session = SessionRecord { id };
     let session_key = session_key(&session.id);
     let old_sessions = read_raw(context, ALL_SESSIONS_KEY)?;
     let mut sessions = decode_ids(old_sessions.as_deref())?;
@@ -232,14 +236,81 @@ fn prepare_create(
 
 fn create_session(
     context: &SessionContext<'_, '_>,
-    id: SessionId,
+    session: SessionRecord,
 ) -> Result<SessionResponse, String> {
-    let (session, operations) = prepare_create(context, id)?;
+    let (session, operations) = prepare_create(context, session)?;
     context
         .kernel
         .transact_durable(&session_namespace(), &operations)
         .map_err(|error| error.to_string())?;
     Ok(SessionResponse::Created { session })
+}
+
+fn rename_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    title: String,
+) -> Result<SessionResponse, String> {
+    update_session(context, id, move |session| {
+        require_open(session)?;
+        session.title = Some(title);
+        Ok(())
+    })
+}
+
+fn close_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+) -> Result<SessionResponse, String> {
+    update_session(context, id, |session| {
+        require_open(session)?;
+        session.lifecycle = SessionLifecycle::Closed;
+        Ok(())
+    })
+}
+
+fn update_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    mutate: impl FnOnce(&mut SessionRecord) -> Result<(), String>,
+) -> Result<SessionResponse, String> {
+    let key = session_key(id);
+    let old = read_raw(context, &key)?.ok_or_else(|| format!("unknown session: {id}"))?;
+    let mut session: SessionRecord =
+        serde_json::from_slice(&old).map_err(|error| error.to_string())?;
+    mutate(&mut session)?;
+    let value = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .transact_durable(
+            &session_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: Some(old),
+                },
+                TransactionOp::Put { key, value },
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(SessionResponse::Updated { session })
+}
+
+fn require_open(session: &SessionRecord) -> Result<(), String> {
+    if session.is_open() {
+        Ok(())
+    } else {
+        Err(format!("session is closed: {}", session.id))
+    }
+}
+
+fn require_open_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+) -> Result<SessionRecord, String> {
+    let session = require_open_session(context, id)?;
+    require_open(&session)?;
+    Ok(session)
 }
 
 fn continue_session(
@@ -284,9 +355,7 @@ fn append_history(
     id: &SessionId,
     draft: SessionHistoryDraft,
 ) -> Result<SessionResponse, String> {
-    if read_session(context, id)?.is_none() {
-        return Err(format!("unknown session: {id}"));
-    }
+    require_open_session(context, id)?;
     let key = history_key(id);
     let old_history = read_raw(context, &key)?;
     let mut entries = decode_history(old_history.as_deref())?;
@@ -511,7 +580,7 @@ mod tests {
         assert_eq!(
             invoke(&mut restored, &SessionCommand::List).unwrap(),
             SessionResponse::Sessions {
-                sessions: vec![SessionRecord { id: root.clone() }],
+                sessions: vec![SessionRecord::new(root.clone())],
             }
         );
         assert_eq!(

@@ -74,7 +74,7 @@ fn process_roundtrip_routes_and_restores_plugin_owned_state() {
             serde_json::json!({
                 "id": 1,
                 "service": "phenix.sessions@1",
-                "input": structural_input(&SessionCommand::Create { id: session_id.clone() })
+                "input": structural_input(&SessionCommand::Create { session: phenix_plugin_catalog::SessionRecord::new(session_id.clone()) })
             }),
             serde_json::json!({
                 "id": 2,
@@ -94,9 +94,7 @@ fn process_roundtrip_routes_and_restores_plugin_owned_state() {
     assert_eq!(
         structural_output::<SessionResponse>(&first[0]["output"]),
         SessionResponse::Created {
-            session: SessionRecord {
-                id: session_id.clone()
-            },
+            session: SessionRecord::new(session_id.clone()),
         }
     );
     assert_eq!(first[1]["status"], "ok");
@@ -125,7 +123,7 @@ fn process_roundtrip_routes_and_restores_plugin_owned_state() {
     assert_eq!(
         structural_output::<SessionResponse>(&second[0]["output"]),
         SessionResponse::Session {
-            session: Some(SessionRecord { id: session_id }),
+            session: Some(SessionRecord::new(session_id)),
         }
     );
     assert_eq!(second[1]["status"], "ok");

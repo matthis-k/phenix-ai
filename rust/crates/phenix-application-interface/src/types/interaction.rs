@@ -146,8 +146,8 @@ record!(ReviewDecisionInput, "phenix.application.type.review-decision-input@1", 
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, PhenixValue, ReferenceId,
-        ValueCodec,
+        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, HasPhenixSchema,
+        ReferenceId, ValueCodec,
     };
 
     #[test]

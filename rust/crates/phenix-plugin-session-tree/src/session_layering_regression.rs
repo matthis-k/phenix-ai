@@ -45,7 +45,7 @@ fn configured_kernel(layer: LayerPolicy) -> Kernel {
 
 fn create(kernel: &mut Kernel, id: &str) -> SessionResponse {
     let command = SessionCommand::Create {
-        id: SessionId::parse(id).unwrap(),
+        session: phenix_sdk::SessionRecord::new(SessionId::parse(id).unwrap()),
     };
     let output = kernel
         .invoke(
@@ -73,9 +73,7 @@ fn configured_session_tree_layer_delegates_to_flat_session_terminal() {
     assert_eq!(
         create(&mut kernel, "root"),
         SessionResponse::Created {
-            session: SessionRecord {
-                id: SessionId::parse("root").unwrap(),
-            },
+            session: SessionRecord::new(SessionId::parse("root").unwrap()),
         }
     );
 

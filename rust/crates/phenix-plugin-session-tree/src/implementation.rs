@@ -530,8 +530,18 @@ mod tests {
         let child = session("child");
         {
             let mut kernel = kernel_with(&path);
-            invoke_session(&mut kernel, SessionCommand::Create { id: root.clone() });
-            invoke_session(&mut kernel, SessionCommand::Create { id: child.clone() });
+            invoke_session(
+                &mut kernel,
+                SessionCommand::Create {
+                    session: phenix_sdk::SessionRecord::new(root.clone()),
+                },
+            );
+            invoke_session(
+                &mut kernel,
+                SessionCommand::Create {
+                    session: phenix_sdk::SessionRecord::new(child.clone()),
+                },
+            );
             assert_eq!(
                 invoke_tree(
                     &mut kernel,
@@ -559,7 +569,7 @@ mod tests {
             assert_eq!(
                 invoke_session(&mut kernel, SessionCommand::Get { id: child.clone() }),
                 SessionResponse::Session {
-                    session: Some(SessionRecord { id: child.clone() }),
+                    session: Some(SessionRecord::new(child.clone())),
                 }
             );
         }
@@ -597,7 +607,7 @@ mod tests {
         invoke_session(
             &mut kernel,
             SessionCommand::Create {
-                id: session("root"),
+                session: phenix_sdk::SessionRecord::new(session("root")),
             },
         );
         assert!(invoke_tree(

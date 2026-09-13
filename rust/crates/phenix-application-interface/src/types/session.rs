@@ -90,7 +90,7 @@ record!(Provenance, "phenix.application.type.provenance@1", {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::PhenixValue;
+    use phenix_core::ValueCodec;
 
     #[test]
     fn session_projection_state_round_trips_as_one_structural_value() {

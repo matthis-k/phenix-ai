@@ -341,7 +341,7 @@ fn open_session(
     if let Some(session) = existing {
         if resolve_bool(context, "session.reuse_existing", &option_context)? {
             return Ok(SdkSessionResponse::Opened {
-                session: phenix_sdk::SessionRecord { id: session.id },
+                session,
                 created: false,
             });
         }
@@ -359,11 +359,13 @@ fn open_session(
     match context
         .sdk
         .sessions
-        .invoke(&SessionCommand::Create { id })
+        .invoke(&SessionCommand::Create {
+            session: phenix_sdk::SessionRecord::new(id),
+        })
         .map_err(|error| error.to_string())?
     {
         SessionResponse::Created { session } => Ok(SdkSessionResponse::Opened {
-            session: phenix_sdk::SessionRecord { id: session.id },
+            session,
             created: true,
         }),
         response => Err(format!("unexpected session create response: {response:?}")),

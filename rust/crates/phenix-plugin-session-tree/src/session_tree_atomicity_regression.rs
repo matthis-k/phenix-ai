@@ -221,7 +221,12 @@ fn rejected_reparent_does_not_partially_mutate_lineage_indexes() {
     let path = temp_db();
     let mut kernel = kernel_with(&path);
     for id in ["root-a", "root-b", "child"] {
-        invoke_session(&mut kernel, SessionCommand::Create { id: session_id(id) });
+        invoke_session(
+            &mut kernel,
+            SessionCommand::Create {
+                session: phenix_sdk::SessionRecord::new(session_id(id)),
+            },
+        );
     }
 
     invoke_tree(
@@ -259,7 +264,12 @@ fn rejected_cycle_does_not_partially_mutate_lineage_indexes() {
     let path = temp_db();
     let mut kernel = kernel_with(&path);
     for id in ["root", "child"] {
-        invoke_session(&mut kernel, SessionCommand::Create { id: session_id(id) });
+        invoke_session(
+            &mut kernel,
+            SessionCommand::Create {
+                session: phenix_sdk::SessionRecord::new(session_id(id)),
+            },
+        );
     }
 
     invoke_tree(
@@ -302,7 +312,7 @@ fn combined_child_session_and_lineage_operation_commits_as_one_semantic_operatio
     invoke_session(
         &mut kernel,
         SessionCommand::Create {
-            id: session_id("root"),
+            session: phenix_sdk::SessionRecord::new(session_id("root")),
         },
     );
 
@@ -356,7 +366,7 @@ fn failed_combined_child_creation_rolls_back_session_and_lineage_namespaces() {
         invoke_session(
             &mut setup,
             SessionCommand::Create {
-                id: session_id("root"),
+                session: phenix_sdk::SessionRecord::new(session_id("root")),
             },
         );
     }
