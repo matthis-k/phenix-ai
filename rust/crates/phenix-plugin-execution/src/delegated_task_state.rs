@@ -3,9 +3,10 @@ use phenix_sdk::{
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, WorkerTaskRecord,
     WorkerTaskState,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DelegatedTaskStore {
     tasks: BTreeMap<String, DelegatedWorkerTaskRecord>,
 }
@@ -32,39 +33,33 @@ impl DelegatedTaskStore {
         now_ms: u64,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
         if self.tasks.contains_key(&task.id) {
-            return Err(DelegatedTaskStoreError::DuplicateTask {
-                task_id: task.id,
-            });
+            return Err(DelegatedTaskStoreError::DuplicateTask { task_id: task.id });
         }
         if task.delegated_authority != binding.resources.authority {
             return Err(DelegatedTaskStoreError::BindingAuthorityMismatch);
         }
-        if !task
-            .delegated_authority
-            .capabilities
-            .is_subset(&parent_authority.capabilities)
-        {
+        if !task.delegated_authority.capabilities.is_subset(&parent_authority.capabilities) {
             return Err(DelegatedTaskStoreError::AuthorityExpanded);
         }
-        binding
-            .resources
-            .validate_policy(policy)
-            .map_err(DelegatedTaskStoreError::Admission)?;
-        binding
-            .resources
-            .validate_deadline(now_ms)
-            .map_err(DelegatedTaskStoreError::Admission)?;
-
+        binding.resources.validate_policy(policy).map_err(DelegatedTaskStoreError::Admission)?;
+        binding.resources.validate_deadline(now_ms).map_err(DelegatedTaskStoreError::Admission)?;
         let id = task.id.clone();
         self.tasks.insert(
             id.clone(),
-            DelegatedWorkerTaskRecord {
-                task,
-                binding,
-                result: None,
-            },
+            DelegatedWorkerTaskRecord { task, binding, result: None },
         );
         Ok(&self.tasks[&id])
+    }
+
+    pub(crate) fn get(&self, task_id: &str) -> Option<&DelegatedWorkerTaskRecord> {
+        self.tasks.get(task_id)
+    }
+
+    pub(crate) fn child_count(&self, parent_execution: &str) -> usize {
+        self.tasks
+            .values()
+            .filter(|record| record.task.parent_execution == parent_execution)
+            .count()
     }
 
     pub(crate) fn runnable(&self) -> Vec<String> {
@@ -97,21 +92,12 @@ impl DelegatedTaskStore {
         now_ms: u64,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
         if !self.runnable().iter().any(|id| id == task_id) {
-            return Err(DelegatedTaskStoreError::NotRunnable {
-                task_id: task_id.to_owned(),
-            });
+            return Err(DelegatedTaskStoreError::NotRunnable { task_id: task_id.to_owned() });
         }
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
-        record
-            .binding
-            .resources
-            .validate_deadline(now_ms)
-            .map_err(DelegatedTaskStoreError::Admission)?;
+        let record = self.tasks.get_mut(task_id).ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+            task_id: task_id.to_owned(),
+        })?;
+        record.binding.resources.validate_deadline(now_ms).map_err(DelegatedTaskStoreError::Admission)?;
         record.task.state = WorkerTaskState::Running { execution_id };
         Ok(record)
     }
@@ -122,36 +108,21 @@ impl DelegatedTaskStore {
         execution_id: &str,
         result: DelegatedWorkerResult,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
+        let record = self.tasks.get_mut(task_id).ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+            task_id: task_id.to_owned(),
+        })?;
         match &record.task.state {
-            WorkerTaskState::Running {
-                execution_id: active,
-            } if active == execution_id => {}
+            WorkerTaskState::Running { execution_id: active } if active == execution_id => {}
             WorkerTaskState::Running { .. } => {
-                return Err(DelegatedTaskStoreError::ExecutionMismatch {
-                    task_id: task_id.to_owned(),
-                });
+                return Err(DelegatedTaskStoreError::ExecutionMismatch { task_id: task_id.to_owned() });
             }
-            _ => {
-                return Err(DelegatedTaskStoreError::InvalidState {
-                    task_id: task_id.to_owned(),
-                });
-            }
+            _ => return Err(DelegatedTaskStoreError::InvalidState { task_id: task_id.to_owned() }),
         }
-        result
-            .validate_against(&record.binding)
-            .map_err(DelegatedTaskStoreError::Admission)?;
+        result.validate_against(&record.binding).map_err(DelegatedTaskStoreError::Admission)?;
         let result_refs = result
             .evidence
             .iter()
-            .map(|reference| {
-                format!("{}@{}", reference.resource_id, reference.revision)
-            })
+            .map(|reference| format!("{}@{}", reference.resource_id, reference.revision))
             .collect();
         record.result = Some(result);
         record.task.state = WorkerTaskState::Completed {
@@ -167,16 +138,11 @@ impl DelegatedTaskStore {
         execution_id: &str,
         cause: String,
     ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
-        let record = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
-                task_id: task_id.to_owned(),
-            })?;
+        let record = self.tasks.get_mut(task_id).ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+            task_id: task_id.to_owned(),
+        })?;
         match &record.task.state {
-            WorkerTaskState::Running {
-                execution_id: active,
-            } if active == execution_id => {
+            WorkerTaskState::Running { execution_id: active } if active == execution_id => {
                 record.task.state = WorkerTaskState::Failed {
                     execution_id: execution_id.to_owned(),
                     cause,
@@ -186,9 +152,7 @@ impl DelegatedTaskStore {
             WorkerTaskState::Running { .. } => Err(DelegatedTaskStoreError::ExecutionMismatch {
                 task_id: task_id.to_owned(),
             }),
-            _ => Err(DelegatedTaskStoreError::InvalidState {
-                task_id: task_id.to_owned(),
-            }),
+            _ => Err(DelegatedTaskStoreError::InvalidState { task_id: task_id.to_owned() }),
         }
     }
 }
@@ -197,9 +161,7 @@ impl DelegatedTaskStore {
 mod tests {
     use super::*;
     use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
-    use phenix_sdk::{
-        BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate,
-    };
+    use phenix_sdk::{BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate};
     use std::collections::BTreeMap;
 
     fn authority(values: &[&str]) -> ExecutionAuthority {
