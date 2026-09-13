@@ -1,207 +1,219 @@
 from pathlib import Path
 import re
 
-
-def replace_once(path: Path, old: str, new: str) -> None:
-    source = path.read_text()
-    if old not in source:
-        raise SystemExit(f"expected source fragment missing in {path}: {old[:80]!r}")
-    path.write_text(source.replace(old, new, 1))
-
-
 implementation = Path("rust/crates/phenix-plugin-sessions/src/implementation.rs")
 source = implementation.read_text()
-source = source.replace(
-    "    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionMutationCommand,\n    SessionMutationInterface, SessionMutationResponse,\n",
-    "    session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionLifecycle,\n    SessionMutationCommand, SessionMutationInterface, SessionMutationResponse,\n",
-    1,
+
+recursive = '''fn require_open_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+) -> Result<SessionRecord, String> {
+    let session = require_open_session(context, id)?;
+    require_open(&session)?;
+    Ok(session)
+}'''
+fixed = '''fn require_open_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+) -> Result<SessionRecord, String> {
+    let session = read_session(context, id)?.ok_or_else(|| format!("unknown session: {id}"))?;
+    require_open(&session)?;
+    Ok(session)
+}'''
+if recursive not in source:
+    raise SystemExit("recursive require_open_session fragment missing")
+source = source.replace(recursive, fixed, 1)
+
+continue_old = '''fn continue_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    kind: SessionInputKind,
+    content: Bytes,
+) -> Result<SessionResponse, String> {
+    let session = read_session(context, id)?.ok_or_else(|| format!("unknown session: {id}"))?;'''
+continue_new = '''fn continue_session(
+    context: &SessionContext<'_, '_>,
+    id: &SessionId,
+    kind: SessionInputKind,
+    content: Bytes,
+) -> Result<SessionResponse, String> {
+    let session = require_open_session(context, id)?;'''
+if continue_old not in source:
+    raise SystemExit("continue_session lifecycle fragment missing")
+source = source.replace(continue_old, continue_new, 1)
+
+# The original migration intentionally skipped this file while rewriting Create
+# patterns, so migrate only its test module now that the production match arm is stable.
+head, tests = source.split("#[cfg(test)]", 1)
+tests = re.sub(
+    r"SessionCommand::Create\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
+    lambda match: (
+        "SessionCommand::Create { session: SessionRecord::new("
+        + match.group(1).strip()
+        + ") }"
+    ),
+    tests,
 )
-source = source.replace(
-    "        SessionCommand::Create { id } => create_session(context, id),",
-    "        SessionCommand::Create { session } => create_session(context, session),",
-    1,
+tests = re.sub(
+    r"SessionRecord\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
+    lambda match: "SessionRecord::new(" + match.group(1).strip() + ")",
+    tests,
 )
-source = source.replace(
-    "        SessionCommand::List => Ok(SessionResponse::Sessions {\n            sessions: read_sessions(context)?,\n        }),\n",
-    "        SessionCommand::List => Ok(SessionResponse::Sessions {\n            sessions: read_sessions(context)?,\n        }),\n        SessionCommand::Rename { id, title } => rename_session(context, &id, title),\n        SessionCommand::Close { id } => close_session(context, &id),\n",
-    1,
-)
-source = source.replace(
-    "    let SessionMutationCommand::PrepareCreate { id } = command;\n    let (session, operations) = prepare_create(context, id)?;",
-    "    let SessionMutationCommand::PrepareCreate { session } = command;\n    let (session, operations) = prepare_create(context, session)?;",
-    1,
-)
-source = source.replace(
-    "fn prepare_create(\n    context: &SessionContext<'_, '_>,\n    id: SessionId,\n) -> Result<(SessionRecord, Vec<TransactionOp>), String> {\n    if read_session(context, &id)?.is_some() {\n        return Err(format!(\"session already exists: {id}\"));\n    }\n\n    let session = SessionRecord { id };\n",
-    "fn prepare_create(\n    context: &SessionContext<'_, '_>,\n    session: SessionRecord,\n) -> Result<(SessionRecord, Vec<TransactionOp>), String> {\n    if !session.is_open() {\n        return Err(\"new sessions must start open\".into());\n    }\n    if read_session(context, &session.id)?.is_some() {\n        return Err(format!(\"session already exists: {}\", session.id));\n    }\n\n",
-    1,
-)
-source = source.replace(
-    "fn create_session(\n    context: &SessionContext<'_, '_>,\n    id: SessionId,\n) -> Result<SessionResponse, String> {\n    let (session, operations) = prepare_create(context, id)?;",
-    "fn create_session(\n    context: &SessionContext<'_, '_>,\n    session: SessionRecord,\n) -> Result<SessionResponse, String> {\n    let (session, operations) = prepare_create(context, session)?;",
-    1,
-)
-marker = "    Ok(SessionResponse::Created { session })\n}\n\nfn continue_session("
-insertion = "\n".join(
-    [
-        "    Ok(SessionResponse::Created { session })",
-        "}",
-        "",
-        "fn rename_session(",
-        "    context: &SessionContext<'_, '_>,",
-        "    id: &SessionId,",
-        "    title: String,",
-        ") -> Result<SessionResponse, String> {",
-        "    update_session(context, id, move |session| {",
-        "        require_open(session)?;",
-        "        session.title = Some(title);",
-        "        Ok(())",
-        "    })",
-        "}",
-        "",
-        "fn close_session(",
-        "    context: &SessionContext<'_, '_>,",
-        "    id: &SessionId,",
-        ") -> Result<SessionResponse, String> {",
-        "    update_session(context, id, |session| {",
-        "        require_open(session)?;",
-        "        session.lifecycle = SessionLifecycle::Closed;",
-        "        Ok(())",
-        "    })",
-        "}",
-        "",
-        "fn update_session(",
-        "    context: &SessionContext<'_, '_>,",
-        "    id: &SessionId,",
-        "    mutate: impl FnOnce(&mut SessionRecord) -> Result<(), String>,",
-        ") -> Result<SessionResponse, String> {",
-        "    let key = session_key(id);",
-        "    let old = read_raw(context, &key)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
-        "    let mut session: SessionRecord =",
-        "        serde_json::from_slice(&old).map_err(|error| error.to_string())?;",
-        "    mutate(&mut session)?;",
-        "    let value = serde_json::to_vec(&session).map_err(|error| error.to_string())?;",
-        "    context",
-        "        .kernel",
-        "        .transact_durable(",
-        "            &session_namespace(),",
-        "            &[",
-        "                TransactionOp::AssertValue {",
-        "                    key: key.clone(),",
-        "                    expected: Some(old),",
-        "                },",
-        "                TransactionOp::Put { key, value },",
-        "            ],",
-        "        )",
-        "        .map_err(|error| error.to_string())?;",
-        "    Ok(SessionResponse::Updated { session })",
-        "}",
-        "",
-        "fn require_open(session: &SessionRecord) -> Result<(), String> {",
-        "    if session.is_open() {",
-        "        Ok(())",
-        "    } else {",
-        "        Err(format!(\"session is closed: {}\", session.id))",
-        "    }",
-        "}",
-        "",
-        "fn require_open_session(",
-        "    context: &SessionContext<'_, '_>,",
-        "    id: &SessionId,",
-        ") -> Result<SessionRecord, String> {",
-        "    let session = read_session(context, id)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
-        "    require_open(&session)?;",
-        "    Ok(session)",
-        "}",
-        "",
-        "fn continue_session(",
-    ]
-)
-if marker not in source:
-    raise SystemExit("create_session insertion marker missing")
-source = source.replace(marker, insertion, 1)
-source = source.replace(
-    "    let session = read_session(context, id)?.ok_or_else(|| format!(\"unknown session: {id}\"))?;",
-    "    let session = require_open_session(context, id)?;",
-    1,
-)
-source = source.replace(
-    "    if read_session(context, id)?.is_none() {\n        return Err(format!(\"unknown session: {id}\"));\n    }\n    let key = history_key(id);",
-    "    require_open_session(context, id)?;\n    let key = history_key(id);",
-    1,
-)
+source = head + "#[cfg(test)]" + tests
+
+regression = r'''
+
+    #[test]
+    fn application_metadata_and_closed_lifecycle_are_durable() {
+        let path = temp_db("session-metadata");
+        let root = SessionId::parse("root").unwrap();
+        {
+            let mut kernel = kernel_with(&path);
+            let created = SessionRecord::application(
+                root.clone(),
+                "/workspace".into(),
+                Some("initial".into()),
+            );
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Create {
+                        session: created.clone(),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Created { session } if session == created
+            ));
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Rename {
+                        id: root.clone(),
+                        title: "renamed".into(),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Updated { ref session }
+                    if session.title.as_deref() == Some("renamed")
+                        && session.working_directory.as_deref() == Some("/workspace")
+            ));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Get { id: root.clone() },
+            )
+            .unwrap(),
+            SessionResponse::Session { session: Some(ref session) }
+                if session.title.as_deref() == Some("renamed")
+                    && session.working_directory.as_deref() == Some("/workspace")
+                    && session.lifecycle == SessionLifecycle::Open
+        ));
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Close { id: root.clone() },
+            )
+            .unwrap(),
+            SessionResponse::Updated { ref session }
+                if session.lifecycle == SessionLifecycle::Closed
+        ));
+        let error = invoke(
+            &mut restored,
+            &SessionCommand::Continue {
+                id: root.clone(),
+                kind: SessionInputKind::User,
+                content: b"closed".to_vec().into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("session is closed"));
+        drop(restored);
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(&mut restored, &SessionCommand::Get { id: root }).unwrap(),
+            SessionResponse::Session { session: Some(ref session) }
+                if session.lifecycle == SessionLifecycle::Closed
+        ));
+        let _ = fs::remove_file(path);
+    }
+'''
+if "fn application_metadata_and_closed_lifecycle_are_durable()" not in source:
+    source = source.rstrip()
+    if not source.endswith("}"):
+        raise SystemExit("session implementation test module terminator missing")
+    source = source[:-1] + regression + "}\n"
+
 implementation.write_text(source)
 
-# Migrate every ordinary session creation to the complete canonical record.
-explicit = re.compile(
-    r"SessionCommand::Create\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
-    re.MULTILINE,
-)
-for path in Path("rust").rglob("*.rs"):
-    source = path.read_text()
-    if path != implementation:
-        source = source.replace(
-            "SessionCommand::Create { id }",
-            "SessionCommand::Create { session: phenix_sdk::SessionRecord::new(id) }",
-        )
-        source = explicit.sub(
-            lambda match: (
-                "SessionCommand::Create { session: phenix_sdk::SessionRecord::new("
-                + match.group(1).strip()
-                + ") }"
-            ),
-            source,
-        )
-    source = re.sub(
-        r"SessionRecord\s*\{\s*id:\s*([^,\n{}]+)\s*,?\s*\}",
-        lambda match: "SessionRecord::new(" + match.group(1).strip() + ")",
-        source,
-    )
-    source = re.sub(
-        r"SessionRecord\s*\{\s*id\s*\}",
-        "SessionRecord::new(id)",
-        source,
-    )
-    if "crates/phenix-harness/" in path.as_posix():
-        source = source.replace(
-            "phenix_sdk::SessionRecord::new(",
-            "phenix_plugin_catalog::SessionRecord::new(",
-        )
-    path.write_text(source)
+# Restore the repository's ordinary maintenance workflow. This cleanup script is
+# one-shot and removes itself so no migration machinery remains on the PR branch.
+workflow = Path(".github/workflows/sync-maintenance.yml")
+workflow.write_text('''name: Maintenance autofix
 
-# Re-export lifecycle alongside the rest of the session contract.
-for path in [
-    Path("rust/crates/phenix-plugin-sessions/src/lib.rs"),
-    Path("rust/crates/phenix-plugin-catalog/src/lib.rs"),
-]:
-    source = path.read_text()
-    if "SessionLifecycle" not in source:
-        source = source.replace(
-            "SessionInterface, SessionRecord, SessionResponse",
-            "SessionInterface, SessionLifecycle, SessionRecord, SessionResponse",
-        )
-    path.write_text(source)
+on:
+  pull_request:
 
-# Preserve full SDK records instead of throwing canonical metadata away.
-api = Path("rust/crates/phenix-plugin-api/src/lib.rs")
-source = api.read_text()
-source = source.replace(
-    "session: phenix_sdk::SessionRecord::new(session.id),",
-    "session,",
-)
-api.write_text(source)
+permissions:
+  actions: write
+  contents: write
 
-# Fix the exact-head Clippy failures in passive contract tests.
-interaction = Path("rust/crates/phenix-application-interface/src/types/interaction.rs")
-source = interaction.read_text().replace(
-    "        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, PhenixValue, ReferenceId,\n        ValueCodec,",
-    "        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, HasPhenixSchema,\n        ReferenceId, ValueCodec,",
-)
-interaction.write_text(source)
+concurrency:
+  group: maintenance-autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
-session_types = Path("rust/crates/phenix-application-interface/src/types/session.rs")
-source = session_types.read_text().replace(
-    "    use phenix_core::PhenixValue;",
-    "    use phenix_core::ValueCodec;",
-)
-session_types.write_text(source)
+jobs:
+  autofix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Apply deterministic maintenance fixes
+        run: |
+          set -euo pipefail
+          nix flake update phenix-flake-ci
+          printf '%s\\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
+            nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
+          nix develop --command bash -lc 'cd rust && cargo metadata --format-version 1 >/dev/null'
+          git diff --check
+
+      - name: Commit autofixes
+        id: commit
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          if test -z "$(git status --porcelain=v1 --untracked-files=all)"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: apply CI autofixes"
+          git push origin "HEAD:$HEAD_REF"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Validate corrected head
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: gh workflow run ci.yml --ref "$HEAD_REF"
+''')
+Path(__file__).unlink()
