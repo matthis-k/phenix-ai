@@ -117,9 +117,6 @@ mod tests {
             graph.reachable_from(&"root"),
             BTreeSet::from(["a-child", "root", "z-child"])
         );
-        assert_eq!(
-            graph.reachable_from(&"other"),
-            BTreeSet::from(["other"])
-        );
+        assert_eq!(graph.reachable_from(&"other"), BTreeSet::from(["other"]));
     }
 }
