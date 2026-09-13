@@ -392,6 +392,46 @@ fn run(
         );
     }
 
+    let prepared: ModelDispatchResponse =
+        match context
+            .sdk
+            .dispatch
+            .invoke_projected(&ModelDispatchCommand::PrepareResolved {
+                decision: decision.clone(),
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    format!("resolved model dispatch preflight failed: {error}"),
+                )
+            }
+        };
+    let ModelDispatchResponse::Ready {
+        decision: prepared_decision,
+    } = prepared
+    else {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "resolved model dispatch preflight returned a non-ready response".into(),
+        );
+    };
+    if prepared_decision != decision {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "resolved model dispatch preflight changed the route decision".into(),
+        );
+    }
+
     let dispatch_id = format!("dispatch/{}", attribution.attempt_id);
     if let Err(error) = bind_attempt(
         context,
@@ -431,7 +471,17 @@ fn run(
                 return Err(format!("resolved model dispatch failed: {error}"));
             }
         };
-    let ModelDispatchResponse::Inference { response, .. } = dispatched;
+    let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        settle_after_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            &plan,
+            &reservation_id,
+            AttemptOutcome::Failed,
+        )?;
+        return Err("resolved model dispatch returned a non-inference response".into());
+    };
 
     let settled = conservative_actual(&plan);
     settle_budget(
