@@ -35,6 +35,7 @@ fn expand_struct(
     root_requested: bool,
     remaps: &[ExposeRemap],
 ) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let root = should_inject_root(&args, &item, root_requested)?;
     let name = item.ident.clone();
     let root_ident = root_component_ident(&name);
@@ -48,13 +49,13 @@ fn expand_struct(
         let remaps = remaps.iter().map(|remap| {
             let from = &remap.from;
             let to = &remap.to;
-            quote!(::phenix_sdk::StaticExposeRemap::new(#from, #to))
+            quote!(#sdk::StaticExposeRemap::new(#from, #to))
         });
         quote! {
             #fields_impl
 
-            impl ::phenix_sdk::StaticRootExpose for #name {
-                const EXPOSED_REMAPS: &'static [::phenix_sdk::StaticExposeRemap] =
+            impl #sdk::StaticRootExpose for #name {
+                const EXPOSED_REMAPS: &'static [#sdk::StaticExposeRemap] =
                     &[#(#remaps),*];
             }
         }
@@ -82,7 +83,7 @@ fn expand_struct(
     let root_dispatch = root.then(|| {
         quote! {
             if component == &Self::component_id() {
-                return ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_runtime(
+                return #sdk::StaticComponentRuntimeDispatch::dispatch_runtime(
                     self,
                     service,
                     input,
@@ -97,7 +98,7 @@ fn expand_struct(
 
         quote! {
             if component == &#id {
-                return ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_runtime(
+                return #sdk::StaticComponentRuntimeDispatch::dispatch_runtime(
                     &self.#field,
                     service,
                     input,
@@ -108,7 +109,7 @@ fn expand_struct(
     });
     let root_layer = root.then(|| {
         quote! {
-            if let Some(result) = ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_layer_runtime(
+            if let Some(result) = #sdk::StaticComponentRuntimeDispatch::dispatch_layer_runtime(
                 self,
                 service,
                 input,
@@ -121,7 +122,7 @@ fn expand_struct(
     let layer_arms = components.iter().map(|component| {
         let field = &component.field;
         quote! {
-            if let Some(result) = ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_layer_runtime(
+            if let Some(result) = #sdk::StaticComponentRuntimeDispatch::dispatch_layer_runtime(
                 &self.#field,
                 service,
                 input,
@@ -134,14 +135,14 @@ fn expand_struct(
     let root_listener_binding = root.then(|| {
         quote! {
             if component == &Self::component_id() {
-                let listener = <#root_ident as ::phenix_sdk::StaticComponentBehavior>::listeners()
+                let listener = <#root_ident as #sdk::StaticComponentBehavior>::listeners()
                     .into_iter()
                     .find(|listener| listener.method == method)?;
                 let state = ::std::sync::Weak::clone(&state);
                 let owner = owner.clone();
                 let component = component.clone();
                 let method = listener.method;
-                return Some(::phenix_sdk::StaticPluginInstance::<Self>::listener_handler(
+                return Some(#sdk::StaticPluginInstance::<Self>::listener_handler(
                     owner,
                     method,
                     move |envelope, host| {
@@ -151,12 +152,12 @@ fn expand_struct(
                             ))) as Box<dyn ::std::error::Error + Send + Sync>);
                         };
                         let plugin = state;
-                        let context = ::phenix_sdk::EventContext::from_event(
+                        let context = #sdk::EventContext::from_event(
                             host,
                             component.clone(),
                             envelope,
                         );
-                        ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_listener_runtime(
+                        #sdk::StaticComponentRuntimeDispatch::dispatch_listener_runtime(
                             &*plugin,
                             method,
                             &context,
@@ -176,14 +177,14 @@ fn expand_struct(
         let id = component_id(component);
         quote! {
             if component == &#id {
-                let listener = <#ty as ::phenix_sdk::StaticComponentBehavior>::listeners()
+                let listener = <#ty as #sdk::StaticComponentBehavior>::listeners()
                     .into_iter()
                     .find(|listener| listener.method == method)?;
                 let state = ::std::sync::Weak::clone(&state);
                 let owner = owner.clone();
                 let component = component.clone();
                 let method = listener.method;
-                return Some(::phenix_sdk::StaticPluginInstance::<Self>::listener_handler(
+                return Some(#sdk::StaticPluginInstance::<Self>::listener_handler(
                     owner,
                     method,
                     move |envelope, host| {
@@ -193,12 +194,12 @@ fn expand_struct(
                             ))) as Box<dyn ::std::error::Error + Send + Sync>);
                         };
                         let plugin = state;
-                        let context = ::phenix_sdk::EventContext::from_event(
+                        let context = #sdk::EventContext::from_event(
                             host,
                             component.clone(),
                             envelope,
                         );
-                        ::phenix_sdk::StaticComponentRuntimeDispatch::dispatch_listener_runtime(
+                        #sdk::StaticComponentRuntimeDispatch::dispatch_listener_runtime(
                             &plugin.#field,
                             method,
                             &context,
@@ -218,13 +219,13 @@ fn expand_struct(
 
         #exposed_fields_impl
 
-        impl ::phenix_sdk::StaticPluginComponentDispatch for #name {
+        impl #sdk::StaticPluginComponentDispatch for #name {
             fn dispatch_component(
                 &self,
-                component: &::phenix_sdk::__phenix_plugin::ComponentId,
-                service: &::phenix_sdk::__phenix_plugin::ServiceId,
+                component: &#sdk::__phenix_plugin::ComponentId,
+                service: &#sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<Vec<u8>, String> {
                 #root_dispatch
                 #(#dispatch_arms)*
@@ -233,10 +234,10 @@ fn expand_struct(
 
             fn dispatch_layer(
                 &self,
-                service: &::phenix_sdk::__phenix_plugin::ServiceId,
+                service: &#sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
-            ) -> Result<::phenix_sdk::LayerResult, String> {
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
+            ) -> Result<#sdk::LayerResult, String> {
                 #root_layer
                 #(#layer_arms)*
                 Err(format!("unsupported static plugin layer: {service}"))
@@ -244,11 +245,11 @@ fn expand_struct(
 
             fn listener_handler(
                 state: ::std::sync::Weak<Self>,
-                owner: &::phenix_sdk::__phenix_plugin::PluginId,
-                component: &::phenix_sdk::__phenix_plugin::ComponentId,
+                owner: &#sdk::__phenix_plugin::PluginId,
+                component: &#sdk::__phenix_plugin::ComponentId,
                 method: &str,
-                _generation: &::phenix_sdk::__phenix_plugin::GraphGenerationId,
-            ) -> Option<::std::sync::Arc<dyn ::phenix_sdk::__phenix_plugin::PluginListener>>
+                _generation: &#sdk::__phenix_plugin::GraphGenerationId,
+            ) -> Option<::std::sync::Arc<dyn #sdk::__phenix_plugin::PluginListener>>
             where
                 Self: Send + Sync + 'static,
             {
@@ -261,6 +262,7 @@ fn expand_struct(
 }
 
 fn expand_root_impl(args: TokenStream, item: ItemImpl) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     if !args.is_empty() {
         return Err(syn::Error::new_spanned(
             args,
@@ -288,8 +290,8 @@ fn expand_root_impl(args: TokenStream, item: ItemImpl) -> syn::Result<TokenStrea
         #[doc(hidden)]
         struct #root_ident;
 
-        impl ::phenix_sdk::StaticComponentDefinition for #root_ident {}
-        impl ::phenix_sdk::StaticComponentImports for #root_ident {}
+        impl #sdk::StaticComponentDefinition for #root_ident {}
+        impl #sdk::StaticComponentImports for #root_ident {}
     };
     append_lifecycle_runtime(expanded, &item)
 }
@@ -329,6 +331,7 @@ fn lifecycle_trait_impl(item: &ItemImpl) -> syn::Result<TokenStream> {
 }
 
 fn normalize_root_behavior(mut item: ItemImpl) -> syn::Result<(ItemImpl, Vec<TokenStream>)> {
+    let sdk = crate::sdk_crate();
     let self_ty = (*item.self_ty).clone();
     let self_ident = self_type_ident(&item)?;
     let mut markers = Vec::new();
@@ -383,9 +386,9 @@ fn normalize_root_behavior(mut item: ItemImpl) -> syn::Result<(ItemImpl, Vec<Tok
                     #[allow(non_camel_case_types)]
                     struct #marker;
 
-                    impl ::phenix_sdk::InterfaceMarker for #marker {
-                        fn interface_id() -> ::phenix_sdk::__phenix_plugin::InterfaceId {
-                            <#self_ty as ::phenix_sdk::StaticRootExpose>::root_exposed_interface(
+                    impl #sdk::InterfaceMarker for #marker {
+                        fn interface_id() -> #sdk::__phenix_plugin::InterfaceId {
+                            <#self_ty as #sdk::StaticRootExpose>::root_exposed_interface(
                                 #public_name,
                             )
                         }
@@ -526,6 +529,7 @@ fn retarget_behavior(
     root: &Ident,
     plugin: &Type,
 ) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let mut file = syn::parse2::<syn::File>(expanded)?;
     let target: Type = parse_quote!(#root);
     let mut found = false;
@@ -549,7 +553,7 @@ fn retarget_behavior(
             exports.block = parse_quote!({
                 let mut exports = (|| #direct)();
                 exports.extend(
-                    <#plugin as ::phenix_sdk::StaticRootExpose>::root_exposed_field_exports(),
+                    <#plugin as #sdk::StaticRootExpose>::root_exposed_field_exports(),
                 );
                 exports
             });
@@ -569,7 +573,7 @@ fn retarget_behavior(
             let direct = dispatch.block.clone();
             dispatch.block = parse_quote!({
                 if let Some(result) =
-                    <#plugin as ::phenix_sdk::StaticRootExpose>::dispatch_root_exposed_field(
+                    <#plugin as #sdk::StaticRootExpose>::dispatch_root_exposed_field(
                         self,
                         service,
                         input,
@@ -943,18 +947,19 @@ fn strip_synthetic_root(expanded: TokenStream, plugin: &Ident) -> syn::Result<To
 }
 
 fn component_id(component: &ComponentField) -> TokenStream {
+    let sdk = crate::sdk_crate();
     let field = &component.field;
     let ty = &component.ty;
     match &component.id {
         Some(id) => quote! {
-            ::phenix_sdk::StaticComponentDescriptor::explicit::<#ty>(
+            #sdk::StaticComponentDescriptor::explicit::<#ty>(
                 #id,
                 stringify!(#field),
             )
             .id
         },
         None => quote! {
-            ::phenix_sdk::StaticComponentDescriptor::derived::<#ty>(
+            #sdk::StaticComponentDescriptor::derived::<#ty>(
                 &Self::plugin_id(),
                 stringify!(#field),
             )
@@ -964,6 +969,7 @@ fn component_id(component: &ComponentField) -> TokenStream {
 }
 
 fn append_lifecycle_runtime(expanded: TokenStream, item: &ItemImpl) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let (start, stop) = lifecycle_methods(item)?;
     let self_ty = &item.self_ty;
 
@@ -972,9 +978,9 @@ fn append_lifecycle_runtime(expanded: TokenStream, item: &ItemImpl) -> syn::Resu
             #[doc(hidden)]
             fn __phenix_runtime_start(
                 &mut self,
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<(), String> {
-                let context = ::phenix_sdk::PluginContext::new(host, (), (), ());
+                let context = #sdk::PluginContext::new(host, (), (), ());
                 self.#method(&context).map_err(|error| error.to_string())
             }
         }
@@ -984,9 +990,9 @@ fn append_lifecycle_runtime(expanded: TokenStream, item: &ItemImpl) -> syn::Resu
             #[doc(hidden)]
             fn __phenix_runtime_stop(
                 &mut self,
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<(), String> {
-                let context = ::phenix_sdk::PluginContext::new(host, (), (), ());
+                let context = #sdk::PluginContext::new(host, (), (), ());
                 self.#method(&context).map_err(|error| error.to_string())
             }
         }
@@ -1012,15 +1018,15 @@ fn append_lifecycle_runtime(expanded: TokenStream, item: &ItemImpl) -> syn::Resu
             #[doc(hidden)]
             pub fn __phenix_into_plugin_instance(
                 self,
-            ) -> Box<dyn ::phenix_sdk::__phenix_plugin::PluginInstance>
+            ) -> Box<dyn #sdk::__phenix_plugin::PluginInstance>
             where
-                Self: ::phenix_sdk::StaticPluginComponentDispatch
-                    + ::phenix_sdk::StaticPluginResources
+                Self: #sdk::StaticPluginComponentDispatch
+                    + #sdk::StaticPluginResources
                     + Send
                     + Sync
                     + 'static,
             {
-                let instance = ::phenix_sdk::StaticPluginInstance::from_component_dispatch(self);
+                let instance = #sdk::StaticPluginInstance::from_component_dispatch(self);
                 #with_start
                 #with_stop
                 Box::new(instance)

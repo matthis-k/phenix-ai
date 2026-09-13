@@ -7,6 +7,7 @@ use syn::{
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let schema = parse_schema(args)?;
     let mut item = syn::parse2::<ItemImpl>(input)?;
     if item.trait_.is_some() || !item.generics.params.is_empty() {
@@ -65,7 +66,7 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
     let migration_descriptors = migrations.iter().map(|(from, method)| {
         let from_version = from.get();
         quote! {
-            ::phenix_sdk::StaticResourceMigration {
+            #sdk::StaticResourceMigration {
                 from_version: #from_version,
                 to_version: #schema_version,
                 method: stringify!(#method),
@@ -76,12 +77,12 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
     Ok(quote! {
         #item
 
-        impl ::phenix_sdk::StaticResourceDefinition for #self_ty {
+        impl #sdk::StaticResourceDefinition for #self_ty {
             fn schema_version() -> u32 {
                 #schema_version
             }
 
-            fn migrations() -> Vec<::phenix_sdk::StaticResourceMigration> {
+            fn migrations() -> Vec<#sdk::StaticResourceMigration> {
                 vec![#(#migration_descriptors),*]
             }
         }

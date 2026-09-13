@@ -245,6 +245,18 @@ async fn refresh(
     store: &CredentialStore,
     credential: StoredCredential,
 ) -> Result<StoredCredential, String> {
+    refresh_with(store, credential, &ReqwestHttp, unix_time()?).await
+}
+
+async fn refresh_with<C>(
+    store: &CredentialStore,
+    credential: StoredCredential,
+    http_client: &C,
+    now: u64,
+) -> Result<StoredCredential, String>
+where
+    C: for<'c> AsyncHttpClient<'c>,
+{
     let StoredCredential::OAuth {
         refresh_token,
         id_token,
@@ -257,7 +269,7 @@ async fn refresh(
     let client = codex_client("http://localhost/oauth/callback")?;
     let response = client
         .exchange_refresh_token(&RefreshToken::new(refresh_token.expose_secret().to_owned()))
-        .request_async(&ReqwestHttp)
+        .request_async(http_client)
         .await
         .map_err(|error| format!("OAuth token refresh failed: {error}"))?;
     let refreshed_access = response.access_token().secret().to_owned();
@@ -273,7 +285,7 @@ async fn refresh(
     let account_id = account_id_from_token(&refreshed_id)
         .or_else(|| account_id_from_token(&refreshed_access))
         .unwrap_or(account_id);
-    let expires_at = token_expiry(&refreshed_access).unwrap_or(unix_time()?.saturating_add(3600));
+    let expires_at = token_expiry(&refreshed_access).unwrap_or(now.saturating_add(3600));
     let refreshed = StoredCredential::OAuth {
         access_token: SecretString::from(refreshed_access),
         refresh_token: SecretString::from(refreshed_refresh),
@@ -286,6 +298,10 @@ async fn refresh(
 }
 
 fn credential_from_tokens(tokens: CodexToken) -> Result<StoredCredential, String> {
+    credential_from_tokens_at(tokens, unix_time()?)
+}
+
+fn credential_from_tokens_at(tokens: CodexToken, now: u64) -> Result<StoredCredential, String> {
     let access_token = tokens.access_token().secret().to_owned();
     let refresh_token = tokens
         .refresh_token()
@@ -295,7 +311,7 @@ fn credential_from_tokens(tokens: CodexToken) -> Result<StoredCredential, String
     let account_id = account_id_from_token(&id_token)
         .or_else(|| account_id_from_token(&access_token))
         .ok_or_else(|| "OAuth token does not identify a ChatGPT account".to_owned())?;
-    let expires_at = token_expiry(&access_token).unwrap_or(unix_time()?.saturating_add(3600));
+    let expires_at = token_expiry(&access_token).unwrap_or(now.saturating_add(3600));
     Ok(StoredCredential::OAuth {
         access_token: SecretString::from(access_token),
         refresh_token: SecretString::from(refresh_token),
@@ -413,15 +429,10 @@ impl<'c> AsyncHttpClient<'c> for ReqwestHttp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use oauth2::basic::BasicTokenType;
+    use oauth2::AccessToken;
 
-    fn expiry(delta_secs: i64) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .saturating_add_signed(delta_secs)
-    }
+    const NOW: u64 = 1_700_000_000;
 
     /// Build a deterministic HS256 JWT with the given claims (signature is not
     /// relevant to extraction, but the token must be well formed).
@@ -435,11 +446,45 @@ mod tests {
         .expect("fixture token encodes")
     }
 
+    fn codex_token(access: &str, refresh: Option<&str>, id: Option<&str>) -> CodexToken {
+        let extra = CodexTokenExtras {
+            id_token: id.map(str::to_owned),
+            ..CodexTokenExtras::default()
+        };
+        let mut token = CodexToken::new(
+            AccessToken::new(access.to_owned()),
+            BasicTokenType::Bearer,
+            extra,
+        );
+        token.set_refresh_token(refresh.map(|value| RefreshToken::new(value.to_owned())));
+        token
+    }
+
+    fn oauth_credential(credential: &StoredCredential) -> (String, String, String, String, u64) {
+        let StoredCredential::OAuth {
+            access_token,
+            refresh_token,
+            id_token,
+            account_id,
+            expires_at,
+        } = credential
+        else {
+            panic!("expected an OAuth credential");
+        };
+        (
+            access_token.expose_secret().to_owned(),
+            refresh_token.expose_secret().to_owned(),
+            id_token.expose_secret().to_owned(),
+            account_id.clone(),
+            *expires_at,
+        )
+    }
+
     #[test]
     fn extraction_reads_account_id_from_id_and_access_tokens() {
         let id_token = token(serde_json::json!({
             "chatgpt_account_id": "account-123",
-            "exp": expiry(60 * 60),
+            "exp": NOW + 60 * 60,
         }));
         assert_eq!(
             account_id_from_token(&id_token).as_deref(),
@@ -448,13 +493,13 @@ mod tests {
 
         let access_token = token(serde_json::json!({
             "https://api.openai.com/auth": { "chatgpt_account_id": "account-456" },
-            "exp": expiry(60 * 60),
+            "exp": NOW + 60 * 60,
         }));
         assert_eq!(
             account_id_from_token(&access_token).as_deref(),
             Some("account-456")
         );
-        assert_eq!(token_expiry(&access_token), Some(expiry(60 * 60)));
+        assert_eq!(token_expiry(&access_token), Some(NOW + 60 * 60));
     }
 
     #[test]
@@ -463,7 +508,7 @@ mod tests {
             "iss": "https://auth.openai.com",
             "aud": "https://api.openai.com",
             "chatgpt_account_id": "account-aud",
-            "exp": expiry(60 * 60),
+            "exp": NOW + 60 * 60,
         }));
         assert_eq!(
             account_id_from_token(&token).as_deref(),
@@ -475,13 +520,13 @@ mod tests {
     fn extraction_does_not_reject_expired_claims() {
         let expired = token(serde_json::json!({
             "chatgpt_account_id": "account-expired",
-            "exp": expiry(-60 * 60),
+            "exp": NOW - 60 * 60,
         }));
         assert_eq!(
             account_id_from_token(&expired).as_deref(),
             Some("account-expired")
         );
-        assert_eq!(token_expiry(&expired), Some(expiry(-60 * 60)));
+        assert_eq!(token_expiry(&expired), Some(NOW - 60 * 60));
     }
 
     #[test]
@@ -495,7 +540,237 @@ mod tests {
 
     #[test]
     fn missing_account_id_reads_as_none() {
-        let token = token(serde_json::json!({ "exp": expiry(60 * 60) }));
+        let token = token(serde_json::json!({ "exp": NOW + 60 * 60 }));
         assert_eq!(account_id_from_token(&token), None);
+    }
+
+    #[test]
+    fn credential_creation_prefers_id_token_account_id() {
+        let id_token = token(serde_json::json!({
+            "chatgpt_account_id": "id-account",
+            "exp": NOW + 60 * 60,
+        }));
+        let access_token = token(serde_json::json!({
+            "chatgpt_account_id": "access-account",
+            "exp": NOW + 30 * 60,
+        }));
+        let credential =
+            credential_from_tokens_at(codex_token(&access_token, None, Some(&id_token)), NOW)
+                .unwrap();
+        let (_, _, _, account_id, expires_at) = oauth_credential(&credential);
+        assert_eq!(account_id, "id-account");
+        assert_eq!(expires_at, NOW + 30 * 60);
+    }
+
+    #[test]
+    fn credential_creation_falls_back_to_access_token_account_id() {
+        let id_token = token(serde_json::json!({ "exp": NOW + 60 * 60 }));
+        let access_token = token(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "access-account" },
+            "exp": NOW + 30 * 60,
+        }));
+        let credential =
+            credential_from_tokens_at(codex_token(&access_token, None, Some(&id_token)), NOW)
+                .unwrap();
+        let (_, _, _, account_id, _) = oauth_credential(&credential);
+        assert_eq!(account_id, "access-account");
+    }
+
+    #[test]
+    fn credential_creation_selects_access_expiry_even_when_expired_or_audience_bearing() {
+        let id_token = token(serde_json::json!({
+            "chatgpt_account_id": "id-account",
+            "exp": NOW + 60 * 60,
+        }));
+        let access_token = token(serde_json::json!({
+            "aud": "https://api.openai.com",
+            "chatgpt_account_id": "access-account",
+            "exp": NOW - 60 * 60,
+        }));
+        let credential =
+            credential_from_tokens_at(codex_token(&access_token, None, Some(&id_token)), NOW)
+                .unwrap();
+        let (_, _, _, account_id, expires_at) = oauth_credential(&credential);
+        assert_eq!(account_id, "id-account");
+        assert_eq!(expires_at, NOW - 60 * 60);
+    }
+
+    #[test]
+    fn credential_creation_rejects_missing_account_id() {
+        let id_token = token(serde_json::json!({ "exp": NOW + 60 * 60 }));
+        let access_token = token(serde_json::json!({ "exp": NOW + 30 * 60 }));
+        let error =
+            credential_from_tokens_at(codex_token(&access_token, None, Some(&id_token)), NOW)
+                .unwrap_err();
+        assert_eq!(error, "OAuth token does not identify a ChatGPT account");
+    }
+
+    #[test]
+    fn credential_creation_uses_one_hour_fallback_for_missing_or_invalid_expiry() {
+        let id_token = token(serde_json::json!({ "chatgpt_account_id": "id-account" }));
+        let access_without_exp = token(serde_json::json!({
+            "chatgpt_account_id": "access-account",
+        }));
+        let credential =
+            credential_from_tokens_at(codex_token(&access_without_exp, None, Some(&id_token)), NOW)
+                .unwrap();
+        let (_, _, _, _, expires_at) = oauth_credential(&credential);
+        assert_eq!(expires_at, NOW + 3600);
+
+        let malformed_expiry = token(serde_json::json!({
+            "chatgpt_account_id": "access-account",
+            "exp": "not-a-number",
+        }));
+        let credential =
+            credential_from_tokens_at(codex_token(&malformed_expiry, None, Some(&id_token)), NOW)
+                .unwrap();
+        let (_, _, _, _, expires_at) = oauth_credential(&credential);
+        assert_eq!(expires_at, NOW + 3600);
+    }
+
+    /// A deterministic fake token endpoint. `body` is the raw JSON response the
+    /// endpoint returns; it is cloned so the same closure answers every call.
+    fn fake_token_endpoint(body: String) -> impl for<'c> AsyncHttpClient<'c> {
+        move |_request: HttpRequest| {
+            let body = body.clone();
+            async move { Ok::<_, std::io::Error>(HttpResponse::new(body.into_bytes())) }
+        }
+    }
+
+    fn token_response(access: &str, refresh: Option<&str>, id: Option<&str>) -> String {
+        let mut response = serde_json::Map::new();
+        response.insert("access_token".to_owned(), access.into());
+        response.insert("token_type".to_owned(), "Bearer".into());
+        if let Some(refresh) = refresh {
+            response.insert("refresh_token".to_owned(), refresh.into());
+        }
+        if let Some(id) = id {
+            response.insert("id_token".to_owned(), id.into());
+        }
+        serde_json::Value::Object(response).to_string()
+    }
+
+    fn temp_store() -> CredentialStore {
+        CredentialStore {
+            path: std::env::temp_dir().join(format!(
+                "phenix-oauth-refresh-test-{}-{}.json",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            )),
+        }
+    }
+
+    fn stored_oauth(
+        access: &str,
+        refresh: &str,
+        id: &str,
+        account_id: &str,
+        expires_at: u64,
+    ) -> StoredCredential {
+        StoredCredential::OAuth {
+            access_token: SecretString::from(access.to_owned()),
+            refresh_token: SecretString::from(refresh.to_owned()),
+            id_token: SecretString::from(id.to_owned()),
+            account_id: account_id.to_owned(),
+            expires_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_replaces_tokens_and_selects_expiry() {
+        let store = temp_store();
+        let refreshed_access = token(serde_json::json!({
+            "chatgpt_account_id": "refreshed-account",
+            "exp": NOW + 1200,
+        }));
+        let refreshed_id = token(serde_json::json!({
+            "chatgpt_account_id": "refreshed-account",
+            "exp": NOW + 2400,
+        }));
+        let client = fake_token_endpoint(token_response(
+            &refreshed_access,
+            Some("new-refresh"),
+            Some(&refreshed_id),
+        ));
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "old-account", NOW);
+        let refreshed = refresh_with(&store, credential, &client, NOW)
+            .await
+            .unwrap();
+        let (access, refresh, id, account_id, expires_at) = oauth_credential(&refreshed);
+        assert_eq!(access, refreshed_access);
+        assert_eq!(refresh, "new-refresh");
+        assert_eq!(id, refreshed_id);
+        assert_eq!(account_id, "refreshed-account");
+        assert_eq!(expires_at, NOW + 1200);
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[tokio::test]
+    async fn refresh_preserves_omitted_refresh_and_id_tokens() {
+        let store = temp_store();
+        let refreshed_access = token(serde_json::json!({
+            "chatgpt_account_id": "account",
+            "exp": NOW + 1200,
+        }));
+        let client = fake_token_endpoint(token_response(&refreshed_access, None, None));
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "account", NOW);
+        let refreshed = refresh_with(&store, credential, &client, NOW)
+            .await
+            .unwrap();
+        let (_, refresh, id, _, _) = oauth_credential(&refreshed);
+        assert_eq!(refresh, "old-refresh");
+        assert_eq!(id, "old-id");
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[tokio::test]
+    async fn refresh_selects_access_account_id_when_id_token_lacks_one() {
+        let store = temp_store();
+        let refreshed_access = token(serde_json::json!({
+            "chatgpt_account_id": "access-account",
+            "exp": NOW + 1200,
+        }));
+        let refreshed_id = token(serde_json::json!({ "exp": NOW + 2400 }));
+        let client =
+            fake_token_endpoint(token_response(&refreshed_access, None, Some(&refreshed_id)));
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "old-account", NOW);
+        let refreshed = refresh_with(&store, credential, &client, NOW)
+            .await
+            .unwrap();
+        let (_, _, _, account_id, _) = oauth_credential(&refreshed);
+        assert_eq!(account_id, "access-account");
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[tokio::test]
+    async fn refresh_uses_one_hour_fallback_for_missing_expiry() {
+        let store = temp_store();
+        let refreshed_access = token(serde_json::json!({
+            "chatgpt_account_id": "account",
+        }));
+        let client = fake_token_endpoint(token_response(&refreshed_access, None, None));
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "account", NOW);
+        let refreshed = refresh_with(&store, credential, &client, NOW)
+            .await
+            .unwrap();
+        let (_, _, _, _, expires_at) = oauth_credential(&refreshed);
+        assert_eq!(expires_at, NOW + 3600);
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[tokio::test]
+    async fn refresh_failure_does_not_save_a_partial_credential() {
+        let store = temp_store();
+        let failing: &'static str = "fixture token endpoint failure";
+        let client = move |_request: HttpRequest| async move {
+            Err::<HttpResponse, std::io::Error>(std::io::Error::other(failing))
+        };
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "account", NOW);
+        let result = refresh_with(&store, credential, &client, NOW).await;
+        assert!(result.is_err());
+        assert!(!store.path.exists());
     }
 }

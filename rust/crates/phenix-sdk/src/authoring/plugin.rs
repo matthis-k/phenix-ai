@@ -20,10 +20,11 @@ use std::{
 pub mod __phenix_plugin {
     pub use phenix_core::{
         Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-        ComponentInvocationError, ComponentManifest, EventBus, EventHandler, EventSubscription,
-        GraphGenerationId, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
-        PluginExecution, PluginHost, PluginId, PluginInstance, PluginListener, PluginManifest,
-        ServiceContribution, ServiceId, ServiceRole,
+        ComponentInvocationError, ComponentManifest, ContractId, EventBus, EventHandler,
+        EventSubscription, Exact, GraphGenerationId, InterfaceId, InterfaceSchema, Key,
+        PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+        PluginId, PluginInstance, PluginListener, PluginManifest, Project, ServiceContribution,
+        ServiceId, ServiceRole, TypeKind, ValueCodec, ValueError,
     };
 }
 

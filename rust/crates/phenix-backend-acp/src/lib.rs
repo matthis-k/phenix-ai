@@ -434,6 +434,9 @@ fn receive_worker_messages(
                 }
             }
             Ok(WorkerMessage::ToolCall(request)) => {
+                if request.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
                 let result = if let Some(error) = host_error.as_ref() {
                     Err(BackendError::Protocol(format!(
                         "backend host already failed before tool invocation: {error}"
@@ -441,7 +444,9 @@ fn receive_worker_messages(
                 } else {
                     host.invoke_tool(request.invocation)
                 };
-                let _ = request.response.send(result);
+                if !request.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = request.response.send(result);
+                }
             }
             Ok(WorkerMessage::Done(result)) => return host_error.map_or(result, Err),
             Err(error) => {
@@ -590,7 +595,23 @@ async fn run_turn(
         )
         .on_receive_request(
             async move |request: MessageMcpRequest, responder, _connection| {
-                responder.respond(message_bridge.message(request)?)
+                if ToolBridge::is_tool_call(&request) {
+                    let bridge = message_bridge.clone();
+                    std::thread::Builder::new()
+                        .name("phenix-acp-mcp-tool".to_owned())
+                        .spawn(move || match bridge.message(request) {
+                            Ok(response) => {
+                                let _ = responder.respond(response);
+                            }
+                            Err(error) => {
+                                let _ = responder.respond_with_error(error);
+                            }
+                        })
+                        .map_err(agent_client_protocol::Error::into_internal_error)?;
+                    Ok(())
+                } else {
+                    responder.respond(message_bridge.message(request)?)
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -709,7 +730,23 @@ async fn run_persistent_session(
         )
         .on_receive_request(
             async move |request: MessageMcpRequest, responder, _connection| {
-                responder.respond(message_bridge.message(request)?)
+                if ToolBridge::is_tool_call(&request) {
+                    let bridge = message_bridge.clone();
+                    std::thread::Builder::new()
+                        .name("phenix-acp-mcp-tool".to_owned())
+                        .spawn(move || match bridge.message(request) {
+                            Ok(response) => {
+                                let _ = responder.respond(response);
+                            }
+                            Err(error) => {
+                                let _ = responder.respond_with_error(error);
+                            }
+                        })
+                        .map_err(agent_client_protocol::Error::into_internal_error)?;
+                    Ok(())
+                } else {
+                    responder.respond(message_bridge.message(request)?)
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
