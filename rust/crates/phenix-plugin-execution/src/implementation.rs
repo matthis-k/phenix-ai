@@ -8,7 +8,7 @@ use phenix_sdk::{
     ExecutionRecord, ExecutionResponse, ExecutionState, WorkerTaskRecord, WorkerTaskState,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 const EXECUTION_PLUGIN: &str = "phenix.execution";
 const EXECUTION_NAMESPACE: &str = "phenix.execution.state";
@@ -527,6 +527,7 @@ mod tests {
         ResolvedHarnessActivation,
     };
     use std::{
+        collections::BTreeSet,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
