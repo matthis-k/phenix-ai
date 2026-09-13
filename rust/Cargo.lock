@@ -2083,6 +2083,7 @@ dependencies = [
 name = "phenix-plugin-planning"
 version = "0.1.0"
 dependencies = [
+ "petgraph",
  "phenix-core",
  "phenix-sdk",
  "serde",
