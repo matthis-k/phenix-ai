@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod association_store;
 mod component;
 mod error;
 mod freshness;
