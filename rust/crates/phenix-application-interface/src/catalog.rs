@@ -49,6 +49,8 @@ operations! {
     InvokeCapability: "capability-invoke", "capabilities", CapabilityInvokeInput => CapabilityInvokeResult;
     AddClientTool: "client-tool-add", "client-tools", ClientToolAddInput => ClientToolAdmission;
     RemoveClientTool: "client-tool-remove", "client-tools", ClientToolRemoveInput => Acknowledged;
+    SetInteractionHandlers: "interaction-handlers-set", "interaction", SetInteractionHandlersInput => Acknowledged;
+    DecideReview: "review-decide", "review", ReviewDecisionInput => ReviewRecord;
     GetExecutionTree: "execution-tree", "inspection", SessionInput => ExecutionTree;
     GetProvenance: "execution-provenance", "inspection", ExecutionInput => Provenance;
     GetDiagnostics: "diagnostics", "diagnostics", Empty => Diagnostics;
@@ -89,8 +91,16 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         StopReason,
         ExecutionState,
         ExecutionInfo,
+        SessionProjection,
+        SessionProjectionState,
         SessionChange,
         ExecutionChange,
+        InteractionHandlers,
+        ReviewHunk,
+        ReviewFile,
+        ReviewState,
+        ReviewRecord,
+        ReviewDecision,
         ObservablePathSegment,
         ObservablePath,
         ObservableAddress,
@@ -134,6 +144,8 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         ("sdk", vec!["discovery"]),
         ("capabilities", vec!["discovery"]),
         ("client-tools", vec!["sessions", "capabilities"]),
+        ("interaction", vec!["capabilities"]),
+        ("review", vec!["sessions"]),
     ] {
         descriptor.capabilities.insert(
             capability(name),
