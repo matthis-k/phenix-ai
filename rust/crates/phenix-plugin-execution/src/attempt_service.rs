@@ -1,6 +1,6 @@
 use phenix_core::{
-    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance, ResourceNamespace,
-    ServiceId, TransactionOp,
+    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance,
+    ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,

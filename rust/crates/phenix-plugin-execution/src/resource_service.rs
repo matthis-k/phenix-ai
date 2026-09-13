@@ -1,7 +1,7 @@
 use crate::resource_transaction::ExecutionResourceState;
 use phenix_core::{
-    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance, ResourceNamespace,
-    ServiceId, TransactionOp,
+    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance,
+    ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     execution_resource_service, ExecutionResourceCommand, ExecutionResourceInterface,
