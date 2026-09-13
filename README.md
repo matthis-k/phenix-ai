@@ -114,6 +114,15 @@ Authentication and provider selection are plugin and Harness concerns. They must
 
 ## Development
 
+For a fresh clone with repository hooks enabled immediately:
+
+```sh
+git clone -c core.hooksPath=.githooks https://github.com/matthis-k/phenix-conductor
+cd phenix-conductor
+```
+
+The tracked hook invokes the repository's Nix maintenance app. It does not install hook files or configuration beneath `.git`. A normal clone also works; `nix develop` activates the same hook path for that repository and shell without mutating Git metadata.
+
 ```sh
 nix develop
 maintenance fix
