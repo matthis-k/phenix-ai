@@ -52,16 +52,9 @@ impl StoreBindingId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("store binding identity must not be empty")]
 pub struct StoreBindingIdParseError;
-
-impl Display for StoreBindingIdParseError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("store binding identity must not be empty")
-    }
-}
-
-impl Error for StoreBindingIdParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreBinding {
