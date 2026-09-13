@@ -57,6 +57,9 @@ impl PluginInstance for FixtureProvider {
                 input,
             )
             .map_err(|error| error.to_string())?;
+        if request.input.as_ref() == b"provider-fails" {
+            return Err("fixture provider failed after invocation".into());
+        }
         context
             .kernel
             .encode_value(&ModelInferenceResponse {
@@ -440,6 +443,32 @@ mod pre_dispatch_cleanup {
         assert_eq!(remaining.attempts, 4);
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn missing_authentication_fails_preflight_without_charging_provider_work() {
+        let path = temp_db("preflight-auth");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, false);
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(1_000),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("authentication required"));
+        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was recorded");
+        assert_eq!(attempt.phase, StepAttemptPhase::Settled);
+        assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.fresh_input_tokens, 4_000);
+        assert_eq!(remaining.output_tokens, 1_000);
+        assert_eq!(remaining.cost_microunits, Some(10_000));
+        assert_eq!(remaining.attempts, 4);
+        let _ = fs::remove_file(path);
+    }
 }
 
 mod successful_lifecycle {
@@ -486,20 +515,20 @@ mod failed_dispatch {
     use super::*;
 
     #[test]
-    fn provider_failure_settles_reserved_maximum_and_marks_attempt_failed() {
+    fn provider_failure_after_preflight_settles_reserved_maximum() {
         let path = temp_db("dispatch-failure");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, false);
+        setup_routing(&mut kernel, true, true);
+        let mut request = request(1_000);
+        request.input = b"provider-fails".to_vec().into();
         let error = invoke::<_, StepRunnerResponse>(
             &mut kernel,
             step_runner_service(),
-            &StepRunnerCommand::Run {
-                request: request(1_000),
-            },
+            &StepRunnerCommand::Run { request },
         )
         .unwrap_err();
-        assert!(error.contains("authentication required"));
+        assert!(error.contains("fixture provider failed after invocation"));
         let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("failed attempt exists");
         assert_eq!(attempt.phase, StepAttemptPhase::Settled);
         assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
@@ -549,7 +578,7 @@ mod retry_budget {
         .unwrap_err();
         assert!(error.contains("exceeds attempt limit"));
         assert!(lookup_attempt(&mut kernel, "attempt-3").is_none());
-        assert_eq!(remaining(&mut kernel).attempts, 2);
+        assert_eq!(remaining(&mut kernel).attempts, 4);
         let _ = fs::remove_file(path);
     }
 }
