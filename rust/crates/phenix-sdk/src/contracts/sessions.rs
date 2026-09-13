@@ -156,16 +156,59 @@ pub struct SessionHistoryDraft {
     pub instruction_revision: String,
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycle {
+    #[default]
+    Open,
+    Closed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRecord {
     pub id: SessionId,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub lifecycle: SessionLifecycle,
+}
+
+impl SessionRecord {
+    #[must_use]
+    pub fn new(id: SessionId) -> Self {
+        Self {
+            id,
+            working_directory: None,
+            title: None,
+            lifecycle: SessionLifecycle::Open,
+        }
+    }
+
+    #[must_use]
+    pub fn application(id: SessionId, working_directory: String, title: Option<String>) -> Self {
+        Self {
+            id,
+            working_directory: Some(working_directory),
+            title,
+            lifecycle: SessionLifecycle::Open,
+        }
+    }
+
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.lifecycle == SessionLifecycle::Open
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionMutationCommand {
-    PrepareCreate { id: SessionId },
+    PrepareCreate { session: SessionRecord },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -181,12 +224,19 @@ pub enum SessionMutationResponse {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionCommand {
     Create {
-        id: SessionId,
+        session: SessionRecord,
     },
     Get {
         id: SessionId,
     },
     List,
+    Rename {
+        id: SessionId,
+        title: String,
+    },
+    Close {
+        id: SessionId,
+    },
     Continue {
         id: SessionId,
         kind: SessionInputKind,
@@ -221,6 +271,9 @@ pub enum SessionResponse {
     },
     Sessions {
         sessions: Vec<SessionRecord>,
+    },
+    Updated {
+        session: SessionRecord,
     },
     Continued {
         session: SessionRecord,
