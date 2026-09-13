@@ -26,6 +26,8 @@ struct RuntimeRoutingProfile {
     id: RoutingProfileId,
     default_target: RuntimeModelTarget,
     #[serde(default)]
+    fallback_targets: Vec<RuntimeModelTarget>,
+    #[serde(default)]
     callable_targets: BTreeMap<CallableId, RuntimeModelTarget>,
 }
 
@@ -85,6 +87,11 @@ impl RuntimeRoutingProfile {
         RoutingProfile {
             id: self.id,
             default_target: self.default_target.into_model_target(),
+            fallback_targets: self
+                .fallback_targets
+                .into_iter()
+                .map(RuntimeModelTarget::into_model_target)
+                .collect(),
             callable_targets: self
                 .callable_targets
                 .into_iter()
