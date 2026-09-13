@@ -2,7 +2,7 @@
   description = "Phenix core, conductor, plugins, clients, and supported harness";
 
   inputs = {
-    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/fa8008e193d3b6d6d52703979bdf63c9eaa1a4da";
+    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/abe3c9f6e0c68e0573db9f66c020fdede851165a";
     phenix-pins = {
       url = "github:matthis-k/phenix-pins";
       inputs.phenix-flake-ci.follows = "phenix-flake-ci";

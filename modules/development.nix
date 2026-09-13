@@ -234,7 +234,7 @@
           };
 
           phenix-lua-binding = mkNixCheckSuite {
-            check = "phenix-product-lua-smoke";
+            check = "phenix-binding-lua-observable-callback";
             name = "Phenix Lua binding product fixture";
           };
         };
@@ -246,6 +246,17 @@
         ci.github = {
           enable = true;
           outputName = "phenix-maintenance";
+          nixCache = {
+            enable = true;
+            jobs = [
+              "integration-plugin-packaging"
+              "product-phenix-lua-binding"
+              "product-phenix-runtime"
+            ];
+            primaryKey = "phenix-nix-\${{ runner.os }}-\${{ github.job }}-\${{ hashFiles('flake.lock', 'rust/Cargo.lock', 'modules/**/*.nix') }}";
+            restorePrefixesFirstMatch = [ "phenix-nix-\${{ runner.os }}-\${{ github.job }}-" ];
+            gcMaxStoreSizeLinux = "2G";
+          };
         };
         gitHooks = {
           enable = true;

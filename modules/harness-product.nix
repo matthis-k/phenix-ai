@@ -79,12 +79,6 @@
 
             touch "$out"
           '';
-
-      phenixProductLuaSmoke = pkgs.runCommand "phenix-product-lua-smoke" { } ''
-        # Exercise the host-linked module through its packaged ACP fixture.
-        test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
-        touch "$out"
-      '';
     in
     {
       packages = {
@@ -92,9 +86,6 @@
         phenix-harness-resources = phenixHarnessResources;
       };
 
-      checks = {
-        phenix-product-runtime-smoke = phenixProductRuntimeSmoke;
-        phenix-product-lua-smoke = phenixProductLuaSmoke;
-      };
+      checks.phenix-product-runtime-smoke = phenixProductRuntimeSmoke;
     };
 }

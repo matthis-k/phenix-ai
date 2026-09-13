@@ -33,6 +33,15 @@ jobs:
           nix flake update phenix-flake-ci
           printf '%s\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
             nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
+
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          nix eval --raw \
+            ".#packages.$system.phenix-maintenance.phenixMaintenance.ci.github.workflow" \
+            > .github/workflows/ci.yml
+          hooks="$(nix build --no-link --print-out-paths \
+            ".#packages.$system.phenix-maintenance-git-hooks")"
+          cp "$hooks/.githooks/pre-commit" .githooks/pre-commit
+
           nix develop --command bash -lc 'cd rust && cargo metadata --format-version 1 >/dev/null'
           git diff --check
 
