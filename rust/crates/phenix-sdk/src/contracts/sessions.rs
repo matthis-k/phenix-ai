@@ -157,7 +157,15 @@ pub struct SessionHistoryDraft {
 }
 
 #[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SessionLifecycle {
