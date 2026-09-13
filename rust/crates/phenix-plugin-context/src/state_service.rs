@@ -67,7 +67,10 @@ impl ContextStateService {
                         state
                             .apply_admission(result.clone())
                             .map_err(|error| format!("context projection update failed: {error:?}"))?;
-                        Ok(ContextResponse::Admission { result })
+                        Ok(ContextResponse::Admission {
+                            result,
+                            projection: state.revision.clone(),
+                        })
                     })
             }
             ContextCommand::PrepareCompaction { proposal } => {
