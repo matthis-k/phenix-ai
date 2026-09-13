@@ -7,6 +7,7 @@ mod component;
 mod configuration;
 #[cfg(test)]
 mod configuration_regression;
+mod delegated_task_state;
 #[cfg(test)]
 mod generation_regression;
 mod implementation;
