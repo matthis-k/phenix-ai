@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, Bytes, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
-    PhenixValue, PluginId, Project, ResolvedHarness, RoutingProfileId,
+    PhenixValue, PluginId, Project, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
