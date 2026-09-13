@@ -3,9 +3,10 @@ use phenix_sdk::{
     ContextAdmissionResult, ContextProjectionForm, ContextRetention, ProjectionRevision,
     RetentionTransition,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ContextProjectionState {
     pub execution_id: String,
     pub revision: ProjectionRevision,
