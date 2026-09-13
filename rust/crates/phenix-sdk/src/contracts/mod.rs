@@ -9,6 +9,7 @@ pub mod models;
 pub mod options;
 pub mod planning;
 pub mod sessions;
+pub mod usage;
 pub mod workspace;
 
 pub use context::*;
@@ -22,4 +23,5 @@ pub use models::*;
 pub use options::*;
 pub use planning::*;
 pub use sessions::*;
+pub use usage::*;
 pub use workspace::*;
