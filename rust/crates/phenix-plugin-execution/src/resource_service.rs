@@ -1,7 +1,6 @@
 use crate::resource_transaction::ExecutionResourceState;
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
+    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance, ResourceNamespace,
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
@@ -9,11 +8,7 @@ use phenix_sdk::{
     ExecutionResourceResponse,
 };
 
-const EXECUTION_RESOURCE_PLUGIN: &str = "phenix.execution";
 const EXECUTION_RESOURCE_NAMESPACE: &str = "phenix.execution.resources.state";
-const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
-const PERSISTENCE_READ: &str = "kernel.persistence.read";
-const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const RESOURCE_STATE_KEY: &str = "state";
 const MAX_RESOURCE_STATE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -25,32 +20,6 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> ResourceContex
 
 pub(crate) fn execution_resource_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(EXECUTION_RESOURCE_NAMESPACE).expect("static namespace is valid")
-}
-
-#[must_use]
-pub(crate) fn resource_manifest() -> PluginManifest {
-    PluginManifest {
-        id: PluginId::parse(EXECUTION_RESOURCE_PLUGIN).expect("static plugin id is valid"),
-        version: 1,
-        execution: PluginExecution::Embedded,
-        dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: phenix_core::ServiceRole::Terminal,
-            service: execution_resource_service(),
-            priority: 100,
-            required_authority: Authority::default(),
-        }],
-        resource_namespaces: vec![execution_resource_namespace()],
-        maximum_authority: persistence_authority(),
-    }
-}
-
-pub(crate) fn persistence_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
-    ])
 }
 
 #[must_use]

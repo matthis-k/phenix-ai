@@ -8,6 +8,7 @@ pub use phenix_sdk::{
 };
 
 mod component;
+#[allow(clippy::too_many_arguments)]
 mod implementation_state;
 mod projection_state;
 mod prompt;
