@@ -36,6 +36,7 @@ members = [
   "crates/phenix-plugin-api",
   "crates/phenix-plugin-sessions",
   "crates/phenix-plugin-session-tree",
+  "crates/phenix-plugin-step-runner",
   "crates/phenix-plugin-workspace",
   "crates/phenix-plugin-catalog",
   "crates/phenix-provider-sdk",
