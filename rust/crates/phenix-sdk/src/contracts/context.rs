@@ -151,6 +151,7 @@ pub enum ContextResponse {
     },
     Admission {
         result: ContextAdmissionResult,
+        projection: ProjectionRevision,
     },
     CompactionPrepared {
         checkpoint_id: String,
