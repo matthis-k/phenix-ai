@@ -8,7 +8,10 @@ use phenix_core::{
     ModelToolDescriptor, PhenixValue, PluginId, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::{BTreeMap, BTreeSet}};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 pub const MODEL_ROUTING_SERVICE: &str = "phenix.models.routing@1";
 
