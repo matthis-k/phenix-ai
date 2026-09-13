@@ -245,7 +245,15 @@ in
       fixtureConductorBase = pkgs.writeShellScriptBin "phenix-conductor" ''
         exit 0
       '';
-      mkFixturePhenix = args: mkPhenixWithBase (args // { inherit pkgs; base = fixtureBase; });
+      mkFixturePhenix =
+        args:
+        mkPhenixWithBase (
+          args
+          // {
+            inherit pkgs;
+            base = fixtureBase;
+          }
+        );
 
       defaultFixtureComposition = mkFixturePhenix {
         plugins = defaultPlugins;
