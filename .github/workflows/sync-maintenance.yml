@@ -30,6 +30,16 @@ jobs:
       - name: Apply deterministic maintenance fixes
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("rust/crates/phenix-plugin-api/src/lib.rs")
+          source = path.read_text()
+          old = "ComponentManifest, ContextResourceId, InterfaceId, PhenixContract, PluginContext,"
+          new = "ComponentManifest, ContextResourceId, HasPhenixSchema, InterfaceId, PluginContext,"
+          if old not in source:
+              raise SystemExit("expected phenix-plugin-api import line not found")
+          path.write_text(source.replace(old, new, 1))
+          PY
           nix flake update phenix-flake-ci
           printf '%s\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
             nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
