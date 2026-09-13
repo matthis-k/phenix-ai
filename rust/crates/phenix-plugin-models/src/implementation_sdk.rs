@@ -7,8 +7,9 @@ use phenix_core::{
     RoutingProfileId, ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
-    model_routing_service, ModelCommand, ModelResponse, ModelTarget, RoutingProfile,
-    RoutingProfileDescriptor, MODEL_ROUTING_SERVICE,
+    model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
+    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget,
+    RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -49,12 +50,15 @@ pub fn model_routing_manifest(maximum_authority: Authority) -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: phenix_core::ServiceRole::Terminal,
-            service: model_routing_service(),
-            priority: 100,
-            required_authority: Authority::default(),
-        }],
+        services: [model_routing_service(), model_dispatch_service()]
+            .into_iter()
+            .map(|service| ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service,
+                priority: 100,
+                required_authority: Authority::default(),
+            })
+            .collect(),
         resource_namespaces: vec![model_namespace()],
         maximum_authority,
     }
@@ -103,24 +107,34 @@ impl PluginInstance for ModelRoutingPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &model_routing_service() {
-            return Err(format!("unsupported model routing service: {service}"));
-        }
         let mut context = context(host, &mut self.authenticated);
-        let interface = crate::ModelRoutingInterface::interface_id();
-        let command = context
-            .kernel
-            .decode_projected::<ModelCommand>(&interface, input)
-            .map_err(|error| error.to_string())?;
-        let response = handle(&mut context, &mut self.routing, command)?;
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
+        if service == &model_routing_service() {
+            let command = context
+                .kernel
+                .decode_projected::<ModelCommand>(&ModelRoutingInterface::interface_id(), input)
+                .map_err(|error| error.to_string())?;
+            let response = handle_routing(&mut context, &mut self.routing, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service == &model_dispatch_service() {
+            let command = context
+                .kernel
+                .decode_projected::<ModelDispatchCommand>(&ModelDispatchInterface::interface_id(), input)
+                .map_err(|error| error.to_string())?;
+            let response = handle_dispatch(&mut context, &self.routing, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        Err(format!("unsupported model service: {service}"))
     }
 }
 
-fn handle(
+fn handle_routing(
     context: &mut ModelContext<'_, '_, '_>,
     routing: &mut RoutingServiceState,
     command: ModelCommand,
@@ -135,7 +149,9 @@ fn handle(
         None
     };
 
-    if let Some(response) = routing.handle_state_command(command.clone(), |id| read_profile(context, id)) {
+    if let Some(response) =
+        routing.handle_state_command(command.clone(), |id| read_profile(context, id))
+    {
         let response = response?;
         if mutates_runtime {
             persist_runtime_state(context, routing, previous_runtime)?;
@@ -186,38 +202,7 @@ fn handle(
             tools,
         } => {
             let target = resolve_compat_target(context, &profile_id, callable_id.as_ref())?;
-            if !context.plugin.state.contains(&target.provider_plugin) {
-                return Err(format!(
-                    "provider authentication required: {}",
-                    target.provider_plugin
-                ));
-            }
-            let request = ModelInferenceRequest {
-                model: target.model.clone(),
-                input,
-                options: target.options.clone(),
-                tools,
-            };
-            let input = context
-                .kernel
-                .encode_value(&request)
-                .map_err(|error| error.to_string())?;
-            let output = context
-                .kernel
-                .invoke_service_abi(
-                    &model_inference_service(),
-                    &input,
-                    context.call.authority,
-                    Some(&target.provider_plugin),
-                )
-                .map_err(|error| error.to_string())?;
-            let response = context
-                .kernel
-                .decode_projected::<ModelInferenceResponse>(
-                    &phenix_core::ModelInferenceInterface::interface_id(),
-                    &output,
-                )
-                .map_err(|error| error.to_string())?;
+            let response = invoke_target(context, &target, input, tools)?;
             Ok(ModelResponse::Inference { target, response })
         }
         ModelCommand::PublishCapabilities { .. }
@@ -227,6 +212,64 @@ fn handle(
             Err("routing state command was not handled".into())
         }
     }
+}
+
+fn handle_dispatch(
+    context: &mut ModelContext<'_, '_, '_>,
+    routing: &RoutingServiceState,
+    command: ModelDispatchCommand,
+) -> Result<ModelDispatchResponse, String> {
+    match command {
+        ModelDispatchCommand::InvokeResolved {
+            decision,
+            input,
+            tools,
+        } => {
+            routing.validate_decision(&decision)?;
+            let response = invoke_target(context, &decision.target, input, tools)?;
+            Ok(ModelDispatchResponse::Inference { decision, response })
+        }
+    }
+}
+
+fn invoke_target(
+    context: &mut ModelContext<'_, '_, '_>,
+    target: &ModelTarget,
+    input: phenix_core::Bytes,
+    tools: Vec<phenix_core::ModelToolDescriptor>,
+) -> Result<ModelInferenceResponse, String> {
+    if !context.plugin.state.contains(&target.provider_plugin) {
+        return Err(format!(
+            "provider authentication required: {}",
+            target.provider_plugin
+        ));
+    }
+    let request = ModelInferenceRequest {
+        model: target.model.clone(),
+        input,
+        options: target.options.clone(),
+        tools,
+    };
+    let input = context
+        .kernel
+        .encode_value(&request)
+        .map_err(|error| error.to_string())?;
+    let output = context
+        .kernel
+        .invoke_service_abi(
+            &model_inference_service(),
+            &input,
+            context.call.authority,
+            Some(&target.provider_plugin),
+        )
+        .map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .decode_projected::<ModelInferenceResponse>(
+            &phenix_core::ModelInferenceInterface::interface_id(),
+            &output,
+        )
+        .map_err(|error| error.to_string())
 }
 
 fn persist_runtime_state(
@@ -370,391 +413,4 @@ fn profile_key(id: &RoutingProfileId) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use phenix_core::{
-        CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, ModelToolDescriptor,
-        PhenixValue, Project,
-    };
-    use phenix_sdk::{
-        CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities, ModelLimits,
-        RouteSelectionPolicy, RoutingEstimateMode, RoutingRequirements,
-    };
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    struct PlainProvider;
-
-    impl PluginInstance for PlainProvider {
-        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn invoke(
-            &mut self,
-            service: &ServiceId,
-            input: &[u8],
-            host: &PluginHost<'_>,
-        ) -> Result<Vec<u8>, String> {
-            if service != &model_inference_service() {
-                return Err(format!("unsupported fixture provider service: {service}"));
-            }
-            let context = PluginContext::new(host, (), (), ());
-            let request = context
-                .kernel
-                .decode_projected::<ModelInferenceRequest>(
-                    &phenix_core::ModelInferenceInterface::interface_id(),
-                    input,
-                )
-                .map_err(|error| error.to_string())?;
-            let response = ModelInferenceResponse {
-                output: request.input,
-                provider_metadata: BTreeMap::from([(
-                    "provider".into(),
-                    serde_json::json!("fixture.provider").into(),
-                )]),
-                tool_calls: Vec::new(),
-            };
-            context
-                .kernel
-                .encode_value(&response)
-                .map_err(|error| error.to_string())
-        }
-    }
-
-    fn temp_db(name: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "phenix-{name}-{}-{nonce}.sqlite",
-            std::process::id()
-        ))
-    }
-
-    fn target(provider: &str, model: &str) -> ModelTarget {
-        ModelTarget {
-            provider_plugin: PluginId::parse(provider).unwrap(),
-            model: ModelId::parse(model).unwrap(),
-            options: BTreeMap::new(),
-        }
-    }
-
-    fn profile() -> RoutingProfile {
-        RoutingProfile {
-            id: RoutingProfileId::parse("default").unwrap(),
-            default_target: target("provider.default", "root"),
-            fallback_targets: vec![target("provider.fallback", "fallback")],
-            callable_targets: BTreeMap::from([(
-                CallableId::parse("agent.scout").unwrap(),
-                target("provider.scout", "scout"),
-            )]),
-        }
-    }
-
-    fn capabilities(target: ModelTarget, context_window_tokens: u64) -> EffectiveModelCapabilities {
-        EffectiveModelCapabilities {
-            target,
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            context: ContextControl::ReplaceableTurns,
-            capacity: CapacityKnowledge::Known {
-                limits: ModelLimits {
-                    context_window_tokens,
-                    max_output_tokens: Some(2_000),
-                },
-            },
-            optional: BTreeSet::new(),
-        }
-    }
-
-    fn routing_authority() -> Authority {
-        model_routing_manifest(Authority::default()).maximum_authority
-    }
-
-    fn provider_manifest() -> PluginManifest {
-        PluginManifest {
-            id: PluginId::parse("fixture.provider").unwrap(),
-            version: 1,
-            execution: PluginExecution::Embedded,
-            dependencies: Vec::new(),
-            services: vec![ServiceContribution {
-                role: phenix_core::ServiceRole::Terminal,
-                service: model_inference_service(),
-                priority: 100,
-                required_authority: Authority::default(),
-            }],
-            resource_namespaces: Vec::new(),
-            maximum_authority: Authority::default(),
-        }
-    }
-
-    fn kernel_with(path: &PathBuf) -> Kernel {
-        let manifest = model_routing_manifest(Authority::default());
-        let plugin = manifest.id.clone();
-        let persistence = LocalPersistence::open(path).unwrap();
-        let mut kernel =
-            Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-        kernel
-            .register_embedded_factory(plugin, model_routing_factory)
-            .unwrap();
-        kernel.activate_all().unwrap();
-        kernel
-    }
-
-    fn kernel_with_provider(path: &PathBuf) -> Kernel {
-        let routing = model_routing_manifest(Authority::default());
-        let provider = provider_manifest();
-        let routing_id = routing.id.clone();
-        let provider_id = provider.id.clone();
-        let persistence = LocalPersistence::open(path).unwrap();
-        let mut kernel =
-            Kernel::with_persistence(KernelConfig::new([routing, provider]).unwrap(), persistence);
-        kernel
-            .register_embedded_factory(routing_id, model_routing_factory)
-            .unwrap();
-        kernel
-            .register_embedded_factory(provider_id, || Box::new(PlainProvider))
-            .unwrap();
-        kernel.activate_all().unwrap();
-        kernel
-    }
-
-    fn invoke(kernel: &mut Kernel, command: ModelCommand) -> Result<ModelResponse, String> {
-        let output = kernel
-            .invoke(
-                &model_routing_service(),
-                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-                &routing_authority(),
-                None,
-            )
-            .map_err(|error| error.to_string())?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| error.to_string())?;
-        ModelResponse::try_from(Project(&output)).map_err(|error| error.to_string())
-    }
-
-    mod profile_store {
-        use super::*;
-
-        #[test]
-        fn immutable_profile_survives_restart_and_describes_all_providers() {
-            let path = temp_db("routing-profile-store");
-            let profile = profile();
-            {
-                let mut kernel = kernel_with(&path);
-                invoke(
-                    &mut kernel,
-                    ModelCommand::RegisterProfile {
-                        profile: profile.clone(),
-                    },
-                )
-                .unwrap();
-                assert!(invoke(
-                    &mut kernel,
-                    ModelCommand::RegisterProfile {
-                        profile: profile.clone(),
-                    },
-                )
-                .unwrap_err()
-                .contains("already registered"));
-            }
-            let mut restored = kernel_with(&path);
-            let response = invoke(&mut restored, ModelCommand::ListProfiles).unwrap();
-            let ModelResponse::Profiles { profiles } = response else {
-                panic!("expected profiles response");
-            };
-            assert_eq!(profiles.len(), 1);
-            assert_eq!(
-                profiles[0].providers,
-                vec![
-                    PluginId::parse("provider.default").unwrap(),
-                    PluginId::parse("provider.fallback").unwrap(),
-                    PluginId::parse("provider.scout").unwrap(),
-                ]
-            );
-            let _ = fs::remove_file(path);
-        }
-    }
-
-    mod smart_selection {
-        use super::*;
-
-        fn requirements() -> RoutingRequirements {
-            RoutingRequirements {
-                context: ContextDemand {
-                    mandatory_input_tokens: 1_000,
-                    reducible_input_tokens: 500,
-                    output_reserve_tokens: 500,
-                    required_capabilities: BTreeSet::new(),
-                },
-                required_capabilities: BTreeSet::new(),
-                require_known_capacity: true,
-            }
-        }
-
-        fn policy() -> RouteSelectionPolicy {
-            RouteSelectionPolicy {
-                revision: "route-policy-1".into(),
-                estimates: RoutingEstimateMode::Ignore,
-                max_candidate_attempts: 2,
-            }
-        }
-
-        #[test]
-        fn hard_capacity_rejects_primary_before_fallback_selection() {
-            let path = temp_db("routing-smart-selection");
-            let profile = profile();
-            let mut kernel = kernel_with(&path);
-            invoke(
-                &mut kernel,
-                ModelCommand::RegisterProfile {
-                    profile: profile.clone(),
-                },
-            )
-            .unwrap();
-            for capabilities in [
-                capabilities(profile.default_target.clone(), 1_500),
-                capabilities(profile.fallback_targets[0].clone(), 8_000),
-            ] {
-                invoke(
-                    &mut kernel,
-                    ModelCommand::PublishCapabilities { capabilities },
-                )
-                .unwrap();
-            }
-            let response = invoke(
-                &mut kernel,
-                ModelCommand::ResolveWithRequirements {
-                    profile_id: profile.id,
-                    callable_id: None,
-                    requirements: requirements(),
-                    policy: policy(),
-                },
-            )
-            .unwrap();
-            let ModelResponse::Decision { selection } = response else {
-                panic!("expected routing decision");
-            };
-            assert_eq!(selection.decision.target.model.as_str(), "fallback");
-            assert_eq!(selection.rejected.len(), 1);
-            let _ = fs::remove_file(path);
-        }
-    }
-
-    mod runtime_persistence {
-        use super::*;
-
-        #[test]
-        fn published_capabilities_survive_restart() {
-            let path = temp_db("routing-runtime-persistence");
-            let profile = profile();
-            {
-                let mut kernel = kernel_with(&path);
-                invoke(
-                    &mut kernel,
-                    ModelCommand::RegisterProfile {
-                        profile: profile.clone(),
-                    },
-                )
-                .unwrap();
-                invoke(
-                    &mut kernel,
-                    ModelCommand::PublishCapabilities {
-                        capabilities: capabilities(profile.default_target.clone(), 8_000),
-                    },
-                )
-                .unwrap();
-                invoke(
-                    &mut kernel,
-                    ModelCommand::PublishCapabilities {
-                        capabilities: capabilities(profile.fallback_targets[0].clone(), 8_000),
-                    },
-                )
-                .unwrap();
-            }
-            let mut restored = kernel_with(&path);
-            let response = invoke(
-                &mut restored,
-                ModelCommand::ListCandidates {
-                    profile_id: profile.id,
-                    callable_id: None,
-                },
-            )
-            .unwrap();
-            let ModelResponse::Candidates { candidates } = response else {
-                panic!("expected routing candidates");
-            };
-            assert_eq!(candidates.len(), 2);
-            assert_eq!(candidates[0].capabilities.target.model.as_str(), "root");
-            assert_eq!(candidates[1].capabilities.target.model.as_str(), "fallback");
-            let _ = fs::remove_file(path);
-        }
-    }
-
-    mod provider_dispatch {
-        use super::*;
-
-        #[test]
-        fn compatibility_invoke_uses_provider_abi_and_process_local_auth() {
-            let path = temp_db("routing-provider-dispatch");
-            let profile = RoutingProfile {
-                id: RoutingProfileId::parse("default").unwrap(),
-                default_target: target("fixture.provider", "fixture"),
-                fallback_targets: Vec::new(),
-                callable_targets: BTreeMap::new(),
-            };
-            {
-                let mut kernel = kernel_with_provider(&path);
-                invoke(
-                    &mut kernel,
-                    ModelCommand::RegisterProfile {
-                        profile: profile.clone(),
-                    },
-                )
-                .unwrap();
-                invoke(
-                    &mut kernel,
-                    ModelCommand::SetProviderAuthenticated {
-                        provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                        authenticated: true,
-                    },
-                )
-                .unwrap();
-                let response = invoke(
-                    &mut kernel,
-                    ModelCommand::Invoke {
-                        profile_id: profile.id.clone(),
-                        callable_id: None,
-                        input: b"hello".to_vec().into(),
-                        tools: Vec::<ModelToolDescriptor>::new(),
-                    },
-                )
-                .unwrap();
-                assert!(matches!(
-                    response,
-                    ModelResponse::Inference { target, response }
-                        if target.provider_plugin.as_str() == "fixture.provider"
-                            && response.output.as_ref() == b"hello"
-                ));
-            }
-            let mut restored = kernel_with_provider(&path);
-            assert!(invoke(
-                &mut restored,
-                ModelCommand::Invoke {
-                    profile_id: profile.id,
-                    callable_id: None,
-                    input: b"hello".to_vec().into(),
-                    tools: Vec::new(),
-                },
-            )
-            .unwrap_err()
-            .contains("authentication required"));
-            let _ = fs::remove_file(path);
-        }
-    }
-}
+mod tests;
