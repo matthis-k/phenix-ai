@@ -11,6 +11,7 @@ pub use phenix_sdk::{
     ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget,
     RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
+use phenix_sdk::{ModelTurnUsage, UsageQuantity};
 use std::collections::BTreeSet;
 
 use crate::routing_service::{RoutingServiceState, ROUTING_RUNTIME_KEY};
@@ -227,7 +228,12 @@ fn handle_dispatch(
         } => {
             routing.validate_decision(&decision)?;
             let response = invoke_target(context, &decision.target, input, tools)?;
-            Ok(ModelDispatchResponse::Inference { decision, response })
+            let usage = normalize_usage(&response);
+            Ok(ModelDispatchResponse::Inference {
+                decision,
+                response,
+                usage,
+            })
         }
     }
 }
@@ -270,6 +276,59 @@ fn invoke_target(
             &output,
         )
         .map_err(|error| error.to_string())
+}
+
+fn normalize_usage(response: &ModelInferenceResponse) -> ModelTurnUsage {
+    let Some(raw) = response.provider_metadata.get("usage") else {
+        return ModelTurnUsage::default();
+    };
+    let Ok(value) = serde_json::to_value(raw) else {
+        return ModelTurnUsage::default();
+    };
+
+    let anthropic_cache = value.get("cache_read_input_tokens").is_some()
+        || value.get("cache_creation_input_tokens").is_some();
+    let input = value
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| value.get("prompt_tokens").and_then(serde_json::Value::as_u64));
+    let cache_read = value
+        .get("cache_read_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| value.pointer("/input_tokens_details/cached_tokens").and_then(serde_json::Value::as_u64))
+        .or_else(|| value.pointer("/prompt_tokens_details/cached_tokens").and_then(serde_json::Value::as_u64));
+    let cache_write = value
+        .get("cache_creation_input_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let output = value
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| value.get("completion_tokens").and_then(serde_json::Value::as_u64));
+    let reasoning = value
+        .pointer("/output_tokens_details/reasoning_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| value.pointer("/completion_tokens_details/reasoning_tokens").and_then(serde_json::Value::as_u64));
+    let fresh = input.map(|input| {
+        if anthropic_cache {
+            input
+        } else {
+            input.saturating_sub(cache_read.unwrap_or(0))
+        }
+    });
+
+    ModelTurnUsage {
+        fresh_input_tokens: reported(fresh),
+        cache_read_tokens: reported(cache_read),
+        cache_write_tokens: reported(cache_write),
+        output_tokens: reported(output),
+        reasoning_tokens: reported(reasoning),
+    }
+}
+
+fn reported(value: Option<u64>) -> UsageQuantity {
+    value
+        .map(|value| UsageQuantity::Reported { value })
+        .unwrap_or(UsageQuantity::Unavailable)
 }
 
 fn persist_runtime_state(
