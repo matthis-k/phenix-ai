@@ -23,9 +23,7 @@ pub fn session_projection_value_id() -> ValueId {
 pub enum SessionProjectionError {
     #[error("session projection is missing for {session_id}")]
     Missing { session_id: phenix_core::SessionId },
-    #[error(
-        "session projection sequence gap for {session_id}: expected {expected}, got {actual}"
-    )]
+    #[error("session projection sequence gap for {session_id}: expected {expected}, got {actual}")]
     SequenceGap {
         session_id: phenix_core::SessionId,
         expected: u64,
@@ -96,11 +94,13 @@ impl SessionProjectionReducer {
 
     pub fn apply_update(&mut self, update: SessionUpdate) -> Result<(), SessionProjectionError> {
         let key = update.session_id.as_str().to_owned();
-        let projection = self.state.sessions.get_mut(&key).ok_or_else(|| {
-            SessionProjectionError::Missing {
-                session_id: update.session_id.clone(),
-            }
-        })?;
+        let projection =
+            self.state
+                .sessions
+                .get_mut(&key)
+                .ok_or_else(|| SessionProjectionError::Missing {
+                    session_id: update.session_id.clone(),
+                })?;
         let expected = projection.through_sequence + 1;
         if update.sequence != expected {
             return Err(SessionProjectionError::SequenceGap {
