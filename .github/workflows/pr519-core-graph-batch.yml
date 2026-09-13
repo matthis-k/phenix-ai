@@ -1,0 +1,262 @@
+name: PR 519 core graph batch
+
+on:
+  push:
+    branches:
+      - refactor/shared-graph-mechanics
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: refactor/shared-graph-mechanics
+
+      - name: Apply event and reconciliation graph migrations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          events = Path('rust/crates/phenix-core/src/events.rs')
+          text = events.read_text()
+          old_import = 'use crate::{Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId};'
+          new_import = 'use crate::{graph_util::DirectedGraph, Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId};'
+          if text.count(old_import) != 1:
+              raise SystemExit('unexpected events import shape')
+          text = text.replace(old_import, new_import, 1)
+
+          start = text.index('fn dependency_levels(')
+          end = text.index('\nfn dependency_order(', start)
+          replacement = '''fn dependency_levels(
+              subscriptions: &BTreeMap<SubscriptionId, EventSubscription>,
+              event_type: &EventTypeId,
+              event_version: u32,
+          ) -> Result<Vec<Vec<SubscriptionId>>, EventError> {
+              let event_subscriptions = subscriptions
+                  .values()
+                  .filter(|subscription| {
+                      &subscription.spec.event_type == event_type
+                          && subscription.spec.event_version == event_version
+                  })
+                  .map(|subscription| subscription.spec.id.clone())
+                  .collect::<BTreeSet<_>>();
+
+              let mut graph = DirectedGraph::from_nodes(event_subscriptions.iter().cloned());
+              for id in &event_subscriptions {
+                  for dependency in &subscriptions[id].spec.dependencies {
+                      graph.add_edge(id, dependency);
+                  }
+              }
+              for id in &event_subscriptions {
+                  if let Some(path) = graph.cycle_path_from(id) {
+                      return Err(EventError::DependencyCycle(
+                          path.first()
+                              .cloned()
+                              .expect("cycle path contains its repeated root"),
+                      ));
+                  }
+              }
+
+              let mut remaining = event_subscriptions;
+              let mut levels = Vec::new();
+              while !remaining.is_empty() {
+                  let ready = remaining
+                      .iter()
+                      .filter(|id| {
+                          subscriptions[*id]
+                              .spec
+                              .dependencies
+                              .iter()
+                              .all(|dependency| !remaining.contains(dependency))
+                      })
+                      .cloned()
+                      .collect::<Vec<_>>();
+                  let Some(first) = ready.first() else {
+                      return Err(EventError::DependencyCycle(
+                          remaining
+                              .iter()
+                              .next()
+                              .expect("remaining is not empty")
+                              .clone(),
+                      ));
+                  };
+                  debug_assert!(remaining.contains(first));
+                  for id in &ready {
+                      remaining.remove(id);
+                  }
+                  levels.push(ready);
+              }
+
+              Ok(levels)
+          }
+          '''
+          text = text[:start] + replacement + text[end:]
+
+          marker = '''    #[test]
+              fn independent_subscribers_run_concurrently() {'''
+          permutation_test = '''    #[test]
+              fn dependency_levels_are_registration_order_independent() {
+                  let a = subscription_with("a-root", &[]);
+                  let b = subscription_with("b-root", &[]);
+                  let z = subscription_with("z-dependent", &["a-root", "b-root"]);
+                  let expected = vec![
+                      vec![subscription("a-root"), subscription("b-root")],
+                      vec![subscription("z-dependent")],
+                  ];
+
+                  for entries in [
+                      vec![z.clone(), b.clone(), a.clone()],
+                      vec![a.clone(), z.clone(), b.clone()],
+                  ] {
+                      let indexed = index_subscriptions(entries).unwrap();
+                      assert_eq!(
+                          dependency_levels(&indexed, &event_type("demo.changed"), 1).unwrap(),
+                          expected
+                      );
+                  }
+              }
+
+              #[test]
+              fn independent_subscribers_run_concurrently() {'''
+          if marker not in text:
+              raise SystemExit('event concurrency marker missing')
+          text = text.replace(marker, permutation_test, 1)
+
+          old_cycle = '''    #[test]
+              fn dependency_cycles_are_rejected_atomically() {
+                  let bus = EventBus::default();
+                  let noop: Arc<dyn EventHandler> = Arc::new(|_: &EventEnvelope, _: &Authority| Ok(()));
+                  let error = bus
+                      .replace_subscriptions([
+                          EventSubscription {
+                              spec: spec("a", &["b"]),
+                              handler: Arc::clone(&noop),
+                          },
+                          EventSubscription {
+                              spec: spec("b", &["a"]),
+                              handler: noop,
+                          },
+                      ])
+                      .unwrap_err();
+                  assert!(matches!(error, EventError::DependencyCycle(_)));
+              }
+          '''
+          new_cycle = '''    #[test]
+              fn dependency_cycles_are_rejected_atomically() {
+                  let noop: Arc<dyn EventHandler> = Arc::new(|_: &EventEnvelope, _: &Authority| Ok(()));
+                  let a = EventSubscription {
+                      spec: spec("a", &["b"]),
+                      handler: Arc::clone(&noop),
+                  };
+                  let b = EventSubscription {
+                      spec: spec("b", &["a"]),
+                      handler: noop,
+                  };
+
+                  for entries in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+                      let bus = EventBus::default();
+                      assert_eq!(
+                          bus.replace_subscriptions(entries).unwrap_err(),
+                          EventError::DependencyCycle(subscription("a"))
+                      );
+                  }
+              }
+          '''
+          if old_cycle not in text:
+              raise SystemExit('event cycle regression shape changed')
+          text = text.replace(old_cycle, new_cycle, 1)
+          events.write_text(text)
+
+          reconciliation = Path('rust/crates/phenix-core/src/reconciliation.rs')
+          text = reconciliation.read_text()
+          old_import = '''use crate::{
+              Authority, ComponentId, ComponentManifest, ConfigContribution, ConfigurationFrontendId,
+              ConfigurationFrontendMetadata, FrontendConfigContribution, GraphGenerationId, InterfaceId,
+              LayerPolicy, PluginManifest, ResolvedHarness, ResolvedHarnessError, ServiceId,
+              SkillResourceMetadata,
+          };'''
+          new_import = '''use crate::{
+              graph_util::DirectedGraph, Authority, ComponentId, ComponentManifest, ConfigContribution,
+              ConfigurationFrontendId, ConfigurationFrontendMetadata, FrontendConfigContribution,
+              GraphGenerationId, InterfaceId, LayerPolicy, PluginManifest, ResolvedHarness,
+              ResolvedHarnessError, ServiceId, SkillResourceMetadata,
+          };'''
+          if old_import not in text:
+              raise SystemExit('unexpected reconciliation import shape')
+          text = text.replace(old_import, new_import, 1)
+
+          old_start = '''    let mut actions = Vec::new();
+              let mut restart = BTreeSet::new();
+          '''
+          new_start = '''    let mut actions = Vec::new();
+              let mut restart = BTreeSet::new();
+              let previous_dependencies = required_dependency_graph(previous);
+              let next_dependencies = required_dependency_graph(next);
+          '''
+          if old_start not in text:
+              raise SystemExit('transition plan start shape changed')
+          text = text.replace(old_start, new_start, 1)
+
+          old_reconfigured = '''            ComponentChangeKind::Reconfigured => {
+                          restart.insert(change.component.clone());
+                          collect_required_dependents(previous, &change.component, &mut restart);
+                          collect_required_dependents(next, &change.component, &mut restart);
+                      }
+          '''
+          new_reconfigured = '''            ComponentChangeKind::Reconfigured => {
+                          restart.extend(previous_dependencies.reachable_from(&change.component));
+                          restart.extend(next_dependencies.reachable_from(&change.component));
+                      }
+          '''
+          if old_reconfigured not in text:
+              raise SystemExit('reconfigured transition shape changed')
+          text = text.replace(old_reconfigured, new_reconfigured, 1)
+
+          start = text.index('fn collect_required_dependents(')
+          end = text.index('\nfn component_changes(', start)
+          replacement = '''fn required_dependency_graph(harness: &ResolvedHarness) -> DirectedGraph<ComponentId> {
+              let components = harness.component_graph().components().collect::<Vec<_>>();
+              let mut graph = DirectedGraph::from_nodes(
+                  components.iter().map(|component| component.id.clone()),
+              );
+              for component in components {
+                  for import in &component.imports {
+                      if !import.required {
+                          continue;
+                      }
+                      if let Some(binding) = &import.binding {
+                          graph.add_edge(binding.exporter(), &component.id);
+                      }
+                  }
+              }
+              graph
+          }
+          '''
+          text = text[:start] + replacement + text[end:]
+          reconciliation.write_text(text)
+          PY
+
+      - name: Format
+        run: cargo fmt --manifest-path rust/Cargo.toml --all
+
+      - name: Focused Core graph regressions
+        run: |
+          cargo test --manifest-path rust/Cargo.toml -p phenix-core --lib dependency_levels_are_registration_order_independent
+          cargo test --manifest-path rust/Cargo.toml -p phenix-core --lib dependency_cycles_are_rejected_atomically
+          cargo test --manifest-path rust/Cargo.toml -p phenix-core --lib all_subscribers_receive_event_in_dependency_order
+          cargo test --manifest-path rust/Cargo.toml -p phenix-core --lib reconfiguring_a_provider_restarts_its_required_dependency_closure
+
+      - name: Commit batch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/phenix-core/src/events.rs rust/crates/phenix-core/src/reconciliation.rs
+          git diff --cached --check
+          git commit -m 'refactor(core): migrate event and reconciliation graphs'
+          git push origin HEAD:refactor/shared-graph-mechanics
