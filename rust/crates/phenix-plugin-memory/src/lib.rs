@@ -6,25 +6,32 @@ mod context_service_state;
 mod error;
 mod freshness;
 mod implementation;
+mod package;
 mod persistence;
 mod retrieval;
 
 pub use component::*;
-pub use implementation::{memory_factory, memory_manifest};
+pub use package::{memory_factory, memory_manifest};
 pub use phenix_sdk::{
     context_compaction_service, context_expansion_service, memory_consolidate_callable,
-    memory_extract_callable, memory_resolve_callable, memory_service, memory_summarize_callable,
-    memory_validate_callable, CompactContextItem, ContextCheckpoint, ContextCompactionCommand,
-    ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
-    ContextExpansionCommand, ContextExpansionInterface, ContextExpansionResponse,
-    MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision, MemoryExpansion,
-    MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
+    memory_context_service, memory_extract_callable, memory_resolve_callable, memory_service,
+    memory_summarize_callable, memory_validate_callable, CandidateCompleteness, CompactContextItem,
+    ContextCheckpoint, ContextCompactionCommand, ContextCompactionInterface,
+    ContextCompactionRequest, ContextCompactionResponse, ContextExpansionCommand,
+    ContextExpansionInterface, ContextExpansionResponse, MemoryAssociationConfirmation,
+    MemoryAssociationObservation, MemoryAssociationState, MemoryCanonicalReference, MemoryCommand,
+    MemoryContextAssociation, MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface,
+    MemoryContextMatch, MemoryContextRecallRequest, MemoryContextResponse, MemoryDependencyRevision,
+    MemoryExpansion, MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
     MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome, MemoryScope,
-    MemorySourceReference, CONTEXT_COMPACTION_SERVICE, CONTEXT_EXPANSION_SERVICE,
-    MEMORY_CONSOLIDATE_CALLABLE, MEMORY_EXTRACT_CALLABLE, MEMORY_RESOLVE_CALLABLE, MEMORY_SERVICE,
-    MEMORY_SUMMARIZE_CALLABLE, MEMORY_VALIDATE_CALLABLE,
+    MemorySourceReference, RecallEvidence, RecallResolution, CONTEXT_COMPACTION_SERVICE,
+    CONTEXT_EXPANSION_SERVICE, MEMORY_CONSOLIDATE_CALLABLE, MEMORY_CONTEXT_SERVICE,
+    MEMORY_EXTRACT_CALLABLE, MEMORY_RESOLVE_CALLABLE, MEMORY_SERVICE, MEMORY_SUMMARIZE_CALLABLE,
+    MEMORY_VALIDATE_CALLABLE,
 };
 
+#[cfg(test)]
+mod context_service_integration;
 #[cfg(test)]
 mod embedding_integration;
 #[cfg(test)]
