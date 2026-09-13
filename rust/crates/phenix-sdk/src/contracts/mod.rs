@@ -15,6 +15,7 @@ pub mod memory;
 pub mod memory_context;
 pub mod memory_freshness;
 pub mod model_dispatch;
+#[allow(clippy::double_must_use)]
 pub mod models;
 pub mod options;
 pub mod planning;
