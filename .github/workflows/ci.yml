@@ -167,8 +167,6 @@ jobs:
     name: "CI / Integration / ACP backend integration"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -235,9 +233,9 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 
-  product-phenix:
+  product-phenix-lua-binding:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Product / Phenix supported product journey"
+    name: "CI / Product / Phenix Lua binding product fixture"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
     steps:
@@ -251,12 +249,43 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - name: "Phenix supported product journey"
+      - name: "Phenix Lua binding product fixture"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix\",\"source\":{\"job\":\"product-phenix\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-733891df94ef -- invoke"
+        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-lua-binding\",\"source\":{\"job\":\"product-phenix-lua-binding\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-c3ad7e345430 -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  product-phenix-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Product / Phenix supported runtime journey"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: "Phenix supported runtime journey"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-runtime\",\"source\":{\"job\":\"product-phenix-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-5bfe8a5b5d52 -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}
@@ -271,8 +300,6 @@ jobs:
     name: "CI / Runtime / Harness process roundtrip"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -344,8 +371,6 @@ jobs:
     name: "CI / Test / Adapter and domain tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -386,8 +411,6 @@ jobs:
     name: "CI / Test / Rust doc tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -428,8 +451,6 @@ jobs:
     name: "CI / Test / Harness code tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -470,8 +491,6 @@ jobs:
     name: "CI / Test / SDK tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -512,8 +531,6 @@ jobs:
     name: "CI / Test / Rust unit tests"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
-    needs:
-      - build-rust-workspace
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -559,7 +576,8 @@ jobs:
       - build-stitch-mcp
       - integration-backend-acp
       - integration-plugin-packaging
-      - product-phenix
+      - product-phenix-lua-binding
+      - product-phenix-runtime
       - runtime-process-roundtrip
       - runtime-stitch
       - test-adapter-domain
@@ -578,7 +596,8 @@ jobs:
           [[ '${{ needs.build-stitch-mcp.result }}' == success ]]
           [[ '${{ needs.integration-backend-acp.result }}' == success ]]
           [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
-          [[ '${{ needs.product-phenix.result }}' == success ]]
+          [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
+          [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
           [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
           [[ '${{ needs.runtime-stitch.result }}' == success ]]
           [[ '${{ needs.test-adapter-domain.result }}' == success ]]

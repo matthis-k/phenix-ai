@@ -41,8 +41,8 @@
       '';
 
       supportedPhenix = self.packages.${system}.phenix;
-      phenixProductSmoke =
-        pkgs.runCommand "phenix-product-smoke"
+      phenixProductRuntimeSmoke =
+        pkgs.runCommand "phenix-product-runtime-smoke"
           {
             nativeBuildInputs = [
               supportedPhenix
@@ -77,11 +77,14 @@
             test -f ${supportedPhenix}/share/phenix/skills/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
 
-            # Exercise the host-linked module through its packaged ACP fixture.
-            test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
-
             touch "$out"
           '';
+
+      phenixProductLuaSmoke = pkgs.runCommand "phenix-product-lua-smoke" { } ''
+        # Exercise the host-linked module through its packaged ACP fixture.
+        test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
+        touch "$out"
+      '';
     in
     {
       packages = {
@@ -89,6 +92,9 @@
         phenix-harness-resources = phenixHarnessResources;
       };
 
-      checks.phenix-product-smoke = phenixProductSmoke;
+      checks = {
+        phenix-product-runtime-smoke = phenixProductRuntimeSmoke;
+        phenix-product-lua-smoke = phenixProductLuaSmoke;
+      };
     };
 }

@@ -92,7 +92,7 @@
         test = {
           unit = {
             name = "Rust unit tests";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.bash
               pkgs.bubblewrap
@@ -125,7 +125,7 @@
 
           docs = {
             name = "Rust doc tests";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -139,7 +139,7 @@
 
           sdk = {
             name = "SDK tests";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -153,7 +153,7 @@
 
           adapter-domain = {
             name = "Adapter and domain tests";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -170,7 +170,7 @@
 
           harness = {
             name = "Harness code tests";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -188,7 +188,7 @@
         runtime = {
           process-roundtrip = {
             name = "Harness process roundtrip";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -209,7 +209,7 @@
         integration = {
           backend-acp = {
             name = "ACP backend integration";
-            needs = [ "build.rust-workspace" ];
+            needs = [ ];
             runtimeInputs = pkgs: [
               pkgs.cargo
               pkgs.git
@@ -227,9 +227,16 @@
           };
         };
 
-        product.phenix = mkNixCheckSuite {
-          check = "phenix-product-smoke";
-          name = "Phenix supported product journey";
+        product = {
+          phenix-runtime = mkNixCheckSuite {
+            check = "phenix-product-runtime-smoke";
+            name = "Phenix supported runtime journey";
+          };
+
+          phenix-lua-binding = mkNixCheckSuite {
+            check = "phenix-product-lua-smoke";
+            name = "Phenix Lua binding product fixture";
+          };
         };
       };
 
