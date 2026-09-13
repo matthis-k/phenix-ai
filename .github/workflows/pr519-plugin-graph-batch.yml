@@ -1,0 +1,191 @@
+name: PR 519 plugin graph batch
+
+on:
+  push:
+    branches:
+      - refactor/shared-graph-mechanics
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: refactor/shared-graph-mechanics
+
+      - name: Apply planning and execution graph cleanup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cargo = Path('rust/crates/phenix-plugin-planning/Cargo.toml')
+          text = cargo.read_text()
+          needle = '[dependencies]\n'
+          if text.count(needle) != 1 or 'petgraph.workspace' in text:
+              raise SystemExit('unexpected planning Cargo dependency shape')
+          cargo.write_text(text.replace(needle, needle + 'petgraph.workspace = true\n', 1))
+
+          planning = Path('rust/crates/phenix-plugin-planning/src/implementation.rs')
+          text = planning.read_text()
+          import_marker = 'use phenix_core::{\n'
+          if text.count(import_marker) != 1:
+              raise SystemExit('unexpected planning import shape')
+          text = text.replace(
+              import_marker,
+              'use petgraph::{algo::is_cyclic_directed, graph::DiGraph};\n' + import_marker,
+              1,
+          )
+          start = text.index('fn ensure_acyclic(')
+          end = text.index('\nfn require_objective(', start)
+          replacement = '''fn ensure_acyclic(graph: &BTreeMap<String, Vec<String>>, label: &str) -> Result<(), String> {
+              let mut dependency_graph = DiGraph::<&str, ()>::new();
+              let indices = graph
+                  .keys()
+                  .map(|node| (node.as_str(), dependency_graph.add_node(node.as_str())))
+                  .collect::<BTreeMap<_, _>>();
+              for (node, dependencies) in graph {
+                  for dependency in dependencies {
+                      dependency_graph.add_edge(indices[node.as_str()], indices[dependency.as_str()], ());
+                  }
+              }
+              if is_cyclic_directed(&dependency_graph) {
+                  Err(format!("{label} cycle detected"))
+              } else {
+                  Ok(())
+              }
+          }
+          '''
+          text = text[:start] + replacement + text[end:]
+          marker = '''    #[test]
+              fn invalid_plan_and_decision_dependencies_are_rejected() {'''
+          test = '''    #[test]
+              fn plan_cycle_validation_is_step_order_independent() {
+                  let a = PlanStep {
+                      id: "a".into(),
+                      description: "a".into(),
+                      dependencies: vec!["b".into()],
+                  };
+                  let b = PlanStep {
+                      id: "b".into(),
+                      description: "b".into(),
+                      dependencies: vec!["a".into()],
+                  };
+                  for mut steps in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+                      assert!(normalize_and_validate_steps(&mut steps)
+                          .unwrap_err()
+                          .contains("cycle"));
+                  }
+              }
+
+              #[test]
+              fn invalid_plan_and_decision_dependencies_are_rejected() {'''
+          if marker not in text:
+              raise SystemExit('planning test marker missing')
+          planning.write_text(text.replace(marker, test, 1))
+
+          execution = Path('rust/crates/phenix-plugin-execution/src/implementation.rs')
+          text = execution.read_text()
+          old_check = '''            if creates_cycle(&state.tasks, &id, &depends_on) {
+                          return Err("worker task dependencies contain a cycle".into());
+                      }
+          '''
+          replacement = '''            // Dependencies must already exist, while task identities and dependency sets are
+                      // immutable after insertion. Adding this fresh task therefore cannot create a cycle.
+          '''
+          if old_check not in text:
+              raise SystemExit('execution cycle check shape changed')
+          text = text.replace(old_check, replacement, 1)
+          start = text.index('fn creates_cycle(')
+          end = text.index('\nfn validate_identity(', start)
+          text = text[:start] + text[end:]
+          marker = '''    #[test]
+              fn task_dependencies_are_deterministic_and_share_execution_authority() {'''
+          test = '''    #[test]
+              fn task_creation_rules_make_dependency_cycles_unrepresentable() {
+                  let path = temp_db("execution-task-dag");
+                  let mut kernel = kernel_with(&path);
+                  create(&mut kernel, "root", authority(&["fs.read"]));
+
+                  let missing = invoke(
+                      &mut kernel,
+                      &ExecutionCommand::CreateTask {
+                          id: "a".into(),
+                          parent_execution: "root".into(),
+                          description: "task a".into(),
+                          depends_on: BTreeSet::from(["b".to_owned()]),
+                          requested_authority: authority(&["fs.read"]),
+                      },
+                  )
+                  .unwrap_err();
+                  assert!(missing.contains("unknown worker task dependency: b"));
+
+                  invoke(
+                      &mut kernel,
+                      &ExecutionCommand::CreateTask {
+                          id: "a".into(),
+                          parent_execution: "root".into(),
+                          description: "task a".into(),
+                          depends_on: BTreeSet::new(),
+                          requested_authority: authority(&["fs.read"]),
+                      },
+                  )
+                  .unwrap();
+                  invoke(
+                      &mut kernel,
+                      &ExecutionCommand::CreateTask {
+                          id: "b".into(),
+                          parent_execution: "root".into(),
+                          description: "task b".into(),
+                          depends_on: BTreeSet::from(["a".to_owned()]),
+                          requested_authority: authority(&["fs.read"]),
+                      },
+                  )
+                  .unwrap();
+
+                  let immutable = invoke(
+                      &mut kernel,
+                      &ExecutionCommand::CreateTask {
+                          id: "a".into(),
+                          parent_execution: "root".into(),
+                          description: "task a".into(),
+                          depends_on: BTreeSet::from(["b".to_owned()]),
+                          requested_authority: authority(&["fs.read"]),
+                      },
+                  )
+                  .unwrap_err();
+                  assert!(immutable.contains("worker task already exists: a"));
+                  let _ = fs::remove_file(path);
+              }
+
+              #[test]
+              fn task_dependencies_are_deterministic_and_share_execution_authority() {'''
+          if marker not in text:
+              raise SystemExit('execution test marker missing')
+          execution.write_text(text.replace(marker, test, 1))
+          PY
+
+      - name: Refresh lock and format
+        run: |
+          cargo check --manifest-path rust/Cargo.toml -p phenix-plugin-planning -p phenix-plugin-execution
+          cargo fmt --manifest-path rust/Cargo.toml --all
+
+      - name: Focused plugin graph regressions
+        run: |
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-planning plan_cycle_validation_is_step_order_independent
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-planning invalid_plan_and_decision_dependencies_are_rejected
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-execution task_creation_rules_make_dependency_cycles_unrepresentable
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-execution task_dependencies_are_deterministic_and_share_execution_authority
+
+      - name: Commit batch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.lock rust/crates/phenix-plugin-planning/Cargo.toml rust/crates/phenix-plugin-planning/src/implementation.rs rust/crates/phenix-plugin-execution/src/implementation.rs
+          git diff --cached --check
+          git commit -m 'refactor(plugins): migrate planning graph and remove dead task DFS'
+          git push origin HEAD:refactor/shared-graph-mechanics
