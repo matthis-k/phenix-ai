@@ -1834,6 +1834,7 @@ dependencies = [
 name = "phenix-harness"
 version = "0.1.0"
 dependencies = [
+ "phenix-application-interface",
  "phenix-conductor",
  "phenix-core",
  "phenix-plugin-catalog",
