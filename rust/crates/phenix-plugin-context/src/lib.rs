@@ -8,6 +8,7 @@ pub use phenix_sdk::{
 
 mod component;
 mod implementation;
+mod projection_state;
 mod prompt;
 
 pub use component::*;
