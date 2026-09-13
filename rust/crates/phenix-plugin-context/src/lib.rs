@@ -10,6 +10,7 @@ mod component;
 mod implementation;
 mod projection_state;
 mod prompt;
+mod state_service;
 
 pub use component::*;
 pub use implementation::context_factory;
