@@ -16,7 +16,7 @@ pub enum ModelDispatchCommand {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelDispatchResponse {
     Inference {
         decision: RouteDecision,
