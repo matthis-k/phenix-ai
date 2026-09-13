@@ -1,19 +1,19 @@
 use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
     Authority, Bytes, ContextResourceId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
-    PluginState, Project, ResolvedHarness,
+    PluginState, Project, ResolvedHarness, ResolvedHarnessActivation,
 };
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
 };
 use phenix_sdk::{
     context_service, execution_service, BudgetReservation, CachePlacement, CompactionProposal,
-    ContextAdmissionRequest, ContextCandidate, ContextCheckpoint, ContextCommand, ContextDemand,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextProjectionForm,
-    ContextResourceKind, ContextResponse, ContextRetention, ContextScope, ContextSource,
-    DelegationResourcePolicy, ExecutionAuthority, ExecutionCommand, ProjectionRevision,
-    ReasoningBudget, RetentionTransition, RetryBudget, RoutingRequirements, SkillProvisionBudget,
-    StepPlan, ToolCallGroupReference, ToolProvisionBudget,
+    ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDemand,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextRetention, ContextScope, ContextSource, DelegationResourcePolicy, ExecutionAuthority,
+    ExecutionCommand, ProjectionCheckpoint, ProjectionRevision, ReasoningBudget, RetentionTransition,
+    RetryBudget, RoutingRequirements, SkillProvisionBudget, StepPlan, ToolCallGroupReference,
+    ToolProvisionBudget,
 };
 use std::{
     collections::BTreeSet,
@@ -172,7 +172,7 @@ fn proposal(execution_id: &str, checkpoint: &str) -> CompactionProposal {
             to: ContextRetention::DropAllowed,
             recovery: None,
         }],
-        checkpoint: ContextCheckpoint {
+        checkpoint: ProjectionCheckpoint {
             checkpoint_id: checkpoint.into(),
             execution_id: execution_id.into(),
             source_revision: revision,
