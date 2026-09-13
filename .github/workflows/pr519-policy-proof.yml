@@ -1,0 +1,145 @@
+name: PR 519 policy boundary proof
+
+on:
+  push:
+    branches:
+      - refactor/shared-graph-mechanics
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: refactor/shared-graph-mechanics
+
+      - name: Add ordering and snapshot permutation proofs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hooks = Path('rust/crates/phenix-plugin-hooks/src/implementation.rs')
+          text = hooks.read_text()
+          old = '''    #[test]
+              fn hook_cycle_is_rejected_independent_of_registration_order() {
+                  let path = temp_db("hooks-cycle");
+                  let mut kernel = kernel(&path);
+                  let error = invoke(
+                      &mut kernel,
+                      HookCommand::RegisterConfiguration {
+                          configuration: HookConfiguration {
+                              revision: "config-cycle".into(),
+                              hooks: vec![observe("a", &["b"]), observe("b", &["a"])],
+                          },
+                      },
+                  )
+                  .unwrap_err();
+                  assert!(error.contains("cycle"));
+                  let _ = fs::remove_file(path);
+              }
+          '''
+          new = '''    #[test]
+              fn hook_cycle_is_rejected_independent_of_registration_order() {
+                  for (suffix, hooks) in [
+                      ("forward", vec![observe("a", &["b"]), observe("b", &["a"])]),
+                      ("reverse", vec![observe("b", &["a"]), observe("a", &["b"])]),
+                  ] {
+                      let path = temp_db(&format!("hooks-cycle-{suffix}"));
+                      let mut kernel = kernel(&path);
+                      let error = invoke(
+                          &mut kernel,
+                          HookCommand::RegisterConfiguration {
+                              configuration: HookConfiguration {
+                                  revision: format!("config-cycle-{suffix}"),
+                                  hooks,
+                              },
+                          },
+                      )
+                      .unwrap_err();
+                      assert!(error.contains("cycle"));
+                      let _ = fs::remove_file(path);
+                  }
+              }
+
+              #[test]
+              fn hook_ready_order_is_lexical_independent_of_registration_order() {
+                  let expected = vec!["a", "b", "z"];
+                  for hooks in [
+                      vec![observe("z", &["a"]), observe("b", &[]), observe("a", &[])],
+                      vec![observe("a", &[]), observe("z", &["a"]), observe("b", &[])],
+                  ] {
+                      let configuration = HookConfiguration {
+                          revision: "order-proof".into(),
+                          hooks,
+                      };
+                      let ordered = ordered_hooks(&configuration, &LifecycleEvent::ExecutionCompleted)
+                          .unwrap()
+                          .into_iter()
+                          .map(|hook| hook.id.as_str())
+                          .collect::<Vec<_>>();
+                      assert_eq!(ordered, expected);
+                  }
+              }
+          '''
+          if old not in text:
+              raise SystemExit('hook cycle test shape changed')
+          hooks.write_text(text.replace(old, new, 1))
+
+          workers = Path('rust/crates/phenix-plugin-repository-workers/src/implementation.rs')
+          text = workers.read_text()
+          marker = '''    #[test]
+              fn dependency_blocker_outranks_ordinary_ready_work() {'''
+          new_test = '''    #[test]
+              fn dependency_selection_is_snapshot_order_independent() {
+                  let ordinary = pr(20, "ordinary", 20);
+                  let blocker = pr(30, "blocker", 30);
+                  let mut dependent = pr(31, "dependent", 31);
+                  dependent.dependencies.insert(30);
+                  let expected = Some(RepositoryWorkSelection {
+                      pr_number: 30,
+                      reason: RepositorySelectionReason::DependencyBlocking,
+                  });
+
+                  for pull_requests in [
+                      vec![ordinary.clone(), blocker.clone(), dependent.clone()],
+                      vec![dependent.clone(), ordinary.clone(), blocker.clone()],
+                      vec![blocker.clone(), dependent.clone(), ordinary.clone()],
+                  ] {
+                      let queue = RepositoryWorkerQueue::reconstruct(&RepositoryWorkSnapshot {
+                          pull_requests,
+                          issues: vec![],
+                      });
+                      assert_eq!(queue.select_work(), expected);
+                      assert!(!queue.pull_request(31).unwrap().dependencies_satisfied);
+                  }
+              }
+
+              #[test]
+              fn dependency_blocker_outranks_ordinary_ready_work() {'''
+          if marker not in text:
+              raise SystemExit('repository dependency test marker missing')
+          workers.write_text(text.replace(marker, new_test, 1))
+          PY
+
+      - name: Format and focused tests
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-hooks hook_cycle_is_rejected_independent_of_registration_order
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-hooks hook_ready_order_is_lexical_independent_of_registration_order
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-repository-workers dependency_selection_is_snapshot_order_independent
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-repository-workers dependency_blocker_outranks_ordinary_ready_work
+          cargo test --manifest-path rust/Cargo.toml -p phenix-plugin-repository-workers dependency_requires_merged_green_boundary
+
+      - name: Commit proof
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/phenix-plugin-hooks/src/implementation.rs rust/crates/phenix-plugin-repository-workers/src/implementation.rs
+          git diff --cached --check
+          git commit -m 'test(graph): prove policy ordering boundaries'
+          git push origin HEAD:refactor/shared-graph-mechanics
