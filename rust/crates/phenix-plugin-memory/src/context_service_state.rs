@@ -1,5 +1,7 @@
 use crate::association_store::AssociationStore;
-use phenix_sdk::{resolve_recall, MemoryContextCommand, MemoryContextResponse};
+use phenix_sdk::{
+    resolve_recall, MemoryAssociationState, MemoryContextCommand, MemoryContextResponse,
+};
 
 pub(crate) const MEMORY_CONTEXT_STATE_KEY: &str = "context/service-state";
 pub(crate) const MAX_MEMORY_CONTEXT_STATE_BYTES: usize = 4 * 1024 * 1024;
@@ -44,6 +46,10 @@ impl MemoryContextServiceState {
             });
         }
         Ok(bytes)
+    }
+
+    pub(crate) fn association_states(&self) -> impl Iterator<Item = &MemoryAssociationState> {
+        self.associations.states()
     }
 
     /// Handles association-state operations. `Recall` stays with the semantic
@@ -120,5 +126,6 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(restored.association_states().count(), 1);
     }
 }
