@@ -218,14 +218,6 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock', 'rust/Cargo.lock', 'modules/**/*.nix') }}"
-          restore-prefixes-first-match: |
-            phenix-nix-${{ runner.os }}-${{ github.job }}-
-          gc-max-store-size-linux: "2G"
-
       - name: "Plugin packaging integration"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
@@ -257,14 +249,6 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock', 'rust/Cargo.lock', 'modules/**/*.nix') }}"
-          restore-prefixes-first-match: |
-            phenix-nix-${{ runner.os }}-${{ github.job }}-
-          gc-max-store-size-linux: "2G"
-
       - name: "Phenix Lua binding product fixture"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
@@ -295,14 +279,6 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
             max-jobs = auto
-
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock', 'rust/Cargo.lock', 'modules/**/*.nix') }}"
-          restore-prefixes-first-match: |
-            phenix-nix-${{ runner.os }}-${{ github.job }}-
-          gc-max-store-size-linux: "2G"
 
       - name: "Phenix supported runtime journey"
         env:
