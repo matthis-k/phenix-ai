@@ -15,7 +15,8 @@ use genai::Client as ProviderClient;
 use parking_lot::Mutex;
 use phenix_backend::{
     Backend, BackendCapabilities, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
-    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolInvocation, ToolPresentation,
+    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolCancellation, ToolInvocation,
+    ToolPresentation,
 };
 use phenix_domain::{
     AuthenticationInput, AuthenticationMethodDescriptor, AuthenticationMethodId,
@@ -132,6 +133,7 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
     match host.invoke_tool(ToolInvocation {
         callable: descriptor.id.clone(),
         arguments_json,
+        cancellation: ToolCancellation::new(),
     }) {
         Ok(result) if result.success => Ok(result.output),
         Ok(result) => Ok(json!({ "error": result.output }).to_string()),
