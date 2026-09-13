@@ -6,7 +6,8 @@ use agent_client_protocol::schema::v1::{
 };
 use parking_lot::Mutex;
 use phenix_backend::{
-    BackendError, PreparedToolSurface, ToolCancellation, ToolInvocation, ToolPresentation, ToolResult,
+    BackendError, PreparedToolSurface, ToolCancellation, ToolInvocation, ToolPresentation,
+    ToolResult,
 };
 use phenix_domain::{CallableDescriptor, PhenixSchema};
 use rmcp::model::{
@@ -748,9 +749,7 @@ mod tests {
             while !request.invocation.cancellation.is_cancelled() {
                 std::thread::yield_now();
             }
-            observed_tx
-                .send(request.cancelled.is_cancelled())
-                .unwrap();
+            observed_tx.send(request.cancelled.is_cancelled()).unwrap();
         });
 
         let caller = {
