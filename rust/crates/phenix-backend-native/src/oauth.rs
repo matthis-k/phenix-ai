@@ -502,7 +502,7 @@ mod tests {
             assert_eq!(query.get(key).map(String::as_str), Some(expected), "{key}");
         }
         assert!(!query["code_challenge"].is_empty());
-        assert_eq!(query["state"], state.secret());
+        assert_eq!(query["state"].as_str(), state.secret().as_str());
         assert_eq!(query.len(), 10);
         assert!(!query.contains_key("version"));
     }
@@ -817,10 +817,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_uses_one_hour_fallback_for_missing_expiry() {
+    async fn refresh_uses_one_hour_fallback_for_missing_or_invalid_expiry() {
         let store = temp_store();
         let refreshed_access = token(serde_json::json!({
             "chatgpt_account_id": "account",
+        }));
+        let client = fake_token_endpoint(token_response(&refreshed_access, None, None));
+        let credential = stored_oauth("old-access", "old-refresh", "old-id", "account", NOW);
+        let refreshed = refresh_with(&store, credential, &client, NOW)
+            .await
+            .unwrap();
+        let (_, _, _, _, expires_at) = oauth_credential(&refreshed);
+        assert_eq!(expires_at, NOW + 3600);
+
+        let refreshed_access = token(serde_json::json!({
+            "chatgpt_account_id": "account",
+            "exp": "not-a-number",
         }));
         let client = fake_token_endpoint(token_response(&refreshed_access, None, None));
         let credential = stored_oauth("old-access", "old-refresh", "old-id", "account", NOW);
