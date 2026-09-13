@@ -1,5 +1,5 @@
 ---
-status: complete
+status: implemented
 source: rust-library-ownership-audit
 snapshot: 5c3c0f2ee187c6dd38d569d2467055b8afcd067a
 ---
