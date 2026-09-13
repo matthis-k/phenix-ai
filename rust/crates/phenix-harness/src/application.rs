@@ -2,23 +2,43 @@ use phenix_application_interface::types::{
     SessionChange, SessionInfo, SessionProjection, SessionProjectionState, SessionSnapshot,
     SessionUpdate,
 };
-use phenix_core::SessionId;
+use phenix_core::{
+    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PluginId,
+    SnapshotPolicy, ValueAddress, ValueCodec, ValueId, ValuePath,
+};
+use phenix_plugin_catalog::SDK_PLUGIN;
 use std::collections::BTreeMap;
 
 pub const APPLICATION_INVOCATION_CAPACITY: usize = 64;
 pub const CLIENT_CAPABILITY_CAPACITY: usize = 64;
 pub const APPLICATION_EVENT_CAPACITY: usize = 256;
+pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub fn session_projection_value_id() -> ValueId {
+    ValueId::parse(SESSION_PROJECTION_VALUE).expect("static session projection value id is valid")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SessionProjectionError {
-    Missing {
-        session_id: SessionId,
-    },
+    #[error("session projection is missing for {session_id}")]
+    Missing { session_id: phenix_core::SessionId },
+    #[error(
+        "session projection sequence gap for {session_id}: expected {expected}, got {actual}"
+    )]
     SequenceGap {
-        session_id: SessionId,
+        session_id: phenix_core::SessionId,
         expected: u64,
         actual: u64,
     },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SessionProjectionStoreError {
+    #[error(transparent)]
+    Projection(#[from] SessionProjectionError),
+    #[error(transparent)]
+    Observable(#[from] ObservableError),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,10 +118,92 @@ impl SessionProjectionReducer {
     }
 }
 
+pub struct SessionProjectionStore {
+    store: ObservableStore,
+    value_id: ValueId,
+    reducer: SessionProjectionReducer,
+}
+
+impl SessionProjectionStore {
+    pub fn new() -> Result<Self, ObservableError> {
+        let reducer = SessionProjectionReducer::new();
+        let store = ObservableStore::default();
+        let value_id = session_projection_value_id();
+        store.register(ObservableRegistration {
+            id: value_id.clone(),
+            owner: PluginId::parse(SDK_PLUGIN).expect("static SDK plugin id is valid"),
+            schema: SessionProjectionState::phenix_schema(),
+            snapshot_policy: SnapshotPolicy::CopyOnChange,
+            initial: reducer.state().to_value(),
+        })?;
+        Ok(Self {
+            store,
+            value_id,
+            reducer,
+        })
+    }
+
+    #[must_use]
+    pub fn store(&self) -> &ObservableStore {
+        &self.store
+    }
+
+    #[must_use]
+    pub fn state(&self) -> &SessionProjectionState {
+        self.reducer.state()
+    }
+
+    #[must_use]
+    pub fn value_id(&self) -> &ValueId {
+        &self.value_id
+    }
+
+    pub fn insert_created(
+        &mut self,
+        session: SessionInfo,
+    ) -> Result<(), SessionProjectionStoreError> {
+        self.commit(move |reducer| {
+            reducer.insert_created(session);
+            Ok(())
+        })
+    }
+
+    pub fn replace_snapshot(
+        &mut self,
+        snapshot: SessionSnapshot,
+    ) -> Result<(), SessionProjectionStoreError> {
+        self.commit(move |reducer| {
+            reducer.replace_snapshot(snapshot);
+            Ok(())
+        })
+    }
+
+    pub fn apply_update(
+        &mut self,
+        update: SessionUpdate,
+    ) -> Result<(), SessionProjectionStoreError> {
+        self.commit(move |reducer| reducer.apply_update(update))
+    }
+
+    fn commit(
+        &mut self,
+        mutate: impl FnOnce(&mut SessionProjectionReducer) -> Result<(), SessionProjectionError>,
+    ) -> Result<(), SessionProjectionStoreError> {
+        let mut next = self.reducer.clone();
+        mutate(&mut next)?;
+        let value = next.state().to_value();
+        self.store.transaction([&self.value_id], |transaction| {
+            transaction.replace(&self.value_id, ValuePath::root(), value)
+        })?;
+        self.reducer = next;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_application_interface::types::SessionChange;
+    use phenix_core::SessionId;
 
     fn session(id: &str, title: Option<&str>) -> SessionInfo {
         SessionInfo {
@@ -185,5 +287,60 @@ mod tests {
             }
         );
         assert_eq!(reducer.state().sessions["session-1"].through_sequence, 0);
+    }
+
+    #[test]
+    fn observable_projection_commits_match_reducer_state() {
+        let mut projection = SessionProjectionStore::new().unwrap();
+        projection
+            .insert_created(session("session-1", None))
+            .unwrap();
+        projection
+            .apply_update(SessionUpdate {
+                session_id: SessionId::parse("session-1").unwrap(),
+                sequence: 1,
+                update: SessionChange::Renamed {
+                    title: "observable".into(),
+                },
+            })
+            .unwrap();
+
+        let (_, value) = projection
+            .store()
+            .get(&ValueAddress {
+                value: projection.value_id().clone(),
+                path: ValuePath::root(),
+            })
+            .unwrap();
+        let observed = SessionProjectionState::from_value(&value).unwrap();
+        assert_eq!(&observed, projection.state());
+        assert_eq!(
+            observed.sessions["session-1"].session.title.as_deref(),
+            Some("observable")
+        );
+    }
+
+    #[test]
+    fn projection_gap_does_not_advance_observable_version() {
+        let mut projection = SessionProjectionStore::new().unwrap();
+        projection
+            .insert_created(session("session-1", None))
+            .unwrap();
+        let before = projection.store().metadata(projection.value_id()).unwrap();
+
+        let error = projection
+            .apply_update(SessionUpdate {
+                session_id: SessionId::parse("session-1").unwrap(),
+                sequence: 2,
+                update: SessionChange::Closed,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            SessionProjectionStoreError::Projection(SessionProjectionError::SequenceGap { .. })
+        ));
+        let after = projection.store().metadata(projection.value_id()).unwrap();
+        assert_eq!(before.version, after.version);
+        assert_eq!(projection.state().sessions["session-1"].through_sequence, 0);
     }
 }
