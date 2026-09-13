@@ -1847,6 +1847,7 @@ dependencies = [
 name = "phenix-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "phenix-application-interface",
  "phenix-core",
  "phenix-plugin-context",
  "phenix-plugin-execution",
