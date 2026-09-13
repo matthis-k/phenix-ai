@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Internal mapping glue around petgraph.
 ///
-/// Domain meaning stays at the call site. This type only centralizes stable
-/// node indexing plus reusable traversal mechanics.
+/// Domain meaning and semantic ordering stay at the call site. This type only
+/// centralizes stable node indexing plus reusable traversal mechanics.
 pub(crate) struct DirectedGraph<N> {
     graph: DiGraph<N, ()>,
     indices: BTreeMap<N, NodeIndex>,
@@ -28,19 +28,27 @@ where
     }
 
     pub(crate) fn add_edge(&mut self, from: &N, to: &N) {
-        let from = self.indices[from];
-        let to = self.indices[to];
+        let from = self
+            .indices
+            .get(from)
+            .copied()
+            .expect("graph edges are added only from registered nodes");
+        let to = self
+            .indices
+            .get(to)
+            .copied()
+            .expect("graph edges are added only to registered nodes");
         self.graph.add_edge(from, to, ());
     }
 
-    pub(crate) fn reachable_from(&self, root: &N) -> Vec<N> {
+    pub(crate) fn reachable_from(&self, root: &N) -> BTreeSet<N> {
         let Some(&root) = self.indices.get(root) else {
-            return Vec::new();
+            return BTreeSet::new();
         };
         let mut dfs = Dfs::new(&self.graph, root);
-        let mut reachable = Vec::new();
+        let mut reachable = BTreeSet::new();
         while let Some(index) = dfs.next(&self.graph) {
-            reachable.push(self.graph[index].clone());
+            reachable.insert(self.graph[index].clone());
         }
         reachable
     }
@@ -100,11 +108,18 @@ mod tests {
     }
 
     #[test]
-    fn reachability_is_scoped_to_the_requested_root() {
-        let mut graph = DirectedGraph::from_nodes(["root", "child", "other"]);
-        graph.add_edge(&"root", &"child");
+    fn reachability_is_membership_not_traversal_order() {
+        let mut graph = DirectedGraph::from_nodes(["root", "z-child", "a-child", "other"]);
+        graph.add_edge(&"root", &"z-child");
+        graph.add_edge(&"root", &"a-child");
 
-        assert_eq!(graph.reachable_from(&"root"), vec!["root", "child"]);
-        assert_eq!(graph.reachable_from(&"other"), vec!["other"]);
+        assert_eq!(
+            graph.reachable_from(&"root"),
+            BTreeSet::from(["a-child", "root", "z-child"])
+        );
+        assert_eq!(
+            graph.reachable_from(&"other"),
+            BTreeSet::from(["other"])
+        );
     }
 }
