@@ -36,6 +36,7 @@
         ./modules/plugin-packaging.nix
         ./modules/package-sets.nix
         ./modules/lua-binding-integration.nix
+        ./modules/nvim-client.nix
         ./modules/development.nix
         ./modules/stitch.nix
       ];

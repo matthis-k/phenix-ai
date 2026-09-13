@@ -8,6 +8,7 @@ publish = false
 role = "application"
 
 [dependencies]
+phenix-application-interface = { path = "../phenix-application-interface" }
 phenix-conductor = { path = "../phenix-conductor" }
 phenix-core = { path = "../phenix-core" }
 phenix-plugin-catalog = { path = "../phenix-plugin-catalog" }

@@ -1,8 +1,8 @@
 # Phenix AI
 
-This repository owns the generic Phenix runtime, conductor, internal client wire, independently packaged first-party plugins and protocol adapters, and the supported Harness product.
+This repository owns the generic Phenix runtime, conductor, internal client wire, independently packaged first-party plugins and protocol adapters, the canonical Neovim frontend, and the supported Harness product.
 
-The Neovim frontend lives in `matthis-k/phenix-nvim`. This repository owns server-side behavior and frontend-neutral contracts.
+The canonical Neovim source lives under `clients/nvim`. The standalone `matthis-k/phenix-nvim` repository is a deterministic export target for plugin managers, not a second implementation.
 
 ## Architecture
 
@@ -37,7 +37,9 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 `phenix-application-interface` owns the fixed, versioned application descriptor. Typed Rust declarations derive its `PhenixSchema` payloads. The descriptor covers editor operations, updates, callbacks, capability dependencies, and errors. It contains no runtime service topology or authority policy. The first Rust emitter consumes the serialized descriptor and produces a compiled regression client.
 
-`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The remaining runtime bridge and `phenix-acp` executable are required before an editor can spawn it.
+`phenix-binding-lua` projects the application/value-capability client surface into Lua. `clients/nvim` consumes that binding through `require("phenix")`; only its runtime adapter owns native client userdata.
+
+`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The remaining configured-runtime bridge and `phenix-acp` executable are required before a packaged editor can spawn the real Phenix application.
 
 ### Rust boundaries
 
@@ -81,6 +83,9 @@ The flake exposes:
 - `packages.<system>.phenix-core`;
 - `packages.<system>.phenix-client`;
 - `packages.<system>.phenix-application-interface`, including `bin/phenix-application-descriptor` and `share/phenix/interfaces/phenix.application@1.json`;
+- `packages.<system>.phenix-binding-lua`;
+- `packages.<system>.phenix-nvim`;
+- `packages.<system>.phenix-nvim-export`;
 - `packages.<system>.phenix-conductor`;
 - `packages.<system>.phenix-harness`;
 - `packages.<system>.phenix`;
@@ -109,7 +114,7 @@ Authentication and provider selection are plugin and Harness concerns. They must
 - Zero-plugin mode has no hidden first-party fallbacks.
 - First-party plugins use the same contracts as alternate plugins.
 - Do not add parallel frontend-to-agent protocols or duplicate orchestration registries.
-- Keep frontend-specific behavior and packaging in frontend repositories.
+- Keep canonical Neovim behavior and packaging under `clients/nvim`; export mirrors from that source.
 - Tests should assert behavior, protocol semantics, or cross-boundary integration rather than duplicated configuration facts.
 
 ## Development
@@ -129,6 +134,6 @@ maintenance fix
 maintenance all
 ```
 
-Validation is separated into source, Rust, integration/system, realized product, Nix composition, and Maintenance boundaries. Product validation exercises installed conductor and Harness compositions. Frontend behavior is tested in frontend repositories.
+Validation is separated into source, Rust, integration/system, realized product, Nix composition, Maintenance, and canonical frontend boundaries. Product validation exercises installed conductor and Harness compositions. `clients/nvim` has packaged headless checks in this repository; standalone mirrors validate export parity rather than owning behavior.
 
 See `DEVELOPMENT.md` for focused validation commands and test-boundary guidance.
