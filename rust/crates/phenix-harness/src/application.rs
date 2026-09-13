@@ -3,7 +3,7 @@ use phenix_application_interface::types::{
     SessionUpdate,
 };
 use phenix_core::{
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PluginId,
+    HasPhenixSchema, ObservableError, ObservableRegistration, ObservableStore, PluginId,
     SnapshotPolicy, ValueAddress, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::SDK_PLUGIN;
@@ -28,6 +28,11 @@ pub enum SessionProjectionError {
         session_id: phenix_core::SessionId,
         expected: u64,
         actual: u64,
+    },
+    #[error("session projection repair for {expected} received an update for {actual}")]
+    RepairSessionMismatch {
+        expected: phenix_core::SessionId,
+        actual: phenix_core::SessionId,
     },
 }
 
@@ -185,6 +190,37 @@ impl SessionProjectionStore {
         self.commit(move |reducer| reducer.apply_update(update))
     }
 
+    /// Replaces one session with an authoritative full snapshot, then consumes
+    /// only the still-relevant contiguous suffix buffered while repair ran.
+    ///
+    /// A remaining gap is returned after the snapshot (and any preceding
+    /// contiguous suffix) has committed. The caller must fetch another full
+    /// snapshot rather than guessing the missing transition.
+    pub fn repair_with_snapshot(
+        &mut self,
+        snapshot: SessionSnapshot,
+        buffered: impl IntoIterator<Item = SessionUpdate>,
+    ) -> Result<(), SessionProjectionStoreError> {
+        let session_id = snapshot.session.session_id.clone();
+        self.replace_snapshot(snapshot)?;
+
+        for update in buffered {
+            if update.session_id != session_id {
+                return Err(SessionProjectionError::RepairSessionMismatch {
+                    expected: session_id,
+                    actual: update.session_id,
+                }
+                .into());
+            }
+            let through_sequence = self.reducer.state.sessions[session_id.as_str()].through_sequence;
+            if update.sequence <= through_sequence {
+                continue;
+            }
+            self.apply_update(update)?;
+        }
+        Ok(())
+    }
+
     fn commit(
         &mut self,
         mutate: impl FnOnce(&mut SessionProjectionReducer) -> Result<(), SessionProjectionError>,
@@ -210,6 +246,16 @@ mod tests {
             session_id: SessionId::parse(id).unwrap(),
             title: title.map(str::to_owned),
             working_directory: "/workspace".into(),
+        }
+    }
+
+    fn rename(id: &str, sequence: u64, title: &str) -> SessionUpdate {
+        SessionUpdate {
+            session_id: SessionId::parse(id).unwrap(),
+            sequence,
+            update: SessionChange::Renamed {
+                title: title.to_owned(),
+            },
         }
     }
 
@@ -242,15 +288,7 @@ mod tests {
     fn ordered_rename_updates_history_and_projected_metadata() {
         let mut reducer = SessionProjectionReducer::new();
         reducer.insert_created(session("session-1", None));
-        reducer
-            .apply_update(SessionUpdate {
-                session_id: SessionId::parse("session-1").unwrap(),
-                sequence: 1,
-                update: SessionChange::Renamed {
-                    title: "new title".into(),
-                },
-            })
-            .unwrap();
+        reducer.apply_update(rename("session-1", 1, "new title")).unwrap();
 
         let projection = &reducer.state().sessions["session-1"];
         assert_eq!(projection.through_sequence, 1);
@@ -296,13 +334,7 @@ mod tests {
             .insert_created(session("session-1", None))
             .unwrap();
         projection
-            .apply_update(SessionUpdate {
-                session_id: SessionId::parse("session-1").unwrap(),
-                sequence: 1,
-                update: SessionChange::Renamed {
-                    title: "observable".into(),
-                },
-            })
+            .apply_update(rename("session-1", 1, "observable"))
             .unwrap();
 
         let (_, value) = projection
@@ -342,5 +374,68 @@ mod tests {
         let after = projection.store().metadata(projection.value_id()).unwrap();
         assert_eq!(before.version, after.version);
         assert_eq!(projection.state().sessions["session-1"].through_sequence, 0);
+    }
+
+    #[test]
+    fn repair_discards_snapshot_covered_updates_and_applies_contiguous_suffix() {
+        let mut projection = SessionProjectionStore::new().unwrap();
+        projection
+            .insert_created(session("session-1", Some("stale")))
+            .unwrap();
+        projection
+            .repair_with_snapshot(
+                SessionSnapshot {
+                    session: session("session-1", Some("snapshot")),
+                    through_sequence: 2,
+                    updates: vec![
+                        rename("session-1", 1, "one"),
+                        rename("session-1", 2, "snapshot"),
+                    ],
+                },
+                [
+                    rename("session-1", 2, "covered duplicate"),
+                    rename("session-1", 3, "after repair"),
+                ],
+            )
+            .unwrap();
+
+        let repaired = &projection.state().sessions["session-1"];
+        assert_eq!(repaired.through_sequence, 3);
+        assert_eq!(repaired.updates.len(), 3);
+        assert_eq!(repaired.session.title.as_deref(), Some("after repair"));
+    }
+
+    #[test]
+    fn repair_keeps_authoritative_snapshot_when_suffix_still_has_gap() {
+        let mut projection = SessionProjectionStore::new().unwrap();
+        projection
+            .insert_created(session("session-1", Some("stale")))
+            .unwrap();
+
+        let error = projection
+            .repair_with_snapshot(
+                SessionSnapshot {
+                    session: session("session-1", Some("repaired")),
+                    through_sequence: 2,
+                    updates: vec![
+                        rename("session-1", 1, "one"),
+                        rename("session-1", 2, "repaired"),
+                    ],
+                },
+                [rename("session-1", 4, "still gapped")],
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SessionProjectionStoreError::Projection(SessionProjectionError::SequenceGap {
+                expected: 3,
+                actual: 4,
+                ..
+            })
+        ));
+        let repaired = &projection.state().sessions["session-1"];
+        assert_eq!(repaired.through_sequence, 2);
+        assert_eq!(repaired.session.title.as_deref(), Some("repaired"));
     }
 }
