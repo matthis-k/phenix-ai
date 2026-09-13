@@ -7,6 +7,9 @@ pub const MODEL_DISPATCH_SERVICE: &str = "phenix.models.dispatch@1";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelDispatchCommand {
+    PrepareResolved {
+        decision: RouteDecision,
+    },
     InvokeResolved {
         decision: RouteDecision,
         input: Bytes,
@@ -18,6 +21,9 @@ pub enum ModelDispatchCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelDispatchResponse {
+    Ready {
+        decision: RouteDecision,
+    },
     Inference {
         decision: RouteDecision,
         response: ModelInferenceResponse,
