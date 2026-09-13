@@ -30,6 +30,7 @@ use std::{
     sync::Arc,
 };
 
+pub mod application;
 mod basic_suite;
 mod persistence;
 
