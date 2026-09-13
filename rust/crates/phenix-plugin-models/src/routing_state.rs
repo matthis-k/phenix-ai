@@ -178,8 +178,12 @@ mod tests {
     fn runtime_resolve_reuses_sdk_hard_admission_and_selection() {
         let mut state = RoutingRuntimeState::default();
         let profile = profile();
-        for target in std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter()) {
-            state.publish_capabilities(capabilities(target.clone())).unwrap();
+        for target in
+            std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
+        {
+            state
+                .publish_capabilities(capabilities(target.clone()))
+                .unwrap();
         }
         let selection = state
             .resolve(
