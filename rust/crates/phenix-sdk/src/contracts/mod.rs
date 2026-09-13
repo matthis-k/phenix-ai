@@ -1,6 +1,7 @@
 pub mod context;
 pub mod context_admission;
 pub mod context_compaction;
+pub mod context_recovery_bootstrap;
 pub mod delegation;
 pub mod execution;
 pub mod exploration;
@@ -20,6 +21,7 @@ pub mod workspace;
 pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::*;
+pub use context_recovery_bootstrap::*;
 pub use delegation::*;
 pub use execution::*;
 pub use exploration::*;
