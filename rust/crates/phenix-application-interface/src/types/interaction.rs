@@ -1,5 +1,47 @@
 use super::*;
 
+macro_rules! interaction_handler_ref {
+    ($name:ident, $contract:literal, $input:ty => $output:ty) => {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct $name(pub phenix_core::CallableRef);
+
+        impl $name {
+            #[must_use]
+            pub fn reference(&self) -> &phenix_core::CallableRef {
+                &self.0
+            }
+
+            #[must_use]
+            pub fn into_reference(self) -> phenix_core::CallableRef {
+                self.0
+            }
+        }
+
+        impl phenix_core::ValueCodec for $name {
+            fn phenix_type() -> phenix_core::Type {
+                phenix_core::Type::Callable {
+                    contract: phenix_core::ContractId::parse($contract)
+                        .expect("static interaction callable contract is valid"),
+                    input: Box::new(<$input as phenix_core::HasPhenixSchema>::phenix_schema()),
+                    output: Box::new(<$output as phenix_core::HasPhenixSchema>::phenix_schema()),
+                }
+            }
+
+            fn to_value(&self) -> PhenixValue {
+                PhenixValue::Callable(self.0.clone())
+            }
+
+            fn from_value(value: &PhenixValue) -> Result<Self, phenix_core::ValueError> {
+                <Self as phenix_core::ValueCodec>::phenix_type().parse(value)?;
+                match value {
+                    PhenixValue::Callable(reference) => Ok(Self(reference.clone())),
+                    _ => unreachable!("validated callable value"),
+                }
+            }
+        }
+    };
+}
+
 // Sequence numbers increase within the declared scope. Resume snapshots include their watermark.
 record!(SessionUpdate, "phenix.application.type.session-update@1", {
     session_id: SessionId,
@@ -45,9 +87,19 @@ record!(ElicitationRequest, "phenix.application.type.elicitation-request@1", {
 variants!(ElicitationResponse, "phenix.application.type.elicitation-response@1", {
     Accepted { value: PhenixValue }, Declined, Cancelled,
 });
+interaction_handler_ref!(
+    PermissionHandlerRef,
+    "phenix.application.permission@1",
+    PermissionRequest => PermissionResponse
+);
+interaction_handler_ref!(
+    ElicitationHandlerRef,
+    "phenix.application.elicitation@1",
+    ElicitationRequest => ElicitationResponse
+);
 record!(InteractionHandlers, "phenix.application.type.interaction-handlers@1", {
-    permission: Option<phenix_core::CallableRef>,
-    elicitation: Option<phenix_core::CallableRef>,
+    permission: Option<PermissionHandlerRef>,
+    elicitation: Option<ElicitationHandlerRef>,
 });
 record!(SetInteractionHandlersInput, "phenix.application.type.set-interaction-handlers-input@1", {
     handlers: InteractionHandlers,
@@ -93,7 +145,32 @@ record!(ReviewDecisionInput, "phenix.application.type.review-decision-input@1", 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::PhenixValue;
+    use phenix_core::{
+        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, PhenixValue, ReferenceId,
+        ValueCodec,
+    };
+
+    #[test]
+    fn interaction_handlers_encode_exact_callable_contracts() {
+        let permission = PermissionHandlerRef(phenix_core::CallableRef::new(
+            phenix_core::ContractId::parse("phenix.application.permission@1").unwrap(),
+            CapabilityOwnerId::Client(ClientConnectionId::parse("client-1").unwrap()),
+            CapabilityGenerationId::parse("generation-1").unwrap(),
+            ReferenceId::parse("permission-handler").unwrap(),
+        ));
+        assert_eq!(
+            <PermissionHandlerRef as ValueCodec>::phenix_type(),
+            phenix_core::Type::Callable {
+                contract: phenix_core::ContractId::parse("phenix.application.permission@1").unwrap(),
+                input: Box::new(PermissionRequest::phenix_schema()),
+                output: Box::new(PermissionResponse::phenix_schema()),
+            }
+        );
+        assert_eq!(
+            PermissionHandlerRef::from_value(&permission.to_value()).unwrap(),
+            permission
+        );
+    }
 
     #[test]
     fn review_record_round_trips_without_frontend_patch_state() {
