@@ -1,12 +1,7 @@
 use crate::{PluginId, ResourceNamespace};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    fmt::{self, Display, Formatter},
-    path::Path,
-};
+use std::{collections::BTreeSet, path::Path};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BackendFeature {
@@ -76,90 +71,45 @@ pub struct SchemaMigration {
     pub operations: Vec<TransactionOp>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PersistenceError {
-    Sql(rusqlite::Error),
+    #[error("local persistence: {0}")]
+    Sql(#[from] rusqlite::Error),
+    #[error("durable namespace {namespace} is owned by {owner}")]
     NamespaceCollision {
         namespace: ResourceNamespace,
         owner: PluginId,
     },
+    #[error("durable namespace {namespace} has schema {stored}, requested {requested}")]
     IncompatibleSchema {
         namespace: ResourceNamespace,
         stored: u32,
         requested: u32,
     },
+    #[error("durable namespace {namespace} is missing migration {from_version}->{to_version}")]
     MissingMigration {
         namespace: ResourceNamespace,
         from_version: u32,
         to_version: u32,
     },
+    #[error("durable namespace {namespace} requires unsupported backend feature {feature:?}")]
     UnsupportedFeature {
         namespace: ResourceNamespace,
         feature: BackendFeature,
     },
+    #[error("durable namespace is not registered: {0}")]
     UnregisteredNamespace(ResourceNamespace),
+    #[error("plugin {caller} cannot mutate namespace {namespace} owned by {owner}")]
     WrongNamespaceOwner {
         namespace: ResourceNamespace,
         owner: PluginId,
         caller: PluginId,
     },
+    #[error("transaction assertion failed for {namespace}/{key}")]
     AssertionFailed {
         namespace: ResourceNamespace,
         key: String,
     },
-}
-
-impl Display for PersistenceError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Sql(error) => write!(f, "local persistence: {error}"),
-            Self::NamespaceCollision { namespace, owner } => {
-                write!(f, "durable namespace {namespace} is owned by {owner}")
-            }
-            Self::IncompatibleSchema {
-                namespace,
-                stored,
-                requested,
-            } => write!(
-                f,
-                "durable namespace {namespace} has schema {stored}, requested {requested}"
-            ),
-            Self::MissingMigration {
-                namespace,
-                from_version,
-                to_version,
-            } => write!(
-                f,
-                "durable namespace {namespace} is missing migration {from_version}->{to_version}"
-            ),
-            Self::UnsupportedFeature { namespace, feature } => write!(
-                f,
-                "durable namespace {namespace} requires unsupported backend feature {feature:?}"
-            ),
-            Self::UnregisteredNamespace(namespace) => {
-                write!(f, "durable namespace is not registered: {namespace}")
-            }
-            Self::WrongNamespaceOwner {
-                namespace,
-                owner,
-                caller,
-            } => write!(
-                f,
-                "plugin {caller} cannot mutate namespace {namespace} owned by {owner}"
-            ),
-            Self::AssertionFailed { namespace, key } => {
-                write!(f, "transaction assertion failed for {namespace}/{key}")
-            }
-        }
-    }
-}
-
-impl Error for PersistenceError {}
-
-impl From<rusqlite::Error> for PersistenceError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::Sql(value)
-    }
 }
 
 pub trait PersistenceBackend: Send {

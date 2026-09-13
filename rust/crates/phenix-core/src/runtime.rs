@@ -9,12 +9,13 @@ use crate::{
     ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
     SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
+use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -390,9 +391,7 @@ fn stage_listener_subscriptions(
             .instances
             .get(&resolved_listener.owning_plugin)
             .ok_or_else(|| KernelError::PluginNotActive(resolved_listener.owning_plugin.clone()))?;
-        let mut instance = instance
-            .lock()
-            .expect("plugin instance mutex poisoned during listener binding");
+        let mut instance = instance.lock();
         let handler = catch_unwind(AssertUnwindSafe(|| {
             match instance.bind_plugin_listener(resolved_listener, sources.generation) {
                 Some(handler) => handler.map(|handler| {
