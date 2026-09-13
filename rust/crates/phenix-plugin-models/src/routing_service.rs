@@ -62,33 +62,31 @@ impl RoutingServiceState {
                 let response = capabilities.clone();
                 self.runtime
                     .publish_capabilities(capabilities)
-                    .map_err(|error| format!("routing capability publication failed: {error:?}"))?;
-                Ok(ModelResponse::Capabilities {
-                    capabilities: response,
-                })
+                    .map(|()| ModelResponse::Capabilities {
+                        capabilities: response,
+                    })
+                    .map_err(|error| format!("routing capability publication failed: {error:?}"))
             }
             ModelCommand::ListCandidates {
                 profile_id,
                 callable_id,
-            } => {
-                let profile = require_profile(&mut load_profile, &profile_id)?;
+            } => require_profile(&mut load_profile, &profile_id).and_then(|profile| {
                 self.runtime
                     .candidates(&profile, callable_id.as_ref())
                     .map(|candidates| ModelResponse::Candidates { candidates })
                     .map_err(|error| format!("routing candidate construction failed: {error:?}"))
-            }
+            }),
             ModelCommand::ResolveWithRequirements {
                 profile_id,
                 callable_id,
                 requirements,
                 policy,
-            } => {
-                let profile = require_profile(&mut load_profile, &profile_id)?;
+            } => require_profile(&mut load_profile, &profile_id).and_then(|profile| {
                 self.runtime
                     .resolve(&profile, callable_id.as_ref(), &requirements, &policy)
                     .map(|selection| ModelResponse::Decision { selection })
                     .map_err(|error| format!("routing selection failed: {error:?}"))
-            }
+            }),
             ModelCommand::RecordEvidence { decision, evidence } => self
                 .runtime
                 .record_evidence(&decision, evidence)
