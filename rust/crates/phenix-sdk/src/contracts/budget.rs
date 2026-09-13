@@ -111,9 +111,8 @@ impl RootBudgetLedger {
                 remaining.fresh_input_tokens = remaining
                     .fresh_input_tokens
                     .saturating_sub(actual.fresh_input_tokens);
-                remaining.output_tokens = remaining
-                    .output_tokens
-                    .saturating_sub(actual.output_tokens);
+                remaining.output_tokens =
+                    remaining.output_tokens.saturating_sub(actual.output_tokens);
                 remaining.attempts = remaining.attempts.saturating_sub(actual.attempts);
                 if let (Some(current), Some(actual_cost)) =
                     (remaining.cost_microunits, actual.cost_microunits)
@@ -125,10 +124,7 @@ impl RootBudgetLedger {
         remaining
     }
 
-    pub fn reserve(
-        &mut self,
-        request: BudgetReservationRequest,
-    ) -> Result<(), BudgetLedgerError> {
+    pub fn reserve(&mut self, request: BudgetReservationRequest) -> Result<(), BudgetLedgerError> {
         if self.reservations.contains_key(&request.reservation_id) {
             return Err(BudgetLedgerError::DuplicateReservation {
                 reservation_id: request.reservation_id,
@@ -202,7 +198,10 @@ impl RootBudgetLedger {
                 reservation_id: reservation_id.to_owned(),
             });
         }
-        let cost_exceeded = match (actual.cost_microunits, record.request.budget.cost_microunits) {
+        let cost_exceeded = match (
+            actual.cost_microunits,
+            record.request.budget.cost_microunits,
+        ) {
             (Some(actual), Some(reserved)) => actual > reserved,
             (Some(_), None) => false,
             _ => false,

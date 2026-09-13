@@ -40,15 +40,17 @@ impl AssociationStore {
             return Ok((state, true));
         }
 
-        let current = self.associations.get(&key).cloned().unwrap_or_else(|| {
-            MemoryAssociationState {
-                association: observation.association.clone(),
-                observation_count: 0,
-                confirmed_recoveries: 0,
-                last_observed_at: 0,
-                last_confirmed_at: None,
-            }
-        });
+        let current =
+            self.associations
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| MemoryAssociationState {
+                    association: observation.association.clone(),
+                    observation_count: 0,
+                    confirmed_recoveries: 0,
+                    last_observed_at: 0,
+                    last_confirmed_at: None,
+                });
         let next = current.apply_observation(observation);
         self.associations.insert(key, next.clone());
         self.processed_observation_events
@@ -110,8 +112,8 @@ fn association_key(
     memory_id: &str,
     anchor: &ContextAnchor,
 ) -> Result<String, AssociationStoreError> {
-    let anchor = serde_json::to_string(anchor)
-        .map_err(|_| AssociationStoreError::InvalidAnchorIdentity)?;
+    let anchor =
+        serde_json::to_string(anchor).map_err(|_| AssociationStoreError::InvalidAnchorIdentity)?;
     Ok(format!("{memory_id}\0{anchor}"))
 }
 

@@ -122,7 +122,10 @@ impl ContextProjectionState {
             });
         };
         item.retention = transition.to;
-        item.recovery = transition.recovery.clone().or_else(|| item.recovery.clone());
+        item.recovery = transition
+            .recovery
+            .clone()
+            .or_else(|| item.recovery.clone());
         item.form = match transition.to {
             ContextRetention::Pinned | ContextRetention::Full | ContextRetention::Compact => {
                 ContextProjectionForm::Full
@@ -138,9 +141,7 @@ impl ContextProjectionState {
 mod tests {
     use super::*;
     use phenix_core::Bytes;
-    use phenix_sdk::{
-        CachePlacement, ContextCheckpoint, ContextSource, ToolCallGroupReference,
-    };
+    use phenix_sdk::{CachePlacement, ContextCheckpoint, ContextSource, ToolCallGroupReference};
 
     fn state() -> ContextProjectionState {
         let mut state = ContextProjectionState::new("execution-1");
@@ -210,7 +211,10 @@ mod tests {
         state.prepare_compaction(proposal(&state)).unwrap();
         let commit = state.commit_compaction("checkpoint-1").unwrap();
         assert_eq!(commit.committed_projection.revision, original.revision + 1);
-        assert_eq!(commit.committed_projection.cache_epoch, original.cache_epoch + 1);
+        assert_eq!(
+            commit.committed_projection.cache_epoch,
+            original.cache_epoch + 1
+        );
         assert_eq!(
             state.admitted["item-1"].form,
             ContextProjectionForm::Omitted
