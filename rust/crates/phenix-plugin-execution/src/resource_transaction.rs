@@ -59,10 +59,6 @@ impl ExecutionResourceState {
         Ok(ledger)
     }
 
-    pub(crate) fn root_budget(&self, root_execution_id: &str) -> Option<&RootBudgetLedger> {
-        self.ledgers.get(root_execution_id)
-    }
-
     pub(crate) fn reserve(
         &mut self,
         root_execution_id: &str,
@@ -124,6 +120,7 @@ impl ExecutionResourceState {
             .map(RootBudgetLedger::remaining)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn admit_delegated(
         &mut self,
         root_execution_id: &str,
@@ -175,7 +172,7 @@ impl ExecutionResourceState {
     ) -> Result<DelegatedWorkerTaskRecord, ExecutionResourceError> {
         self.delegated
             .start(task_id, execution_id, now_ms)
-            .map(Clone::clone)
+            .cloned()
             .map_err(ExecutionResourceError::Task)
     }
 
