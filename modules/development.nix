@@ -249,6 +249,7 @@
         };
         gitHooks = {
           enable = true;
+          path = ".githooks";
           preCommit = [ "fix" ];
         };
 
@@ -407,7 +408,7 @@
                   };
 
                   workflow-sync = {
-                    description = "Committed GitHub workflow matches the Nix CI declaration";
+                    description = "Committed generated repository integrations match the Nix declarations";
                     ci = sourceCi // {
                       stepName = "Generated workflow";
                     };
@@ -425,6 +426,10 @@
                         ".#packages.$system.phenix-maintenance.phenixMaintenance.ci.github.workflow" \
                         > "$generated"
                       diff -u .github/workflows/ci.yml "$generated"
+
+                      hooks="$(nix build --no-link --print-out-paths \
+                        ".#packages.$system.phenix-maintenance-git-hooks")"
+                      diff -u "$hooks/.githooks/pre-commit" .githooks/pre-commit
                     '';
                   };
                 };
