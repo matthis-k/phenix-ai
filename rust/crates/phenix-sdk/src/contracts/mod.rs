@@ -1,3 +1,4 @@
+pub mod budget;
 pub mod context;
 pub mod context_admission;
 pub mod context_compaction;
@@ -18,6 +19,7 @@ pub mod usage;
 pub mod usage_policy;
 pub mod workspace;
 
+pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::*;
