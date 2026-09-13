@@ -1,4 +1,6 @@
-use crate::{Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId};
+use crate::{
+    graph_util::DirectedGraph, Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId,
+};
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -624,7 +626,7 @@ fn dependency_levels(
     event_type: &EventTypeId,
     event_version: u32,
 ) -> Result<Vec<Vec<SubscriptionId>>, EventError> {
-    let mut remaining = subscriptions
+    let event_subscriptions = subscriptions
         .values()
         .filter(|subscription| {
             &subscription.spec.event_type == event_type
@@ -632,8 +634,25 @@ fn dependency_levels(
         })
         .map(|subscription| subscription.spec.id.clone())
         .collect::<BTreeSet<_>>();
-    let mut levels = Vec::new();
 
+    let mut graph = DirectedGraph::from_nodes(event_subscriptions.iter().cloned());
+    for id in &event_subscriptions {
+        for dependency in &subscriptions[id].spec.dependencies {
+            graph.add_edge(id, dependency);
+        }
+    }
+    for id in &event_subscriptions {
+        if let Some(path) = graph.cycle_path_from(id) {
+            return Err(EventError::DependencyCycle(
+                path.first()
+                    .cloned()
+                    .expect("cycle path contains its repeated root"),
+            ));
+        }
+    }
+
+    let mut remaining = event_subscriptions;
+    let mut levels = Vec::new();
     while !remaining.is_empty() {
         let ready = remaining
             .iter()
@@ -818,6 +837,28 @@ mod tests {
     }
 
     #[test]
+    fn dependency_levels_are_registration_order_independent() {
+        let a = subscription_with("a-root", &[]);
+        let b = subscription_with("b-root", &[]);
+        let z = subscription_with("z-dependent", &["a-root", "b-root"]);
+        let expected = vec![
+            vec![subscription("a-root"), subscription("b-root")],
+            vec![subscription("z-dependent")],
+        ];
+
+        for entries in [
+            vec![z.clone(), b.clone(), a.clone()],
+            vec![a.clone(), z.clone(), b.clone()],
+        ] {
+            let indexed = index_subscriptions(entries).unwrap();
+            assert_eq!(
+                dependency_levels(&indexed, &event_type("demo.changed"), 1).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn independent_subscribers_run_concurrently() {
         #[derive(Default)]
         struct GateState {
@@ -875,21 +916,23 @@ mod tests {
 
     #[test]
     fn dependency_cycles_are_rejected_atomically() {
-        let bus = EventBus::default();
         let noop: Arc<dyn EventHandler> = Arc::new(|_: &EventEnvelope, _: &Authority| Ok(()));
-        let error = bus
-            .replace_subscriptions([
-                EventSubscription {
-                    spec: spec("a", &["b"]),
-                    handler: Arc::clone(&noop),
-                },
-                EventSubscription {
-                    spec: spec("b", &["a"]),
-                    handler: noop,
-                },
-            ])
-            .unwrap_err();
-        assert!(matches!(error, EventError::DependencyCycle(_)));
+        let a = EventSubscription {
+            spec: spec("a", &["b"]),
+            handler: Arc::clone(&noop),
+        };
+        let b = EventSubscription {
+            spec: spec("b", &["a"]),
+            handler: noop,
+        };
+
+        for entries in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+            let bus = EventBus::default();
+            assert_eq!(
+                bus.replace_subscriptions(entries).unwrap_err(),
+                EventError::DependencyCycle(subscription("a"))
+            );
+        }
     }
 
     #[test]
