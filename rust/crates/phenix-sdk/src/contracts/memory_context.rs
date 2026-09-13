@@ -252,7 +252,7 @@ pub enum MemoryContextCommand {
         request: MemoryContextRecallRequest,
     },
     Resolve {
-        request: MemoryContextRecallRequest,
+        evidence: Vec<RecallEvidence>,
     },
     ConfirmUse {
         confirmation: MemoryAssociationConfirmation,
