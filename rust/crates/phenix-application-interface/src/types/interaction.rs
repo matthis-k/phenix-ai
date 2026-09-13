@@ -13,6 +13,7 @@ variants!(SessionChange, "phenix.application.type.session-change@1", {
     Closed,
     Execution { execution_id: String, update: ExecutionChange },
     Diagnostic { diagnostic: Diagnostic },
+    Review { review: ReviewRecord },
 });
 record!(ExecutionUpdate, "phenix.application.type.execution-update@1", {
     session_id: SessionId,
