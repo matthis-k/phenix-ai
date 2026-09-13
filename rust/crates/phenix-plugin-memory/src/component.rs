@@ -3,8 +3,9 @@ use phenix_core::{
     ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    ContextCompactionInterface, ContextExpansionInterface, MemoryEmbeddingInterface,
-    MemoryInterface, MemoryRankInterface, ModelRoutingInterface, OptionsInterface,
+    ContextCompactionInterface, ContextExpansionInterface, MemoryContextInterface,
+    MemoryEmbeddingInterface, MemoryInterface, MemoryRankInterface, ModelRoutingInterface,
+    OptionsInterface,
 };
 
 const MEMORY_COMPONENT: &str = "phenix.memory";
@@ -51,6 +52,10 @@ pub fn memory_component_manifest() -> ComponentManifest {
         exports: [
             (MemoryInterface::interface_id(), MemoryInterface::schema()),
             (
+                MemoryContextInterface::interface_id(),
+                MemoryContextInterface::schema(),
+            ),
+            (
                 ContextCompactionInterface::interface_id(),
                 ContextCompactionInterface::schema(),
             ),
@@ -76,7 +81,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn memory_is_an_ordinary_typed_component() {
+    fn service_manifest_exports_each_memory_semantic_batch() {
         let manifest = memory_component_manifest();
         assert_eq!(manifest.id, memory_component_id());
         assert_eq!(manifest.owner.as_str(), MEMORY_PLUGIN);
@@ -101,19 +106,18 @@ mod tests {
             MemoryRankInterface::interface_id()
         );
         assert!(!manifest.imports[3].required);
-        assert_eq!(manifest.exports.len(), 3);
-        assert!(manifest
-            .exports
-            .iter()
-            .any(|export| export.interface == MemoryInterface::interface_id()));
-        assert!(manifest
-            .exports
-            .iter()
-            .any(|export| export.interface == ContextCompactionInterface::interface_id()));
-        assert!(manifest
-            .exports
-            .iter()
-            .any(|export| export.interface == ContextExpansionInterface::interface_id()));
+        assert_eq!(manifest.exports.len(), 4);
+        for interface in [
+            MemoryInterface::interface_id(),
+            MemoryContextInterface::interface_id(),
+            ContextCompactionInterface::interface_id(),
+            ContextExpansionInterface::interface_id(),
+        ] {
+            assert!(manifest
+                .exports
+                .iter()
+                .any(|export| export.interface == interface));
+        }
         assert!(manifest
             .exports
             .iter()
