@@ -287,12 +287,12 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
     invoke(
         &mut harness,
         "phenix.sessions@1",
-        json!({"operation": "create", "id": "root"}),
+        json!({"operation": "create", "session": {"id": "root", "working_directory": null, "title": null, "lifecycle": "open"}}),
     );
     invoke(
         &mut harness,
         "phenix.sessions@1",
-        json!({"operation": "create", "id": "child"}),
+        json!({"operation": "create", "session": {"id": "child", "working_directory": null, "title": null, "lifecycle": "open"}}),
     );
     let lineage = invoke(
         &mut harness,

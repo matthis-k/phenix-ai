@@ -111,7 +111,7 @@ fn capability(value: &str) -> CapabilityId {
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
 enum SessionMutationRequest {
-    PrepareCreate { id: SessionId },
+    PrepareCreate { session: SessionRecord },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
@@ -236,7 +236,7 @@ fn create_child(
         .mutations
         .invoke_projected::<SessionMutationRequest, SessionMutationResult>(
             &SessionMutationRequest::PrepareCreate {
-                id: session_id.clone(),
+                session: SessionRecord::new(session_id.clone()),
             },
         )
         .map_err(|error| error.to_string())?;
