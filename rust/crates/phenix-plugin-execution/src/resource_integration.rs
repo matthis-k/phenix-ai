@@ -1,5 +1,8 @@
 use crate::{execution_factory, execution_manifest, execution_resource_service};
-use phenix_core::{Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixValue, PluginId, Project};
+use phenix_core::{
+    Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    PhenixValue, PluginId, Project,
+};
 use phenix_sdk::{
     BudgetActual, BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest,
     DelegatedWorkResources, DelegatedWorkerResult, DelegationResourcePolicy, DelegationTaskBinding,
@@ -34,7 +37,9 @@ fn kernel(path: &PathBuf) -> Kernel {
     let plugin = manifest.id.clone();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-    kernel.register_embedded_factory(plugin, execution_factory).unwrap();
+    kernel
+        .register_embedded_factory(plugin, execution_factory)
+        .unwrap();
     kernel.activate_all().unwrap();
     kernel
 }

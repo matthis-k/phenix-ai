@@ -8,8 +8,9 @@ use phenix_core::{
 };
 pub use phenix_sdk::{
     model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
-    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget,
-    RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
+    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
+    ModelTarget, RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE,
+    MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -122,7 +123,10 @@ impl PluginInstance for ModelRoutingPlugin {
         if service == &model_dispatch_service() {
             let command = context
                 .kernel
-                .decode_projected::<ModelDispatchCommand>(&ModelDispatchInterface::interface_id(), input)
+                .decode_projected::<ModelDispatchCommand>(
+                    &ModelDispatchInterface::interface_id(),
+                    input,
+                )
                 .map_err(|error| error.to_string())?;
             let response = handle_dispatch(&mut context, &self.routing, command)?;
             return context

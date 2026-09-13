@@ -109,12 +109,18 @@ mod tests {
 
         assert_eq!(component.owner, plugin.id);
         assert!(component.maximum_authority.permits(&capability));
-        assert_eq!(component.exports[0].interface, ExecutionInterface::interface_id());
+        assert_eq!(
+            component.exports[0].interface,
+            ExecutionInterface::interface_id()
+        );
         assert_eq!(
             component.exports[1].interface,
             ExecutionResourceInterface::interface_id()
         );
-        assert_eq!(component.exports[2].interface, StepAttemptInterface::interface_id());
+        assert_eq!(
+            component.exports[2].interface,
+            StepAttemptInterface::interface_id()
+        );
         for export in &component.exports[..3] {
             assert_eq!(export.required_authority, persistence_authority());
         }
@@ -122,12 +128,24 @@ mod tests {
             component.exports[3].interface,
             ExecutionConfigurationInterface::interface_id()
         );
-        assert_eq!(component.exports[3].required_authority, Authority::default());
-        assert_eq!(component.exports[4].interface, AgentLoopInterface::interface_id());
-        assert_eq!(component.exports[4].required_authority, Authority::default());
+        assert_eq!(
+            component.exports[3].required_authority,
+            Authority::default()
+        );
+        assert_eq!(
+            component.exports[4].interface,
+            AgentLoopInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[4].required_authority,
+            Authority::default()
+        );
         assert_eq!(component.imports.len(), 1);
         assert!(!component.imports[0].required);
-        assert_eq!(component.imports[0].interface, ModelRoutingInterface::interface_id());
+        assert_eq!(
+            component.imports[0].interface,
+            ModelRoutingInterface::interface_id()
+        );
         assert!(graph.component(&execution_component_id()).is_some());
     }
 

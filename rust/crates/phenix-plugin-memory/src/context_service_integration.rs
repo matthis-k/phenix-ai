@@ -116,12 +116,7 @@ mod association_persistence {
         let path = temp_db("association-restart");
         {
             let mut kernel = kernel(&path);
-            invoke_memory(
-                &mut kernel,
-                MemoryCommand::Record {
-                    record: record(),
-                },
-            );
+            invoke_memory(&mut kernel, MemoryCommand::Record { record: record() });
             let first = invoke_context(
                 &mut kernel,
                 MemoryContextCommand::Observe {
@@ -176,12 +171,7 @@ mod deterministic_recall {
     use super::*;
 
     fn seed(kernel: &mut Kernel) {
-        invoke_memory(
-            kernel,
-            MemoryCommand::Record {
-                record: record(),
-            },
-        );
+        invoke_memory(kernel, MemoryCommand::Record { record: record() });
         invoke_context(
             kernel,
             MemoryContextCommand::Observe {

@@ -104,10 +104,7 @@ impl RootBudgetLedger {
         remaining
     }
 
-    pub fn reserve(
-        &mut self,
-        request: BudgetReservationRequest,
-    ) -> Result<(), BudgetLedgerError> {
+    pub fn reserve(&mut self, request: BudgetReservationRequest) -> Result<(), BudgetLedgerError> {
         if self.reservations.contains_key(&request.reservation_id) {
             return Err(BudgetLedgerError::DuplicateReservation {
                 reservation_id: request.reservation_id,
@@ -146,12 +143,11 @@ impl RootBudgetLedger {
         reservation_id: &str,
         actual: BudgetActual,
     ) -> Result<(), BudgetLedgerError> {
-        let record = self
-            .reservations
-            .get(reservation_id)
-            .ok_or_else(|| BudgetLedgerError::UnknownReservation {
+        let record = self.reservations.get(reservation_id).ok_or_else(|| {
+            BudgetLedgerError::UnknownReservation {
                 reservation_id: reservation_id.to_owned(),
-            })?;
+            }
+        })?;
         if record.state != BudgetReservationState::Reserved {
             return Err(BudgetLedgerError::ReservationNotActive {
                 reservation_id: reservation_id.to_owned(),
@@ -186,12 +182,11 @@ impl RootBudgetLedger {
     }
 
     pub fn release(&mut self, reservation_id: &str) -> Result<(), BudgetLedgerError> {
-        let record = self
-            .reservations
-            .get(reservation_id)
-            .ok_or_else(|| BudgetLedgerError::UnknownReservation {
+        let record = self.reservations.get(reservation_id).ok_or_else(|| {
+            BudgetLedgerError::UnknownReservation {
                 reservation_id: reservation_id.to_owned(),
-            })?;
+            }
+        })?;
         if record.state != BudgetReservationState::Reserved {
             return Err(BudgetLedgerError::ReservationNotActive {
                 reservation_id: reservation_id.to_owned(),
@@ -210,12 +205,11 @@ impl RootBudgetLedger {
     }
 
     fn remaining_within(&self, reservation_id: &str) -> Result<RemainingBudget, BudgetLedgerError> {
-        let parent = self
-            .reservations
-            .get(reservation_id)
-            .ok_or_else(|| BudgetLedgerError::UnknownParentReservation {
+        let parent = self.reservations.get(reservation_id).ok_or_else(|| {
+            BudgetLedgerError::UnknownParentReservation {
                 reservation_id: reservation_id.to_owned(),
-            })?;
+            }
+        })?;
         let mut remaining = RemainingBudget {
             fresh_input_tokens: parent.request.budget.input_tokens,
             output_tokens: parent.request.budget.output_tokens,
@@ -314,9 +308,10 @@ fn subtract_record(remaining: &mut RemainingBudget, record: &BudgetReservationRe
                 .output_tokens
                 .saturating_sub(record.request.budget.output_tokens);
             remaining.attempts = remaining.attempts.saturating_sub(record.request.attempts);
-            if let (Some(current), Some(reserved)) =
-                (remaining.cost_microunits, record.request.budget.cost_microunits)
-            {
+            if let (Some(current), Some(reserved)) = (
+                remaining.cost_microunits,
+                record.request.budget.cost_microunits,
+            ) {
                 remaining.cost_microunits = Some(current.saturating_sub(reserved));
             }
         }
@@ -327,9 +322,8 @@ fn subtract_record(remaining: &mut RemainingBudget, record: &BudgetReservationRe
             remaining.output_tokens = remaining.output_tokens.saturating_sub(actual.output_tokens);
             remaining.attempts = remaining.attempts.saturating_sub(actual.attempts);
             if let Some(current) = remaining.cost_microunits {
-                remaining.cost_microunits = Some(
-                    current.saturating_sub(actual_cost_for_request(actual, &record.request)),
-                );
+                remaining.cost_microunits =
+                    Some(current.saturating_sub(actual_cost_for_request(actual, &record.request)));
             }
         }
         BudgetReservationState::Released => {}
@@ -455,7 +449,10 @@ mod tests {
             second.parent_reservation_id = Some("parent".into());
             assert!(matches!(
                 ledger.reserve(second),
-                Err(BudgetLedgerError::InputBudgetExceeded { remaining: 1_000, .. })
+                Err(BudgetLedgerError::InputBudgetExceeded {
+                    remaining: 1_000,
+                    ..
+                })
             ));
         }
 

@@ -4,8 +4,8 @@ use phenix_core::{
     PhenixValue, Project,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities, ModelLimits,
-    ModelDispatchCommand, ModelDispatchResponse, RouteDecision, RouteSelectionPolicy,
+    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities,
+    ModelDispatchCommand, ModelDispatchResponse, ModelLimits, RouteDecision, RouteSelectionPolicy,
     RoutingEstimateMode, RoutingRequirements,
 };
 use std::{
@@ -244,11 +244,7 @@ mod smart_selection {
         .unwrap();
         for capabilities in [
             capabilities(profile.default_target.clone(), "generation-1", 1_500),
-            capabilities(
-                profile.fallback_targets[0].clone(),
-                "generation-1",
-                8_000,
-            ),
+            capabilities(profile.fallback_targets[0].clone(), "generation-1", 8_000),
         ] {
             invoke_routing(
                 &mut kernel,
@@ -304,8 +300,8 @@ mod runtime_persistence {
                 },
             )
             .unwrap();
-            for target in std::iter::once(&profile.default_target)
-                .chain(profile.fallback_targets.iter())
+            for target in
+                std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
             {
                 invoke_routing(
                     &mut kernel,
@@ -324,8 +320,7 @@ mod runtime_persistence {
                 callable_id: None,
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected routing candidates");
         };
         assert_eq!(candidates.len(), 2);

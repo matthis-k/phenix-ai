@@ -3,8 +3,9 @@ use phenix_core::{
     PluginInstance, ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
-    StepAttemptRecord, StepAttemptResponse, StepPlan, UsageAttemptKind, UsageAttribution,
+    step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,
+    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan, UsageAttemptKind,
+    UsageAttribution,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -46,7 +47,10 @@ impl AttemptLedger {
         plan: StepPlan,
     ) -> Result<StepAttemptRecord, String> {
         if self.attempts.contains_key(&attribution.attempt_id) {
-            return Err(format!("step attempt already exists: {}", attribution.attempt_id));
+            return Err(format!(
+                "step attempt already exists: {}",
+                attribution.attempt_id
+            ));
         }
         if attribution.parent_attempt_id.as_deref() == Some(attribution.attempt_id.as_str()) {
             return Err("step attempt cannot parent itself".into());
@@ -164,7 +168,10 @@ impl PluginInstance for AttemptPlugin {
     }
 }
 
-fn read(ledger: &AttemptLedger, command: StepAttemptCommand) -> Result<StepAttemptResponse, String> {
+fn read(
+    ledger: &AttemptLedger,
+    command: StepAttemptCommand,
+) -> Result<StepAttemptResponse, String> {
     match command {
         StepAttemptCommand::Get { attempt_id } => Ok(StepAttemptResponse::AttemptLookup {
             attempt: ledger.get(&attempt_id).cloned(),
@@ -234,7 +241,9 @@ fn mutate(
     };
     let encoded = serde_json::to_vec(&next).map_err(|error| error.to_string())?;
     if encoded.len() > MAX_ATTEMPT_STATE_BYTES {
-        return Err(format!("step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"));
+        return Err(format!(
+            "step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"
+        ));
     }
     context
         .kernel
@@ -261,7 +270,9 @@ fn restore(snapshot: Option<&[u8]>) -> Result<AttemptLedger, String> {
         return Ok(AttemptLedger::default());
     };
     if bytes.len() > MAX_ATTEMPT_STATE_BYTES {
-        return Err(format!("step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"));
+        return Err(format!(
+            "step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"
+        ));
     }
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }

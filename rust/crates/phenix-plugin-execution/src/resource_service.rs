@@ -216,12 +216,12 @@ fn mutate(
             if cause.trim().is_empty() {
                 return Err("delegated resource failure cause must not be empty".into());
             }
-            next
-                .fail_delegated(&task_id, &execution_id, cause, actual)
+            next.fail_delegated(&task_id, &execution_id, cause, actual)
                 .map(|task| ExecutionResourceResponse::DelegatedTask { task })
                 .map_err(|error| format!("delegated resource failure failed: {error:?}"))?
         }
-        ExecutionResourceCommand::Remaining { .. } | ExecutionResourceCommand::GetDelegated { .. } => {
+        ExecutionResourceCommand::Remaining { .. }
+        | ExecutionResourceCommand::GetDelegated { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
     };

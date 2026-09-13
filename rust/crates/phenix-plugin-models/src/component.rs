@@ -26,8 +26,14 @@ pub fn model_routing_component_manifest(maximum_authority: Authority) -> Compone
             .expect("static model routing plugin id is valid"),
         imports: Vec::new(),
         exports: [
-            (ModelRoutingInterface::interface_id(), ModelRoutingInterface::schema()),
-            (ModelDispatchInterface::interface_id(), ModelDispatchInterface::schema()),
+            (
+                ModelRoutingInterface::interface_id(),
+                ModelRoutingInterface::schema(),
+            ),
+            (
+                ModelDispatchInterface::interface_id(),
+                ModelDispatchInterface::schema(),
+            ),
         ]
         .into_iter()
         .map(|(interface, schema)| ComponentExport {

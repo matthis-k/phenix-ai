@@ -17,7 +17,9 @@ pub(crate) struct RoutingRuntimeState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RoutingRuntimeError {
     InvalidTargetIdentity,
-    MissingEffectiveCapabilities { target: ModelTarget },
+    MissingEffectiveCapabilities {
+        target: ModelTarget,
+    },
     StaleCapabilityGeneration {
         target: ModelTarget,
         decision: CapabilityGenerationId,
@@ -231,7 +233,9 @@ mod tests {
     fn runtime_resolve_reuses_sdk_hard_admission_and_selection() {
         let mut state = RoutingRuntimeState::default();
         let profile = profile();
-        for target in std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter()) {
+        for target in
+            std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
+        {
             state
                 .publish_capabilities(capabilities(target.clone(), "generation-1"))
                 .unwrap();

@@ -3,15 +3,17 @@ use phenix_core::{
     Authority, Bytes, ContextResourceId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
     PluginState, Project, ResolvedHarness,
 };
-use phenix_plugin_execution::{execution_component_manifest, execution_factory, execution_manifest};
+use phenix_plugin_execution::{
+    execution_component_manifest, execution_factory, execution_manifest,
+};
 use phenix_sdk::{
     context_service, execution_service, BudgetReservation, CachePlacement, CompactionProposal,
     ContextAdmissionRequest, ContextCandidate, ContextCheckpoint, ContextCommand, ContextDemand,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextProjectionForm, ContextResourceKind,
-    ContextResponse, ContextRetention, ContextScope, ContextSource, DelegationResourcePolicy,
-    ExecutionAuthority, ExecutionCommand, ProjectionRevision, ReasoningBudget, RetentionTransition,
-    RetryBudget, RoutingRequirements, SkillProvisionBudget, StepPlan, ToolCallGroupReference,
-    ToolProvisionBudget,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextProjectionForm,
+    ContextResourceKind, ContextResponse, ContextRetention, ContextScope, ContextSource,
+    DelegationResourcePolicy, ExecutionAuthority, ExecutionCommand, ProjectionRevision,
+    ReasoningBudget, RetentionTransition, RetryBudget, RoutingRequirements, SkillProvisionBudget,
+    StepPlan, ToolCallGroupReference, ToolProvisionBudget,
 };
 use std::{
     collections::BTreeSet,

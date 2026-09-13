@@ -22,11 +22,22 @@ pub(crate) struct ExecutionResourceState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ExecutionResourceError {
-    DuplicateRootBudget { root_execution_id: String },
-    UnknownRootBudget { root_execution_id: String },
-    DuplicateTaskReservation { task_id: String },
-    UnknownTaskReservation { task_id: String },
-    ChildLimitExceeded { parent_execution: String, allowed: u32 },
+    DuplicateRootBudget {
+        root_execution_id: String,
+    },
+    UnknownRootBudget {
+        root_execution_id: String,
+    },
+    DuplicateTaskReservation {
+        task_id: String,
+    },
+    UnknownTaskReservation {
+        task_id: String,
+    },
+    ChildLimitExceeded {
+        parent_execution: String,
+        allowed: u32,
+    },
     ReservationPurposeMismatch,
     ReservationPolicyMismatch,
     ReservationBudgetMismatch,
@@ -57,13 +68,14 @@ impl ExecutionResourceState {
         root_execution_id: &str,
         reservation: BudgetReservationRequest,
     ) -> Result<RootBudgetLedger, ExecutionResourceError> {
-        let ledger = self
-            .ledgers
-            .get_mut(root_execution_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownRootBudget {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
                 root_execution_id: root_execution_id.to_owned(),
-            })?;
-        ledger.reserve(reservation).map_err(ExecutionResourceError::Budget)?;
+            }
+        })?;
+        ledger
+            .reserve(reservation)
+            .map_err(ExecutionResourceError::Budget)?;
         Ok(ledger.clone())
     }
 
@@ -73,12 +85,11 @@ impl ExecutionResourceState {
         reservation_id: &str,
         actual: BudgetActual,
     ) -> Result<RootBudgetLedger, ExecutionResourceError> {
-        let ledger = self
-            .ledgers
-            .get_mut(root_execution_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownRootBudget {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
                 root_execution_id: root_execution_id.to_owned(),
-            })?;
+            }
+        })?;
         ledger
             .settle(reservation_id, actual)
             .map_err(ExecutionResourceError::Budget)?;
@@ -90,12 +101,11 @@ impl ExecutionResourceState {
         root_execution_id: &str,
         reservation_id: &str,
     ) -> Result<RootBudgetLedger, ExecutionResourceError> {
-        let ledger = self
-            .ledgers
-            .get_mut(root_execution_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownRootBudget {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
                 root_execution_id: root_execution_id.to_owned(),
-            })?;
+            }
+        })?;
         ledger
             .release(reservation_id)
             .map_err(ExecutionResourceError::Budget)?;
@@ -110,7 +120,8 @@ impl ExecutionResourceState {
         &self,
         root_execution_id: &str,
     ) -> Result<RemainingBudget, ExecutionResourceError> {
-        self.ledger(root_execution_id).map(RootBudgetLedger::remaining)
+        self.ledger(root_execution_id)
+            .map(RootBudgetLedger::remaining)
     }
 
     pub(crate) fn admit_delegated(
@@ -125,9 +136,7 @@ impl ExecutionResourceState {
     ) -> Result<DelegatedWorkerTaskRecord, ExecutionResourceError> {
         validate_reservation_binding(&reservation, &binding)?;
         if self.task_reservations.contains_key(&task.id) {
-            return Err(ExecutionResourceError::DuplicateTaskReservation {
-                task_id: task.id,
-            });
+            return Err(ExecutionResourceError::DuplicateTaskReservation { task_id: task.id });
         }
         if self.delegated.child_count(&task.parent_execution) >= policy.max_children as usize {
             return Err(ExecutionResourceError::ChildLimitExceeded {
@@ -139,7 +148,9 @@ impl ExecutionResourceState {
         let reservation_id = reservation.reservation_id.clone();
         let mut ledger = self.ledger(root_execution_id)?.clone();
         let mut delegated = self.delegated.clone();
-        ledger.reserve(reservation).map_err(ExecutionResourceError::Budget)?;
+        ledger
+            .reserve(reservation)
+            .map_err(ExecutionResourceError::Budget)?;
         let record = delegated
             .create(task, binding, parent_authority, policy, now_ms)
             .map_err(ExecutionResourceError::Task)?
@@ -185,7 +196,8 @@ impl ExecutionResourceState {
         ledger
             .settle(&reservation.reservation_id, actual)
             .map_err(ExecutionResourceError::Budget)?;
-        self.ledgers.insert(reservation.root_execution_id.clone(), ledger);
+        self.ledgers
+            .insert(reservation.root_execution_id.clone(), ledger);
         self.delegated = delegated;
         Ok(record)
     }
@@ -207,28 +219,29 @@ impl ExecutionResourceState {
         ledger
             .settle(&reservation.reservation_id, actual)
             .map_err(ExecutionResourceError::Budget)?;
-        self.ledgers.insert(reservation.root_execution_id.clone(), ledger);
+        self.ledgers
+            .insert(reservation.root_execution_id.clone(), ledger);
         self.delegated = delegated;
         Ok(record)
     }
 
     fn ledger(&self, root_execution_id: &str) -> Result<&RootBudgetLedger, ExecutionResourceError> {
-        self.ledgers
-            .get(root_execution_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownRootBudget {
+        self.ledgers.get(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
                 root_execution_id: root_execution_id.to_owned(),
-            })
+            }
+        })
     }
 
     fn task_reservation(
         &self,
         task_id: &str,
     ) -> Result<&TaskReservationBinding, ExecutionResourceError> {
-        self.task_reservations
-            .get(task_id)
-            .ok_or_else(|| ExecutionResourceError::UnknownTaskReservation {
+        self.task_reservations.get(task_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownTaskReservation {
                 task_id: task_id.to_owned(),
-            })
+            }
+        })
     }
 }
 

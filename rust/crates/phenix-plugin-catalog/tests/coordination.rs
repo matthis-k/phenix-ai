@@ -4,8 +4,8 @@ use phenix_core::{
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
-    execution_component_manifest, execution_factory, execution_manifest, execution_resource_service,
-    step_attempt_service,
+    execution_component_manifest, execution_factory, execution_manifest,
+    execution_resource_service, step_attempt_service,
 };
 use phenix_plugin_models::{
     model_routing_component_manifest, model_routing_factory, model_routing_manifest,

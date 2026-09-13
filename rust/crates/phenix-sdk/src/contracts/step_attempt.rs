@@ -124,10 +124,7 @@ impl StepAttemptRecord {
         Ok(())
     }
 
-    fn require_phase(
-        &self,
-        expected: StepAttemptPhase,
-    ) -> Result<(), StepAttemptTransitionError> {
+    fn require_phase(&self, expected: StepAttemptPhase) -> Result<(), StepAttemptTransitionError> {
         if self.phase == expected {
             Ok(())
         } else {
@@ -187,15 +184,9 @@ pub enum StepAttemptCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StepAttemptResponse {
-    Attempt {
-        attempt: StepAttemptRecord,
-    },
-    AttemptLookup {
-        attempt: Option<StepAttemptRecord>,
-    },
-    Attempts {
-        attempts: Vec<StepAttemptRecord>,
-    },
+    Attempt { attempt: StepAttemptRecord },
+    AttemptLookup { attempt: Option<StepAttemptRecord> },
+    Attempts { attempts: Vec<StepAttemptRecord> },
 }
 
 pub struct StepAttemptInterface;

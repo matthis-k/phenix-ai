@@ -1,7 +1,7 @@
 use crate::{execution_factory, execution_manifest, step_attempt_service};
 use phenix_core::{
-    Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixValue,
-    PluginId, Project,
+    Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
     AttemptOutcome, BudgetReservation, ContextDemand, DelegationResourcePolicy, ModelTarget,
@@ -36,15 +36,14 @@ fn kernel(path: &PathBuf) -> Kernel {
     let plugin = manifest.id.clone();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-    kernel.register_embedded_factory(plugin, execution_factory).unwrap();
+    kernel
+        .register_embedded_factory(plugin, execution_factory)
+        .unwrap();
     kernel.activate_all().unwrap();
     kernel
 }
 
-fn invoke(
-    kernel: &mut Kernel,
-    command: StepAttemptCommand,
-) -> Result<StepAttemptResponse, String> {
+fn invoke(kernel: &mut Kernel, command: StepAttemptCommand) -> Result<StepAttemptResponse, String> {
     let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
     let output = kernel
         .invoke(&step_attempt_service(), &input, &authority(), None)
