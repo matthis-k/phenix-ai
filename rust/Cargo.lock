@@ -1850,6 +1850,7 @@ dependencies = [
  "phenix-plugin-step-runner",
  "phenix-plugin-workspace",
  "phenix-sdk",
+ "serde_json",
 ]
 
 [[package]]
