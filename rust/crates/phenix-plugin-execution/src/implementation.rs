@@ -375,9 +375,9 @@ fn mutate(
         }
         ExecutionCommand::CreateDelegatedTask { .. }
         | ExecutionCommand::CompleteDelegatedTask { .. }
-        | ExecutionCommand::GetDelegatedTask { .. } => Err(
-            "delegated task lifecycle is owned by phenix.execution.resources@1".into(),
-        ),
+        | ExecutionCommand::GetDelegatedTask { .. } => {
+            Err("delegated task lifecycle is owned by phenix.execution.resources@1".into())
+        }
         ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }
         | ExecutionCommand::InvokeCallable { .. } => {
