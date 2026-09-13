@@ -11,6 +11,7 @@ mod delegated_task_state;
 #[cfg(test)]
 mod generation_regression;
 mod implementation;
+mod resource_transaction;
 mod tool_schedule;
 
 pub use agent_loop::{
