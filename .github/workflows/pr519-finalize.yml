@@ -30,16 +30,9 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit('unexpected execution collection import')
           text = text.replace(old, 'use std::collections::BTreeMap;', 1)
-          marker = '''    use std::{
-              fs,
-              path::PathBuf,
-          '''
-          replacement = '''    use std::{
-              collections::BTreeSet,
-              fs,
-              path::PathBuf,
-          '''
-          if marker not in text:
+          marker = 'use std::{\n        fs,\n        path::PathBuf,'
+          replacement = 'use std::{\n        collections::BTreeSet,\n        fs,\n        path::PathBuf,'
+          if text.count(marker) != 1:
               raise SystemExit('unexpected execution test imports')
           execution.write_text(text.replace(marker, replacement, 1))
 
