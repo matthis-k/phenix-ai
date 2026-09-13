@@ -103,10 +103,7 @@ impl RoutingServiceState {
     }
 }
 
-fn require_profile<F>(
-    load_profile: &mut F,
-    id: &RoutingProfileId,
-) -> Result<RoutingProfile, String>
+fn require_profile<F>(load_profile: &mut F, id: &RoutingProfileId) -> Result<RoutingProfile, String>
 where
     F: FnMut(&RoutingProfileId) -> Result<Option<RoutingProfile>, String>,
 {
