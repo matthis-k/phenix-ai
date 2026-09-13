@@ -147,6 +147,7 @@ fn routing(
     let profile = RoutingProfile {
         id: profile_id.clone(),
         default_target: target("fail"),
+        fallback_targets: Vec::new(),
         callable_targets: BTreeMap::from([
             (memory_extract_callable(), target(extract)),
             (memory_consolidate_callable(), target(consolidate)),
