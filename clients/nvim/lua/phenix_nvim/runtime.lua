@@ -484,6 +484,33 @@ function M.cancel_active()
   end)
 end
 
+function M.decide_review(review_id, expected_revision, decision, callback)
+  if type(review_id) ~= "string" or review_id == "" then
+    util.safe_call(callback, nil, { message = "review id is required" })
+    return
+  end
+  if type(expected_revision) ~= "number" then
+    util.safe_call(callback, nil, { message = "review revision is required" })
+    return
+  end
+  if decision ~= "Accept" and decision ~= "Reject" then
+    util.safe_call(callback, nil, { message = "invalid review decision" })
+    return
+  end
+  if not require_application(callback) then
+    return
+  end
+  if type(state.application.review_decide) ~= "function" then
+    util.safe_call(callback, nil, { message = "review decisions are unavailable" })
+    return
+  end
+  M.track(state.application.review_decide({
+    review_id = review_id,
+    expected_revision = expected_revision,
+    decision = { kind = decision },
+  }), callback)
+end
+
 function M.status()
   return {
     connection = state.connection,

@@ -106,3 +106,20 @@ end)
 vim.api.nvim_exec_autocmds("WinScrolled", { pattern = tostring(transcript_win) })
 assert(transcript_view.is_following_tail(), "returning to the end must re-enable follow-tail")
 sidebar.close()
+
+local review = require("phenix_nvim.review")
+local review_buffer = assert(review.open({
+  id = "review-1",
+  revision = 1,
+  files = {
+    {
+      uri = "file:///workspace/lib.rs",
+      hunks = {
+        { unified_diff = "@@ -1 +1 @@\n-old\n+new" },
+      },
+    },
+  },
+}))
+assert(vim.bo[review_buffer].filetype == "diff")
+assert(table.concat(vim.api.nvim_buf_get_lines(review_buffer, 0, -1, false), "\n"):find("%+new"))
+vim.cmd("tabclose")
