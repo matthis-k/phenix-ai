@@ -69,7 +69,8 @@ fn persistence_error(plugin: &PluginId, error: PersistenceError) -> KernelError 
 mod tests {
     use super::*;
     use crate::{
-        BackendFeature, DurableSchema, NamespaceTransaction, ResourceNamespace, TransactionOp,
+        BackendFeature, DurableKeyRange, DurableRecord, DurableSchema, NamespaceTransaction,
+        ResourceNamespace, ScanDirection, TransactionOp,
     };
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -154,6 +155,17 @@ mod tests {
             _key: &str,
         ) -> Result<Option<Vec<u8>>, PersistenceError> {
             Ok(None)
+        }
+
+        fn scan(
+            &self,
+            _caller: &PluginId,
+            _namespace: &ResourceNamespace,
+            _range: &DurableKeyRange,
+            _direction: ScanDirection,
+            _limit: Option<usize>,
+        ) -> Result<Vec<DurableRecord>, PersistenceError> {
+            Ok(Vec::new())
         }
 
         fn transact_many(

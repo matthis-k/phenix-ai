@@ -1,7 +1,9 @@
 use crate::{PluginId, ResourceNamespace};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{
+    params, params_from_iter, types::Value, Connection, OptionalExtension, Transaction,
+};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, ops::Bound, path::Path};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BackendFeature {
@@ -40,6 +42,83 @@ impl DurableSchema {
             required_features: features.into_iter().collect(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableRecord {
+    pub key: String,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ScanDirection {
+    #[default]
+    Forward,
+    Reverse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableKeyRange {
+    lower: Bound<String>,
+    upper: Bound<String>,
+}
+
+impl DurableKeyRange {
+    #[must_use]
+    pub fn new(lower: Bound<String>, upper: Bound<String>) -> Self {
+        Self { lower, upper }
+    }
+
+    #[must_use]
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn prefix(prefix: impl Into<String>) -> Self {
+        let prefix = prefix.into();
+        let upper = prefix_successor(&prefix)
+            .map(Bound::Excluded)
+            .unwrap_or(Bound::Unbounded);
+        Self {
+            lower: Bound::Included(prefix),
+            upper,
+        }
+    }
+
+    #[must_use]
+    pub fn lower(&self) -> &Bound<String> {
+        &self.lower
+    }
+
+    #[must_use]
+    pub fn upper(&self) -> &Bound<String> {
+        &self.upper
+    }
+}
+
+impl Default for DurableKeyRange {
+    fn default() -> Self {
+        Self {
+            lower: Bound::Unbounded,
+            upper: Bound::Unbounded,
+        }
+    }
+}
+
+fn prefix_successor(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let mut next = u32::from(last).checked_add(1)?;
+        if (0xD800..=0xDFFF).contains(&next) {
+            next = 0xE000;
+        }
+        if let Some(next) = char::from_u32(next) {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -139,6 +218,15 @@ pub trait PersistenceBackend: Send {
         namespace: &ResourceNamespace,
         key: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError>;
+
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError>;
 
     fn transact_many(
         &mut self,
@@ -378,6 +466,69 @@ impl PersistenceBackend for LocalPersistence {
             .optional()?)
     }
 
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError> {
+        self.require_owner(caller, namespace)?;
+        if matches!(limit, Some(0)) {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            "SELECT record_key, record_value FROM kernel_plugin_records WHERE namespace = ?1",
+        );
+        let mut values = vec![Value::Text(namespace.as_str().to_owned())];
+        match range.lower() {
+            Bound::Included(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key >= ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Excluded(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key > ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Unbounded => {}
+        }
+        match range.upper() {
+            Bound::Included(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key <= ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Excluded(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key < ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Unbounded => {}
+        }
+        match direction {
+            ScanDirection::Forward => sql.push_str(" ORDER BY record_key ASC"),
+            ScanDirection::Reverse => sql.push_str(" ORDER BY record_key DESC"),
+        }
+        if let Some(limit) = limit {
+            let limit_index = values.len() + 1;
+            sql.push_str(&format!(" LIMIT ?{limit_index}"));
+            values.push(Value::Integer(i64::try_from(limit).unwrap_or(i64::MAX)));
+        }
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values), |row| {
+            Ok(DurableRecord {
+                key: row.get(0)?,
+                value: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     fn transact_many(
         &mut self,
         transactions: &[NamespaceTransaction],
@@ -521,6 +672,20 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, PersistenceError::AssertionFailed { .. }));
         assert_eq!(store.read(&owner, &namespace, "first").unwrap(), None);
+    }
+
+    #[test]
+    fn prefix_range_covers_only_keys_with_the_prefix() {
+        let range = DurableKeyRange::prefix("items/beta");
+        assert_eq!(range.lower(), &Bound::Included("items/beta".into()));
+        assert_eq!(range.upper(), &Bound::Excluded("items/betb".into()));
+
+        let max = DurableKeyRange::prefix(format!("items/{}", char::MAX));
+        assert_eq!(
+            max.lower(),
+            &Bound::Included(format!("items/{}", char::MAX))
+        );
+        assert_eq!(max.upper(), &Bound::Excluded("items0".into()));
     }
 
     #[test]

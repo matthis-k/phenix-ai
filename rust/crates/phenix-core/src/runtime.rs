@@ -1,13 +1,14 @@
 use crate::{
     prepared_mutation::PreparedMutationScope, ArtifactRevision, Authority, CallCancellationToken,
     CapabilityId, ComponentGraphError, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
-    EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
-    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
-    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    DurableKeyRange, DurableRecord, DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope,
+    EventError, EventHandler, EventSubscription, EventTypeId, GraphGenerationId, InterfaceId,
+    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence,
+    PersistenceBackend, PluginArtifact, PluginExecution, PluginId, PluginManifest,
+    ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph, ResolvedImportHandle,
+    ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain, ResourceNamespace, RuntimeId,
+    ScanDirection, SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime,
+    TaskScope, TransactionOp,
 };
 use parking_lot::Mutex;
 use std::{

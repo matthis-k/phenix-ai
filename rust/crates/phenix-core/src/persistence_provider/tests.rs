@@ -1,5 +1,8 @@
 use super::*;
-use crate::{DurableSchema, NamespaceTransaction, ResourceNamespace};
+use crate::{
+    DurableKeyRange, DurableRecord, DurableSchema, NamespaceTransaction, ResourceNamespace,
+    ScanDirection,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -73,6 +76,17 @@ impl PersistenceBackend for MockBackend {
         _key: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError> {
         Ok(None)
+    }
+
+    fn scan(
+        &self,
+        _caller: &PluginId,
+        _namespace: &ResourceNamespace,
+        _range: &DurableKeyRange,
+        _direction: ScanDirection,
+        _limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError> {
+        Ok(Vec::new())
     }
 
     fn transact_many(
