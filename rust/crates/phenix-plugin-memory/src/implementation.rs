@@ -18,13 +18,13 @@ use phenix_sdk::{
     memory_validate_callable, ContextCheckpoint, ContextCompactionCommand,
     ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
-    HelperInvocationRequest, MemoryCanonicalReference, MemoryCommand, MemoryConsolidationRequest,
-    MemoryDependencyRevision, MemoryEmbeddingInterface, MemoryEmbeddingRequest,
-    MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
-    MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
-    MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
-    MemoryResponse, MemoryRevalidationOutcome, MemoryScope, MemorySourceReference,
-    StepRunnerResponse,
+    HelperInvocationRequest, HelperInvocationResponse, MemoryCanonicalReference, MemoryCommand,
+    MemoryConsolidationRequest, MemoryDependencyRevision, MemoryEmbeddingInterface,
+    MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest,
+    MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
+    MemoryRankCandidate, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome, MemoryScope,
+    MemorySourceReference,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -662,7 +662,7 @@ fn routed_model_bytes(
     input: Vec<u8>,
     label: &str,
 ) -> MemoryResult<Vec<u8>> {
-    let response: StepRunnerResponse = context
+    let response: HelperInvocationResponse = context
         .sdk
         .invocation
         .invoke_projected(&HelperInvocationCommand::Invoke {
@@ -677,13 +677,12 @@ fn routed_model_bytes(
             },
         })
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
-    let StepRunnerResponse::Completed { output, .. } = response;
-    if output.as_ref().is_empty() {
+    if response.output.as_ref().is_empty() {
         return Err(MemoryError::Provider(format!(
             "{label} returned an empty model response"
         )));
     }
-    Ok(output.as_ref().to_vec())
+    Ok(response.output.as_ref().to_vec())
 }
 
 fn recall_memory(
