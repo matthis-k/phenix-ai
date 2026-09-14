@@ -46,7 +46,7 @@ fn replacement_manifest() -> PluginManifest {
 
 #[test]
 fn hook_behavior_is_absent_when_omitted_and_replaceable_through_public_core_api() {
-    let mut omitted = Kernel::new(KernelConfig::empty());
+    let omitted = Kernel::new(KernelConfig::empty());
     assert_eq!(
         omitted
             .invoke(&hook_service(), b"ignored", &Authority::default(), None,)
