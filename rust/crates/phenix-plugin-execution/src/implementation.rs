@@ -373,6 +373,11 @@ fn mutate(
             };
             Ok(ExecutionResponse::Task { task: task.clone() })
         }
+        ExecutionCommand::CreateDelegatedTask { .. }
+        | ExecutionCommand::CompleteDelegatedTask { .. }
+        | ExecutionCommand::GetDelegatedTask { .. } => {
+            Err("delegated task lifecycle is owned by phenix.execution.resources@1".into())
+        }
         ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }
         | ExecutionCommand::InvokeCallable { .. } => {

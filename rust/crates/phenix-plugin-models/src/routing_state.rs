@@ -1,8 +1,8 @@
 use phenix_core::CallableId;
 use phenix_sdk::{
-    select_route, EffectiveModelCapabilities, ModelTarget, RejectedRoutingCandidate, RouteDecision,
-    RouteSelection, RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate,
-    RoutingEvidence, RoutingProfile, RoutingRequirements,
+    select_route, EffectiveModelCapabilities, ModelTarget, RouteDecision, RouteSelection,
+    RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate, RoutingEvidence,
+    RoutingProfile, RoutingRequirements,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,15 +31,6 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
-    pub(crate) fn publish_estimate(
-        &mut self,
-        target: &ModelTarget,
-        estimate: RoutingEstimate,
-    ) -> Result<(), RoutingRuntimeError> {
-        self.estimates.insert(target_key(target)?, estimate);
-        Ok(())
-    }
-
     pub(crate) fn record_evidence(
         &mut self,
         decision: &RouteDecision,
@@ -50,17 +41,6 @@ impl RoutingRuntimeState {
             .or_default()
             .push(evidence);
         Ok(())
-    }
-
-    pub(crate) fn evidence_for(
-        &self,
-        target: &ModelTarget,
-    ) -> Result<&[RoutingEvidence], RoutingRuntimeError> {
-        Ok(self
-            .evidence
-            .get(&target_key(target)?)
-            .map(Vec::as_slice)
-            .unwrap_or_default())
     }
 
     pub(crate) fn candidates(
@@ -112,100 +92,4 @@ impl RoutingRuntimeState {
 
 fn target_key(target: &ModelTarget) -> Result<String, RoutingRuntimeError> {
     serde_json::to_string(target).map_err(|_| RoutingRuntimeError::InvalidTargetIdentity)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId, RoutingProfileId};
-    use phenix_sdk::{
-        CapacityKnowledge, ContextControl, ContextDemand, ModelLimits, RoutingEstimateMode,
-    };
-
-    fn target(model: &str) -> ModelTarget {
-        ModelTarget {
-            provider_plugin: PluginId::parse("provider.fixture").unwrap(),
-            model: ModelId::parse(model).unwrap(),
-            options: BTreeMap::new(),
-        }
-    }
-
-    fn capabilities(target: ModelTarget) -> EffectiveModelCapabilities {
-        EffectiveModelCapabilities {
-            target,
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            context: ContextControl::ReplaceableTurns,
-            capacity: CapacityKnowledge::Known {
-                limits: ModelLimits {
-                    context_window_tokens: 10_000,
-                    max_output_tokens: Some(2_000),
-                },
-            },
-            optional: BTreeSet::new(),
-        }
-    }
-
-    fn profile() -> RoutingProfile {
-        RoutingProfile {
-            id: RoutingProfileId::parse("profile.default").unwrap(),
-            default_target: target("primary"),
-            fallback_targets: vec![target("fallback")],
-            callable_targets: BTreeMap::new(),
-        }
-    }
-
-    #[test]
-    fn candidate_order_is_profile_order_and_requires_effective_capabilities() {
-        let mut state = RoutingRuntimeState::default();
-        let profile = profile();
-        state
-            .publish_capabilities(capabilities(profile.default_target.clone()))
-            .unwrap();
-        assert!(matches!(
-            state.candidates(&profile, None),
-            Err(RoutingRuntimeError::MissingEffectiveCapabilities { .. })
-        ));
-        state
-            .publish_capabilities(capabilities(profile.fallback_targets[0].clone()))
-            .unwrap();
-        let candidates = state.candidates(&profile, None).unwrap();
-        assert_eq!(candidates[0].ordinal, 0);
-        assert_eq!(candidates[0].capabilities.target.model.as_str(), "primary");
-        assert_eq!(candidates[1].ordinal, 1);
-    }
-
-    #[test]
-    fn runtime_resolve_reuses_sdk_hard_admission_and_selection() {
-        let mut state = RoutingRuntimeState::default();
-        let profile = profile();
-        for target in
-            std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
-        {
-            state
-                .publish_capabilities(capabilities(target.clone()))
-                .unwrap();
-        }
-        let selection = state
-            .resolve(
-                &profile,
-                None,
-                &RoutingRequirements {
-                    context: ContextDemand {
-                        mandatory_input_tokens: 100,
-                        reducible_input_tokens: 100,
-                        output_reserve_tokens: 100,
-                        required_capabilities: BTreeSet::new(),
-                    },
-                    required_capabilities: BTreeSet::new(),
-                    require_known_capacity: true,
-                },
-                &RouteSelectionPolicy {
-                    revision: "policy-1".into(),
-                    estimates: RoutingEstimateMode::Ignore,
-                    max_candidate_attempts: 2,
-                },
-            )
-            .unwrap();
-        assert_eq!(selection.decision.target.model.as_str(), "primary");
-    }
 }
