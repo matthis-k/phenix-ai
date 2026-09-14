@@ -119,7 +119,9 @@ impl ContextStateService {
             | ContextCommand::List
             | ContextCommand::DiscoverRepository { .. }
             | ContextCommand::Load { .. }
-            | ContextCommand::Project { .. } => return None,
+            | ContextCommand::Project { .. }
+            | ContextCommand::PrepareInvocation { .. }
+            | ContextCommand::MaterializeInvocation { .. } => return None,
         };
         Some(response)
     }
@@ -132,6 +134,10 @@ impl ContextStateService {
                 revision: 0,
                 cache_epoch: 0,
             })
+    }
+
+    pub(crate) fn projection(&self, execution_id: &str) -> Option<&ContextProjectionState> {
+        self.projections.get(execution_id)
     }
 
     pub(crate) fn invalidate_if_present(
