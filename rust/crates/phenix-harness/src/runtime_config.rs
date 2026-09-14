@@ -5,16 +5,21 @@ use phenix_core::{
 use phenix_harness::{default_suite_authority, PhenixHarness};
 use phenix_plugin_catalog::{
     execution_configuration_service, model_routing_service, options_component_manifest,
-    options_service, AgentDefinition, CapacityKnowledge, ContextControl,
-    EffectiveModelCapabilities, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    options_service, AgentDefinition, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
     ModelCommand, ModelResponse, ModelTarget, OptionAssignment, OptionCommand, OptionKey,
     OptionResponse, OptionScope, OptionStartupPrecedence, OptionSubjectId, OptionValue,
     OrchestrationDefinition, RoutingProfile,
 };
 use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
+use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::{BTreeMap, BTreeSet}, error::Error, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fs,
+    path::Path,
+};
 
 const RUNTIME_CAPABILITY_GENERATION: &str = "runtime-config-v1";
 
@@ -293,7 +298,9 @@ fn ensure_routing_profile(
 
     match existing {
         Some(existing) if existing == profile => {}
-        Some(_) => return Err(format!("routing profile identity is immutable: {}", profile.id).into()),
+        Some(_) => {
+            return Err(format!("routing profile identity is immutable: {}", profile.id).into())
+        }
         None => {
             let command = ModelCommand::RegisterProfile {
                 profile: profile.clone(),
