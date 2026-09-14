@@ -52,7 +52,7 @@
           ''
             export PHENIX_STATE_DB="$TMPDIR/product-smoke.sqlite"
             printf '%s\n' \
-              '{"id":1,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Create","value":{"type":"table","value":{"session":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"},"working_directory":{"type":"option","value":null},"title":{"type":"option","value":null},"lifecycle":{"type":"variant","value":{"tag":"Open","value":{"type":"null"}}}}}}}}}}' \
+              '{"id":1,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Create","value":{"type":"table","value":{"session":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"},"working_directory":{"type":"option","value":null},"title":{"type":"option","value":null},"lifecycle":{"type":"variant","value":{"tag":"Open","value":{"type":"unit","value":null}}}}}}}}}}' \
               '{"id":2,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Get","value":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"}}}}}}' \
               | ${supportedPhenix}/bin/phenix-harness > "$TMPDIR/product-smoke.jsonl"
             if ! jq -se '
