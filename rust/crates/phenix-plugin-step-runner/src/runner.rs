@@ -387,7 +387,7 @@ fn run(
         context,
         StepAttemptCommand::BindProjection {
             attempt_id: attribution.attempt_id.clone(),
-            projection,
+            projection: projection.clone(),
         },
     ) {
         return fail_before_dispatch(
@@ -399,13 +399,50 @@ fn run(
         );
     }
 
+    let materialized: ContextResponse = match context.sdk.context.invoke_projected(
+        &ContextCommand::MaterializeInvocation {
+            execution_id: attribution.execution_id.clone(),
+            input,
+            expected_projection: projection.clone(),
+        },
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                format!("context materialization failed: {error}"),
+            )
+        }
+    };
+    let ContextResponse::InvocationMaterialized { materialization } = materialized else {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "context service returned a non-materialization response".into(),
+        );
+    };
+    if materialization.projection != projection {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "context materialization changed the admitted projection".into(),
+        );
+    }
+
     let prepared: ModelDispatchResponse =
         match context
             .sdk
             .dispatch
             .invoke_projected(&ModelDispatchCommand::PrepareResolved {
                 decision: decision.clone(),
-                input,
+                input: materialization.input,
                 tools,
             }) {
             Ok(response) => response,
