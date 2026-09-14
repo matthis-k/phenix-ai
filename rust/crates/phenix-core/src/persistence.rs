@@ -7,11 +7,6 @@ use std::{collections::BTreeSet, ops::Bound, path::Path};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BackendFeature {
-    Transactions,
-    UniqueKeys,
-    ForeignKeys,
-    OrderedAppend,
-    IndexedRange,
     Migrations,
 }
 
@@ -348,13 +343,7 @@ impl LocalPersistence {
 
 impl PersistenceBackend for LocalPersistence {
     fn supported_features(&self) -> BTreeSet<BackendFeature> {
-        [
-            BackendFeature::Transactions,
-            BackendFeature::UniqueKeys,
-            BackendFeature::Migrations,
-        ]
-        .into_iter()
-        .collect()
+        [BackendFeature::Migrations].into_iter().collect()
     }
 
     fn register_schema(
@@ -631,18 +620,13 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_backend_feature_is_rejected_before_schema_registration() {
-        let mut store = LocalPersistence::open_in_memory().unwrap();
-        let schema =
-            DurableSchema::requiring(namespace("owner.state"), 1, [BackendFeature::IndexedRange]);
+    fn local_backend_reports_only_callable_optional_features() {
+        let store = LocalPersistence::open_in_memory().unwrap();
 
-        assert!(matches!(
-            store.register_schema(&plugin("owner"), &schema),
-            Err(PersistenceError::UnsupportedFeature {
-                feature: BackendFeature::IndexedRange,
-                ..
-            })
-        ));
+        assert_eq!(
+            store.supported_features(),
+            BTreeSet::from([BackendFeature::Migrations])
+        );
     }
 
     #[test]

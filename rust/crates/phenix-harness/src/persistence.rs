@@ -109,7 +109,7 @@ mod tests {
         let provider = Provider {
             descriptor: PersistenceProviderDescriptor::new(
                 PluginId::parse("fixture.persistence").unwrap(),
-                [BackendFeature::Transactions],
+                [BackendFeature::Migrations],
                 ["sqlite-v1".to_owned()],
             ),
             calls,
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn selected_provider_prepares_store_before_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::Transactions);
+        let (builder, mut provider) = fixture(BackendFeature::Migrations);
         let binding = binding();
         let mut harness = builder
             .build_with_persistence_provider(&mut provider, binding.clone())
@@ -138,7 +138,8 @@ mod tests {
 
     #[test]
     fn unsupported_schema_features_prevent_store_open_and_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::IndexedRange);
+        let (builder, mut provider) = fixture(BackendFeature::Migrations);
+        provider.descriptor.supported_features.clear();
         let result = builder.build_with_persistence_provider(&mut provider, binding());
 
         assert!(matches!(
@@ -154,7 +155,7 @@ mod tests {
 
     #[test]
     fn bootstrap_cycle_prevents_store_open_and_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::Transactions);
+        let (builder, mut provider) = fixture(BackendFeature::Migrations);
         provider.descriptor.bootstrap_dependencies =
             vec![PersistenceBootstrapDependency::TargetStore];
         let result = builder.build_with_persistence_provider(&mut provider, binding());
