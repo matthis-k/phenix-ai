@@ -338,6 +338,75 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
 }
 
 #[test]
+fn persistence_assertion_conflict_preserves_namespace_and_key() {
+    let namespace = ResourceNamespace::parse("conflict.state").unwrap();
+    let owner = plugin("conflict-owner");
+    let manifest = PluginManifest {
+        id: owner.clone(),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: Vec::new(),
+        resource_namespaces: vec![namespace.clone()],
+        maximum_authority: Authority::new([capability(PERSISTENCE_WRITE)]),
+    };
+    let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+    kernel
+        .persistence
+        .lock()
+        .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))
+        .unwrap();
+    let authority = Authority::new([capability(PERSISTENCE_WRITE)]);
+    let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
+    let host = PluginHost {
+        graph_generation: kernel.graph_generation(),
+        component_graph: kernel.component_graph(),
+        config: kernel.config(),
+        states: &kernel.states,
+        instances: &kernel.instances,
+        plugin: &owner,
+        authority: &authority,
+        call_cancellation: None,
+        call_stack: BTreeSet::from([owner.clone()]),
+        events: &kernel.events,
+        tasks: &kernel.tasks,
+        persistence: &kernel.persistence,
+        prepared_mutations: &prepared_mutations,
+        provenance: &kernel.provenance,
+        continuation: None,
+        active_services: BTreeSet::new(),
+        active_component_endpoints: BTreeSet::new(),
+    };
+
+    host.transact_durable(
+        &namespace,
+        &[TransactionOp::Put {
+            key: "tail".into(),
+            value: b"1".to_vec(),
+        }],
+    )
+    .unwrap();
+    let error = host
+        .transact_durable(
+            &namespace,
+            &[TransactionOp::AssertValue {
+                key: "tail".into(),
+                expected: Some(b"0".to_vec()),
+            }],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        KernelError::PersistenceConflict {
+            plugin: owner,
+            namespace,
+            key: "tail".into(),
+        }
+    );
+}
+
+#[test]
 fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
     let write = capability(PERSISTENCE_WRITE);
     let caller_namespace = ResourceNamespace::parse("caller.state").unwrap();
