@@ -1,16 +1,20 @@
 use crate::configuration::ExecutionConfigurationInterface;
-use crate::{execution_manifest, AgentLoopCommand, AgentLoopResponse, AGENT_LOOP_SERVICE};
+use crate::{
+    execution_manifest, AgentLoopCommand, AgentLoopResponse, ExecutionReviewInterface,
+    AGENT_LOOP_SERVICE,
+};
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, PluginId,
 };
-use phenix_sdk::{ExecutionInterface, ModelRoutingInterface};
+use phenix_sdk::{ExecutionInterface, ModelRoutingInterface, WorkspaceInterface};
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
 const EXECUTION_PLUGIN: &str = "phenix.execution";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+const WORKSPACE_WRITE: &str = "workspace.write";
 
 pub struct AgentLoopInterface;
 
@@ -37,12 +41,20 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
         listeners: Vec::new(),
         id: execution_component_id(),
         owner: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),
-        imports: vec![ComponentImport {
-            interface: ModelRoutingInterface::interface_id(),
-            schema: ModelRoutingInterface::schema(),
-            required: false,
-            authority: model_authority,
-        }],
+        imports: vec![
+            ComponentImport {
+                interface: ModelRoutingInterface::interface_id(),
+                schema: ModelRoutingInterface::schema(),
+                required: false,
+                authority: model_authority,
+            },
+            ComponentImport {
+                interface: WorkspaceInterface::interface_id(),
+                schema: WorkspaceInterface::schema(),
+                required: false,
+                authority: workspace_write_authority(),
+            },
+        ],
         exports: vec![
             ComponentExport {
                 interface: ExecutionInterface::interface_id(),
@@ -62,6 +74,12 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
                 priority: 100,
                 required_authority: Authority::default(),
             },
+            ComponentExport {
+                interface: ExecutionReviewInterface::interface_id(),
+                schema: ExecutionReviewInterface::schema(),
+                priority: 100,
+                required_authority: persistence_authority(),
+            },
         ],
         maximum_authority: authority,
     }
@@ -72,6 +90,12 @@ fn persistence_authority() -> Authority {
         CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
         CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
         CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
+    ])
+}
+
+fn workspace_write_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")
     ])
 }
 
@@ -120,12 +144,26 @@ mod tests {
             component.exports[2].required_authority,
             Authority::default()
         );
-        assert_eq!(component.imports.len(), 1);
+        assert_eq!(
+            component.exports[3].interface,
+            ExecutionReviewInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[3].required_authority,
+            persistence_authority()
+        );
+        assert_eq!(component.imports.len(), 2);
         assert!(!component.imports[0].required);
         assert_eq!(
             component.imports[0].interface,
             ModelRoutingInterface::interface_id()
         );
+        assert!(!component.imports[1].required);
+        assert_eq!(
+            component.imports[1].interface,
+            WorkspaceInterface::interface_id()
+        );
+        assert_eq!(component.imports[1].authority, workspace_write_authority());
         assert!(graph.component(&execution_component_id()).is_some());
     }
 
