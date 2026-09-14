@@ -7,10 +7,12 @@ mod component;
 mod configuration;
 #[cfg(test)]
 mod configuration_regression;
+#[allow(dead_code)]
 mod delegated_task_state;
 #[cfg(test)]
 mod generation_regression;
 mod implementation;
+#[allow(dead_code)]
 mod resource_transaction;
 mod tool_schedule;
 
