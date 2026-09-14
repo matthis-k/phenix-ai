@@ -122,28 +122,28 @@ replace_exact(
 )
 
 provider_tests = "rust/crates/phenix-core/src/persistence_provider/tests.rs"
-replace_exact(
-    provider_tests,
-    '''        descriptor: PersistenceProviderDescriptor::new(
+file = Path(provider_tests)
+text = file.read_text()
+old_provider = '''        descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
             [BackendFeature::Transactions],
             ["mock-v1".to_owned()],
-        ),''',
+        ),'''
+if text.count(old_provider) != 2:
+    raise SystemExit(
+        f"{provider_tests}: expected two fixture.provider descriptors, found {text.count(old_provider)}"
+    )
+text = text.replace(
+    old_provider,
     '''        descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
             [],
             ["mock-v1".to_owned()],
         ),''',
-    expected=1,
+    1,
 )
-replace_exact(
-    provider_tests,
-    "&[schema(BackendFeature::IndexedRange)],",
-    "&[schema(BackendFeature::Migrations)],",
-)
+text = text.replace("&[schema(BackendFeature::IndexedRange)],", "&[schema(BackendFeature::Migrations)],", 1)
 # Remaining provider fixtures are eligible and therefore advertise migrations.
-file = Path(provider_tests)
-text = file.read_text()
 text = text.replace("[BackendFeature::Transactions]", "[BackendFeature::Migrations]")
 text = text.replace("schema(BackendFeature::Transactions)", "schema(BackendFeature::Migrations)")
 file.write_text(text)
@@ -253,7 +253,6 @@ impl MemoryPersistence {
     }
 }''',
 )
-# Merge the second impl block into the first is not required in Rust.
 replace_exact(
     conformance,
     '''    fn supported_features(&self) -> BTreeSet<BackendFeature> {
@@ -311,5 +310,9 @@ removed = ["Transactions", "UniqueKeys", "ForeignKeys", "OrderedAppend", "Indexe
 for path in Path("rust").rglob("*.rs"):
     text = path.read_text()
     for name in removed:
-        if f"BackendFeature::{name}" in text or f"features({name}" in text or f'"{name}"' in text and "backend feature" in text:
+        if (
+            f"BackendFeature::{name}" in text
+            or f"features({name}" in text
+            or (f'"{name}"' in text and "backend feature" in text)
+        ):
             raise SystemExit(f"removed backend feature {name} remains in {path}")
