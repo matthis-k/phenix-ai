@@ -13,8 +13,10 @@ phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 phenix-plugin-api = { path = "../phenix-plugin-api" }
 phenix-plugin-options-test = { package = "phenix-plugin-options", path = "../phenix-plugin-options" }
 phenix-plugin-sessions-test = { package = "phenix-plugin-sessions", path = "../phenix-plugin-sessions" }
+trybuild = "1"
