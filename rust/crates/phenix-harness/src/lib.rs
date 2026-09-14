@@ -24,6 +24,7 @@ use phenix_plugin_catalog::{
     repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
     sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
+    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
     workspace_component_manifest, workspace_factory, workspace_manifest,
 };
 use std::{
@@ -34,6 +35,7 @@ use std::{
 };
 
 mod basic_suite;
+mod invocation_defaults;
 mod persistence;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
@@ -139,11 +141,19 @@ impl HarnessBuilder {
             model_routing_manifest(authority.clone()),
             model_routing_factory,
         )?;
+        builder.add_embedded(
+            step_runner_manifest(authority.clone()),
+            step_runner_factory,
+        )?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
         builder.add_embedded(hook_manifest(authority.clone()), hook_factory)?;
         builder.add_embedded(debug_manifest(authority.clone()), debug_factory)?;
         builder.add_embedded(options_manifest(), options_factory)?;
+        builder.add_embedded(
+            invocation_defaults::invocation_defaults_manifest(authority.clone()),
+            invocation_defaults::invocation_defaults_factory,
+        )?;
         builder.add_embedded(sdk_manifest(authority.clone()), sdk_factory)?;
         for component in [
             repository_worker_component_manifest(),
@@ -159,11 +169,13 @@ impl HarnessBuilder {
             planning_component_manifest(),
             workspace_component_manifest(),
             model_routing_component_manifest(authority.clone()),
+            step_runner_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
             hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
+            invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
             sdk_component_manifest(authority),
         ] {
             builder.add_component(component);
@@ -187,11 +199,13 @@ impl HarnessBuilder {
             planning_manifest(),
             workspace_manifest(),
             model_routing_manifest(authority.clone()),
+            step_runner_manifest(authority.clone()),
             job_manifest(),
             frontend_manifest(authority.clone()),
             hook_manifest(authority.clone()),
             debug_manifest(authority.clone()),
             options_manifest(),
+            invocation_defaults::invocation_defaults_manifest(authority.clone()),
             sdk_manifest(authority.clone()),
             basic_model_manifest(),
             basic_tools_manifest(),
@@ -259,6 +273,11 @@ impl HarnessBuilder {
             model_routing_manifest(authority.clone()),
             model_routing_factory,
         )?;
+        builder.add_selected(
+            &enabled,
+            step_runner_manifest(authority.clone()),
+            step_runner_factory,
+        )?;
         builder.add_selected(&enabled, job_manifest(), job_factory)?;
         builder.add_selected(
             &enabled,
@@ -268,6 +287,11 @@ impl HarnessBuilder {
         builder.add_selected(&enabled, hook_manifest(authority.clone()), hook_factory)?;
         builder.add_selected(&enabled, debug_manifest(authority.clone()), debug_factory)?;
         builder.add_selected(&enabled, options_manifest(), options_factory)?;
+        builder.add_selected(
+            &enabled,
+            invocation_defaults::invocation_defaults_manifest(authority.clone()),
+            invocation_defaults::invocation_defaults_factory,
+        )?;
         builder.add_selected(&enabled, sdk_manifest(authority.clone()), sdk_factory)?;
         builder.add_selected(&enabled, basic_model_manifest(), basic_model_factory)?;
         builder.add_selected(&enabled, basic_tools_manifest(), basic_tools_factory)?;
@@ -287,11 +311,13 @@ impl HarnessBuilder {
             planning_component_manifest(),
             workspace_component_manifest(),
             model_routing_component_manifest(authority.clone()),
+            step_runner_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
             hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
+            invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
             sdk_component_manifest(authority),
             basic_model_component_manifest(),
             basic_tools_component_manifest(),
