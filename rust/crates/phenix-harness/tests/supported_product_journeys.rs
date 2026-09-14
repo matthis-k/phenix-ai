@@ -547,7 +547,10 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
     let StepRunnerResponse::Completed {
         attempt, output, ..
     } = response;
-    let route = attempt.route.as_ref().expect("central invocation bound a route");
+    let route = attempt
+        .route
+        .as_ref()
+        .expect("central invocation bound a route");
     assert_eq!(route.target.provider_plugin.as_str(), provider);
     assert_eq!(route.target.model.as_str(), "fixture-model");
     let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
