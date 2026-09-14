@@ -1,4 +1,4 @@
-use crate::{execution_component_id, AgentLoopInterface};
+use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, PluginContext,
     PluginHost, PluginInstance, RoutingProfileId, SdkClient, ServiceId,
@@ -79,7 +79,7 @@ fn context<'host, 'runtime>(
     PluginContext::new(
         host,
         AgentLoopSdk {
-            models: SdkClient::new(host, execution_component_id()),
+            models: SdkClient::new(host, agent_loop_component_id()),
         },
         (),
         (),
