@@ -108,8 +108,10 @@ pub fn normalize_elicitation_response(
     response: ElicitationResponse,
 ) -> Result<ElicitationResponse, ElicitationValidationError> {
     match response {
-        ElicitationResponse::Accepted { value } => normalize_elicitation_value(&request.schema, value)
-            .map(|value| ElicitationResponse::Accepted { value }),
+        ElicitationResponse::Accepted { value } => {
+            normalize_elicitation_value(&request.schema, value)
+                .map(|value| ElicitationResponse::Accepted { value })
+        }
         ElicitationResponse::Declined => Ok(ElicitationResponse::Declined),
         ElicitationResponse::Cancelled => Ok(ElicitationResponse::Cancelled),
     }
@@ -154,9 +156,9 @@ fn normalize_elicitation_value(
                 .collect::<Result<Vec<_>, _>>()
                 .map(PhenixValue::List)
         }
-        Type::List(_) => unsupported(
-            "elicitation lists require a supported scalar or unit-variant item schema",
-        ),
+        Type::List(_) => {
+            unsupported("elicitation lists require a supported scalar or unit-variant item schema")
+        }
         Type::Any => unsupported("elicitation does not accept unconstrained any schemas"),
         Type::Never => unsupported("elicitation does not accept never schemas"),
         Type::Unit => unsupported("unit is supported only as a variant payload"),
@@ -184,9 +186,9 @@ fn ensure_supported_elicitation_schema(
         }
         Type::Variant(_) => unsupported("elicitation variants must contain unit variants only"),
         Type::List(item) if is_scalar_schema(item) || is_unit_variant_schema(item) => Ok(()),
-        Type::List(_) => unsupported(
-            "elicitation lists require a supported scalar or unit-variant item schema",
-        ),
+        Type::List(_) => {
+            unsupported("elicitation lists require a supported scalar or unit-variant item schema")
+        }
         Type::Any => unsupported("elicitation does not accept unconstrained any schemas"),
         Type::Never => unsupported("elicitation does not accept never schemas"),
         Type::Unit => unsupported("unit is supported only as a variant payload"),
@@ -342,10 +344,7 @@ fn unsupported<T>(message: impl Into<String>) -> Result<T, ElicitationValidation
     })
 }
 
-fn invalid_type<T>(
-    expected: &str,
-    value: &PhenixValue,
-) -> Result<T, ElicitationValidationError> {
+fn invalid_type<T>(expected: &str, value: &PhenixValue) -> Result<T, ElicitationValidationError> {
     Err(ElicitationValidationError::InvalidValue {
         message: format!("expected {expected}, got {}", value.kind()),
     })
