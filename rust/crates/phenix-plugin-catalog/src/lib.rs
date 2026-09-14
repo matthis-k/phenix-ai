@@ -46,11 +46,13 @@ pub use phenix_plugin_debug::{
 };
 pub use phenix_plugin_execution::{
     agent_loop_service, execution_component_id, execution_component_manifest,
-    execution_configuration_service, execution_factory, execution_manifest, AgentDefinition,
-    AgentLoopCommand, AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse, AgentLoopUsage,
-    CallablePolicy, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
-    OrchestrationDefinition, OrchestrationNode, AGENT_LOOP_SERVICE,
-    DEFAULT_MAX_PARALLEL_TOOL_CALLS, EXECUTION_CONFIGURATION_SERVICE,
+    execution_configuration_service, execution_factory, execution_manifest,
+    execution_review_service, AgentDefinition, AgentLoopCommand, AgentLoopInterface,
+    AgentLoopPolicy, AgentLoopResponse, AgentLoopUsage, CallablePolicy,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse, ExecutionReviewCommand,
+    ExecutionReviewInterface, ExecutionReviewResponse, OrchestrationDefinition, OrchestrationNode,
+    PreparedReviewFile, AGENT_LOOP_SERVICE, DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+    EXECUTION_CONFIGURATION_SERVICE, EXECUTION_REVIEW_SERVICE,
 };
 pub use phenix_plugin_frontend::{
     frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
@@ -122,7 +124,8 @@ pub use phenix_plugin_sessions::{
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
     workspace_manifest, workspace_service, WorkspaceCommand, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WORKSPACE_SERVICE,
+    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
+    WorkspaceWrite, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 pub use phenix_sdk::{
     context_service, execution_service, CallableRecord, ContextCommand, ContextDescriptor,
