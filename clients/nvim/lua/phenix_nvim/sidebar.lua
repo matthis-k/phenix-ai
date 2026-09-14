@@ -36,6 +36,7 @@ function M.open()
   compose_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_height(compose_win, options.compose_height)
   vim.api.nvim_win_set_buf(compose_win, compose.ensure(state.compose))
+  compose.attach_window(state.compose, compose_win)
   pcall(vim.api.nvim_win_set_cursor, compose_win, state.remembered_compose_cursor)
 
   vim.api.nvim_create_autocmd("WinLeave", {
@@ -51,6 +52,9 @@ end
 
 function M.close()
   M.remember_cursor()
+  if valid(compose_win) then
+    compose.detach_window(compose_win)
+  end
   if valid(transcript_win) then
     transcript.detach_window(transcript_win)
   end
