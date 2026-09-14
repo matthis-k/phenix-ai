@@ -1,6 +1,7 @@
 use crate::{
-    context_component_id,
+    assemble_prompt, context_component_id,
     state_service::{ContextStateService, CONTEXT_PROJECTION_STATE_KEY},
+    PromptSectionKind,
 };
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
@@ -8,11 +9,12 @@ use phenix_core::{
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    context_service, ContextCommand, ContextDescriptor, ContextInjection, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextInterface, ContextResourceKind, ContextResourceRevision,
-    ContextResponse, ContextScope, ExactContextReference, ExecutionCommand,
+    context_service, CachePlacement, ContextCandidate, ContextCommand, ContextDescriptor,
+    ContextInjection, ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
+    ContextInvocationPreparation, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, RepositoryContextSource,
+    ProjectedContextEntry, ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -182,6 +184,12 @@ fn handle(
         }
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
+        }),
+        ContextCommand::PrepareInvocation {
+            execution_id,
+            input,
+        } => Ok(ContextResponse::InvocationPrepared {
+            preparation: prepare_invocation(context, state, execution_id, input)?,
         }),
         ContextCommand::GetProjectionState { .. }
         | ContextCommand::Admit { .. }
@@ -527,6 +535,88 @@ fn project_context(
     })
 }
 
+fn prepare_invocation(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    execution_id: String,
+    input: Bytes,
+) -> Result<ContextInvocationPreparation, String> {
+    require_active_execution(context, &execution_id)?;
+    let projection = project_context(context, execution_id.clone())?;
+    Ok(invocation_preparation(
+        &projection,
+        state.projection_revision(&execution_id),
+        &input,
+    ))
+}
+
+fn invocation_preparation(
+    projection: &ExecutionContextProjection,
+    projection_state: ProjectionRevision,
+    input: &Bytes,
+) -> ContextInvocationPreparation {
+    let candidates = assemble_prompt(projection)
+        .sections
+        .into_iter()
+        .map(|section| {
+            let mandatory = matches!(
+                section.kind,
+                PromptSectionKind::HarnessIdentity
+                    | PromptSectionKind::ProjectInstruction
+                    | PromptSectionKind::Skill
+            );
+            let cache = if mandatory {
+                CachePlacement::StablePrefix
+            } else {
+                CachePlacement::Epoch
+            };
+            let retention = if mandatory {
+                ContextRetention::Pinned
+            } else {
+                ContextRetention::Full
+            };
+            let content_identity = content_hash(section.content.as_ref()).as_str().to_owned();
+            let (id, source, recovery) = match section.reference {
+                Some(reference) => (
+                    format!("{}@{}", reference.resource_id, reference.revision),
+                    ContextSource::Exact {
+                        reference: reference.clone(),
+                    },
+                    Some(reference),
+                ),
+                None => (
+                    "phenix:harness-identity".to_owned(),
+                    ContextSource::Inline {
+                        identity: "phenix:harness-identity".to_owned(),
+                    },
+                    None,
+                ),
+            };
+            ContextCandidate {
+                id,
+                source,
+                content_identity,
+                estimated_tokens: conservative_token_estimate(section.content.as_ref()),
+                content: section.content,
+                mandatory,
+                retention,
+                cache,
+                recovery,
+            }
+        })
+        .collect();
+
+    ContextInvocationPreparation {
+        request_input_tokens: conservative_token_estimate(input.as_ref()),
+        candidates,
+        projection: projection_state,
+    }
+}
+
+fn conservative_token_estimate(content: &[u8]) -> u64 {
+    u64::try_from(content.len()).unwrap_or(u64::MAX)
+}
+
 fn read_resource(
     context: &ContextPluginContext<'_, '_>,
     resource_id: &ContextResourceId,
@@ -602,4 +692,35 @@ fn file_name(path: &str) -> &str {
 
 fn parent_path(path: &str) -> Option<&str> {
     path.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+
+    #[test]
+    fn invocation_preparation_keeps_request_budget_separate_from_context_candidates() {
+        let projection = ExecutionContextProjection {
+            execution_id: "execution-1".into(),
+            entries: Vec::new(),
+        };
+        let preparation = invocation_preparation(
+            &projection,
+            ProjectionRevision {
+                revision: 3,
+                cache_epoch: 2,
+            },
+            &Bytes::from(b"request".to_vec()),
+        );
+
+        assert_eq!(preparation.request_input_tokens, 7);
+        assert_eq!(preparation.projection.revision, 3);
+        assert_eq!(preparation.projection.cache_epoch, 2);
+        assert_eq!(preparation.candidates.len(), 1);
+        let identity = &preparation.candidates[0];
+        assert!(identity.mandatory);
+        assert_eq!(identity.retention, ContextRetention::Pinned);
+        assert_eq!(identity.cache, CachePlacement::StablePrefix);
+        assert!(matches!(identity.source, ContextSource::Inline { .. }));
+    }
 }
