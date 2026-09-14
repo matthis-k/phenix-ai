@@ -1849,6 +1849,7 @@ dependencies = [
  "phenix-plugin-sessions",
  "phenix-plugin-workspace",
  "phenix-sdk",
+ "serde_json",
 ]
 
 [[package]]
