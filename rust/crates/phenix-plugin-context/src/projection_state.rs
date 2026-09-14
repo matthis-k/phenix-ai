@@ -142,7 +142,7 @@ impl ContextProjectionState {
 mod tests {
     use super::*;
     use phenix_core::Bytes;
-    use phenix_sdk::{CachePlacement, ContextCheckpoint, ContextSource, ToolCallGroupReference};
+    use phenix_sdk::{CachePlacement, ContextSource, ToolCallGroupReference};
 
     fn state() -> ContextProjectionState {
         let mut state = ContextProjectionState::new("execution-1");
@@ -182,7 +182,7 @@ mod tests {
                 to: ContextRetention::DropAllowed,
                 recovery: None,
             }],
-            checkpoint: ContextCheckpoint {
+            checkpoint: phenix_sdk::contracts::context_compaction::ContextCheckpoint {
                 checkpoint_id: "checkpoint-1".into(),
                 execution_id: state.execution_id.clone(),
                 source_revision: state.revision.clone(),
