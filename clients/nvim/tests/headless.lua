@@ -41,42 +41,160 @@ assert(serialized[3].snapshot == "B")
 assert(serialized[4].text == "question B")
 
 local transcript = require("phenix_nvim.transcript.model")
-local projection = transcript.new()
-assert(transcript.apply(projection, {
-  sequence = 1,
-  kind = "message",
-  id = "assistant-1",
-  role = "assistant",
+local projection = transcript.new("session-1")
+local function update(sequence, change)
+  return {
+    session_id = "session-1",
+    sequence = sequence,
+    update = change,
+  }
+end
+assert(transcript.apply(projection, update(1, {
+  kind = "Message",
+  message = {
+    role = { kind = "User" },
+    content = { { kind = "Text", text = "question" } },
+  },
+})))
+assert(projection.nodes["session:session-1:sequence:1"].text == "question")
+assert(transcript.apply(projection, update(2, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = { kind = "State", state = { kind = "Running" } },
+})))
+assert(transcript.apply(projection, update(3, {
+  kind = "TextDelta",
+  execution_id = "execution-1",
   text = "hello",
-}))
-assert(transcript.apply(projection, {
-  sequence = 2,
-  kind = "text_delta",
-  id = "assistant-1",
+})))
+assert(transcript.apply(projection, update(4, {
+  kind = "TextDelta",
+  execution_id = "execution-1",
   text = " world",
+})))
+local assistant_id = "session:session-1:execution:execution-1:assistant"
+assert(projection.nodes[assistant_id].text == "hello world")
+assert(transcript.apply(projection, update(5, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = {
+    kind = "ToolCall",
+    call_id = "call-1",
+    callable_id = "tools.read",
+    input = "README.md",
+  },
+})))
+assert(transcript.apply(projection, update(6, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = { kind = "ToolResult", call_id = "call-1", output = "done" },
+})))
+local tool_id = "session:session-1:execution:execution-1:tool:call-1"
+assert(projection.nodes[tool_id].state == "completed")
+assert(transcript.apply(projection, update(7, {
+  kind = "Review",
+  review = {
+    id = "review-1",
+    revision = 0,
+    session_id = "session-1",
+    execution_id = "execution-1",
+    files = {},
+    state = { kind = "Pending" },
+  },
+})))
+assert(projection.nodes["session:session-1:review:review-1"] ~= nil)
+assert(transcript.apply(projection, update(8, {
+  kind = "Message",
+  message = {
+    role = { kind = "Assistant" },
+    content = { { kind = "Text", text = "hello world" } },
+  },
+})))
+assert(projection.nodes[assistant_id].final == true)
+assert(projection.nodes["session:session-1:sequence:8"] == nil)
+assert(transcript.apply(projection, update(9, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = { kind = "State", state = { kind = "Completed" } },
+})))
+assert(projection.nodes["session:session-1:execution:execution-1:state"].state == "completed")
+
+local rebuilt = assert(transcript.rebuild({
+  session = { session_id = "session-1" },
+  through_sequence = 9,
+  updates = {
+    update(1, {
+      kind = "Message",
+      message = {
+        role = { kind = "User" },
+        content = { { kind = "Text", text = "question" } },
+      },
+    }),
+    update(2, {
+      kind = "Execution",
+      execution_id = "execution-1",
+      update = { kind = "State", state = { kind = "Running" } },
+    }),
+    update(3, { kind = "TextDelta", execution_id = "execution-1", text = "hello" }),
+    update(4, { kind = "TextDelta", execution_id = "execution-1", text = " world" }),
+    update(5, {
+      kind = "Execution",
+      execution_id = "execution-1",
+      update = {
+        kind = "ToolCall",
+        call_id = "call-1",
+        callable_id = "tools.read",
+        input = "README.md",
+      },
+    }),
+    update(6, {
+      kind = "Execution",
+      execution_id = "execution-1",
+      update = { kind = "ToolResult", call_id = "call-1", output = "done" },
+    }),
+    update(7, {
+      kind = "Review",
+      review = {
+        id = "review-1",
+        revision = 0,
+        session_id = "session-1",
+        execution_id = "execution-1",
+        files = {},
+        state = { kind = "Pending" },
+      },
+    }),
+    update(8, {
+      kind = "Message",
+      message = {
+        role = { kind = "Assistant" },
+        content = { { kind = "Text", text = "hello world" } },
+      },
+    }),
+    update(9, {
+      kind = "Execution",
+      execution_id = "execution-1",
+      update = { kind = "State", state = { kind = "Completed" } },
+    }),
+  },
 }))
-assert(projection.nodes["assistant-1"].text == "hello world")
-assert(transcript.apply(projection, {
-  sequence = 3,
-  kind = "tool_call",
-  call_id = "call-1",
-  callable_id = "tools.read",
-  input = "README.md",
+assert(rebuilt.sequence == 9)
+assert(rebuilt.nodes[assistant_id].text == "hello world")
+
+local unknown_tool = transcript.new("session-1")
+local _, tool_error = transcript.apply(unknown_tool, update(1, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = { kind = "ToolResult", call_id = "missing", output = "bad" },
 }))
-assert(transcript.apply(projection, {
-  sequence = 4,
-  kind = "tool_result",
-  call_id = "call-1",
-  output = "done",
+assert(tool_error ~= nil, "unknown tool results must request repair")
+assert(unknown_tool.sequence == 0, "failed reducer updates must not advance the sequence")
+
+local _, gap = transcript.apply(projection, update(11, {
+  kind = "Execution",
+  execution_id = "execution-1",
+  update = { kind = "Progress", message = "bad gap" },
 }))
-assert(projection.nodes["call-1"].state == "completed")
-local _, gap = transcript.apply(projection, {
-  sequence = 6,
-  kind = "progress",
-  id = "progress-1",
-  message = "bad gap",
-})
-assert(gap ~= nil, "version gaps must fail instead of being guessed")
+assert(gap ~= nil, "session sequence gaps must fail instead of being guessed")
 
 local sidebar = require("phenix_nvim.sidebar")
 sidebar.open()
