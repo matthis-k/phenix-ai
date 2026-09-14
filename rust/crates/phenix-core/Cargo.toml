@@ -23,3 +23,7 @@ thiserror.workspace = true
 [[test]]
 name = "observable_allocations"
 path = "tests/observable_allocations.rs"
+
+[[test]]
+name = "persistence_backend_conformance"
+path = "tests/persistence_backend_conformance.rs"

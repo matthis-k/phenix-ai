@@ -89,6 +89,11 @@ pub enum KernelError {
         plugin: PluginId,
         message: String,
     },
+    PersistenceConflict {
+        plugin: PluginId,
+        namespace: ResourceNamespace,
+        key: String,
+    },
     EmbeddedFactoryMissing(PluginId),
     WrongExecutionKind(PluginId),
     ComponentGraph(ComponentGraphError),
@@ -200,6 +205,14 @@ impl Display for KernelError {
             Self::Persistence { plugin, message } => {
                 write!(f, "plugin {plugin} persistence operation failed: {message}")
             }
+            Self::PersistenceConflict {
+                plugin,
+                namespace,
+                key,
+            } => write!(
+                f,
+                "plugin {plugin} persistence assertion conflicted at {namespace}/{key}"
+            ),
             Self::EmbeddedFactoryMissing(plugin) => {
                 write!(f, "embedded plugin has no registered factory: {plugin}")
             }

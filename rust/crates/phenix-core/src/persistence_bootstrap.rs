@@ -466,14 +466,10 @@ mod tests {
     fn unsupported_features_reject_provider_before_store_plan_resolves() {
         let error = resolve_persistence_bootstrap(
             &plugin("fixture.provider"),
-            [provider(
-                "fixture.provider",
-                &[BackendFeature::Transactions],
-                &["fixture-v1"],
-            )],
+            [provider("fixture.provider", &[], &["fixture-v1"])],
             &BTreeSet::new(),
             binding("primary", "fixture-v1"),
-            &[schema(&[BackendFeature::IndexedRange])],
+            &[schema(&[BackendFeature::Migrations])],
             None,
             None,
         )
@@ -483,7 +479,7 @@ mod tests {
             error,
             PersistenceBootstrapError::UnsupportedFeatures {
                 provider: plugin("fixture.provider"),
-                missing: BTreeSet::from([BackendFeature::IndexedRange]),
+                missing: BTreeSet::from([BackendFeature::Migrations]),
             }
         );
     }

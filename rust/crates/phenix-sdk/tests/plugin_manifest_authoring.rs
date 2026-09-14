@@ -43,7 +43,7 @@ struct Plugin {
     #[phenix(component)]
     api: Api,
 
-    #[phenix(resource, features(Transactions))]
+    #[phenix(resource, features(Migrations))]
     state: phenix_sdk::Durable<Store>,
 }
 
