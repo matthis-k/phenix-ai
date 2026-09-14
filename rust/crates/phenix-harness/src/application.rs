@@ -7,14 +7,14 @@ use phenix_application_interface::{
     types::{
         Acknowledged, ApplicationError, Content, ElicitationHandlerRef, ExecutionChange,
         ExecutionState, InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
-        PromptInput, PromptResult, SessionChange, SessionCreateInput, SessionInfo,
-        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
-        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput, StopReason,
+        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
+        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
+        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
+        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    AddClientTool, Cancel, CloseSession, CreateSession, GetSdk, InvokeCallable, InvokeCapability,
-    ListCallables, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession,
-    SetInteractionHandlers,
+    AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,
+    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
+    RenameSession, ResumeSession, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
@@ -23,7 +23,8 @@ use phenix_core::{
     SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_service, sdk_contribution, session_service, AgentLoopCommand, AgentLoopResponse,
+    agent_loop_service, execution_review_service, sdk_contribution, session_service,
+    AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand, ExecutionReviewResponse,
     OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
@@ -359,6 +360,9 @@ impl ApplicationWorker {
                 .map(|value| value.to_value()),
             Prompt::ID => self.prompt(decode(input)?).map(|value| value.to_value()),
             Cancel::ID => self.cancel(decode(input)?).map(|value| value.to_value()),
+            DecideReview::ID => self
+                .decide_review(decode(input)?)
+                .map(|value| value.to_value()),
             _ => Err(ApplicationError::UnsupportedCapability {
                 capability: operation.clone(),
             }),
@@ -495,6 +499,51 @@ impl ApplicationWorker {
     ) -> Result<Acknowledged, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
         Ok(Acknowledged {})
+    }
+
+    fn decide_review(
+        &mut self,
+        request: ReviewDecisionInput,
+    ) -> Result<ReviewRecord, ApplicationError> {
+        let command = ExecutionReviewCommand::Decide { input: request };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .invoke(&execution_review_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        let response = ExecutionReviewResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })?;
+        match response {
+            ExecutionReviewResponse::Review { review } => {
+                let session = self.require_open_application_session(&review.session_id)?;
+                self.append_session_change(
+                    &session,
+                    SessionChange::Review {
+                        review: review.clone(),
+                    },
+                )?;
+                Ok(review)
+            }
+            ExecutionReviewResponse::Conflict { message, .. } => {
+                Err(ApplicationError::Conflict { message })
+            }
+            other => Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected execution review response: {other:?}"),
+            }),
+        }
     }
 
     fn append_execution_change(
@@ -1331,6 +1380,7 @@ fn configured_capabilities() -> Vec<ContractId> {
         "callables",
         "client-tools",
         "interaction",
+        "review",
     ]
     .into_iter()
     .map(|name| {
