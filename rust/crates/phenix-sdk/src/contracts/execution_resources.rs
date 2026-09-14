@@ -3,7 +3,7 @@ use super::{
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, RemainingBudget,
     RootBudgetLedger, WorkerTaskRecord,
 };
-use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
+use phenix_core::{ComponentInterface, InterfaceId, PreparedMutationHandle, ServiceId};
 use serde::{Deserialize, Serialize};
 
 pub const EXECUTION_RESOURCE_SERVICE: &str = "phenix.execution.resources@1";
@@ -19,6 +19,11 @@ pub enum ExecutionResourceCommand {
         reservation: BudgetReservationRequest,
     },
     SettleReservation {
+        root_execution_id: String,
+        reservation_id: String,
+        actual: BudgetActual,
+    },
+    PrepareSettleReservation {
         root_execution_id: String,
         reservation_id: String,
         actual: BudgetActual,
@@ -66,6 +71,10 @@ pub enum ExecutionResourceCommand {
 pub enum ExecutionResourceResponse {
     RootBudget {
         ledger: RootBudgetLedger,
+    },
+    PreparedRootBudget {
+        ledger: RootBudgetLedger,
+        mutation: PreparedMutationHandle,
     },
     Remaining {
         budget: RemainingBudget,
