@@ -63,6 +63,11 @@
                 -c ${pkgs.lib.escapeShellArg "lua dofile('${frontendSource}/tests/image.lua')"} \
                 -c qa
 
+              nvim --headless -u NONE \
+                --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \
+                -c ${pkgs.lib.escapeShellArg "lua dofile('${frontendSource}/tests/interaction.lua')"} \
+                -c qa
+
               export PHENIX_STATE_DB="$TMPDIR/phenix-nvim-acp.sqlite"
               export PHENIX_SESSION_ID_FILE="$TMPDIR/phenix-nvim-session-id"
               nvim --headless -u NONE \
