@@ -3,10 +3,10 @@ use crate::{
     session_tree_service, SessionTreeCommand, SessionTreeResponse,
 };
 use phenix_core::{
-    Authority, BackendFeature, DurableSchema, Kernel, KernelConfig, LocalPersistence,
-    NamespaceTransaction, PersistenceBackend, PersistenceError, PhenixValue, PluginId, Project,
-    ResolvedHarness, ResolvedHarnessActivation, ResourceNamespace, SchemaMigration, SessionId,
-    TransactionOp,
+    Authority, BackendFeature, DurableKeyRange, DurableRecord, DurableSchema, Kernel, KernelConfig,
+    LocalPersistence, NamespaceTransaction, PersistenceBackend, PersistenceError, PhenixValue,
+    PluginId, Project, ResolvedHarness, ResolvedHarnessActivation, ResourceNamespace,
+    ScanDirection, SchemaMigration, SessionId, TransactionOp,
 };
 use phenix_plugin_sessions::{
     session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
@@ -60,6 +60,17 @@ impl PersistenceBackend for FailMultiNamespaceTransaction {
         key: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError> {
         self.inner.read(caller, namespace, key)
+    }
+
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError> {
+        self.inner.scan(caller, namespace, range, direction, limit)
     }
 
     fn transact_many(
@@ -380,7 +391,7 @@ fn failed_combined_child_creation_rolls_back_session_and_lineage_namespaces() {
         },
     )
     .unwrap_err();
-    assert!(error.contains("transaction assertion failed"));
+    assert!(error.contains("persistence assertion conflicted"));
     assert!(session_exists(&mut kernel, "root"));
     assert!(!session_exists(&mut kernel, "child"));
     assert_eq!(parent(&mut kernel, "child"), None);
