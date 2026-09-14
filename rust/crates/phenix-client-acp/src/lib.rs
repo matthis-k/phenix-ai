@@ -333,7 +333,6 @@ impl DescriptorExtensions {
     }
 
     /// Returns every application capability advertised during ACP initialization.
-    #[must_use]
     pub fn advertised_capabilities(&self) -> impl Iterator<Item = &ContractId> {
         self.advertised_capabilities.iter()
     }
@@ -1476,6 +1475,32 @@ mod tests {
                 connection
                     .new_session(NewSessionRequest::new("/workspace"))
                     .await?;
+                let event = futures::future::poll_fn(|cx| match receiver.try_recv() {
+                    Ok(event) => std::task::Poll::Ready(Ok(event)),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        cx.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        std::task::Poll::Ready(Err(ClientError::Transport(
+                            "ACP extension event channel disconnected".to_owned(),
+                        )))
+                    }
+                })
+                .await?;
+                assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
+                assert_eq!(
+                    event.payload,
+                    SessionUpdate {
+                        session_id: phenix_core::SessionId::parse("session-1")
+                            .expect("static session id is valid"),
+                        sequence: 0,
+                        update: SessionChange::Renamed {
+                            title: "Renamed".to_owned(),
+                        },
+                    }
+                    .to_value()
+                );
                 Ok(())
             },
         );
@@ -1484,22 +1509,6 @@ mod tests {
             futures::executor::block_on(async { futures::join!(server, client) });
         client_result.expect("client completes the ACP session request");
         server_result.expect("server completes after the client disconnects");
-        let event = receiver
-            .try_recv()
-            .expect("negotiated extension event is delivered");
-        assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
-        assert_eq!(
-            event.payload,
-            SessionUpdate {
-                session_id: phenix_core::SessionId::parse("session-1")
-                    .expect("static session id is valid"),
-                sequence: 0,
-                update: SessionChange::Renamed {
-                    title: "Renamed".to_owned(),
-                },
-            }
-            .to_value()
-        );
     }
 
     #[test]
@@ -1593,7 +1602,6 @@ mod tests {
                     agent_client_protocol::schema::v1::ContentChunk::new(
                         agent_client_protocol::schema::v1::ContentBlock::Text(
                             agent_client_protocol::schema::v1::TextContent::new("hello"),
-                        ),
                     ),
                 ),
             )
