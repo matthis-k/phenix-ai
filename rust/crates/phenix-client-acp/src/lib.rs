@@ -1602,6 +1602,7 @@ mod tests {
                     agent_client_protocol::schema::v1::ContentChunk::new(
                         agent_client_protocol::schema::v1::ContentBlock::Text(
                             agent_client_protocol::schema::v1::TextContent::new("hello"),
+                        ),
                     ),
                 ),
             )
