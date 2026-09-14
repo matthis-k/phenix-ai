@@ -432,6 +432,19 @@ function M.list_sessions(callback)
   M.track(state.application.session_list({ cursor = nil }), callback)
 end
 
+function M.close_session(session_id, callback)
+  if not require_application(callback) then
+    return
+  end
+  M.track(state.application.session_close({ session_id = session_id }), function(result, error)
+    if error == nil and state.active_session_id == session_id then
+      state.active_session_id = nil
+      emit("status", M.status())
+    end
+    util.safe_call(callback, result, error)
+  end)
+end
+
 function M.active_session()
   return state.active_session_id
 end
