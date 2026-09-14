@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, CapabilityGenerationId, ComponentInterface, Kernel, KernelConfig, LocalPersistence,
     ModelId, ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedHarness, ServiceContribution, ServiceId, ValueError,
+    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
