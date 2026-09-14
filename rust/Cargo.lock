@@ -1742,6 +1742,7 @@ dependencies = [
  "phenix-conductor",
  "phenix-core",
  "phenix-plugin-catalog",
+ "phenix-provider-sdk",
  "phenix-sdk",
  "serde",
  "serde_json",

@@ -5,10 +5,10 @@ use phenix_core::{
 use phenix_harness::{default_suite_authority, PhenixHarness};
 use phenix_plugin_catalog::{
     execution_configuration_service, model_routing_service, options_component_manifest,
-    options_service, AgentDefinition, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
-    ModelCommand, ModelResponse, ModelTarget, OptionAssignment, OptionCommand, OptionKey,
-    OptionResponse, OptionScope, OptionStartupPrecedence, OptionSubjectId, OptionValue,
-    OrchestrationDefinition, RoutingProfile,
+    options_service, AgentDefinition, ExecutionConfigurationCommand,
+    ExecutionConfigurationResponse, ModelCommand, ModelResponse, ModelTarget, OptionAssignment,
+    OptionCommand, OptionKey, OptionResponse, OptionScope, OptionStartupPrecedence,
+    OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
 };
 use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
 use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities};
