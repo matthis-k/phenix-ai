@@ -331,7 +331,7 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
         "phenix.context@1",
         json!({"operation": "list"}),
     );
-    assert_eq!(context["result"], "resources");
+    assert_eq!(context["response"], "resources");
 
     let execution = invoke(
         &mut harness,
@@ -432,6 +432,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             model: ModelId::parse("fixture-model").unwrap(),
             options: BTreeMap::new(),
         },
+        fallback_targets: Vec::new(),
         callable_targets: BTreeMap::new(),
     };
     let _: ModelResponse = invoke_structural(
