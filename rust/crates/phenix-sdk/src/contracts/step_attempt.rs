@@ -1,4 +1,6 @@
-use super::{AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttribution};
+use super::{
+    AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
+};
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +177,7 @@ pub enum StepAttemptCommand {
         execution_id: String,
         parent_attempt_id: Option<String>,
         policy_revision: String,
+        kind: UsageAttemptKind,
     },
     Create {
         attribution: UsageAttribution,
