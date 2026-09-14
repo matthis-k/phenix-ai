@@ -5,7 +5,8 @@ use phenix_core::{
     ComponentManifest, InterfaceId, PluginId,
 };
 use phenix_sdk::{
-    ExecutionInterface, ExecutionResourceInterface, ModelRoutingInterface, StepAttemptInterface,
+    DefaultInvocationInterface, ExecutionInterface, ExecutionResourceInterface,
+    StepAttemptInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
@@ -82,8 +83,8 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
         id: agent_loop_component_id(),
         owner: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),
         imports: vec![ComponentImport {
-            interface: ModelRoutingInterface::interface_id(),
-            schema: ModelRoutingInterface::schema(),
+            interface: DefaultInvocationInterface::interface_id(),
+            schema: DefaultInvocationInterface::schema(),
             required: false,
             authority: maximum_authority.clone(),
         }],
@@ -154,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_loop_component_owns_model_dependency_separately() {
+    fn agent_loop_component_owns_invocation_dependency_separately() {
         let network = CapabilityId::parse("network.model").unwrap();
         let component = agent_loop_component_manifest(Authority::new([network.clone()]));
 
@@ -163,7 +164,7 @@ mod tests {
         assert!(!component.imports[0].required);
         assert_eq!(
             component.imports[0].interface,
-            ModelRoutingInterface::interface_id()
+            DefaultInvocationInterface::interface_id()
         );
         assert!(component.imports[0].authority.permits(&network));
         assert_eq!(component.exports.len(), 1);
@@ -178,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn model_import_does_not_inherit_execution_persistence_authority() {
+    fn invocation_import_does_not_inherit_execution_persistence_authority() {
         let network = CapabilityId::parse("network.model").unwrap();
         let component = agent_loop_component_manifest(Authority::new([network.clone()]));
         assert!(component.imports[0].authority.permits(&network));
