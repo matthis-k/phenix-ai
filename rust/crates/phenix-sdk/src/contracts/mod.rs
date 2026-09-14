@@ -1,4 +1,5 @@
 pub mod budget;
+#[allow(clippy::large_enum_variant)]
 pub mod context;
 pub mod context_admission;
 pub mod context_compaction;
@@ -11,6 +12,7 @@ pub mod jobs;
 pub mod memory;
 pub mod memory_context;
 pub mod memory_freshness;
+#[allow(clippy::double_must_use)]
 pub mod models;
 pub mod options;
 pub mod planning;
