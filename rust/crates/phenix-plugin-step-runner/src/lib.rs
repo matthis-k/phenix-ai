@@ -399,6 +399,43 @@ fn run(
         );
     }
 
+    let prepared: ModelDispatchResponse = match context.sdk.dispatch.invoke_projected(
+        &ModelDispatchCommand::PrepareResolved {
+            decision: decision.clone(),
+            input,
+            tools,
+        },
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                format!("resolved model preflight failed: {error}"),
+            )
+        }
+    };
+    let ModelDispatchResponse::Ready { prepared } = prepared else {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "model dispatch returned inference during preflight".into(),
+        );
+    };
+    if prepared.decision() != &decision {
+        return fail_before_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            Some(&reservation_id),
+            "model dispatch preflight changed the resolved decision".into(),
+        );
+    }
+
     let dispatch_id = format!("dispatch/{}", attribution.attempt_id);
     if let Err(error) = bind_attempt(
         context,
@@ -416,29 +453,35 @@ fn run(
         );
     }
 
-    let dispatched: ModelDispatchResponse =
-        match context
-            .sdk
-            .dispatch
-            .invoke_projected(&ModelDispatchCommand::InvokeResolved {
-                decision,
-                input,
-                tools,
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                settle_after_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    &plan,
-                    &reservation_id,
-                    AttemptOutcome::Failed,
-                )?;
-                return Err(format!("resolved model dispatch failed: {error}"));
-            }
-        };
-    let ModelDispatchResponse::Inference { response, .. } = dispatched;
+    let dispatched: ModelDispatchResponse = match context
+        .sdk
+        .dispatch
+        .invoke_projected(&ModelDispatchCommand::InvokePrepared { prepared })
+    {
+        Ok(response) => response,
+        Err(error) => {
+            settle_after_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                &plan,
+                &reservation_id,
+                AttemptOutcome::Failed,
+            )?;
+            return Err(format!("prepared model dispatch failed: {error}"));
+        }
+    };
+    let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        settle_after_dispatch(
+            context,
+            &attribution.root_execution_id,
+            &attribution.attempt_id,
+            &plan,
+            &reservation_id,
+            AttemptOutcome::Failed,
+        )?;
+        return Err("model dispatch returned preflight readiness after dispatch".into());
+    };
 
     let settled = conservative_actual(&plan);
     let attempt = settle_step(
