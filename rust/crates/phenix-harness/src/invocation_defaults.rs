@@ -9,11 +9,14 @@ use phenix_plugin_catalog::{
     OptionsInterface,
 };
 use phenix_sdk::{
-    invocation_clock_service, invocation_defaults_service, DelegationResourcePolicy,
-    HelperInvocationRequest, InvocationClockCommand, InvocationClockInterface,
-    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
-    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
-    RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
+    context_recovery_service, invocation_clock_service, invocation_defaults_service,
+    recovery_cold_gate, validate_recovery_decision, ContextNeed, ContextRecoveryCommand,
+    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
+    ContextRecoveryResponse, DelegationResourcePolicy, HelperInvocationRequest,
+    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
+    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
+    InvocationIntent, InvocationParams, InvocationRequest, RecoveryClassifierPolicy,
+    RecoveryColdGate, RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -43,6 +46,12 @@ pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManif
             ServiceContribution {
                 role: ServiceRole::Terminal,
                 service: invocation_clock_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: context_recovery_service(),
                 priority: 100,
                 required_authority: Authority::default(),
             },
@@ -79,6 +88,12 @@ pub fn invocation_defaults_component_manifest(maximum_authority: Authority) -> C
             ComponentExport {
                 interface: InvocationClockInterface::interface_id(),
                 schema: InvocationClockInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: ContextRecoveryInterface::interface_id(),
+                schema: ContextRecoveryInterface::schema(),
                 priority: 100,
                 required_authority: Authority::default(),
             },
@@ -170,10 +185,69 @@ impl PluginInstance for InvocationDefaultsPlugin {
                 }
             }
         }
+        if service == &context_recovery_service() {
+            let command = context
+                .kernel
+                .decode_projected::<ContextRecoveryCommand>(
+                    &ContextRecoveryInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let ContextRecoveryCommand::Assess { request } = command;
+            let decision = assess_recovery(&request)?;
+            return context
+                .kernel
+                .encode_value(&ContextRecoveryResponse::Decision { decision })
+                .map_err(|error| error.to_string());
+        }
         Err(format!(
             "unsupported invocation defaults service: {service}"
         ))
     }
+}
+
+fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
+    let policy = RecoveryClassifierPolicy::default();
+    if request.prompt.len() > policy.max_prompt_bytes as usize {
+        return Err(format!(
+            "recovery prompt exceeds {} bytes",
+            policy.max_prompt_bytes
+        ));
+    }
+    if request.state.anchors.len() > policy.max_anchors as usize {
+        return Err(format!(
+            "recovery anchors exceed {} entries",
+            policy.max_anchors
+        ));
+    }
+    if matches!(
+        recovery_cold_gate(&request.state),
+        RecoveryColdGate::CurrentContextSufficient
+    ) {
+        return Ok(ContextRecoveryDecision::Sufficient);
+    }
+    let query = bounded_utf8(request.prompt.trim(), policy.max_need_query_bytes as usize);
+    if query.is_empty() {
+        return Ok(ContextRecoveryDecision::Sufficient);
+    }
+    validate_recovery_decision(
+        ContextRecoveryDecision::Missing {
+            needs: vec![ContextNeed::Task { query }],
+        },
+        &policy,
+    )
+    .map_err(|error| format!("invalid recovery decision: {error:?}"))
+}
+
+fn bounded_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 fn resolve_defaults(
@@ -276,13 +350,13 @@ fn invocation_params(
 mod tests {
     use super::*;
     use phenix_core::Bytes;
-    use phenix_sdk::HelperInvocationKind;
+    use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
 
     #[test]
-    fn provider_exports_replaceable_defaults_and_clock_interfaces() {
+    fn provider_exports_replaceable_defaults_clock_and_recovery_interfaces() {
         let authority = Authority::default();
         let manifest = invocation_defaults_manifest(authority.clone());
-        assert_eq!(manifest.services.len(), 2);
+        assert_eq!(manifest.services.len(), 3);
         assert_eq!(manifest.dependencies.len(), 1);
 
         let component = invocation_defaults_component_manifest(authority);
@@ -291,7 +365,7 @@ mod tests {
             component.imports[0].interface,
             OptionsInterface::interface_id()
         );
-        assert_eq!(component.exports.len(), 2);
+        assert_eq!(component.exports.len(), 3);
         assert!(component
             .exports
             .iter()
@@ -300,6 +374,30 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == InvocationClockInterface::interface_id()));
+        assert!(component
+            .exports
+            .iter()
+            .any(|export| export.interface == ContextRecoveryInterface::interface_id()));
+    }
+
+    #[test]
+    fn cold_context_requests_bounded_task_recovery() {
+        let decision = assess_recovery(&ContextRecoveryRequest {
+            profile_id: RoutingProfileId::parse("default").unwrap(),
+            prompt: "work on prs".into(),
+            state: ContextRecoveryState {
+                anchors: Vec::new(),
+                has_durable_session_history: false,
+                has_explicit_resource: false,
+            },
+            at: 1,
+        })
+        .unwrap();
+        assert!(matches!(
+            decision,
+            ContextRecoveryDecision::Missing { needs }
+                if matches!(&needs[..], [ContextNeed::Task { query }] if query == "work on prs")
+        ));
     }
 
     #[test]
