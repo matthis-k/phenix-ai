@@ -1,26 +1,85 @@
 use super::{
-    BudgetActual, ContextCandidate, RouteSelectionPolicy, StepAttemptRecord, TaskRequirements,
-    UsageAttribution, UsagePolicy,
+    BudgetActual, ContextCandidate, ContextDemand, ContextInvocationPreparation, RouteSelectionPolicy,
+    StepAttemptRecord, TaskRequirements, UsageAttribution, UsagePolicy,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,
-    RoutingProfileId, ServiceId,
+    RoutingProfileId, ServiceId, SkillId,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub const INVOCATION_SERVICE: &str = "phenix.invocation@1";
 pub const DEFAULT_INVOCATION_SERVICE: &str = "phenix.invocation.default@1";
 pub const INVOCATION_DEFAULTS_SERVICE: &str = "phenix.invocation.defaults@1";
+pub const INVOCATION_CLOCK_SERVICE: &str = "phenix.invocation.clock@1";
 pub const STEP_RUNNER_SERVICE: &str = "phenix.step-runner@1";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationRequest {
-    pub attribution: UsageAttribution,
+    pub execution_id: String,
+    pub parent_attempt_id: Option<String>,
     pub callable_id: Option<CallableId>,
     pub input: Bytes,
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct InvocationIntent {
+    pub output_reserve_tokens: u64,
+    #[serde(default)]
+    pub required_context_capabilities: BTreeSet<String>,
+    #[serde(default)]
+    pub required_capabilities: BTreeSet<String>,
+    #[serde(default)]
+    pub required_tools: BTreeSet<CallableId>,
+    #[serde(default)]
+    pub optional_tools: BTreeSet<CallableId>,
+    #[serde(default)]
+    pub required_skills: BTreeSet<SkillId>,
+    #[serde(default)]
+    pub optional_skills: BTreeSet<SkillId>,
+    pub requested_reasoning: Option<String>,
+    pub deadline_at_ms: Option<u64>,
+}
+
+impl InvocationIntent {
+    #[must_use]
+    pub fn derive_task(&self, preparation: &ContextInvocationPreparation) -> TaskRequirements {
+        let mandatory_input_tokens = preparation
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.mandatory)
+            .fold(0_u64, |total, candidate| {
+                total.saturating_add(candidate.estimated_tokens)
+            });
+        let reducible_input_tokens = preparation
+            .candidates
+            .iter()
+            .filter(|candidate| !candidate.mandatory)
+            .fold(0_u64, |total, candidate| {
+                total.saturating_add(candidate.estimated_tokens)
+            });
+        TaskRequirements {
+            request_input_tokens: preparation.request_input_tokens,
+            context: ContextDemand {
+                mandatory_input_tokens,
+                reducible_input_tokens,
+                output_reserve_tokens: self.output_reserve_tokens,
+                required_capabilities: self.required_context_capabilities.clone(),
+            },
+            required_capabilities: self.required_capabilities.clone(),
+            required_tools: self.required_tools.clone(),
+            optional_tools: self.optional_tools.clone(),
+            required_skills: self.required_skills.clone(),
+            optional_skills: self.optional_skills.clone(),
+            requested_reasoning: self.requested_reasoning.clone(),
+            deadline_at_ms: self.deadline_at_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -28,46 +87,8 @@ pub struct InvocationRequest {
 pub struct InvocationParams {
     pub profile_id: RoutingProfileId,
     pub policy: UsagePolicy,
-    pub task: TaskRequirements,
-    #[serde(default)]
-    pub context_candidates: Vec<ContextCandidate>,
-    pub cache_epoch: u64,
+    pub intent: InvocationIntent,
     pub route_policy: RouteSelectionPolicy,
-    pub now_ms: u64,
-}
-
-impl InvocationRequest {
-    #[must_use]
-    pub fn into_planned_step(self, params: InvocationParams) -> PlannedStepRequest {
-        let Self {
-            attribution,
-            callable_id,
-            input,
-            tools,
-        } = self;
-        let InvocationParams {
-            profile_id,
-            policy,
-            task,
-            context_candidates,
-            cache_epoch,
-            route_policy,
-            now_ms,
-        } = params;
-        PlannedStepRequest {
-            attribution,
-            profile_id,
-            callable_id,
-            input,
-            tools,
-            policy,
-            task,
-            context_candidates,
-            cache_epoch,
-            route_policy,
-            now_ms,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -95,6 +116,18 @@ pub enum InvocationDefaultsCommand {
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InvocationDefaultsResponse {
     Params { params: InvocationParams },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InvocationClockCommand {
+    Now,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InvocationClockResponse {
+    Time { now_ms: u64 },
 }
 
 #[derive(
@@ -182,6 +215,19 @@ impl ComponentInterface for InvocationDefaultsInterface {
     }
 }
 
+pub struct InvocationClockInterface;
+
+impl ComponentInterface for InvocationClockInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(INVOCATION_CLOCK_SERVICE)
+            .expect("static invocation clock interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<InvocationClockCommand, InvocationClockResponse>()
+    }
+}
+
 pub struct StepRunnerInterface;
 
 impl ComponentInterface for StepRunnerInterface {
@@ -209,6 +255,11 @@ pub fn default_invocation_service() -> ServiceId {
 pub fn invocation_defaults_service() -> ServiceId {
     ServiceId::parse(INVOCATION_DEFAULTS_SERVICE)
         .expect("static invocation defaults service id is valid")
+}
+
+#[must_use]
+pub fn invocation_clock_service() -> ServiceId {
+    ServiceId::parse(INVOCATION_CLOCK_SERVICE).expect("static invocation clock service id is valid")
 }
 
 #[must_use]
