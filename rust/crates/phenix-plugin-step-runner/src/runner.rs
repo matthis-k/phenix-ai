@@ -181,11 +181,11 @@ fn run(
         now_ms,
     } = request;
 
-    if !matches!(
-        attribution.kind,
-        UsageAttemptKind::Root | UsageAttemptKind::Retry
-    ) {
-        return Err("planned step runner accepts root and retry attempts only".into());
+    if !is_supported_attempt_kind(attribution.kind) {
+        return Err(format!(
+            "planned step runner does not support {:?} attempts",
+            attribution.kind
+        ));
     }
     if attribution.policy_revision != policy.revision {
         return Err("planned step attribution policy revision does not match UsagePolicy".into());
@@ -214,12 +214,20 @@ fn run(
         ));
     }
 
+    let parent_reservation_id = helper_parent_reservation(context, &attribution)?;
+    let remaining_command = match &parent_reservation_id {
+        Some(reservation_id) => ExecutionResourceCommand::RemainingWithin {
+            root_execution_id: attribution.root_execution_id.clone(),
+            reservation_id: reservation_id.clone(),
+        },
+        None => ExecutionResourceCommand::Remaining {
+            root_execution_id: attribution.root_execution_id.clone(),
+        },
+    };
     let remaining: ExecutionResourceResponse = context
         .sdk
         .resources
-        .invoke_projected(&ExecutionResourceCommand::Remaining {
-            root_execution_id: attribution.root_execution_id.clone(),
-        })
+        .invoke_projected(&remaining_command)
         .map_err(|error| error.to_string())?;
     let ExecutionResourceResponse::Remaining { budget: remaining } = remaining else {
         return Err("execution resource service returned a non-remaining response".into());
@@ -248,11 +256,7 @@ fn run(
     };
 
     let reservation_id = format!("attempt/{}", attribution.attempt_id);
-    let purpose = match attribution.kind {
-        UsageAttemptKind::Root => BudgetReservationPurpose::RootStep,
-        UsageAttemptKind::Retry => BudgetReservationPurpose::Retry,
-        _ => unreachable!("attempt kind checked above"),
-    };
+    let purpose = reservation_purpose(attribution.kind)?;
     let reserved: ExecutionResourceResponse =
         match context
             .sdk
@@ -261,7 +265,7 @@ fn run(
                 root_execution_id: attribution.root_execution_id.clone(),
                 reservation: BudgetReservationRequest {
                     reservation_id: reservation_id.clone(),
-                    parent_reservation_id: None,
+                    parent_reservation_id,
                     policy_revision: plan.policy_revision.clone(),
                     purpose,
                     budget: plan.reservation.clone(),
@@ -275,7 +279,7 @@ fn run(
                     &attribution.root_execution_id,
                     &attribution.attempt_id,
                     None,
-                    format!("root budget reservation failed: {error}"),
+                    format!("budget reservation failed: {error}"),
                 )
             }
         };
@@ -541,6 +545,70 @@ fn run(
         settled,
         settlement_basis: StepSettlementBasis::ReservedMaximum,
     })
+}
+
+fn is_supported_attempt_kind(kind: UsageAttemptKind) -> bool {
+    matches!(
+        kind,
+        UsageAttemptKind::Root
+            | UsageAttemptKind::Retry
+            | UsageAttemptKind::Helper
+            | UsageAttemptKind::Verification
+            | UsageAttemptKind::RecoveryClassifier
+    )
+}
+
+fn is_helper_attempt(kind: UsageAttemptKind) -> bool {
+    matches!(
+        kind,
+        UsageAttemptKind::Helper
+            | UsageAttemptKind::Verification
+            | UsageAttemptKind::RecoveryClassifier
+    )
+}
+
+fn reservation_purpose(kind: UsageAttemptKind) -> Result<BudgetReservationPurpose, String> {
+    match kind {
+        UsageAttemptKind::Root => Ok(BudgetReservationPurpose::RootStep),
+        UsageAttemptKind::Retry => Ok(BudgetReservationPurpose::Retry),
+        UsageAttemptKind::Helper => Ok(BudgetReservationPurpose::Helper),
+        UsageAttemptKind::Verification => Ok(BudgetReservationPurpose::Verification),
+        UsageAttemptKind::RecoveryClassifier => Ok(BudgetReservationPurpose::RecoveryClassifier),
+        _ => Err(format!("unsupported planned step attempt kind: {kind:?}")),
+    }
+}
+
+fn helper_parent_reservation(
+    context: &StepRunnerContext<'_, '_>,
+    attribution: &UsageAttribution,
+) -> Result<Option<String>, String> {
+    if !is_helper_attempt(attribution.kind) {
+        return Ok(None);
+    }
+    let parent_attempt_id = attribution
+        .parent_attempt_id
+        .as_ref()
+        .ok_or_else(|| "helper attempt requires a parent attempt".to_owned())?;
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::Get {
+            attempt_id: parent_attempt_id.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+    let StepAttemptResponse::AttemptLookup {
+        attempt: Some(parent),
+    } = response
+    else {
+        return Err(format!("unknown helper parent attempt: {parent_attempt_id}"));
+    };
+    if parent.attribution.root_execution_id != attribution.root_execution_id {
+        return Err("helper parent belongs to a different root execution".into());
+    }
+    parent
+        .reservation_id
+        .ok_or_else(|| "helper parent attempt has no active budget reservation".to_owned())
+        .map(Some)
 }
 
 fn validate_tools(tools: &[ModelToolDescriptor], plan: &StepPlan) -> Result<(), String> {
