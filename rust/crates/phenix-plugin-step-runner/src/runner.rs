@@ -11,11 +11,11 @@ use phenix_sdk::{
     ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand,
-    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
-    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
-    StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
-    UsagePlanningInput,
+    ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan,
+    StepRunnerCommand, StepRunnerInterface, StepRunnerResponse, StepSettlementBasis,
+    StepTransactionCommand, StepTransactionInterface, StepTransactionResponse, UsageAttemptKind,
+    UsageAttribution, UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -355,92 +355,116 @@ fn run(
         );
     }
 
-    let admitted: ContextResponse =
-        match context
-            .sdk
-            .context
-            .invoke_projected(&ContextCommand::Admit {
-                request: ContextAdmissionRequest {
-                    execution_id: attribution.execution_id.clone(),
-                    step_plan: plan.clone(),
-                    candidates: context_candidates,
-                    cache_epoch,
-                },
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    Some(&reservation_id),
-                    format!("context admission failed: {error}"),
-                )
-            }
+    let model_input = if is_helper_attempt(attribution.kind) {
+        let projection = ProjectionRevision {
+            revision: 0,
+            cache_epoch: 0,
         };
-    let ContextResponse::Admission { projection, .. } = admitted else {
-        return fail_before_dispatch(
+        if let Err(error) = bind_attempt(
             context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "context service returned a non-admission response".into(),
-        );
-    };
-    if let Err(error) = bind_attempt(
-        context,
-        StepAttemptCommand::BindProjection {
-            attempt_id: attribution.attempt_id.clone(),
-            projection: projection.clone(),
-        },
-    ) {
-        return fail_before_dispatch(
+            StepAttemptCommand::BindProjection {
+                attempt_id: attribution.attempt_id.clone(),
+                projection,
+            },
+        ) {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                error,
+            );
+        }
+        input
+    } else {
+        let admitted: ContextResponse =
+            match context
+                .sdk
+                .context
+                .invoke_projected(&ContextCommand::Admit {
+                    request: ContextAdmissionRequest {
+                        execution_id: attribution.execution_id.clone(),
+                        step_plan: plan.clone(),
+                        candidates: context_candidates,
+                        cache_epoch,
+                    },
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    return fail_before_dispatch(
+                        context,
+                        &attribution.root_execution_id,
+                        &attribution.attempt_id,
+                        Some(&reservation_id),
+                        format!("context admission failed: {error}"),
+                    )
+                }
+            };
+        let ContextResponse::Admission { projection, .. } = admitted else {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                "context service returned a non-admission response".into(),
+            );
+        };
+        if let Err(error) = bind_attempt(
             context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            error,
-        );
-    }
+            StepAttemptCommand::BindProjection {
+                attempt_id: attribution.attempt_id.clone(),
+                projection: projection.clone(),
+            },
+        ) {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                error,
+            );
+        }
 
-    let materialized: ContextResponse =
-        match context
-            .sdk
-            .context
-            .invoke_projected(&ContextCommand::MaterializeInvocation {
-                execution_id: attribution.execution_id.clone(),
-                input,
-                expected_projection: projection.clone(),
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    Some(&reservation_id),
-                    format!("context materialization failed: {error}"),
-                )
-            }
+        let materialized: ContextResponse =
+            match context
+                .sdk
+                .context
+                .invoke_projected(&ContextCommand::MaterializeInvocation {
+                    execution_id: attribution.execution_id.clone(),
+                    input,
+                    expected_projection: projection.clone(),
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    return fail_before_dispatch(
+                        context,
+                        &attribution.root_execution_id,
+                        &attribution.attempt_id,
+                        Some(&reservation_id),
+                        format!("context materialization failed: {error}"),
+                    )
+                }
+            };
+        let ContextResponse::InvocationMaterialized { materialization } = materialized else {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                "context service returned a non-materialization response".into(),
+            );
         };
-    let ContextResponse::InvocationMaterialized { materialization } = materialized else {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "context service returned a non-materialization response".into(),
-        );
+        if materialization.projection != projection {
+            return fail_before_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                Some(&reservation_id),
+                "context materialization changed the admitted projection".into(),
+            );
+        }
+        materialization.input
     };
-    if materialization.projection != projection {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "context materialization changed the admitted projection".into(),
-        );
-    }
 
     let prepared: ModelDispatchResponse =
         match context
@@ -448,7 +472,7 @@ fn run(
             .dispatch
             .invoke_projected(&ModelDispatchCommand::PrepareResolved {
                 decision: decision.clone(),
-                input: materialization.input,
+                input: model_input,
                 tools,
             }) {
             Ok(response) => response,
