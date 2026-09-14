@@ -9,14 +9,15 @@ use phenix_core::{
 };
 use phenix_sdk::{
     context_service, default_invocation_service, helper_invocation_service, invocation_service,
-    step_runner_service, ContextCommand, ContextInterface, ContextResponse,
-    DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
-    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    step_runner_service, ContextCommand, ContextInterface, ContextInvocationPreparation,
+    ContextResponse, DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand,
+    ExecutionInterface, ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
     HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
     InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
-    InvocationRequest, PlannedStepRequest, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptResponse, StepRunnerCommand, StepRunnerResponse, UsageAttemptKind,
+    InvocationRequest, PlannedStepRequest, ProjectionRevision, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
+    UsageAttemptKind,
 };
 use std::collections::BTreeSet;
 
@@ -106,7 +107,6 @@ pub fn helper_invocation_component_manifest(maximum_authority: Authority) -> Com
                 InvocationClockInterface::schema(),
                 true,
             ),
-            import(ContextInterface::interface_id(), ContextInterface::schema(), true),
             import(
                 ExecutionInterface::interface_id(),
                 ExecutionInterface::schema(),
@@ -193,16 +193,29 @@ impl InvocationPackage {
         kind: UsageAttemptKind,
     ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
-        let prepared: ContextResponse = context
-            .sdk
-            .context
-            .invoke_projected(&ContextCommand::PrepareInvocation {
-                execution_id: request.execution_id.clone(),
-                input: request.input.clone(),
-            })
-            .map_err(|error| format!("invocation context preparation failed: {error}"))?;
-        let ContextResponse::InvocationPrepared { preparation } = prepared else {
-            return Err("context service returned a non-preparation response".into());
+        let preparation = if is_isolated_helper(kind) {
+            ContextInvocationPreparation {
+                request_input_tokens: u64::try_from(request.input.as_ref().len())
+                    .unwrap_or(u64::MAX),
+                candidates: Vec::new(),
+                projection: ProjectionRevision {
+                    revision: 0,
+                    cache_epoch: 0,
+                },
+            }
+        } else {
+            let prepared: ContextResponse = context
+                .sdk
+                .context
+                .invoke_projected(&ContextCommand::PrepareInvocation {
+                    execution_id: request.execution_id.clone(),
+                    input: request.input.clone(),
+                })
+                .map_err(|error| format!("invocation context preparation failed: {error}"))?;
+            let ContextResponse::InvocationPrepared { preparation } = prepared else {
+                return Err("context service returned a non-preparation response".into());
+            };
+            preparation
         };
 
         let clock: InvocationClockResponse = context
@@ -339,6 +352,15 @@ impl PluginInstance for InvocationPackage {
     }
 }
 
+fn is_isolated_helper(kind: UsageAttemptKind) -> bool {
+    matches!(
+        kind,
+        UsageAttemptKind::Helper
+            | UsageAttemptKind::Verification
+            | UsageAttemptKind::RecoveryClassifier
+    )
+}
+
 fn root_execution_id(
     context: &InvocationContext<'_, '_>,
     execution_id: &str,
@@ -416,6 +438,10 @@ mod tests {
             helper.exports[0].interface,
             HelperInvocationInterface::interface_id()
         );
+        assert!(!helper
+            .imports
+            .iter()
+            .any(|import| import.interface == ContextInterface::interface_id()));
         let defaults = helper
             .imports
             .iter()
