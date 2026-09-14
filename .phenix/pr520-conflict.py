@@ -52,8 +52,8 @@ replace_once(
 runtime = "rust/crates/phenix-core/src/runtime.rs"
 replace_once(
     runtime,
-    "    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,",
-    "    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PersistenceError,\n    PluginArtifact,",
+    "    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence,\n    PersistenceBackend, PluginArtifact, PluginExecution, PluginId, PluginManifest,",
+    "    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence,\n    PersistenceBackend, PersistenceError, PluginArtifact, PluginExecution, PluginId, PluginManifest,",
 )
 
 host = "rust/crates/phenix-core/src/runtime/host.rs"
