@@ -199,16 +199,10 @@ fn handle_routing(
         } => Ok(ModelResponse::Target {
             target: resolve_compat_target(context, &profile_id, callable_id.as_ref())?,
         }),
-        ModelCommand::Invoke {
-            profile_id,
-            callable_id,
-            input,
-            tools,
-        } => {
-            let target = resolve_compat_target(context, &profile_id, callable_id.as_ref())?;
-            let response = invoke_target(context, &target, input, tools)?;
-            Ok(ModelResponse::Inference { target, response })
-        }
+        ModelCommand::Invoke { .. } => Err(
+            "legacy model invocation is disabled; use phenix.invocation@1 or phenix.invocation.default@1"
+                .into(),
+        ),
         ModelCommand::PublishCapabilities { .. }
         | ModelCommand::ListCandidates { .. }
         | ModelCommand::ResolveWithRequirements { .. }
@@ -263,17 +257,6 @@ fn ensure_authenticated(
             "provider authentication required: {provider_plugin}"
         ))
     }
-}
-
-fn invoke_target(
-    context: &mut ModelContext<'_, '_, '_>,
-    target: &ModelTarget,
-    input: phenix_core::Bytes,
-    tools: Vec<phenix_core::ModelToolDescriptor>,
-) -> Result<ModelInferenceResponse, String> {
-    ensure_authenticated(context, &target.provider_plugin)?;
-    let request = encode_request(context, target, input, tools)?;
-    invoke_encoded_target(context, target, request)
 }
 
 fn encode_request(
