@@ -85,6 +85,13 @@ pub struct ContextInvocationPreparation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInvocationMaterialization {
+    pub input: Bytes,
+    pub projection: ProjectionRevision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct RepositoryContextSource {
     pub path: String,
     pub content: Bytes,
@@ -123,6 +130,11 @@ pub enum ContextCommand {
     PrepareInvocation {
         execution_id: String,
         input: Bytes,
+    },
+    MaterializeInvocation {
+        execution_id: String,
+        input: Bytes,
+        expected_projection: ProjectionRevision,
     },
     GetProjectionState {
         execution_id: String,
@@ -166,6 +178,9 @@ pub enum ContextResponse {
     },
     InvocationPrepared {
         preparation: ContextInvocationPreparation,
+    },
+    InvocationMaterialized {
+        materialization: ContextInvocationMaterialization,
     },
     ProjectionState {
         projection: ProjectionRevision,
@@ -326,7 +341,8 @@ pub fn context_service() -> ServiceId {
 
 #[must_use]
 pub fn context_recovery_service() -> ServiceId {
-    ServiceId::parse(CONTEXT_RECOVERY_SERVICE).expect("static context recovery service id is valid")
+    ServiceId::parse(CONTEXT_RECOVERY_SERVICE)
+        .expect("static context recovery service id is valid")
 }
 
 #[must_use]
