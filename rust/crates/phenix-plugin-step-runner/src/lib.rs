@@ -4,18 +4,19 @@ mod runner;
 
 use phenix_core::{
     Authority, ComponentExport, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginContext, PluginHost, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole,
+    PhenixValue, PluginContext, PluginHost, PluginInstance, PluginManifest, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     context_service, default_invocation_service, helper_invocation_service, invocation_service,
     step_runner_service, ContextCommand, ContextInterface, ContextResponse,
     DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
-    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface, InvocationClockCommand,
-    InvocationClockInterface, InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
+    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
     InvocationRequest, PlannedStepRequest, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptResponse, StepRunnerCommand, UsageAttemptKind,
+    StepAttemptResponse, StepRunnerCommand, StepRunnerResponse, UsageAttemptKind,
 };
 use std::collections::BTreeSet;
 
@@ -260,13 +261,24 @@ impl PluginInstance for InvocationPackage {
                 .map_err(|error| format!("helper invocation parameters unavailable: {error}"))?;
             let InvocationDefaultsResponse::Params { params } = resolved;
             let kind = request.kind.usage_kind();
-            return self.invoke_with_kind(
+            let encoded = self.invoke_with_kind(
                 &context,
                 host,
                 request.as_invocation_request(),
                 params,
                 kind,
-            );
+            )?;
+            let value: PhenixValue =
+                serde_json::from_slice(&encoded).map_err(|error| error.to_string())?;
+            let response: StepRunnerResponse =
+                value.project().map_err(|error| error.to_string())?;
+            let StepRunnerResponse::Completed {
+                output, tool_calls, ..
+            } = response;
+            return context
+                .kernel
+                .encode_value(&HelperInvocationResponse { output, tool_calls })
+                .map_err(|error| error.to_string());
         }
         self.runner.invoke(service, input, host)
     }
