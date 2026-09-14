@@ -3,9 +3,9 @@
 mod runner;
 
 use phenix_core::{
-    Authority, ComponentExport, ComponentImport, ComponentInterface, ComponentManifest,
-    PhenixValue, PluginContext, PluginHost, PluginInstance, PluginManifest, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PhenixValue, PluginContext, PluginHost, PluginId, PluginInstance,
+    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     context_service, default_invocation_service, helper_invocation_service, invocation_service,
@@ -21,6 +21,8 @@ use phenix_sdk::{
 use std::collections::BTreeSet;
 
 pub use runner::{step_runner_component_id, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN};
+
+pub const HELPER_INVOCATION_COMPONENT: &str = "phenix.helper-invocation";
 
 #[must_use]
 pub fn step_runner_manifest(maximum_authority: Authority) -> PluginManifest {
@@ -64,10 +66,6 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
             DefaultInvocationInterface::interface_id(),
             DefaultInvocationInterface::schema(),
         ),
-        (
-            HelperInvocationInterface::interface_id(),
-            HelperInvocationInterface::schema(),
-        ),
     ] {
         manifest.exports.push(ComponentExport {
             interface: interface.0,
@@ -77,6 +75,57 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
         });
     }
     manifest
+}
+
+#[must_use]
+pub fn helper_invocation_component_id() -> ComponentId {
+    ComponentId::parse(HELPER_INVOCATION_COMPONENT)
+        .expect("static helper invocation component id is valid")
+}
+
+#[must_use]
+pub fn helper_invocation_component_manifest(maximum_authority: Authority) -> ComponentManifest {
+    let import = |interface, schema, required| ComponentImport {
+        interface,
+        schema,
+        required,
+        authority: maximum_authority.clone(),
+    };
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: helper_invocation_component_id(),
+        owner: PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid"),
+        imports: vec![
+            import(
+                InvocationDefaultsInterface::interface_id(),
+                InvocationDefaultsInterface::schema(),
+                false,
+            ),
+            import(
+                InvocationClockInterface::interface_id(),
+                InvocationClockInterface::schema(),
+                true,
+            ),
+            import(ContextInterface::interface_id(), ContextInterface::schema(), true),
+            import(
+                ExecutionInterface::interface_id(),
+                ExecutionInterface::schema(),
+                true,
+            ),
+            import(
+                StepAttemptInterface::interface_id(),
+                StepAttemptInterface::schema(),
+                true,
+            ),
+        ],
+        exports: vec![ComponentExport {
+            interface: HelperInvocationInterface::interface_id(),
+            schema: HelperInvocationInterface::schema(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
+        maximum_authority,
+    }
 }
 
 #[must_use]
@@ -99,8 +148,8 @@ type InvocationContext<'host, 'runtime> =
 
 fn invocation_context<'host, 'runtime>(
     host: &'host PluginHost<'runtime>,
+    component: ComponentId,
 ) -> InvocationContext<'host, 'runtime> {
-    let component = step_runner_component_id();
     PluginContext::new(
         host,
         InvocationSdk {
@@ -215,35 +264,8 @@ impl PluginInstance for InvocationPackage {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        let context = invocation_context(host);
-        if service == &invocation_service() {
-            let command = context
-                .kernel
-                .decode_projected::<InvocationCommand>(&InvocationInterface::interface_id(), input)
-                .map_err(|error| error.to_string())?;
-            let InvocationCommand::Invoke { request, params } = command;
-            return self.invoke_explicit(&context, host, request, params);
-        }
-        if service == &default_invocation_service() {
-            let command = context
-                .kernel
-                .decode_projected::<DefaultInvocationCommand>(
-                    &DefaultInvocationInterface::interface_id(),
-                    input,
-                )
-                .map_err(|error| error.to_string())?;
-            let DefaultInvocationCommand::Invoke { request } = command;
-            let resolved: InvocationDefaultsResponse = context
-                .sdk
-                .defaults
-                .invoke_projected(&InvocationDefaultsCommand::Resolve {
-                    request: request.clone(),
-                })
-                .map_err(|error| format!("default invocation parameters unavailable: {error}"))?;
-            let InvocationDefaultsResponse::Params { params } = resolved;
-            return self.invoke_explicit(&context, host, request, params);
-        }
         if service == &helper_invocation_service() {
+            let context = invocation_context(host, helper_invocation_component_id());
             let command = context
                 .kernel
                 .decode_projected::<HelperInvocationCommand>(
@@ -279,6 +301,35 @@ impl PluginInstance for InvocationPackage {
                 .kernel
                 .encode_value(&HelperInvocationResponse { output, tool_calls })
                 .map_err(|error| error.to_string());
+        }
+
+        let context = invocation_context(host, step_runner_component_id());
+        if service == &invocation_service() {
+            let command = context
+                .kernel
+                .decode_projected::<InvocationCommand>(&InvocationInterface::interface_id(), input)
+                .map_err(|error| error.to_string())?;
+            let InvocationCommand::Invoke { request, params } = command;
+            return self.invoke_explicit(&context, host, request, params);
+        }
+        if service == &default_invocation_service() {
+            let command = context
+                .kernel
+                .decode_projected::<DefaultInvocationCommand>(
+                    &DefaultInvocationInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let DefaultInvocationCommand::Invoke { request } = command;
+            let resolved: InvocationDefaultsResponse = context
+                .sdk
+                .defaults
+                .invoke_projected(&InvocationDefaultsCommand::Resolve {
+                    request: request.clone(),
+                })
+                .map_err(|error| format!("default invocation parameters unavailable: {error}"))?;
+            let InvocationDefaultsResponse::Params { params } = resolved;
+            return self.invoke_explicit(&context, host, request, params);
         }
         self.runner.invoke(service, input, host)
     }
@@ -326,7 +377,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_package_exports_direct_default_helper_and_prepared_invocation() {
+    fn public_package_splits_helper_from_central_invocation_component() {
         let authority = Authority::default();
         let manifest = step_runner_manifest(authority.clone());
         assert!(manifest.dependencies.is_empty());
@@ -342,39 +393,41 @@ mod tests {
                 .any(|contribution| contribution.service == service));
         }
 
-        let component = step_runner_component_manifest(authority);
+        let central = step_runner_component_manifest(authority.clone());
         for interface in [
             InvocationInterface::interface_id(),
             DefaultInvocationInterface::interface_id(),
-            HelperInvocationInterface::interface_id(),
             phenix_sdk::StepRunnerInterface::interface_id(),
         ] {
-            assert!(component
+            assert!(central
                 .exports
                 .iter()
                 .any(|export| export.interface == interface));
         }
-        let defaults = component
+        assert!(!central
+            .exports
+            .iter()
+            .any(|export| export.interface == HelperInvocationInterface::interface_id()));
+
+        let helper = helper_invocation_component_manifest(authority);
+        assert_eq!(helper.id, helper_invocation_component_id());
+        assert_eq!(helper.exports.len(), 1);
+        assert_eq!(
+            helper.exports[0].interface,
+            HelperInvocationInterface::interface_id()
+        );
+        let defaults = helper
             .imports
             .iter()
             .find(|import| import.interface == InvocationDefaultsInterface::interface_id())
-            .expect("default and helper invocation import the defaults provider");
+            .expect("helper invocation imports the defaults provider");
         assert!(!defaults.required);
-        let clock = component
+        let clock = helper
             .imports
             .iter()
             .find(|import| import.interface == InvocationClockInterface::interface_id())
-            .expect("central invocation imports a clock provider");
+            .expect("helper invocation imports a clock provider");
         assert!(clock.required);
-        assert!(component.imports.iter().any(|import| {
-            import.interface == ContextInterface::interface_id() && import.required
-        }));
-        assert!(component.imports.iter().any(|import| {
-            import.interface == ExecutionInterface::interface_id() && import.required
-        }));
-        assert!(component.imports.iter().any(|import| {
-            import.interface == StepAttemptInterface::interface_id() && import.required
-        }));
     }
 
     #[test]
