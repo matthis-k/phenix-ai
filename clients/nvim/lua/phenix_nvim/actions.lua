@@ -124,6 +124,14 @@ function M.new_session()
   end)
 end
 
+function M.close_session()
+  sessions.close(nil, function(_, error)
+    if error ~= nil then
+      util.notify(vim.inspect(error), vim.log.levels.ERROR)
+    end
+  end)
+end
+
 function M.choose_session()
   sessions.choose()
 end
