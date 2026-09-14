@@ -18,19 +18,19 @@ use phenix_plugin_step_runner::{
 };
 use phenix_sdk::{
     context_recovery_service, default_invocation_service, execution_resource_service,
-    execution_service, invocation_clock_service, invocation_defaults_service, memory_context_service,
-    memory_service, CapacityKnowledge, CandidateCompleteness, ContextAnchor, ContextControl,
-    ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
-    ContextRecoveryResponse, DefaultInvocationCommand, DefaultInvocationInterface,
-    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
-    ExecutionResourceCommand, ExecutionResourceResponse, InvocationClockCommand,
-    InvocationClockInterface, InvocationClockResponse, InvocationDefaultsCommand,
-    InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationIntent, InvocationParams,
-    InvocationRequest, MemoryCommand, MemoryContextCandidate, MemoryContextCommand,
-    MemoryContextInterface, MemoryContextMatch, MemoryContextResponse, MemoryInterface, MemoryKind,
-    MemoryRecord, MemoryResponse, MemoryScope, ModelCommand, ModelLimits, ModelResponse, ModelTarget,
-    RecallResolution, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile, StepRunnerResponse,
-    UsagePolicy,
+    execution_service, invocation_clock_service, invocation_defaults_service,
+    memory_context_service, memory_service, CandidateCompleteness, CapacityKnowledge,
+    ContextAnchor, ContextControl, ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision,
+    ContextRecoveryInterface, ContextRecoveryResponse, DefaultInvocationCommand,
+    DefaultInvocationInterface, DelegationResourcePolicy, EffectiveModelCapabilities,
+    ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
+    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
+    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
+    InvocationIntent, InvocationParams, InvocationRequest, MemoryCommand, MemoryContextCandidate,
+    MemoryContextCommand, MemoryContextInterface, MemoryContextMatch, MemoryContextResponse,
+    MemoryInterface, MemoryKind, MemoryRecord, MemoryResponse, MemoryScope, ModelCommand,
+    ModelLimits, ModelResponse, ModelTarget, RecallResolution, RouteSelectionPolicy,
+    RoutingEstimateMode, RoutingProfile, StepRunnerResponse, UsagePolicy,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -284,7 +284,10 @@ fn support_component() -> ComponentManifest {
         owner: PluginId::parse(SUPPORT_PLUGIN).unwrap(),
         imports: Vec::new(),
         exports: vec![
-            (InvocationClockInterface::interface_id(), InvocationClockInterface::schema()),
+            (
+                InvocationClockInterface::interface_id(),
+                InvocationClockInterface::schema(),
+            ),
             (
                 InvocationDefaultsInterface::interface_id(),
                 InvocationDefaultsInterface::schema(),
@@ -293,7 +296,10 @@ fn support_component() -> ComponentManifest {
                 ContextRecoveryInterface::interface_id(),
                 ContextRecoveryInterface::schema(),
             ),
-            (MemoryContextInterface::interface_id(), MemoryContextInterface::schema()),
+            (
+                MemoryContextInterface::interface_id(),
+                MemoryContextInterface::schema(),
+            ),
             (MemoryInterface::interface_id(), MemoryInterface::schema()),
         ]
         .into_iter()
