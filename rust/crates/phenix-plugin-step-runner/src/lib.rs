@@ -4,8 +4,8 @@ mod runner;
 
 use phenix_core::{
     Authority, ComponentExport, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginContext, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole,
+    PluginContext, PluginHost, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
+    ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     default_invocation_service, invocation_service, step_runner_service, DefaultInvocationCommand,
@@ -16,18 +16,9 @@ use phenix_sdk::{
 
 pub use runner::{step_runner_component_id, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN};
 
-fn dependency(id: &str) -> PluginId {
-    PluginId::parse(id).expect("static invocation dependency id is valid")
-}
-
 #[must_use]
 pub fn step_runner_manifest(maximum_authority: Authority) -> PluginManifest {
     let mut manifest = runner::step_runner_manifest(maximum_authority);
-    manifest.dependencies = vec![
-        dependency("phenix.execution"),
-        dependency("phenix.models"),
-        dependency("phenix.context"),
-    ];
     for service in [invocation_service(), default_invocation_service()] {
         manifest.services.push(ServiceContribution {
             role: ServiceRole::Terminal,
@@ -173,14 +164,6 @@ mod tests {
     fn public_package_exports_direct_default_and_prepared_invocation() {
         let authority = Authority::default();
         let manifest = step_runner_manifest(authority.clone());
-        assert_eq!(
-            manifest.dependencies,
-            vec![
-                dependency("phenix.execution"),
-                dependency("phenix.models"),
-                dependency("phenix.context"),
-            ]
-        );
         for service in [
             invocation_service(),
             default_invocation_service(),
