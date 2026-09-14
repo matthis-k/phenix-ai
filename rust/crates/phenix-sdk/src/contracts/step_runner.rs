@@ -1,6 +1,7 @@
 use super::{
     BudgetActual, ContextCandidate, ContextDemand, ContextInvocationPreparation,
-    RouteSelectionPolicy, StepAttemptRecord, TaskRequirements, UsageAttribution, UsagePolicy,
+    RouteSelectionPolicy, StepAttemptRecord, TaskRequirements, UsageAttemptKind, UsageAttribution,
+    UsagePolicy,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,
@@ -11,6 +12,7 @@ use std::collections::BTreeSet;
 
 pub const INVOCATION_SERVICE: &str = "phenix.invocation@1";
 pub const DEFAULT_INVOCATION_SERVICE: &str = "phenix.invocation.default@1";
+pub const HELPER_INVOCATION_SERVICE: &str = "phenix.invocation.helper@1";
 pub const INVOCATION_DEFAULTS_SERVICE: &str = "phenix.invocation.defaults@1";
 pub const INVOCATION_CLOCK_SERVICE: &str = "phenix.invocation.clock@1";
 pub const STEP_RUNNER_SERVICE: &str = "phenix.step-runner@1";
@@ -24,6 +26,53 @@ pub struct InvocationRequest {
     pub input: Bytes,
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HelperInvocationKind {
+    Helper,
+    Verification,
+    RecoveryClassifier,
+}
+
+impl HelperInvocationKind {
+    #[must_use]
+    pub const fn usage_kind(self) -> UsageAttemptKind {
+        match self {
+            Self::Helper => UsageAttemptKind::Helper,
+            Self::Verification => UsageAttemptKind::Verification,
+            Self::RecoveryClassifier => UsageAttemptKind::RecoveryClassifier,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct HelperInvocationRequest {
+    pub execution_id: String,
+    pub parent_attempt_id: String,
+    pub profile_id: RoutingProfileId,
+    pub kind: HelperInvocationKind,
+    pub callable_id: CallableId,
+    pub input: Bytes,
+    #[serde(default)]
+    pub tools: Vec<ModelToolDescriptor>,
+}
+
+impl HelperInvocationRequest {
+    #[must_use]
+    pub fn as_invocation_request(&self) -> InvocationRequest {
+        InvocationRequest {
+            execution_id: self.execution_id.clone(),
+            parent_attempt_id: Some(self.parent_attempt_id.clone()),
+            callable_id: Some(self.callable_id.clone()),
+            input: self.input.clone(),
+            tools: self.tools.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -108,8 +157,15 @@ pub enum DefaultInvocationCommand {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HelperInvocationCommand {
+    Invoke { request: HelperInvocationRequest },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InvocationDefaultsCommand {
     Resolve { request: InvocationRequest },
+    ResolveHelper { request: HelperInvocationRequest },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -176,6 +232,7 @@ pub enum StepRunnerResponse {
 
 pub type InvocationResponse = StepRunnerResponse;
 pub type DefaultInvocationResponse = InvocationResponse;
+pub type HelperInvocationResponse = InvocationResponse;
 
 pub struct InvocationInterface;
 
@@ -199,6 +256,19 @@ impl ComponentInterface for DefaultInvocationInterface {
 
     fn schema() -> phenix_core::InterfaceSchema {
         phenix_core::InterfaceSchema::of::<DefaultInvocationCommand, DefaultInvocationResponse>()
+    }
+}
+
+pub struct HelperInvocationInterface;
+
+impl ComponentInterface for HelperInvocationInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(HELPER_INVOCATION_SERVICE)
+            .expect("static helper invocation interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<HelperInvocationCommand, HelperInvocationResponse>()
     }
 }
 
@@ -249,6 +319,11 @@ pub fn invocation_service() -> ServiceId {
 pub fn default_invocation_service() -> ServiceId {
     ServiceId::parse(DEFAULT_INVOCATION_SERVICE)
         .expect("static default invocation service id is valid")
+}
+
+#[must_use]
+pub fn helper_invocation_service() -> ServiceId {
+    ServiceId::parse(HELPER_INVOCATION_SERVICE).expect("static helper invocation service id is valid")
 }
 
 #[must_use]
