@@ -381,7 +381,7 @@ fn failed_combined_child_creation_rolls_back_session_and_lineage_namespaces() {
         },
     )
     .unwrap_err();
-    assert!(error.contains("transaction assertion failed"));
+    assert!(error.contains("persistence assertion conflicted"));
     assert!(session_exists(&mut kernel, "root"));
     assert!(!session_exists(&mut kernel, "child"));
     assert_eq!(parent(&mut kernel, "child"), None);

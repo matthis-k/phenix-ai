@@ -72,26 +72,30 @@ pub trait DurableKeyCodec<K> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Utf8HexKeyCodec;
 
+fn encode_hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
 impl DurableKeyCodec<String> for Utf8HexKeyCodec {
     fn encode_key(&self, key: &String) -> Result<String, DurableCollectionError> {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut encoded = String::with_capacity(key.len() * 2);
-        for byte in key.as_bytes() {
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        Ok(encoded)
+        Ok(encode_hex_bytes(key.as_bytes()))
     }
 
     fn decode_key(&self, encoded: &str) -> Result<String, DurableCollectionError> {
-        if encoded.len() % 2 != 0 {
+        if !encoded.len().is_multiple_of(2) {
             return Err(DurableCollectionError::KeyCodec {
                 message: format!("hex key has odd length: {}", encoded.len()),
             });
         }
         let bytes = encoded.as_bytes();
         let mut decoded = Vec::with_capacity(bytes.len() / 2);
-        for pair in bytes.chunks_exact(2) {
+        for pair in bytes.as_chunks::<2>().0 {
             let high = decode_hex(pair[0])?;
             let low = decode_hex(pair[1])?;
             decoded.push((high << 4) | low);
@@ -344,7 +348,7 @@ where
     }
 
     fn entry_prefix(&self) -> String {
-        format!("{}/map/", self.collection)
+        format!("{}/map/", encode_hex_bytes(self.collection.as_bytes()))
     }
 }
 
@@ -496,11 +500,14 @@ where
     }
 
     fn tail_key(&self) -> String {
-        format!("{}/log/@tail", self.collection)
+        format!("{}/log/@tail", encode_hex_bytes(self.collection.as_bytes()))
     }
 
     fn entry_prefix(&self) -> String {
-        format!("{}/log/entry/", self.collection)
+        format!(
+            "{}/log/entry/",
+            encode_hex_bytes(self.collection.as_bytes())
+        )
     }
 
     fn entry_key(&self, sequence: u64) -> String {
@@ -736,7 +743,9 @@ mod tests {
         let namespace = namespace();
         let access = MemoryAccess::default();
         let map = DurableMap::<String, String>::new(namespace.clone(), "users");
-        let other = DurableMap::<String, String>::new(namespace.clone(), "other");
+        let other = DurableMap::<String, String>::new(namespace.clone(), "users/map/other");
+
+        assert_eq!(map.entry_prefix(), "7573657273/map/");
 
         for (key, value) in [
             ("b", "B"),
@@ -842,6 +851,13 @@ mod tests {
         let namespace = namespace();
         let access = MemoryAccess::default();
         let log = DurableLog::<String>::new(namespace.clone(), "events");
+
+        assert_eq!(log.tail_key(), "6576656e7473/log/@tail");
+        assert!(log
+            .entries_with(&access, ScanDirection::Forward, None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(log.latest_with(&access).unwrap(), None);
 
         assert_eq!(log.append_with(&access, &"first".to_owned()).unwrap(), 0);
         assert_eq!(log.append_with(&access, &"second".to_owned()).unwrap(), 1);

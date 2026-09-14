@@ -382,7 +382,7 @@ fn persistence_assertion_conflict_preserves_namespace_and_key() {
         resource_namespaces: vec![namespace.clone()],
         maximum_authority: Authority::new([capability(PERSISTENCE_WRITE)]),
     };
-    let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+    let kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
     kernel
         .persistence
         .lock()
