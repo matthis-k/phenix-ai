@@ -15,6 +15,7 @@ use phenix_sdk::{
     InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
     InvocationInterface, InvocationParams, InvocationRequest, PlannedStepRequest,
     StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
+    UsageAttemptKind,
 };
 use std::collections::BTreeSet;
 
@@ -137,6 +138,11 @@ impl InvocationPackage {
             .map_err(|error| format!("invocation clock unavailable: {error}"))?;
         let InvocationClockResponse::Time { now_ms } = clock;
 
+        let kind = if request.parent_attempt_id.is_some() {
+            UsageAttemptKind::Retry
+        } else {
+            UsageAttemptKind::Root
+        };
         let allocated: StepAttemptResponse = context
             .sdk
             .attempts
@@ -145,6 +151,7 @@ impl InvocationPackage {
                 execution_id: request.execution_id.clone(),
                 parent_attempt_id: request.parent_attempt_id.clone(),
                 policy_revision: params.policy.revision.clone(),
+                kind,
             })
             .map_err(|error| format!("invocation attempt allocation failed: {error}"))?;
         let StepAttemptResponse::Attribution { attribution } = allocated else {
