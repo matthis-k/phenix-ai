@@ -1,7 +1,7 @@
 use crate::{attempt_service, resource_service};
 use phenix_core::{
-    ComponentInterface, PluginContext, PluginHost, PluginInstance, PreparedMutationHandle, ServiceId,
-    TransactionOp,
+    ComponentInterface, PluginContext, PluginHost, PluginInstance, PreparedMutationHandle,
+    ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     step_transaction_service, StepTransactionCommand, StepTransactionInterface,
@@ -101,8 +101,7 @@ fn handle(
                 let ledger = resources
                     .release_reservation(&root_execution_id, &reservation_id)
                     .map_err(|error| format!("root budget release failed: {error:?}"))?;
-                let resource_mutation =
-                    prepare_resource_state(context, resource_old, &resources)?;
+                let resource_mutation = prepare_resource_state(context, resource_old, &resources)?;
                 context
                     .kernel
                     .transact_prepared(&[resource_mutation, attempt_mutation])
@@ -133,9 +132,7 @@ fn read_resource_state(
         .map_err(|error| error.to_string())
 }
 
-fn read_attempt_state(
-    context: &StepTransactionContext<'_, '_>,
-) -> Result<Option<Vec<u8>>, String> {
+fn read_attempt_state(context: &StepTransactionContext<'_, '_>) -> Result<Option<Vec<u8>>, String> {
     context
         .kernel
         .read_durable(
