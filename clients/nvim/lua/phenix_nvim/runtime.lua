@@ -238,6 +238,7 @@ local function begin_subscription(callback)
 end
 
 function M.refresh_session_state(callback)
+  stop_subscription()
   local resource, resource_error = session_resource()
   if resource == nil then
     util.safe_call(callback, nil, { message = resource_error })
