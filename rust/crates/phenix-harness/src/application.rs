@@ -18,12 +18,12 @@ use phenix_application_interface::{
 use phenix_core::{
     Authority, CapabilityGenerationId, ClientConnectionId, ContractId, HasPhenixSchema,
     LocalPersistence, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
-    PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry,
-    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
+    ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    sdk_contribution, session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry,
-    OptionStartupPrecedence, SessionLifecycle, SessionRecord, SessionResponse,
+    sdk_contribution, session_service, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
     SessionTransition, SDK_PLUGIN,
 };
 use std::{
