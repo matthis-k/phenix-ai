@@ -9,8 +9,8 @@ use phenix_core::{
 pub use phenix_sdk::{
     model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
     ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
-    ModelTarget, RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE,
-    MODEL_ROUTING_SERVICE,
+    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
+    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -224,17 +224,20 @@ fn handle_dispatch(
     command: ModelDispatchCommand,
 ) -> Result<ModelDispatchResponse, String> {
     match command {
-        ModelDispatchCommand::PrepareResolved { decision } => {
-            validate_dispatch(context, routing, &decision)?;
-            Ok(ModelDispatchResponse::Ready { decision })
-        }
-        ModelDispatchCommand::InvokeResolved {
+        ModelDispatchCommand::PrepareResolved {
             decision,
             input,
             tools,
         } => {
             validate_dispatch(context, routing, &decision)?;
-            let response = invoke_target(context, &decision.target, input, tools)?;
+            let request = encode_request(context, &decision.target, input, tools)?;
+            Ok(ModelDispatchResponse::Ready {
+                prepared: PreparedDispatch::new(decision, request),
+            })
+        }
+        ModelDispatchCommand::InvokePrepared { prepared } => {
+            let (decision, request) = prepared.into_parts();
+            let response = invoke_encoded_target(context, &decision.target, request)?;
             Ok(ModelDispatchResponse::Inference { decision, response })
         }
     }
@@ -246,17 +249,20 @@ fn validate_dispatch(
     decision: &phenix_sdk::RouteDecision,
 ) -> Result<(), String> {
     routing.validate_decision(decision)?;
-    if !context
-        .plugin
-        .state
-        .contains(&decision.target.provider_plugin)
-    {
-        return Err(format!(
-            "provider authentication required: {}",
-            decision.target.provider_plugin
-        ));
+    ensure_authenticated(context, &decision.target.provider_plugin)
+}
+
+fn ensure_authenticated(
+    context: &ModelContext<'_, '_, '_>,
+    provider_plugin: &PluginId,
+) -> Result<(), String> {
+    if context.plugin.state.contains(provider_plugin) {
+        Ok(())
+    } else {
+        Err(format!(
+            "provider authentication required: {provider_plugin}"
+        ))
     }
-    Ok(())
 }
 
 fn invoke_target(
@@ -265,27 +271,40 @@ fn invoke_target(
     input: phenix_core::Bytes,
     tools: Vec<phenix_core::ModelToolDescriptor>,
 ) -> Result<ModelInferenceResponse, String> {
-    if !context.plugin.state.contains(&target.provider_plugin) {
-        return Err(format!(
-            "provider authentication required: {}",
-            target.provider_plugin
-        ));
-    }
+    ensure_authenticated(context, &target.provider_plugin)?;
+    let request = encode_request(context, target, input, tools)?;
+    invoke_encoded_target(context, target, request)
+}
+
+fn encode_request(
+    context: &ModelContext<'_, '_, '_>,
+    target: &ModelTarget,
+    input: phenix_core::Bytes,
+    tools: Vec<phenix_core::ModelToolDescriptor>,
+) -> Result<phenix_core::Bytes, String> {
     let request = ModelInferenceRequest {
         model: target.model.clone(),
         input,
         options: target.options.clone(),
         tools,
     };
-    let input = context
+    context
         .kernel
         .encode_value(&request)
-        .map_err(|error| error.to_string())?;
+        .map(Into::into)
+        .map_err(|error| error.to_string())
+}
+
+fn invoke_encoded_target(
+    context: &mut ModelContext<'_, '_, '_>,
+    target: &ModelTarget,
+    request: phenix_core::Bytes,
+) -> Result<ModelInferenceResponse, String> {
     let output = context
         .kernel
         .invoke_service_abi(
             &model_inference_service(),
-            &input,
+            request.as_ref(),
             context.call.authority,
             Some(&target.provider_plugin),
         )

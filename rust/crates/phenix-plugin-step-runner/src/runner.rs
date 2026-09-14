@@ -13,8 +13,9 @@ use phenix_sdk::{
     ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
     ModelResponse, ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand,
     StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
-    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, UsageAttemptKind,
-    UsageAttribution, UsagePlanningInput,
+    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
+    StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
+    UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +71,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
                 StepAttemptInterface::schema(),
             ),
             import(
+                StepTransactionInterface::interface_id(),
+                StepTransactionInterface::schema(),
+            ),
+            import(
                 ModelRoutingInterface::interface_id(),
                 ModelRoutingInterface::schema(),
             ),
@@ -98,6 +103,7 @@ struct StepRunnerSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
     attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
+    transactions: SdkClient<'host, 'runtime, StepTransactionInterface>,
     routing: SdkClient<'host, 'runtime, ModelRoutingInterface>,
     dispatch: SdkClient<'host, 'runtime, ModelDispatchInterface>,
     context: SdkClient<'host, 'runtime, ContextInterface>,
@@ -116,6 +122,7 @@ fn context<'host, 'runtime>(
             execution: SdkClient::new(host, component.clone()),
             resources: SdkClient::new(host, component.clone()),
             attempts: SdkClient::new(host, component.clone()),
+            transactions: SdkClient::new(host, component.clone()),
             routing: SdkClient::new(host, component.clone()),
             dispatch: SdkClient::new(host, component.clone()),
             context: SdkClient::new(host, component),
@@ -398,6 +405,8 @@ fn run(
             .dispatch
             .invoke_projected(&ModelDispatchCommand::PrepareResolved {
                 decision: decision.clone(),
+                input,
+                tools,
             }) {
             Ok(response) => response,
             Err(error) => {
@@ -406,29 +415,26 @@ fn run(
                     &attribution.root_execution_id,
                     &attribution.attempt_id,
                     Some(&reservation_id),
-                    format!("resolved model dispatch preflight failed: {error}"),
+                    format!("resolved model preflight failed: {error}"),
                 )
             }
         };
-    let ModelDispatchResponse::Ready {
-        decision: prepared_decision,
-    } = prepared
-    else {
+    let ModelDispatchResponse::Ready { prepared } = prepared else {
         return fail_before_dispatch(
             context,
             &attribution.root_execution_id,
             &attribution.attempt_id,
             Some(&reservation_id),
-            "resolved model dispatch preflight returned a non-ready response".into(),
+            "model dispatch returned inference during preflight".into(),
         );
     };
-    if prepared_decision != decision {
+    if prepared.decision() != &decision {
         return fail_before_dispatch(
             context,
             &attribution.root_execution_id,
             &attribution.attempt_id,
             Some(&reservation_id),
-            "resolved model dispatch preflight changed the route decision".into(),
+            "model dispatch preflight changed the resolved decision".into(),
         );
     }
 
@@ -449,28 +455,24 @@ fn run(
         );
     }
 
-    let dispatched: ModelDispatchResponse =
-        match context
-            .sdk
-            .dispatch
-            .invoke_projected(&ModelDispatchCommand::InvokeResolved {
-                decision,
-                input,
-                tools,
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                settle_after_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    &plan,
-                    &reservation_id,
-                    AttemptOutcome::Failed,
-                )?;
-                return Err(format!("resolved model dispatch failed: {error}"));
-            }
-        };
+    let dispatched: ModelDispatchResponse = match context
+        .sdk
+        .dispatch
+        .invoke_projected(&ModelDispatchCommand::InvokePrepared { prepared })
+    {
+        Ok(response) => response,
+        Err(error) => {
+            settle_after_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                &plan,
+                &reservation_id,
+                AttemptOutcome::Failed,
+            )?;
+            return Err(format!("prepared model dispatch failed: {error}"));
+        }
+    };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
         settle_after_dispatch(
             context,
@@ -480,17 +482,18 @@ fn run(
             &reservation_id,
             AttemptOutcome::Failed,
         )?;
-        return Err("resolved model dispatch returned a non-inference response".into());
+        return Err("model dispatch returned preflight readiness after dispatch".into());
     };
 
     let settled = conservative_actual(&plan);
-    settle_budget(
+    let attempt = settle_step(
         context,
         &attribution.root_execution_id,
         &reservation_id,
         settled.clone(),
+        &attribution.attempt_id,
+        AttemptOutcome::Succeeded,
     )?;
-    let attempt = settle_attempt(context, &attribution.attempt_id, AttemptOutcome::Succeeded)?;
 
     Ok(StepRunnerResponse::Completed {
         attempt,
@@ -602,16 +605,15 @@ fn fail_before_dispatch<T>(
     reservation_id: Option<&str>,
     cause: String,
 ) -> Result<T, String> {
-    let cleanup = abort_before_dispatch(
+    match abort_before_dispatch(
         context,
         root_execution_id,
         attempt_id,
         reservation_id,
         AttemptOutcome::Failed,
-    );
-    match cleanup {
-        Ok(()) => Err(cause),
-        Err(error) => Err(format!("{cause}; pre-dispatch cleanup failed: {error}")),
+    ) {
+        Ok(_) => Err(cause),
+        Err(cleanup) => Err(format!("{cause}; pre-dispatch cleanup failed: {cleanup}")),
     }
 }
 
@@ -621,75 +623,49 @@ fn abort_before_dispatch(
     attempt_id: &str,
     reservation_id: Option<&str>,
     outcome: AttemptOutcome,
-) -> Result<(), String> {
-    if let Some(reservation_id) = reservation_id {
-        let response: ExecutionResourceResponse = context
-            .sdk
-            .resources
-            .invoke_projected(&ExecutionResourceCommand::ReleaseReservation {
-                root_execution_id: root_execution_id.to_owned(),
-                reservation_id: reservation_id.to_owned(),
-            })
-            .map_err(|error| error.to_string())?;
-        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
-            return Err(
-                "execution resource service returned a non-budget response to release".into(),
-            );
+) -> Result<StepAttemptRecord, String> {
+    let response: StepTransactionResponse = context
+        .sdk
+        .transactions
+        .invoke_projected(&StepTransactionCommand::AbortBeforeDispatch {
+            root_execution_id: root_execution_id.to_owned(),
+            reservation_id: reservation_id.map(str::to_owned),
+            attempt_id: attempt_id.to_owned(),
+            outcome,
+        })
+        .map_err(|error| error.to_string())?;
+    match response {
+        StepTransactionResponse::Aborted { attempt, .. } => Ok(attempt),
+        StepTransactionResponse::Settled { .. } => {
+            Err("step transaction service returned settlement to pre-dispatch abort".into())
         }
     }
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::Abort {
-            attempt_id: attempt_id.to_owned(),
-            outcome,
-        })
-        .map_err(|error| error.to_string())?;
-    if matches!(response, StepAttemptResponse::Attempt { .. }) {
-        Ok(())
-    } else {
-        Err("step attempt service returned a non-attempt abort response".into())
-    }
 }
 
-fn settle_attempt(
-    context: &StepRunnerContext<'_, '_>,
-    attempt_id: &str,
-    outcome: AttemptOutcome,
-) -> Result<StepAttemptRecord, String> {
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::Settle {
-            attempt_id: attempt_id.to_owned(),
-            outcome,
-        })
-        .map_err(|error| error.to_string())?;
-    let StepAttemptResponse::Attempt { attempt } = response else {
-        return Err("step attempt service returned a non-attempt settlement response".into());
-    };
-    Ok(attempt)
-}
-
-fn settle_budget(
+fn settle_step(
     context: &StepRunnerContext<'_, '_>,
     root_execution_id: &str,
     reservation_id: &str,
     actual: BudgetActual,
-) -> Result<(), String> {
-    let response: ExecutionResourceResponse = context
+    attempt_id: &str,
+    outcome: AttemptOutcome,
+) -> Result<StepAttemptRecord, String> {
+    let response: StepTransactionResponse = context
         .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::SettleReservation {
+        .transactions
+        .invoke_projected(&StepTransactionCommand::Settle {
             root_execution_id: root_execution_id.to_owned(),
             reservation_id: reservation_id.to_owned(),
             actual,
+            attempt_id: attempt_id.to_owned(),
+            outcome,
         })
         .map_err(|error| error.to_string())?;
-    if matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
-        Ok(())
-    } else {
-        Err("execution resource service returned a non-budget response to settle".into())
+    match response {
+        StepTransactionResponse::Settled { attempt, .. } => Ok(attempt),
+        StepTransactionResponse::Aborted { .. } => {
+            Err("step transaction service returned abort to terminal settlement".into())
+        }
     }
 }
 
@@ -701,13 +677,15 @@ fn settle_after_dispatch(
     reservation_id: &str,
     outcome: AttemptOutcome,
 ) -> Result<(), String> {
-    settle_budget(
+    settle_step(
         context,
         root_execution_id,
         reservation_id,
         conservative_actual(plan),
-    )?;
-    settle_attempt(context, attempt_id, outcome).map(|_| ())
+        attempt_id,
+        outcome,
+    )
+    .map(|_| ())
 }
 
 fn conservative_actual(plan: &StepPlan) -> BudgetActual {
@@ -733,7 +711,7 @@ mod tests {
     #[test]
     fn component_imports_each_state_owner_once() {
         let component = step_runner_component_manifest(Authority::default());
-        assert_eq!(component.imports.len(), 6);
+        assert_eq!(component.imports.len(), 7);
         assert!(component.imports.iter().all(|import| import.required));
         assert_eq!(component.exports.len(), 1);
         assert_eq!(
