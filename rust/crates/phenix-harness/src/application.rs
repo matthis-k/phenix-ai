@@ -5,38 +5,46 @@ use phenix_acp_stdio::{
 };
 use phenix_application_interface::{
     types::{
-        Acknowledged, ApplicationError, ElicitationHandlerRef, InteractionHandlers, Message,
-        MessageRole, PageInput, PermissionHandlerRef, PromptInput, PromptResult, SessionChange,
-        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
-        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
+        Acknowledged, ApplicationError, Content, ElicitationHandlerRef, ExecutionChange,
+        ExecutionState, InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
+        PromptInput, PromptResult, SessionChange, SessionCreateInput, SessionInfo,
+        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Cancel, CloseSession, CreateSession, GetSdk, InvokeCallable, InvokeCapability,
     ListCallables, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession,
     SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, CapabilityGenerationId, ClientConnectionId, ContractId, HasPhenixSchema,
-    LocalPersistence, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
-    PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
-    ValueCodec, ValueId, ValuePath,
+    Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
+    HasPhenixSchema, LocalPersistence, ObservableError, ObservableRegistration, ObservableStore,
+    PhenixContract, PhenixValue, PluginId, Project, RoutingProfileId, RuntimeId, SessionId,
+    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    sdk_contribution, session_service, OptionStartupPrecedence, SessionCommand,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, SDK_PLUGIN,
+    agent_loop_service, sdk_contribution, session_service, AgentLoopCommand, AgentLoopResponse,
+    OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::mpsc;
 
 pub const APPLICATION_INVOCATION_CAPACITY: usize = 64;
 pub const CLIENT_CAPABILITY_CAPACITY: usize = 64;
 pub const APPLICATION_EVENT_CAPACITY: usize = 256;
+const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
+const DEFAULT_ROUTING_PROFILE: &str = "router.mixed";
+const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 
 #[must_use]
 pub fn session_projection_value_id() -> ValueId {
@@ -216,10 +224,6 @@ impl SessionProjectionStore {
 
     /// Replaces one session with an authoritative full snapshot, then consumes
     /// only the still-relevant contiguous suffix buffered while repair ran.
-    ///
-    /// A remaining gap is returned after the snapshot (and any preceding
-    /// contiguous suffix) has committed. The caller must fetch another full
-    /// snapshot rather than guessing the missing transition.
     pub fn repair_with_snapshot(
         &mut self,
         snapshot: SessionSnapshot,
@@ -262,7 +266,7 @@ impl SessionProjectionStore {
 }
 
 pub struct ApplicationWorker {
-    harness: PhenixHarness,
+    harness: Arc<PhenixHarness>,
     authority: Authority,
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
@@ -274,7 +278,7 @@ pub struct ApplicationWorker {
 impl ApplicationWorker {
     pub fn new(harness: PhenixHarness) -> Result<Self, ObservableError> {
         Ok(Self {
-            harness,
+            harness: Arc::new(harness),
             authority: default_suite_authority(),
             projection: SessionProjectionStore::new()?,
             interaction_handlers: InteractionHandlers {
@@ -315,11 +319,6 @@ impl ApplicationWorker {
         };
     }
 
-    /// Dispatch an application operation with access to the connected client's
-    /// generic callable admission seam.
-    ///
-    /// Only interaction-handler registration needs this seam. All other
-    /// operations use the ordinary configured runtime dispatcher.
     pub fn invoke_with_client_callables(
         &mut self,
         operation: &ContractId,
@@ -375,9 +374,6 @@ impl ApplicationWorker {
         ) -> Result<(), ApplicationError>,
     ) -> Result<Acknowledged, ApplicationError> {
         let handlers = request.handlers;
-
-        // Validate/admit every new ref before changing the semantic slots. A
-        // failed replacement therefore leaves the previous handlers active.
         if let Some(permission) = &handlers.permission {
             admit(
                 permission.reference(),
@@ -390,7 +386,6 @@ impl ApplicationWorker {
                 <ElicitationHandlerRef as ValueCodec>::phenix_type(),
             )?;
         }
-
         self.interaction_handlers = handlers;
         Ok(Acknowledged {})
     }
@@ -478,20 +473,15 @@ impl ApplicationWorker {
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
-        self.reserve_session_event_slot()?;
-        let response = self.invoke_session(SessionCommand::AppendJournal {
-            id: request.session_id.clone(),
-            entry: session_change_journal(&SessionChange::Message {
+        self.append_session_change(
+            &session,
+            SessionChange::Message {
                 message: Message {
                     role: MessageRole::User,
                     content: request.content,
                 },
-            }),
-        })?;
-        let SessionResponse::JournalAppended { entry } = response else {
-            return Err(unexpected_session_response("prompt", response));
-        };
-        self.project_journal_entry(application_session_info(&session)?, entry)?;
+            },
+        )?;
         let execution_id = self.allocate_execution_id()?;
         Ok(PromptResult {
             execution_id,
@@ -505,6 +495,38 @@ impl ApplicationWorker {
     ) -> Result<Acknowledged, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
         Ok(Acknowledged {})
+    }
+
+    fn append_execution_change(
+        &mut self,
+        session_id: &SessionId,
+        execution_id: &str,
+        update: ExecutionChange,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        let session = self.require_open_application_session(session_id)?;
+        self.append_session_change(
+            &session,
+            SessionChange::Execution {
+                execution_id: execution_id.to_owned(),
+                update,
+            },
+        )
+    }
+
+    fn append_session_change(
+        &mut self,
+        session: &SessionRecord,
+        change: SessionChange,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        self.reserve_session_event_slot()?;
+        let response = self.invoke_session(SessionCommand::AppendJournal {
+            id: session.id.clone(),
+            entry: session_change_journal(&change),
+        })?;
+        let SessionResponse::JournalAppended { entry } = response else {
+            return Err(unexpected_session_response("append journal", response));
+        };
+        self.project_journal_entry(application_session_info(session)?, entry)
     }
 
     fn allocate_session_id(&mut self) -> Result<SessionId, ApplicationError> {
@@ -643,7 +665,7 @@ impl ApplicationWorker {
         &mut self,
         session: SessionInfo,
         journal: SessionJournalEntry,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<SessionUpdate, ApplicationError> {
         let update = session_update_from_journal(&session.session_id, journal)?;
         let contiguous = self
             .projection
@@ -665,7 +687,8 @@ impl ApplicationWorker {
                 .repair_with_snapshot(snapshot, [update.clone()])
                 .map_err(application_projection_error)?;
         }
-        self.emit_session_update(update)
+        self.emit_session_update(update.clone())?;
+        Ok(update)
     }
 
     fn reserve_session_event_slot(&self) -> Result<(), ApplicationError> {
@@ -814,10 +837,6 @@ pub enum ConfiguredApplicationError {
     Stdio { message: String },
 }
 
-/// Starts the configured product application for one ACP stdio connection.
-///
-/// The worker is deliberately separate from the transport crate: it owns the
-/// mutable product state, while `phenix-acp-stdio` only forwards typed calls.
 pub async fn serve_default_application() -> Result<(), ConfiguredApplicationError> {
     let state = configured_state_path()?;
     if let Some(parent) = state.parent() {
@@ -936,25 +955,350 @@ pub async fn serve_configured_application(
     })
 }
 
+struct ActiveExecution {
+    execution_id: String,
+    cancellation: Arc<AtomicBool>,
+    prompt: ApplicationInvocation,
+}
+
+struct ExecutionCompletion {
+    session_id: SessionId,
+    execution_id: String,
+    result: Result<String, ApplicationError>,
+}
+
 async fn serve_application_worker(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
 ) {
-    while let Some(invocation) = receiver.recv().await {
-        let operation = invocation.operation.clone();
-        let input = invocation.input.clone();
-        let result = if is_sdk_operation(&operation) {
-            service.invoke(&operation, input)
-        } else {
-            worker.invoke_with_client_callables(&operation, input, |callable, schema| {
-                service.admit_current_client_callable(callable, schema)
-            })
-        };
-        invocation.respond(result);
+    let (completion_sender, mut completions) =
+        mpsc::channel::<ExecutionCompletion>(APPLICATION_EXECUTION_CAPACITY);
+    let mut active = BTreeMap::<String, ActiveExecution>::new();
+    let mut input_closed = false;
+
+    loop {
+        if input_closed && active.is_empty() {
+            break;
+        }
+        tokio::select! {
+            invocation = receiver.recv(), if !input_closed => {
+                let Some(invocation) = invocation else {
+                    input_closed = true;
+                    continue;
+                };
+                if invocation.operation.as_str() == Prompt::ID {
+                    start_prompt(&mut worker, &service, &completion_sender, &mut active, invocation);
+                    continue;
+                }
+                if invocation.operation.as_str() == Cancel::ID {
+                    cancel_prompt(&mut worker, &mut active, invocation);
+                    continue;
+                }
+                let operation = invocation.operation.clone();
+                let input = invocation.input.clone();
+                let result = if is_sdk_operation(&operation) {
+                    service.invoke(&operation, input)
+                } else {
+                    worker.invoke_with_client_callables(&operation, input, |callable, schema| {
+                        service.admit_current_client_callable(callable, schema)
+                    })
+                };
+                invocation.respond(result);
+            }
+            completion = completions.recv(), if !active.is_empty() => {
+                if let Some(completion) = completion {
+                    finish_prompt(&mut worker, &mut active, completion);
+                }
+            }
+        }
+    }
+
+    for (_, execution) in active {
+        execution.cancellation.store(true, Ordering::Release);
+        execution.prompt.respond(Err(ApplicationError::Disconnected));
     }
     worker.clear_interaction_handlers();
     service.retire_client();
+}
+
+fn start_prompt(
+    worker: &mut ApplicationWorker,
+    _service: &SdkApplicationService,
+    completion_sender: &mpsc::Sender<ExecutionCompletion>,
+    active: &mut BTreeMap<String, ActiveExecution>,
+    invocation: ApplicationInvocation,
+) {
+    let request = match decode::<PromptInput>(invocation.input.clone()) {
+        Ok(request) => request,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    let key = request.session_id.as_str().to_owned();
+    if active.contains_key(&key) {
+        invocation.respond(Err(ApplicationError::Conflict {
+            message: format!("session {} already has a running execution", request.session_id),
+        }));
+        return;
+    }
+    let model_input = match model_input_from_content(&request.content) {
+        Ok(input) => input,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    let prompt = match worker.prompt(request.clone()) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    if let Err(error) = worker.append_execution_change(
+        &request.session_id,
+        &prompt.execution_id,
+        ExecutionChange::State {
+            state: ExecutionState::Running,
+        },
+    ) {
+        invocation.respond(Err(error));
+        return;
+    }
+
+    let cancellation = Arc::new(AtomicBool::new(false));
+    active.insert(
+        key,
+        ActiveExecution {
+            execution_id: prompt.execution_id.clone(),
+            cancellation: Arc::clone(&cancellation),
+            prompt: invocation,
+        },
+    );
+
+    let harness = Arc::clone(&worker.harness);
+    let authority = worker.authority.clone();
+    let session_id = request.session_id;
+    let execution_id = prompt.execution_id;
+    let sender = completion_sender.clone();
+    tokio::spawn(async move {
+        let blocking_cancellation = Arc::clone(&cancellation);
+        let result = tokio::task::spawn_blocking(move || {
+            run_agent_execution(harness, authority, model_input, blocking_cancellation)
+        })
+        .await
+        .map_err(|error| ApplicationError::Failed {
+            message: format!("application execution worker failed: {error}"),
+        })
+        .and_then(|result| result);
+        let _ = sender
+            .send(ExecutionCompletion {
+                session_id,
+                execution_id,
+                result,
+            })
+            .await;
+    });
+}
+
+fn cancel_prompt(
+    worker: &mut ApplicationWorker,
+    active: &mut BTreeMap<String, ActiveExecution>,
+    invocation: ApplicationInvocation,
+) {
+    let request = match decode::<ApplicationSessionInput>(invocation.input.clone()) {
+        Ok(request) => request,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    let acknowledgement = worker.cancel(request.clone());
+    if acknowledgement.is_ok() {
+        if let Some(execution) = active.remove(request.session_id.as_str()) {
+            execution.cancellation.store(true, Ordering::Release);
+            let _ = worker.append_execution_change(
+                &request.session_id,
+                &execution.execution_id,
+                ExecutionChange::State {
+                    state: ExecutionState::Cancelled,
+                },
+            );
+            execution.prompt.respond(Ok(PromptResult {
+                execution_id: execution.execution_id,
+                stop_reason: StopReason::Cancelled,
+            }
+            .to_value()));
+        }
+    }
+    invocation.respond(acknowledgement.map(|value| value.to_value()));
+}
+
+fn finish_prompt(
+    worker: &mut ApplicationWorker,
+    active: &mut BTreeMap<String, ActiveExecution>,
+    completion: ExecutionCompletion,
+) {
+    let key = completion.session_id.as_str().to_owned();
+    let Some(execution) = active.remove(&key) else {
+        return;
+    };
+    if execution.execution_id != completion.execution_id {
+        execution.prompt.respond(Err(ApplicationError::Conflict {
+            message: "execution completion identity changed while the prompt was active".to_owned(),
+        }));
+        return;
+    }
+    if execution.cancellation.load(Ordering::Acquire) {
+        execution.prompt.respond(Ok(PromptResult {
+            execution_id: completion.execution_id,
+            stop_reason: StopReason::Cancelled,
+        }
+        .to_value()));
+        return;
+    }
+
+    let result = match completion.result {
+        Ok(text) => complete_prompt_output(
+            worker,
+            &completion.session_id,
+            &completion.execution_id,
+            text,
+        ),
+        Err(error) => {
+            let _ = worker.append_execution_change(
+                &completion.session_id,
+                &completion.execution_id,
+                ExecutionChange::State {
+                    state: ExecutionState::Failed {
+                        error: error.clone(),
+                    },
+                },
+            );
+            Err(error)
+        }
+    };
+    execution.prompt.respond(result.map(|value| value.to_value()));
+}
+
+fn complete_prompt_output(
+    worker: &mut ApplicationWorker,
+    session_id: &SessionId,
+    execution_id: &str,
+    text: String,
+) -> Result<PromptResult, ApplicationError> {
+    let session = worker.require_open_application_session(session_id)?;
+    worker.append_session_change(
+        &session,
+        SessionChange::TextDelta {
+            execution_id: execution_id.to_owned(),
+            text: text.clone(),
+        },
+    )?;
+    worker.append_session_change(
+        &session,
+        SessionChange::Message {
+            message: Message {
+                role: MessageRole::Assistant,
+                content: vec![Content::Text { text }],
+            },
+        },
+    )?;
+    worker.append_execution_change(
+        session_id,
+        execution_id,
+        ExecutionChange::State {
+            state: ExecutionState::Completed,
+        },
+    )?;
+    Ok(PromptResult {
+        execution_id: execution_id.to_owned(),
+        stop_reason: StopReason::EndTurn,
+    })
+}
+
+fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
+    let mut text = String::new();
+    for part in content {
+        let Content::Text { text: part } = part else {
+            return Err(ApplicationError::InvalidInput {
+                message: "the current model-turn ABI accepts text prompt content only; resource and image turns require the typed model-turn contract".to_owned(),
+            });
+        };
+        text.push_str(part);
+    }
+    if text.trim().is_empty() {
+        return Err(ApplicationError::InvalidInput {
+            message: "prompt text must not be empty".to_owned(),
+        });
+    }
+    Ok(Bytes::new(text.into_bytes()))
+}
+
+fn run_agent_execution(
+    harness: Arc<PhenixHarness>,
+    authority: Authority,
+    input: Bytes,
+    cancellation: Arc<AtomicBool>,
+) -> Result<String, ApplicationError> {
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ApplicationError::Cancelled);
+    }
+    let profile = env::var("PHENIX_ROUTING_PROFILE")
+        .unwrap_or_else(|_| DEFAULT_ROUTING_PROFILE.to_owned());
+    let profile_id = RoutingProfileId::parse(profile).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("invalid PHENIX_ROUTING_PROFILE: {error}"),
+    })?;
+    let callable_id = CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| {
+        ApplicationError::Failed {
+            message: format!("invalid application agent id: {error}"),
+        }
+    })?;
+    let command = AgentLoopCommand::Run {
+        profile_id,
+        callable_id: Some(callable_id),
+        input,
+        tools: Vec::new(),
+    };
+    let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+        ApplicationError::InvalidInput {
+            message: error.to_string(),
+        }
+    })?;
+    let output = harness
+        .invoke(&agent_loop_service(), &input, &authority, None)
+        .map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ApplicationError::Cancelled);
+    }
+    let value: PhenixValue = serde_json::from_slice(&output).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })?;
+    let response = AgentLoopResponse::try_from(Project(&value)).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })?;
+    let AgentLoopResponse::Completed {
+        output,
+        tool_calls,
+        ..
+    } = response;
+    if !tool_calls.is_empty() {
+        return Err(ApplicationError::Failed {
+            message: "agent loop returned tool calls before typed tool-result continuation is available"
+                .to_owned(),
+        });
+    }
+    String::from_utf8(output.as_ref().to_vec()).map_err(|error| ApplicationError::InvalidResponse {
+        message: format!("agent output is not UTF-8: {error}"),
+    })
 }
 
 fn is_sdk_operation(operation: &ContractId) -> bool {
@@ -1403,6 +1747,26 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn async_model_input_preserves_ordered_text_parts() {
+        let input = model_input_from_content(&[
+            Content::Text { text: "A".into() },
+            Content::Text { text: "B".into() },
+        ])
+        .unwrap();
+        assert_eq!(input.as_ref(), b"AB");
+    }
+
+    #[test]
+    fn async_model_input_rejects_unrepresentable_content() {
+        let error = model_input_from_content(&[Content::Image {
+            mime_type: "image/png".into(),
+            data: Bytes::new(vec![1, 2, 3]),
+        }])
+        .unwrap_err();
+        assert!(matches!(error, ApplicationError::InvalidInput { .. }));
     }
 
     #[test]
