@@ -648,8 +648,7 @@ impl ApplicationWorker {
             .and_then(|projection| projection.through_sequence.checked_add(1))
             == Some(update.sequence);
         if contiguous {
-            self
-                .projection
+            self.projection
                 .apply_update(update.clone())
                 .map_err(application_projection_error)?;
         } else {
