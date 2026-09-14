@@ -30,6 +30,7 @@ jobs:
       - name: Apply deterministic maintenance fixes
         run: |
           set -euo pipefail
+          python .phenix/work/pr-504-concurrency-patch.py
           nix flake update phenix-flake-ci
           printf '%s\n' '{"command":"fix","source":{"type":"maintenance-autofix"}}' |
             nix run --quiet .#phenix-maintenance-command-1c6e6c4c02e5 -- invoke
