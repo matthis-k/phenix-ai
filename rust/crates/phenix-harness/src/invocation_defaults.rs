@@ -1,7 +1,8 @@
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    Authority, CallableId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, RoutingProfileId, SdkClient, ServiceContribution, ServiceId,
+    ServiceRole,
 };
 use phenix_plugin_catalog::{
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
@@ -9,10 +10,10 @@ use phenix_plugin_catalog::{
 };
 use phenix_sdk::{
     invocation_clock_service, invocation_defaults_service, DelegationResourcePolicy,
-    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
-    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
-    InvocationIntent, InvocationParams, InvocationRequest, RouteSelectionPolicy,
-    RoutingEstimateMode, UsagePolicy,
+    HelperInvocationRequest, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
+    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
+    RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,7 +22,9 @@ pub const INVOCATION_DEFAULTS_PLUGIN: &str = "phenix.harness.invocation-defaults
 pub const INVOCATION_DEFAULTS_COMPONENT: &str = "phenix.harness.invocation-defaults";
 const ROUTING_PROFILE_OPTION: &str = "model.default";
 const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v1";
+const HELPER_POLICY_REVISION: &str = "harness.usage.helper.v1";
 const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v1";
+const HELPER_ROUTE_POLICY_REVISION: &str = "harness.routing.helper.v1";
 
 #[must_use]
 pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManifest {
@@ -131,12 +134,17 @@ impl PluginInstance for InvocationDefaultsPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let InvocationDefaultsCommand::Resolve { request } = command;
+            let params = match command {
+                InvocationDefaultsCommand::Resolve { request } => {
+                    resolve_defaults(&context, &request)?
+                }
+                InvocationDefaultsCommand::ResolveHelper { request } => {
+                    resolve_helper_defaults(&request)
+                }
+            };
             return context
                 .kernel
-                .encode_value(&InvocationDefaultsResponse::Params {
-                    params: resolve_defaults(&context, &request)?,
-                })
+                .encode_value(&InvocationDefaultsResponse::Params { params })
                 .map_err(|error| error.to_string());
         }
         if service == &invocation_clock_service() {
@@ -198,20 +206,47 @@ fn resolve_defaults(
     };
     let profile_id = RoutingProfileId::parse(profile)
         .map_err(|error| format!("invalid {ROUTING_PROFILE_OPTION}: {error}"))?;
-    let optional_tools = request
-        .tools
+    Ok(invocation_params(
+        profile_id,
+        request.callable_id.as_ref(),
+        &request.tools,
+        DEFAULT_POLICY_REVISION,
+        DEFAULT_ROUTE_POLICY_REVISION,
+        1,
+    ))
+}
+
+fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParams {
+    invocation_params(
+        request.profile_id.clone(),
+        Some(&request.callable_id),
+        &request.tools,
+        HELPER_POLICY_REVISION,
+        HELPER_ROUTE_POLICY_REVISION,
+        0,
+    )
+}
+
+fn invocation_params(
+    profile_id: RoutingProfileId,
+    _callable_id: Option<&CallableId>,
+    tools: &[ModelToolDescriptor],
+    policy_revision: &str,
+    route_policy_revision: &str,
+    max_retries: u32,
+) -> InvocationParams {
+    let optional_tools = tools
         .iter()
         .map(|tool| tool.id.clone())
         .collect::<BTreeSet<_>>();
-
-    Ok(InvocationParams {
+    InvocationParams {
         profile_id,
         policy: UsagePolicy {
-            revision: DEFAULT_POLICY_REVISION.into(),
+            revision: policy_revision.into(),
             max_fresh_input_tokens: 128 * 1024,
             max_output_tokens: 16 * 1024,
             max_cost_microunits: None,
-            max_retries: 1,
+            max_retries,
             max_tool_result_bytes: 1024 * 1024,
             max_tool_schemas: 128,
             max_skills: 64,
@@ -230,16 +265,18 @@ fn resolve_defaults(
             deadline_at_ms: None,
         },
         route_policy: RouteSelectionPolicy {
-            revision: DEFAULT_ROUTE_POLICY_REVISION.into(),
+            revision: route_policy_revision.into(),
             estimates: RoutingEstimateMode::Ignore,
             max_candidate_attempts: 8,
         },
-    })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_core::Bytes;
+    use phenix_sdk::HelperInvocationKind;
 
     #[test]
     fn provider_exports_replaceable_defaults_and_clock_interfaces() {
@@ -263,5 +300,22 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == InvocationClockInterface::interface_id()));
+    }
+
+    #[test]
+    fn helper_defaults_preserve_pinned_profile_and_disable_retries() {
+        let request = HelperInvocationRequest {
+            execution_id: "execution-1".into(),
+            parent_attempt_id: "attempt-1".into(),
+            profile_id: RoutingProfileId::parse("router.pinned").unwrap(),
+            kind: HelperInvocationKind::Helper,
+            callable_id: CallableId::parse("memory.summarize").unwrap(),
+            input: Bytes::from(b"input".to_vec()),
+            tools: Vec::new(),
+        };
+        let params = resolve_helper_defaults(&request);
+        assert_eq!(params.profile_id, request.profile_id);
+        assert_eq!(params.policy.revision, HELPER_POLICY_REVISION);
+        assert_eq!(params.policy.max_retries, 0);
     }
 }
