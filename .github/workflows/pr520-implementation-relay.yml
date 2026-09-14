@@ -8,6 +8,7 @@ on:
       - .github/workflows/pr520-implementation-relay.yml
       - .phenix/pr520-edit.py
       - .phenix/pr520-register-test.py
+      - .phenix/pr520-fix-test-backend.py
 
 permissions:
   contents: write
@@ -24,9 +25,10 @@ jobs:
         run: |
           python .phenix/pr520-edit.py
           python .phenix/pr520-register-test.py
+          python .phenix/pr520-fix-test-backend.py
       - name: Remove relay files
         run: |
-          rm .phenix/pr520-edit.py .phenix/pr520-register-test.py .github/workflows/pr520-implementation-relay.yml
+          rm .phenix/pr520-edit.py .phenix/pr520-register-test.py .phenix/pr520-fix-test-backend.py .github/workflows/pr520-implementation-relay.yml
           rmdir .phenix || true
       - name: Format
         working-directory: rust
