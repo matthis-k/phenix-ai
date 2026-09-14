@@ -183,7 +183,8 @@ fn handle(
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
         }),
-        ContextCommand::Admit { .. }
+        ContextCommand::GetProjectionState { .. }
+        | ContextCommand::Admit { .. }
         | ContextCommand::PrepareCompaction { .. }
         | ContextCommand::CommitCompaction { .. }
         | ContextCommand::InvalidateProjection { .. } => {
@@ -196,7 +197,8 @@ fn state_command_execution(command: &ContextCommand) -> Option<&str> {
     match command {
         ContextCommand::Admit { request } => Some(&request.execution_id),
         ContextCommand::PrepareCompaction { proposal } => Some(&proposal.execution_id),
-        ContextCommand::CommitCompaction { execution_id, .. }
+        ContextCommand::GetProjectionState { execution_id }
+        | ContextCommand::CommitCompaction { execution_id, .. }
         | ContextCommand::InvalidateProjection { execution_id } => Some(execution_id),
         _ => None,
     }
@@ -207,6 +209,12 @@ fn handle_state_command(
     state: &mut ContextStateService,
     command: ContextCommand,
 ) -> Result<ContextResponse, String> {
+    if matches!(&command, ContextCommand::GetProjectionState { .. }) {
+        return state
+            .handle_state_command(command)
+            .ok_or_else(|| "projection state command leaked past state service".to_owned())?;
+    }
+
     let previous = read_raw(context, CONTEXT_PROJECTION_STATE_KEY)?;
     let response = match state.handle_state_command(command) {
         Some(Ok(response)) => response,
