@@ -4,12 +4,27 @@ local util = require("phenix_nvim.util")
 local M = {}
 local uv = vim.uv or vim.loop
 
+local required_operations = {
+  "session_create",
+  "session_list",
+  "session_resume",
+  "session_close",
+  "prompt",
+  "cancel",
+  "interaction_handlers_set",
+  "review_decide",
+}
+
 local state = {
   config = nil,
   client = nil,
   sdk = nil,
   application = nil,
-  active_session = nil,
+  active_session_id = nil,
+  session_state = nil,
+  session_observable_version = nil,
+  session_stop = nil,
+  subscription = nil,
   connection = "disconnected",
   error = nil,
   timer = nil,
@@ -31,7 +46,21 @@ local function stop_timer()
   end
 end
 
+local function stop_subscription()
+  state.subscription = nil
+  local stop = state.session_stop
+  state.session_stop = nil
+  if stop == nil then
+    return
+  end
+  local ok, request = pcall(stop)
+  if ok and request ~= nil then
+    M.track(request)
+  end
+end
+
 local function fail(error)
+  stop_subscription()
   state.connection = "failed"
   state.error = error
   stop_timer()
@@ -46,6 +75,124 @@ local function start_timer()
   timer:start(interval, interval, vim.schedule_wrap(function()
     M.tick()
   end))
+end
+
+local function session_resource()
+  local phenix = state.sdk and state.sdk.phenix
+  local sessions = phenix and phenix.sessions
+  local resource = sessions and sessions.state
+  if type(resource) ~= "table" or type(resource.get) ~= "function" or type(resource.listen) ~= "function" then
+    return nil, "missing SDK callable phenix.sessions.state.get/listen"
+  end
+  return resource
+end
+
+local function required_application_error()
+  for _, name in ipairs(required_operations) do
+    if type(state.application[name]) ~= "function" then
+      return "missing application operation " .. name
+    end
+  end
+  return nil
+end
+
+local function replace_root_changes(value, changes)
+  local next_value = value
+  for _, item in ipairs(changes) do
+    if item.kind ~= "Replace" or type(item.change) ~= "table" then
+      return nil
+    end
+    local path = item.change.path
+    if type(path) ~= "table" or type(path.segments) ~= "table" or #path.segments ~= 0 then
+      return nil
+    end
+    next_value = item.change.value
+  end
+  return next_value
+end
+
+local function begin_subscription(callback)
+  local resource, resource_error = session_resource()
+  if resource == nil then
+    util.safe_call(callback, nil, { message = resource_error })
+    return
+  end
+
+  stop_subscription()
+  local subscription = {}
+  state.subscription = subscription
+  local function delivery(received)
+    if state.subscription ~= subscription then
+      return nil
+    end
+    local payload = received:payload()
+    local version = received:version()
+    if type(payload) ~= "table" or type(version) ~= "number" then
+      M.refresh_session_state()
+      return nil
+    end
+    if payload.kind == "Full" then
+      state.session_state = payload.value
+      state.session_observable_version = version
+      emit("sessions", state.session_state)
+      return nil
+    end
+    if payload.kind ~= "Diff" or received:from_version() ~= state.session_observable_version then
+      M.refresh_session_state()
+      return nil
+    end
+    local next_value = replace_root_changes(state.session_state, payload.changes)
+    if next_value == nil then
+      M.refresh_session_state()
+      return nil
+    end
+    state.session_state = next_value
+    state.session_observable_version = version
+    emit("sessions", state.session_state)
+    return nil
+  end
+
+  local request = resource.listen({
+    path = { segments = {} },
+    scope = { kind = "recursive" },
+    mode = { kind = "diff" },
+    initial = { kind = "full" },
+    listener = delivery,
+  })
+  M.track(request, function(stop, error)
+    if state.subscription ~= subscription then
+      return
+    end
+    if error ~= nil then
+      state.subscription = nil
+      util.safe_call(callback, nil, error)
+      return
+    end
+    state.session_stop = stop
+    util.safe_call(callback, state.session_state, nil)
+  end)
+end
+
+function M.refresh_session_state(callback)
+  local resource, resource_error = session_resource()
+  if resource == nil then
+    util.safe_call(callback, nil, { message = resource_error })
+    return
+  end
+  M.track(resource.get(), function(result, error)
+    if error ~= nil then
+      util.safe_call(callback, nil, error)
+      return
+    end
+    if type(result) ~= "table" or type(result.version) ~= "number" or result.value == nil then
+      util.safe_call(callback, nil, { message = "invalid phenix.sessions.state.get response" })
+      return
+    end
+    state.session_state = result.value
+    state.session_observable_version = result.version
+    emit("sessions", state.session_state)
+    begin_subscription(callback)
+  end)
 end
 
 function M.configure(config)
@@ -130,33 +277,60 @@ function M.connect(callback)
     end
     state.sdk = sdk
     state.application = client:application()
-    state.connection = "connected"
-    emit("status", M.status())
-    util.safe_call(callback, state, nil)
+    local application_error = required_application_error()
+    local _, resource_error = session_resource()
+    if application_error ~= nil or resource_error ~= nil then
+      local message = application_error or resource_error
+      fail({ message = message })
+      util.safe_call(callback, nil, { message = message })
+      return
+    end
+    M.refresh_session_state(function(_, state_error)
+      if state_error ~= nil then
+        fail(state_error)
+        util.safe_call(callback, nil, state_error)
+        return
+      end
+      state.connection = "connected"
+      emit("status", M.status())
+      util.safe_call(callback, state, nil)
+    end)
   end)
 end
 
 function M.disconnect()
+  stop_subscription()
   stop_timer()
   state.client = nil
   state.sdk = nil
   state.application = nil
-  state.active_session = nil
+  state.active_session_id = nil
+  state.session_state = nil
+  state.session_observable_version = nil
   state.pending = {}
   state.connection = "disconnected"
   state.error = nil
   emit("status", M.status())
 end
 
-function M.new_session(callback)
-  if state.client == nil then
+local function require_application(callback)
+  if state.application == nil or state.connection == "failed" or state.connection == "disconnected" then
     util.safe_call(callback, nil, { message = "Phenix is not connected" })
+    return false
+  end
+  return true
+end
+
+function M.new_session(callback)
+  if not require_application(callback) then
     return
   end
-  local request = state.client:sessions():new(vim.fn.getcwd())
-  M.track(request, function(session, error)
+  M.track(state.application.session_create({
+    working_directory = vim.fn.getcwd(),
+    title = nil,
+  }), function(session, error)
     if error == nil then
-      state.active_session = session
+      state.active_session_id = session.session_id
       emit("status", M.status())
     end
     util.safe_call(callback, session, error)
@@ -164,59 +338,92 @@ function M.new_session(callback)
 end
 
 function M.resume_session(session_id, callback)
-  if state.client == nil then
-    util.safe_call(callback, nil, { message = "Phenix is not connected" })
+  if not require_application(callback) then
     return
   end
-  M.track(state.client:sessions():resume(session_id, vim.fn.getcwd()), function(session, error)
+  M.track(state.application.session_resume({
+    session_id = session_id,
+    after_sequence = nil,
+  }), function(snapshot, error)
     if error == nil then
-      state.active_session = session
+      state.active_session_id = snapshot.session.session_id
       emit("status", M.status())
     end
-    util.safe_call(callback, session, error)
+    util.safe_call(callback, snapshot, error)
   end)
 end
 
 function M.list_sessions(callback)
-  if state.client == nil then
-    util.safe_call(callback, nil, { message = "Phenix is not connected" })
+  if not require_application(callback) then
     return
   end
-  M.track(state.client:sessions():list(vim.fn.getcwd()), callback)
+  M.track(state.application.session_list({ cursor = nil }), callback)
 end
 
 function M.active_session()
-  return state.active_session
+  return state.active_session_id
 end
 
-function M.prompt(session, content, callback)
-  local text = {}
-  for _, segment in ipairs(content) do
-    if segment.kind ~= "text" then
-      util.safe_call(callback, nil, {
-        message = "multimodal prompt delivery requires the application SDK prompt callable",
+local function application_content(segments)
+  local content = {}
+  for _, segment in ipairs(segments) do
+    if segment.kind == "text" then
+      table.insert(content, { kind = "Text", text = segment.text })
+    elseif segment.kind == "resource" or segment.kind == "location" or segment.kind == "selection" then
+      local source = segment.source or {}
+      if type(source.uri) ~= "string" or source.uri == "" then
+        return nil, "resource is missing a source URI"
+      end
+      table.insert(content, {
+        kind = "Resource",
+        uri = source.uri,
+        mime_type = segment.snapshot and "text/plain" or nil,
+        text = segment.snapshot,
       })
-      return
+    elseif segment.kind == "image" then
+      table.insert(content, {
+        kind = "Image",
+        mime_type = segment.mime_type,
+        data = segment.bytes,
+      })
+    else
+      return nil, "unsupported compose item " .. tostring(segment.kind)
     end
-    table.insert(text, segment.text)
   end
-  M.track(session:prompt(table.concat(text)), callback)
+  return content
+end
+
+function M.prompt(session_id, segments, callback)
+  if not require_application(callback) then
+    return
+  end
+  local content, content_error = application_content(segments)
+  if content == nil then
+    util.safe_call(callback, nil, { message = content_error })
+    return
+  end
+  M.track(state.application.prompt({
+    session_id = session_id,
+    content = content,
+  }), callback)
 end
 
 function M.cancel_active()
-  if state.active_session ~= nil then
-    local ok, error = pcall(state.active_session.cancel, state.active_session)
-    if not ok then
-      util.notify(error, vim.log.levels.ERROR)
-    end
+  if state.application == nil or state.active_session_id == nil then
+    return
   end
+  M.track(state.application.cancel({ session_id = state.active_session_id }), function(_, error)
+    if error ~= nil then
+      util.notify(vim.inspect(error), vim.log.levels.ERROR)
+    end
+  end)
 end
 
 function M.status()
   return {
     connection = state.connection,
     error = state.error,
-    session_id = state.active_session and state.active_session:id() or nil,
+    session_id = state.active_session_id,
     sdk_ready = state.sdk ~= nil,
   }
 end
@@ -227,6 +434,10 @@ end
 
 function M.application()
   return state.application
+end
+
+function M.session_state()
+  return state.session_state
 end
 
 return M
