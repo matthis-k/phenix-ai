@@ -1,0 +1,43 @@
+name: PR 520 implementation relay
+
+on:
+  push:
+    branches:
+      - refactor/durable-collections
+    paths:
+      - .github/workflows/pr520-implementation-relay.yml
+      - .phenix/pr520-edit.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/durable-collections
+          fetch-depth: 0
+      - name: Apply source transformations
+        run: python .phenix/pr520-edit.py
+      - name: Remove relay files
+        run: |
+          rm .phenix/pr520-edit.py .github/workflows/pr520-implementation-relay.yml
+          rmdir .phenix || true
+      - name: Format
+        working-directory: rust
+        run: cargo fmt --all
+      - name: Test persistence conformance
+        working-directory: rust
+        run: cargo test -p phenix-core --test persistence_backend_conformance
+      - name: Test core persistence
+        working-directory: rust
+        run: cargo test -p phenix-core persistence::tests
+      - name: Push implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add ordered durable scans"
+          git push origin HEAD:refactor/durable-collections
