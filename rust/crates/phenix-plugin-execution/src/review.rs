@@ -2,22 +2,21 @@ use phenix_application_interface::types::{
     ReviewDecision, ReviewDecisionInput, ReviewFile, ReviewHunk, ReviewRecord, ReviewState,
 };
 use phenix_core::{
-    ComponentInterface, DurableSchema, InterfaceId, InterfaceSchema, PluginContext, PluginHost,
-    PluginInstance, ResourceNamespace, ServiceId, TransactionOp,
+    ComponentInterface, DurableSchema, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
+    PluginHost, PluginInstance, Project, ResourceNamespace, ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
-    workspace_service, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse, WorkspaceWrite,
+    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceWrite,
+    WORKSPACE_SERVICE,
 };
 use phenix_sdk_macros::PhenixValue as DerivePhenixValue;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const EXECUTION_REVIEW_SERVICE: &str = "phenix.execution.review@1";
 const REVIEW_NAMESPACE: &str = "phenix.execution.review.state";
 const STATE_KEY: &str = "reviews";
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, DerivePhenixValue)]
+#[derive(Clone, Debug, PartialEq, DerivePhenixValue)]
 pub struct PreparedReviewFile {
     pub uri: String,
     pub path: String,
@@ -26,8 +25,7 @@ pub struct PreparedReviewFile {
     pub hunks: Vec<ReviewHunk>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, DerivePhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, DerivePhenixValue)]
 pub enum ExecutionReviewCommand {
     Prepare {
         id: String,
@@ -44,18 +42,11 @@ pub enum ExecutionReviewCommand {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, DerivePhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, DerivePhenixValue)]
 pub enum ExecutionReviewResponse {
-    Review {
-        review: ReviewRecord,
-    },
-    ReviewLookup {
-        review: Option<ReviewRecord>,
-    },
-    Reviews {
-        reviews: Vec<ReviewRecord>,
-    },
+    Review { review: ReviewRecord },
+    ReviewLookup { review: Option<ReviewRecord> },
+    Reviews { reviews: Vec<ReviewRecord> },
     Conflict {
         message: String,
         review: Option<ReviewRecord>,
@@ -75,13 +66,13 @@ impl ComponentInterface for ExecutionReviewInterface {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DerivePhenixValue)]
 struct StoredReview {
     record: ReviewRecord,
     prepared_files: Vec<PreparedReviewFile>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, DerivePhenixValue)]
 struct ReviewProjection {
     reviews: BTreeMap<String, StoredReview>,
 }
@@ -95,6 +86,10 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> ReviewContext<
 #[must_use]
 pub fn execution_review_service() -> ServiceId {
     ServiceId::parse(EXECUTION_REVIEW_SERVICE).expect("static execution review service id is valid")
+}
+
+fn workspace_service() -> ServiceId {
+    ServiceId::parse(WORKSPACE_SERVICE).expect("static workspace service id is valid")
 }
 
 pub(crate) fn execution_review_namespace() -> ResourceNamespace {
@@ -390,7 +385,11 @@ fn read_state(
         .map_err(|error| error.to_string())?;
     let state = old
         .as_deref()
-        .map(|bytes| serde_json::from_slice(bytes).map_err(|error| error.to_string()))
+        .map(|bytes| {
+            let value: PhenixValue =
+                serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+            ReviewProjection::from_value(&value).map_err(|error| error.to_string())
+        })
         .transpose()?
         .unwrap_or_default();
     Ok((old, state))
@@ -412,7 +411,8 @@ fn persist_state(
                 },
                 TransactionOp::Put {
                     key: STATE_KEY.into(),
-                    value: serde_json::to_vec(state).map_err(|error| error.to_string())?,
+                    value: serde_json::to_vec(&state.to_value())
+                        .map_err(|error| error.to_string())?,
                 },
             ],
         )
@@ -438,8 +438,8 @@ fn validate_identity(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
-        PluginExecution, PluginId, PluginManifest, Project, ServiceContribution,
+        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,
+        PluginManifest, ServiceContribution,
     };
     use sha2::{Digest, Sha256};
     use std::{
@@ -495,8 +495,10 @@ mod tests {
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
         let persistence = LocalPersistence::open(db).unwrap();
-        let mut kernel =
-            Kernel::with_persistence(KernelConfig::new([review, workspace]).unwrap(), persistence);
+        let mut kernel = Kernel::with_persistence(
+            KernelConfig::new([review, workspace]).unwrap(),
+            persistence,
+        );
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();
@@ -650,7 +652,10 @@ mod tests {
                 }
             }
         ));
-        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "current");
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "current"
+        );
         let _ = fs::remove_file(db);
         let _ = fs::remove_dir_all(root);
     }
@@ -693,7 +698,10 @@ mod tests {
                 },
             },
         );
-        assert!(matches!(stale, ExecutionReviewResponse::Conflict { .. }));
+        assert!(matches!(
+            stale,
+            ExecutionReviewResponse::Conflict { .. }
+        ));
         let _ = fs::remove_file(db);
         let _ = fs::remove_dir_all(root);
     }
