@@ -11,3 +11,4 @@ role = "application"
 phenix-core = { path = "../phenix-core" }
 phenix-client = { path = "../phenix-client" }
 serde_json.workspace = true
+thiserror.workspace = true
