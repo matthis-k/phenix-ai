@@ -113,7 +113,7 @@ pub enum ContextCommand {
         execution_id: String,
     },
     Admit {
-        request: ContextAdmissionRequest,
+        request: Box<ContextAdmissionRequest>,
     },
     PrepareCompaction {
         proposal: CompactionProposal,
