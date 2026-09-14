@@ -1526,15 +1526,7 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
                     let values = Punctuated::<Ident, Token![,]>::parse_terminated
                         .parse2(feature_list.tokens.clone())?;
                     for feature in values {
-                        if !matches!(
-                            feature.to_string().as_str(),
-                            "Transactions"
-                                | "UniqueKeys"
-                                | "ForeignKeys"
-                                | "OrderedAppend"
-                                | "IndexedRange"
-                                | "Migrations"
-                        ) {
+                        if feature != "Migrations" {
                             return Err(syn::Error::new_spanned(
                                 feature,
                                 "unsupported resource backend feature",
@@ -1985,7 +1977,7 @@ mod tests {
     fn resource_field_preserves_required_backend_features() {
         let mut item: ItemStruct = parse_quote! {
             struct Plugin {
-                #[phenix(resource, features(Transactions, Migrations))]
+                #[phenix(resource, features(Migrations))]
                 state: phenix_sdk::Durable<State>,
             }
         };
@@ -1996,14 +1988,14 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(features, ["Transactions", "Migrations"]);
+        assert_eq!(features, ["Migrations"]);
     }
 
     #[test]
     fn resource_field_rejects_unknown_backend_feature() {
         let mut item: ItemStruct = parse_quote! {
             struct Plugin {
-                #[phenix(resource, features(Transactions, Telepathy))]
+                #[phenix(resource, features(Migrations, Telepathy))]
                 state: phenix_sdk::Durable<State>,
             }
         };

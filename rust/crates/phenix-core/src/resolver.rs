@@ -643,11 +643,6 @@ fn durable_schema_payload(durable_schemas: &[DurableSchemaRegistration]) -> serd
 
 fn backend_feature_name(feature: BackendFeature) -> &'static str {
     match feature {
-        BackendFeature::Transactions => "transactions",
-        BackendFeature::UniqueKeys => "unique_keys",
-        BackendFeature::ForeignKeys => "foreign_keys",
-        BackendFeature::OrderedAppend => "ordered_append",
-        BackendFeature::IndexedRange => "indexed_range",
         BackendFeature::Migrations => "migrations",
     }
 }
@@ -1079,7 +1074,7 @@ mod tests {
             [],
             [DurableSchemaRegistration::new(
                 owner_id,
-                DurableSchema::requiring(namespace.clone(), 2, [BackendFeature::Transactions]),
+                DurableSchema::requiring(namespace.clone(), 2, [BackendFeature::Migrations]),
             )],
             [],
             &Authority::default(),

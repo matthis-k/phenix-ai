@@ -578,7 +578,7 @@ mod tests {
                 },
             )
             .unwrap_err();
-            assert!(duplicate_error.contains("transaction assertion failed"));
+            assert!(duplicate_error.contains("persistence assertion conflicted"));
             assert!(duplicate_error.contains("configuration/config-1"));
         }
         let mut restored = kernel(&path);
