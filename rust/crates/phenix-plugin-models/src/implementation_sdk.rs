@@ -291,6 +291,7 @@ fn encode_request(
     context
         .kernel
         .encode_value(&request)
+        .map(Into::into)
         .map_err(|error| error.to_string())
 }
 
@@ -303,7 +304,7 @@ fn invoke_encoded_target(
         .kernel
         .invoke_service_abi(
             &model_inference_service(),
-            &request,
+            request.as_ref(),
             context.call.authority,
             Some(&target.provider_plugin),
         )
