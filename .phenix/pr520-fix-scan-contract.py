@@ -85,8 +85,8 @@ text, count = re.subn(
     lambda match: f"{match.group(1)}Some({match.group(2)}){match.group(3)}",
     text,
 )
-if count != 5:
-    raise SystemExit(f"persistence conformance: expected 5 scan limits, found {count}")
+if count != 6:
+    raise SystemExit(f"persistence conformance: expected 6 scan limits, found {count}")
 needle = '''    assert_eq!(
         bounded.iter().map(|record| record.key.as_str()).collect::<Vec<_>>(),
         vec!["alpha", "beta", "beta-2"]
