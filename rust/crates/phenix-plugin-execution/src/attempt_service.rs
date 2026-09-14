@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginHost,
-    PluginInstance, ResourceNamespace, ServiceId, TransactionOp,
+    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance,
+    ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,
@@ -13,9 +13,6 @@ use std::collections::BTreeMap;
 const ATTEMPT_NAMESPACE: &str = "phenix.execution.attempts.state";
 const ATTEMPT_STATE_KEY: &str = "state";
 const MAX_ATTEMPT_STATE_BYTES: usize = 16 * 1024 * 1024;
-const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
-const PERSISTENCE_READ: &str = "kernel.persistence.read";
-const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 
 type AttemptContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
@@ -25,14 +22,6 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> AttemptContext
 
 pub(crate) fn attempt_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(ATTEMPT_NAMESPACE).expect("static namespace is valid")
-}
-
-pub(crate) fn persistence_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
-    ])
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
