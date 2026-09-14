@@ -156,6 +156,7 @@ fn recorded_evidence_survives_plugin_restart() {
         .map(|samples| samples.as_array().expect("evidence samples").len())
         .sum();
     assert_eq!(sample_count, 2);
+    drop(store);
     let _ = fs::remove_file(path);
 }
 
@@ -261,5 +262,6 @@ fn failed_runtime_persistence_rolls_back_in_memory_state() {
         candidates[0].capabilities.generation.as_str(),
         "generation-1"
     );
+    drop(kernel);
     let _ = fs::remove_file(path);
 }
