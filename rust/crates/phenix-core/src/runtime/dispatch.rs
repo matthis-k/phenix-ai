@@ -179,7 +179,8 @@ pub(super) fn invoke_resolved_chain_with(
             .and_then(|instance| instance.shared_invocation())
     } else {
         instance.lock().shared_invocation()
-    };
+    }
+    .filter(|invocation| invocation.supports(&chain.service));
     if guards.call_stack.contains(&provider.plugin) && shared_invocation.is_none() {
         return Err(KernelError::HostOperationDenied {
             plugin: provider.plugin.clone(),

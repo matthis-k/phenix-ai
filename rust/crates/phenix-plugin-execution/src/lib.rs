@@ -26,7 +26,9 @@ pub use tool_schedule::{ScheduledToolBatch, ToolCallPlan, ToolConcurrency, ToolS
 
 use phenix_core::{
     Authority, PluginHost, PluginInstance, PluginManifest, ServiceContribution, ServiceId,
+    SharedPluginInvocation,
 };
+use std::sync::Arc;
 
 #[must_use]
 pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
@@ -64,11 +66,32 @@ struct ExecutionPackagePlugin {
     agent_loop: Box<dyn PluginInstance>,
 }
 
+struct ExecutionPackageSharedInvocation;
+
+impl SharedPluginInvocation for ExecutionPackageSharedInvocation {
+    fn supports(&self, service: &ServiceId) -> bool {
+        service == &agent_loop::agent_loop_service()
+    }
+
+    fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        agent_loop::invoke_agent_loop(service, input, host)
+    }
+}
+
 impl PluginInstance for ExecutionPackagePlugin {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
         self.execution.start(host)?;
         self.configuration.start(host)?;
         self.agent_loop.start(host)
+    }
+
+    fn shared_invocation(&self) -> Option<Arc<dyn SharedPluginInvocation>> {
+        Some(Arc::new(ExecutionPackageSharedInvocation))
     }
 
     fn invoke(

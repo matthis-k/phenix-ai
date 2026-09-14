@@ -285,6 +285,14 @@ pub trait PluginRuntimeProvider: Send {
 /// Implementations keep mutable domain state behind their own narrow synchronization handles.
 /// Core may call this endpoint while another endpoint owned by the same Plugin is active.
 pub trait SharedPluginInvocation: Send + Sync {
+    /// Return whether this immutable endpoint can serve one service.
+    ///
+    /// Composite plugins may expose shared dispatch only for long-running or
+    /// reentrant-safe services while retaining mutable dispatch for the rest.
+    fn supports(&self, _service: &ServiceId) -> bool {
+        true
+    }
+
     fn invoke(
         &self,
         _service: &ServiceId,
@@ -448,7 +456,7 @@ pub struct Kernel {
     config: KernelConfig,
     states: BTreeMap<PluginId, PluginState>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
-    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
+    prepared_embedded_instances: Mutex<BTreeMap<PluginId, Box<dyn PluginInstance>>>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,

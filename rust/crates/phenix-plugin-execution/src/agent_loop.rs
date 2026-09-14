@@ -99,21 +99,29 @@ impl PluginInstance for AgentLoopPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &agent_loop_service() {
-            return Err(format!("unsupported agent loop service: {service}"));
-        }
-        let context = context(host);
-        let interface = AgentLoopInterface::interface_id();
-        let command = context
-            .kernel
-            .decode_projected::<AgentLoopCommand>(&interface, input)
-            .map_err(|error| error.to_string())?;
-        let response = handle(&context, command)?;
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
+        invoke_agent_loop(service, input, host)
     }
+}
+
+pub(crate) fn invoke_agent_loop(
+    service: &ServiceId,
+    input: &[u8],
+    host: &PluginHost<'_>,
+) -> Result<Vec<u8>, String> {
+    if service != &agent_loop_service() {
+        return Err(format!("unsupported agent loop service: {service}"));
+    }
+    let context = context(host);
+    let interface = AgentLoopInterface::interface_id();
+    let command = context
+        .kernel
+        .decode_projected::<AgentLoopCommand>(&interface, input)
+        .map_err(|error| error.to_string())?;
+    let response = handle(&context, command)?;
+    context
+        .kernel
+        .encode_value(&response)
+        .map_err(|error| error.to_string())
 }
 
 fn handle(

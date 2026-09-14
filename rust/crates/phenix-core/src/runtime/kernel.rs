@@ -47,7 +47,7 @@ impl Kernel {
             config,
             states,
             embedded_factories: BTreeMap::new(),
-            prepared_embedded_instances: BTreeMap::new(),
+            prepared_embedded_instances: Mutex::new(BTreeMap::new()),
             instances: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
             tasks: Arc::new(TaskRuntime::default()),
@@ -145,14 +145,16 @@ impl Kernel {
         plugin: PluginId,
         instance: Box<dyn PluginInstance>,
     ) {
-        self.prepared_embedded_instances.insert(plugin, instance);
+        self.prepared_embedded_instances
+            .lock()
+            .insert(plugin, instance);
     }
 
     pub(super) fn take_embedded_instance(
         &mut self,
         plugin: &PluginId,
     ) -> Result<Box<dyn PluginInstance>, KernelError> {
-        if let Some(instance) = self.prepared_embedded_instances.remove(plugin) {
+        if let Some(instance) = self.prepared_embedded_instances.lock().remove(plugin) {
             return Ok(instance);
         }
         self.embedded_factories
@@ -407,7 +409,7 @@ impl Kernel {
     }
 
     pub fn invoke_component(
-        &mut self,
+        &self,
         component: &ComponentId,
         service: &ServiceId,
         input: &[u8],
@@ -446,7 +448,7 @@ impl Kernel {
     }
 
     pub fn invoke(
-        &mut self,
+        &self,
         service: &ServiceId,
         input: &[u8],
         caller_authority: &Authority,

@@ -412,7 +412,7 @@ impl PhenixHarness {
     }
 
     pub fn invoke(
-        &mut self,
+        &self,
         service: &phenix_core::ServiceId,
         input: &[u8],
         authority: &Authority,
