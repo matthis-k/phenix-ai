@@ -1,25 +1,32 @@
 use crate::{default_suite_authority, PhenixHarness};
+use phenix_acp_stdio::{
+    serve_stdio_with_events_and_callbacks, ApplicationEvent, ApplicationInvocation,
+    ChannelTransport, ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
+};
 use phenix_application_interface::{
     types::{
-        Acknowledged, ApplicationError, ElicitationHandlerRef, InteractionHandlers, PageInput,
-        PermissionHandlerRef, SessionChange, SessionCreateInput, SessionInfo,
-        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
-        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput,
+        Acknowledged, ApplicationError, ElicitationHandlerRef, InteractionHandlers, Message,
+        MessageRole, PageInput, PermissionHandlerRef, PromptInput, PromptResult, SessionChange,
+        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
+        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
+        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    CloseSession, CreateSession, ListSessions, Operation, RenameSession, ResumeSession,
-    SetInteractionHandlers,
+    AddClientTool, Cancel, CloseSession, CreateSession, GetSdk, InvokeCallable,
+    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
+    RenameSession, ResumeSession, SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, ContractId, HasPhenixSchema, ObservableError, ObservableRegistration,
-    ObservableStore, PhenixContract, PhenixValue, PluginId, Project, SessionId, SnapshotPolicy,
+    Authority, CapabilityGenerationId, ClientConnectionId, ContractId, HasPhenixSchema,
+    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
+    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
     ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
-    SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+    sdk_contribution, session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use std::collections::BTreeMap;
+use tokio::sync::mpsc;
 
 pub const APPLICATION_INVOCATION_CAPACITY: usize = 64;
 pub const CLIENT_CAPABILITY_CAPACITY: usize = 64;
@@ -255,6 +262,7 @@ pub struct ApplicationWorker {
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
     next_session_ordinal: u64,
+    next_execution_ordinal: u64,
 }
 
 impl ApplicationWorker {
@@ -268,6 +276,7 @@ impl ApplicationWorker {
                 elicitation: None,
             },
             next_session_ordinal: 1,
+            next_execution_ordinal: 1,
         })
     }
 
@@ -336,6 +345,8 @@ impl ApplicationWorker {
             CloseSession::ID => self
                 .close_session(decode(input)?)
                 .map(|value| value.to_value()),
+            Prompt::ID => self.prompt(decode(input)?).map(|value| value.to_value()),
+            Cancel::ID => self.cancel(decode(input)?).map(|value| value.to_value()),
             _ => Err(ApplicationError::UnsupportedCapability {
                 capability: operation.clone(),
             }),
@@ -412,7 +423,7 @@ impl ApplicationWorker {
         &mut self,
         request: SessionRenameInput,
     ) -> Result<SessionInfo, ApplicationError> {
-        self.require_open_application_session(&request.session_id)?;
+        let session = self.require_open_application_session(&request.session_id)?;
         let change = SessionChange::Renamed {
             title: request.title.clone(),
         };
@@ -450,6 +461,36 @@ impl ApplicationWorker {
         Ok(Acknowledged {})
     }
 
+    fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        let response = self.invoke_session(SessionCommand::AppendJournal {
+            id: request.session_id.clone(),
+            entry: session_change_journal(&SessionChange::Message {
+                message: Message {
+                    role: MessageRole::User,
+                    content: request.content,
+                },
+            }),
+        })?;
+        let SessionResponse::JournalAppended { entry } = response else {
+            return Err(unexpected_session_response("prompt", response));
+        };
+        self.project_journal_entry(application_session_info(&session)?, entry)?;
+        let execution_id = self.allocate_execution_id()?;
+        Ok(PromptResult {
+            execution_id,
+            stop_reason: StopReason::EndTurn,
+        })
+    }
+
+    fn cancel(
+        &mut self,
+        request: ApplicationSessionInput,
+    ) -> Result<Acknowledged, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        Ok(Acknowledged {})
+    }
+
     fn allocate_session_id(&mut self) -> Result<SessionId, ApplicationError> {
         loop {
             let ordinal = self.next_session_ordinal;
@@ -468,6 +509,16 @@ impl ApplicationWorker {
                 return Ok(id);
             }
         }
+    }
+
+    fn allocate_execution_id(&mut self) -> Result<String, ApplicationError> {
+        let ordinal = self.next_execution_ordinal;
+        self.next_execution_ordinal = ordinal
+            .checked_add(1)
+            .ok_or_else(|| ApplicationError::Failed {
+                message: "application execution id space exhausted".to_owned(),
+            })?;
+        Ok(format!("execution-{ordinal}"))
     }
 
     fn require_open_application_session(
@@ -696,13 +747,136 @@ fn application_projection_error(error: SessionProjectionStoreError) -> Applicati
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConfiguredApplicationError {
+    #[error(transparent)]
+    Harness(#[from] crate::HarnessBuildError),
+    #[error(transparent)]
+    Kernel(#[from] phenix_core::KernelError),
+    #[error(transparent)]
+    Observable(#[from] ObservableError),
+    #[error(transparent)]
+    Sdk(#[from] phenix_core::SdkResolutionError),
+    #[error("ACP stdio server failed: {message}")]
+    Stdio { message: String },
+}
+
+/// Starts the configured product application for one ACP stdio connection.
+///
+/// The worker is deliberately separate from the transport crate: it owns the
+/// mutable product state, while `phenix-acp-stdio` only forwards typed calls.
+pub async fn serve_default_application() -> Result<(), ConfiguredApplicationError> {
+    let mut harness = PhenixHarness::default_suite()?;
+    harness.activate()?;
+    serve_configured_application(harness).await
+}
+
+pub async fn serve_configured_application(
+    harness: PhenixHarness,
+) -> Result<(), ConfiguredApplicationError> {
+    let sdk = harness
+        .resolved_harness()
+        .resolve_sdk_contributions([sdk_contribution()])?;
+    let worker = ApplicationWorker::new(harness)?;
+    let runtime = RuntimeId::parse("phenix.application-runtime")
+        .expect("static application runtime id is valid");
+    let generation = CapabilityGenerationId::from(worker.harness.generation());
+    let client = ClientCapabilityIdentity::new(
+        ClientConnectionId::parse("stdio-client-1").expect("static ACP client id is valid"),
+        CapabilityGenerationId::parse("stdio-connection-1")
+            .expect("static ACP connection generation is valid"),
+    );
+    let (client_callbacks, callback_receiver) =
+        ClientCapabilityCallbacks::bounded(CLIENT_CAPABILITY_CAPACITY);
+    let service = SdkApplicationService::new(
+        &sdk,
+        worker.projection().store(),
+        SharedCapabilityRegistry::default(),
+        runtime,
+        generation,
+        client_callbacks,
+        client,
+    )?;
+    let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+    let (_event_sender, event_receiver) =
+        mpsc::channel::<ApplicationEvent>(APPLICATION_EVENT_CAPACITY);
+
+    let worker = serve_application_worker(worker, service.clone(), receiver);
+    let stdio = serve_stdio_with_events_and_callbacks(
+        transport,
+        configured_capabilities(),
+        event_receiver,
+        callback_receiver,
+    );
+    let (stdio, ()) = tokio::join!(stdio, worker);
+    stdio.map_err(|error| ConfiguredApplicationError::Stdio {
+        message: error.to_string(),
+    })
+}
+
+async fn serve_application_worker(
+    mut worker: ApplicationWorker,
+    service: SdkApplicationService,
+    mut receiver: mpsc::Receiver<ApplicationInvocation>,
+) {
+    while let Some(invocation) = receiver.recv().await {
+        let result = if is_sdk_operation(&invocation.operation) {
+            service.invoke(&invocation.operation, invocation.input)
+        } else {
+            worker.invoke_with_client_callables(
+                &invocation.operation,
+                invocation.input,
+                |callable, schema| service.admit_current_client_callable(callable, schema),
+            )
+        };
+        invocation.respond(result);
+    }
+    worker.clear_interaction_handlers();
+    service.retire_client();
+}
+
+fn is_sdk_operation(operation: &ContractId) -> bool {
+    matches!(
+        operation.as_str(),
+        GetSdk::ID
+            | AddClientTool::ID
+            | RemoveClientTool::ID
+            | ListCallables::ID
+            | InvokeCallable::ID
+            | InvokeCapability::ID
+    )
+}
+
+fn configured_capabilities() -> Vec<ContractId> {
+    [
+        "discovery",
+        "sessions",
+        "session-list",
+        "session-resume",
+        "session-rename",
+        "prompt",
+        "sdk",
+        "capabilities",
+        "callables",
+        "client-tools",
+        "interaction",
+    ]
+    .into_iter()
+    .map(|name| {
+        ContractId::parse(format!("phenix.application.capability.{name}@1"))
+            .expect("static configured capability id is valid")
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        CloseSession, CreateSession, ListSessions, RenameSession, ResumeSession,
+        types::Content, Cancel, CloseSession, CreateSession, ListSessions, Prompt,
+        RenameSession, ResumeSession,
     };
-    use phenix_core::{LocalPersistence, SessionId, ValueAddress};
+    use phenix_core::{Bytes, LocalPersistence, SessionId, ValueAddress};
     use std::{
         fs,
         path::PathBuf,
@@ -981,6 +1155,64 @@ mod tests {
         let listed =
             invoke_operation::<ListSessions>(&mut worker, PageInput { cursor: None }).unwrap();
         assert!(listed.sessions.is_empty());
+    }
+
+    #[test]
+    fn prompt_preserves_multimodal_content_in_the_session_projection() {
+        let mut worker = application_worker();
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let content = vec![
+            Content::Text {
+                text: "inspect this".into(),
+            },
+            Content::Resource {
+                uri: "file:///workspace/src/main.rs".into(),
+                mime_type: Some("text/plain".into()),
+                text: Some("fn main() {}".into()),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                data: Bytes::new(vec![137, 80, 78, 71]),
+            },
+        ];
+
+        let prompt = invoke_operation::<Prompt>(
+            &mut worker,
+            PromptInput {
+                session_id: created.session_id.clone(),
+                content: content.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(prompt.execution_id, "execution-1");
+        assert_eq!(prompt.stop_reason, StopReason::EndTurn);
+        let projection = &worker.projection().state().sessions[created.session_id.as_str()];
+        assert_eq!(projection.through_sequence, 1);
+        assert!(matches!(
+            &projection.updates[0].update,
+            SessionChange::Message {
+                message: Message {
+                    role: MessageRole::User,
+                    content: projected,
+                },
+            } if projected == &content
+        ));
+
+        invoke_operation::<Cancel>(
+            &mut worker,
+            ApplicationSessionInput {
+                session_id: created.session_id,
+            },
+        )
+        .unwrap();
     }
 
     #[test]

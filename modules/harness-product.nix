@@ -29,6 +29,30 @@
         '';
       };
 
+      phenixAcp = pkgs.rustPlatform.buildRustPackage {
+        pname = "phenix-acp";
+        version = "0";
+        src = rustSource;
+
+        cargoLock.lockFile = ../rust/Cargo.lock;
+        cargoBuildFlags = [
+          "--package"
+          "phenix-harness"
+          "--bin"
+          "phenix-acp"
+        ];
+        doCheck = false;
+
+        installPhase = ''
+          runHook preInstall
+          mkdir -p "$out/bin"
+          acp_binary="$(find target -path '*/release/phenix-acp' -type f -print -quit)"
+          test -n "$acp_binary"
+          cp "$acp_binary" "$out/bin/phenix-acp"
+          runHook postInstall
+        '';
+      };
+
       runtimeConfig = pkgs.writeText "phenix-runtime.json" (
         builtins.toJSON (import ../config/phenix/runtime.nix)
       );
@@ -88,6 +112,7 @@
     in
     {
       packages = {
+        phenix-acp = phenixAcp;
         phenix-harness-runtime = phenixHarnessRuntime;
         phenix-harness-resources = phenixHarnessResources;
       };

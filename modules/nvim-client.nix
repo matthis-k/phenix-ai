@@ -4,6 +4,7 @@
     { pkgs, config, ... }:
     let
       luaBinding = config.packages.phenix-binding-lua;
+      phenixAcp = config.packages.phenix-acp;
       revision = self.rev or self.dirtyRev or "unknown";
       frontendSource = pkgs.lib.cleanSource ../clients/nvim;
       nvimClient = pkgs.vimUtils.buildVimPlugin {
@@ -12,6 +13,9 @@
         src = frontendSource;
         postInstall = ''
           install -Dm755 ${luaBinding}/lib/lua/5.1/phenix.so "$out/lua/phenix.so"
+          substituteInPlace "$out/lua/phenix_nvim/config.lua" \
+            --replace-fail 'command = "phenix-acp"' \
+            'command = "${phenixAcp}/bin/phenix-acp"'
           mkdir -p "$out/share/phenix-nvim"
           printf '%s\n' ${pkgs.lib.escapeShellArg revision} > "$out/share/phenix-nvim/conductor-revision"
         '';
@@ -32,7 +36,9 @@
 
       checks = {
         phenix-nvim-load =
-          pkgs.runCommand "phenix-nvim-load-check" { nativeBuildInputs = [ pkgs.neovim ]; }
+          pkgs.runCommand "phenix-nvim-load-check" {
+            nativeBuildInputs = [ pkgs.neovim phenixAcp ];
+          }
             ''
               test ! -e ${frontendSource}/lua/phenix/init.lua
               test "$(grep -R -l 'require(\"phenix\")' ${frontendSource}/lua | wc -l)" -eq 1
