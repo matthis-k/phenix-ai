@@ -402,6 +402,54 @@ mod resolved_dispatch {
         .unwrap();
     }
 
+    fn decision(target: ModelTarget, generation: &str) -> RouteDecision {
+        RouteDecision {
+            target,
+            capability_generation: CapabilityGenerationId::parse(generation).unwrap(),
+            policy_revision: "route-policy-1".into(),
+            candidate_ordinal: 0,
+            estimate: None,
+        }
+    }
+
+    #[test]
+    fn preflight_checks_auth_and_returns_exact_decision_without_provider_call() {
+        let path = temp_db("resolved-dispatch-preflight");
+        let mut kernel = kernel_with_provider(&path);
+        let target = target("fixture.provider", "selected");
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            },
+        )
+        .unwrap();
+        let decision = decision(target, "generation-1");
+
+        let error = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("authentication required"));
+
+        authenticate(&mut kernel);
+        let response = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision.clone(),
+            },
+        )
+        .unwrap();
+        let ModelDispatchResponse::Ready { decision: ready } = response else {
+            panic!("expected ready response");
+        };
+        assert_eq!(ready, decision);
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn exact_selected_target_reaches_provider_unchanged() {
         let path = temp_db("resolved-dispatch-exact");
@@ -415,13 +463,7 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let decision = RouteDecision {
-            target,
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            policy_revision: "route-policy-1".into(),
-            candidate_ordinal: 1,
-            estimate: None,
-        };
+        let decision = decision(target, "generation-1");
         let response = invoke_dispatch(
             &mut kernel,
             ModelDispatchCommand::InvokeResolved {
@@ -434,7 +476,10 @@ mod resolved_dispatch {
         let ModelDispatchResponse::Inference {
             decision: returned,
             response,
-        } = response;
+        } = response
+        else {
+            panic!("expected inference response");
+        };
         assert_eq!(returned, decision);
         assert_eq!(response.output.as_ref(), b"exact");
         assert_eq!(
@@ -445,7 +490,7 @@ mod resolved_dispatch {
     }
 
     #[test]
-    fn stale_generation_is_rejected_before_provider_dispatch() {
+    fn stale_generation_is_rejected_in_preflight_and_invoke() {
         let path = temp_db("resolved-dispatch-stale");
         let mut kernel = kernel_with_provider(&path);
         authenticate(&mut kernel);
@@ -457,13 +502,7 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let decision = RouteDecision {
-            target: target.clone(),
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            policy_revision: "route-policy-1".into(),
-            candidate_ordinal: 0,
-            estimate: None,
-        };
+        let decision = decision(target.clone(), "generation-1");
         invoke_routing(
             &mut kernel,
             ModelCommand::PublishCapabilities {
@@ -471,7 +510,17 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let error = invoke_dispatch(
+
+        let preflight = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(preflight.contains("StaleCapabilityGeneration"));
+
+        let invoke = invoke_dispatch(
             &mut kernel,
             ModelDispatchCommand::InvokeResolved {
                 decision,
@@ -480,7 +529,7 @@ mod resolved_dispatch {
             },
         )
         .unwrap_err();
-        assert!(error.contains("StaleCapabilityGeneration"));
+        assert!(invoke.contains("StaleCapabilityGeneration"));
         let _ = fs::remove_file(path);
     }
 }

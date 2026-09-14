@@ -224,16 +224,39 @@ fn handle_dispatch(
     command: ModelDispatchCommand,
 ) -> Result<ModelDispatchResponse, String> {
     match command {
+        ModelDispatchCommand::PrepareResolved { decision } => {
+            validate_dispatch(context, routing, &decision)?;
+            Ok(ModelDispatchResponse::Ready { decision })
+        }
         ModelDispatchCommand::InvokeResolved {
             decision,
             input,
             tools,
         } => {
-            routing.validate_decision(&decision)?;
+            validate_dispatch(context, routing, &decision)?;
             let response = invoke_target(context, &decision.target, input, tools)?;
             Ok(ModelDispatchResponse::Inference { decision, response })
         }
     }
+}
+
+fn validate_dispatch(
+    context: &ModelContext<'_, '_, '_>,
+    routing: &RoutingServiceState,
+    decision: &phenix_sdk::RouteDecision,
+) -> Result<(), String> {
+    routing.validate_decision(decision)?;
+    if !context
+        .plugin
+        .state
+        .contains(&decision.target.provider_plugin)
+    {
+        return Err(format!(
+            "provider authentication required: {}",
+            decision.target.provider_plugin
+        ));
+    }
+    Ok(())
 }
 
 fn invoke_target(
