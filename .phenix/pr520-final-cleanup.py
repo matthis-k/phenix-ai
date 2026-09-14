@@ -46,7 +46,6 @@ replace_exact(
     "if encoded.len() % 2 != 0 {",
     "if !encoded.len().is_multiple_of(2) {",
 )
-
 replace_exact(
     durable,
     '''    fn entry_prefix(&self) -> String {
@@ -79,7 +78,6 @@ replace_exact(
         )
     }''',
 )
-
 replace_exact(
     durable,
     '''        let map = DurableMap::<String, String>::new(namespace.clone(), "users");
@@ -104,6 +102,30 @@ replace_exact(
         assert_eq!(log.latest_with(&access).unwrap(), None);
 
         assert_eq!(log.append_with(&access, &"first".to_owned()).unwrap(), 0);''',
+)
+
+runtime_tests = "rust/crates/phenix-core/src/runtime/tests.rs"
+replace_exact(
+    runtime_tests,
+    '''    let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+    kernel
+        .persistence
+        .lock()
+        .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))''',
+    '''    let kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+    kernel
+        .persistence
+        .lock()
+        .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))''',
+)
+
+hooks = "rust/crates/phenix-plugin-hooks/src/implementation.rs"
+replace_exact(
+    hooks,
+    '''            assert!(duplicate_error.contains("transaction assertion failed"));
+            assert!(duplicate_error.contains("configuration/config-1"));''',
+    '''            assert!(duplicate_error.contains("persistence assertion conflicted"));
+            assert!(duplicate_error.contains("configuration/config-1"));''',
 )
 
 persistence_doc = "spec/plugin-persistence.md"
