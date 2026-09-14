@@ -101,6 +101,18 @@ impl AttemptLedger {
         Ok(record.clone())
     }
 
+    pub(crate) fn abort(
+        &mut self,
+        attempt_id: &str,
+        outcome: AttemptOutcome,
+    ) -> Result<StepAttemptRecord, String> {
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .abort(outcome)
+                .map_err(|error| format!("attempt abort failed: {error:?}"))
+        })
+    }
+
     pub(crate) fn settle(
         &mut self,
         attempt_id: &str,
@@ -224,6 +236,10 @@ fn mutate(
                 .mark_dispatched(dispatch_id)
                 .map_err(|error| format!("dispatch binding failed: {error:?}"))
         })?,
+        StepAttemptCommand::Abort {
+            attempt_id,
+            outcome,
+        } => next.abort(&attempt_id, outcome)?,
         StepAttemptCommand::Settle {
             attempt_id,
             outcome,
