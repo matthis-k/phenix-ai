@@ -50,10 +50,20 @@
                 echo "frontend Lua must not contain raw Phenix wire method ids" >&2
                 exit 1
               fi
+              grep -F ${pkgs.lib.escapeShellArg "command = \"${phenixAcp}/bin/phenix-acp\""} \
+                ${nvimClient}/lua/phenix_nvim/config.lua >/dev/null
+
               nvim --headless -u NONE \
                 --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \
                 -c ${pkgs.lib.escapeShellArg "lua dofile('${frontendSource}/tests/headless.lua')"} \
                 -c qa
+
+              export PHENIX_STATE_DB="$TMPDIR/phenix-nvim-acp.sqlite"
+              nvim --headless -u NONE \
+                --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \
+                -c ${pkgs.lib.escapeShellArg ''lua local frontend = require("phenix_nvim"); frontend.setup({ auto_connect = false }); local connected = false; local failure = nil; frontend.connect(function(_, err) failure = err; connected = true end); assert(vim.wait(10000, function() return connected end, 10), "packaged phenix-acp connection timed out"); assert(failure == nil, vim.inspect(failure)); local created = false; frontend.new_session(); assert(vim.wait(10000, function() return require("phenix_nvim.runtime").active_session() ~= nil end, 10), "packaged session creation timed out"); frontend.disconnect()''} \
+                -c qa
+              test -s "$PHENIX_STATE_DB"
               touch "$out"
             '';
         phenix-nvim-export = pkgs.runCommand "phenix-nvim-export-check" { } ''
