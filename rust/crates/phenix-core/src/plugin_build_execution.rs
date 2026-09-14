@@ -1,8 +1,4 @@
 use crate::{Authority, PluginArtifact, PluginBuildPlan};
-use std::{
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
 
 const MAX_EVIDENCE_ENTRIES: usize = 64;
 const MAX_EVIDENCE_ENTRY_BYTES: usize = 4_096;
@@ -77,19 +73,12 @@ pub struct PluginBuildExecution {
     pub evidence: PluginBuildEvidence,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{message}")]
 pub struct PluginBuildFailure {
     pub message: String,
     pub evidence: PluginBuildEvidence,
 }
-
-impl Display for PluginBuildFailure {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for PluginBuildFailure {}
 
 /// Executes a plan in isolated staging with only the supplied authority and
 /// explicit environment. Steps run in order and only the declared output may
@@ -102,18 +91,11 @@ pub trait PluginBuildExecutor {
     ) -> Result<PluginBuildExecution, PluginBuildFailure>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{message}")]
 pub struct PluginArtifactStoreError {
     pub message: String,
 }
-
-impl Display for PluginArtifactStoreError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for PluginArtifactStoreError {}
 
 /// Content-addressed artifact storage used before a candidate can reach
 /// runtime resolution. Ready artifacts are verified; built bytes are stored

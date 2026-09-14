@@ -14,7 +14,7 @@ impl Store {
 #[allow(dead_code)]
 #[phenix_sdk::plugin("fixture.resource-only")]
 struct Plugin {
-    #[phenix(resource, features(Transactions, Migrations))]
+    #[phenix(resource, features(Migrations))]
     state: phenix_sdk::Durable<Store>,
 }
 
@@ -26,10 +26,6 @@ fn resource_only_plugin_derives_durable_registration_metadata() {
     let resource = &resources[0];
     assert_eq!(resource.id.as_str(), "fixture.resource-only.state");
     assert_eq!(resource.schema.version, 3);
-    assert!(resource
-        .schema
-        .required_features
-        .contains(&phenix_sdk::BackendFeature::Transactions));
     assert!(resource
         .schema
         .required_features

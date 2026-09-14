@@ -11,10 +11,12 @@ role = "passive-library"
 [dependencies]
 agent-client-protocol.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 phenix-application-interface = { path = "../phenix-application-interface" }
 phenix-core = { path = "../phenix-core" }
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 serde_json.workspace = true
+thiserror.workspace = true
 
 [build-dependencies]
 phenix-application-interface = { path = "../phenix-application-interface" }
