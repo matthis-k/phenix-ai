@@ -11,6 +11,7 @@ role = "application"
 phenix-conductor = { path = "../phenix-conductor" }
 phenix-core = { path = "../phenix-core" }
 phenix-plugin-catalog = { path = "../phenix-plugin-catalog" }
+phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true
 serde_json.workspace = true
