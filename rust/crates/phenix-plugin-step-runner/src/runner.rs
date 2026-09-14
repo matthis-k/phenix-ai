@@ -600,7 +600,9 @@ fn helper_parent_reservation(
         attempt: Some(parent),
     } = response
     else {
-        return Err(format!("unknown helper parent attempt: {parent_attempt_id}"));
+        return Err(format!(
+            "unknown helper parent attempt: {parent_attempt_id}"
+        ));
     };
     if parent.attribution.root_execution_id != attribution.root_execution_id {
         return Err("helper parent belongs to a different root execution".into());
