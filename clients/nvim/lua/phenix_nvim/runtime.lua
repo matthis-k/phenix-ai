@@ -124,11 +124,11 @@ function M.defer(start)
 end
 
 local function permission_handler(request)
-  return M.defer(function(resolve, reject)
+  return M.defer(function(resolve, _reject)
     vim.schedule(function()
-      local ok, error = pcall(interaction.permission, request, resolve)
+      local ok = pcall(interaction.permission, request, resolve)
       if not ok then
-        reject(tostring(error))
+        resolve({ kind = "Cancelled" })
       end
     end)
   end)
