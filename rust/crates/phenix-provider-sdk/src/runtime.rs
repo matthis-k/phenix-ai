@@ -66,9 +66,40 @@ impl ProviderPlugin {
                 return Ok(Some(auth));
             }
         }
+        if let Some(auth) = self.spec.default_auth.clone() {
+            if auth.is_expired() {
+                return Err(ProviderError::Authentication {
+                    message: format!("default OAuth credential for {} is expired", self.spec.id),
+                });
+            }
+            return Ok(Some(auth));
+        }
         Err(ProviderError::Authentication {
             message: format!("provider {} has no configured credentials", self.spec.id),
         })
+    }
+
+    fn available_auth_descriptors(&self) -> Result<Vec<crate::AuthDescriptor>, ProviderError> {
+        let mut credentials = self.credentials()?.list(self.spec.id.as_str())?;
+        if let Some(default_auth) = &self.spec.default_auth {
+            let available = match default_auth {
+                Auth::ApiToken {
+                    source: ApiTokenSource::Environment { variable },
+                } => std::env::var(variable.as_str())
+                    .ok()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                Auth::ApiToken {
+                    source: ApiTokenSource::Literal { .. },
+                } => true,
+                Auth::OAuth { .. } => !default_auth.is_expired(),
+            };
+            let descriptor = default_auth.descriptor();
+            if available && !credentials.iter().any(|item| item.kind == descriptor.kind) {
+                credentials.push(descriptor);
+                credentials.sort_by_key(|item| item.kind);
+            }
+        }
+        Ok(credentials)
     }
 
     fn invoke_model(
@@ -124,7 +155,7 @@ impl ProviderPlugin {
                 methods: self.spec.auth_kinds(),
             }),
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
-                credentials: store.list(self.spec.id.as_str())?,
+                credentials: self.available_auth_descriptors()?,
             }),
             ProviderAuthCommand::Remove { kind } => {
                 let auth = store.remove(self.spec.id.as_str(), kind)?;
