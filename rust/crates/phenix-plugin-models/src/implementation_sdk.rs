@@ -2,15 +2,15 @@ pub use phenix_core::{
     model_inference_service, ModelInferenceRequest, ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    Authority, CallableId, CapabilityId, ComponentInterface, DurableSchema, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
-    RoutingProfileId, ServiceContribution, ServiceId, TransactionOp,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, RoutingProfileId,
+    ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
     model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
     ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
-    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
-    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
+    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE,
+    MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -193,16 +193,6 @@ fn handle_routing(
                 authenticated,
             })
         }
-        ModelCommand::Resolve {
-            profile_id,
-            callable_id,
-        } => Ok(ModelResponse::Target {
-            target: resolve_compat_target(context, &profile_id, callable_id.as_ref())?,
-        }),
-        ModelCommand::Invoke { .. } => Err(
-            "legacy model invocation is disabled; use phenix.invocation@1 or phenix.invocation.default@1"
-                .into(),
-        ),
         ModelCommand::PublishCapabilities { .. }
         | ModelCommand::ListCandidates { .. }
         | ModelCommand::ResolveWithRequirements { .. }
@@ -348,19 +338,6 @@ fn descriptor(profile: &RoutingProfile) -> RoutingProfileDescriptor {
         id: profile.id.clone(),
         providers: providers.into_iter().collect(),
     }
-}
-
-fn resolve_compat_target(
-    context: &ModelContext<'_, '_, '_>,
-    profile_id: &RoutingProfileId,
-    callable_id: Option<&CallableId>,
-) -> Result<ModelTarget, String> {
-    let profile = read_profile(context, profile_id)?
-        .ok_or_else(|| format!("unknown routing profile: {profile_id}"))?;
-    Ok(callable_id
-        .and_then(|callable| profile.callable_targets.get(callable))
-        .unwrap_or(&profile.default_target)
-        .clone())
 }
 
 fn insert_profile(
