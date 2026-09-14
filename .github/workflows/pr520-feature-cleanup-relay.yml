@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/pr520-feature-cleanup-relay.yml
       - .phenix/pr520-feature-cleanup.py
+      - .phenix/pr520-feature-cleanup-pre.py
 
 permissions:
   contents: write
@@ -20,10 +21,12 @@ jobs:
           ref: refactor/durable-collections
           fetch-depth: 0
       - name: Apply feature cleanup
-        run: python .phenix/pr520-feature-cleanup.py
+        run: |
+          python .phenix/pr520-feature-cleanup-pre.py
+          python .phenix/pr520-feature-cleanup.py
       - name: Remove relay files
         run: |
-          rm .phenix/pr520-feature-cleanup.py .github/workflows/pr520-feature-cleanup-relay.yml
+          rm .phenix/pr520-feature-cleanup.py .phenix/pr520-feature-cleanup-pre.py .github/workflows/pr520-feature-cleanup-relay.yml
           rmdir .phenix || true
       - name: Format
         working-directory: rust
