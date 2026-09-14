@@ -22,8 +22,21 @@ local function lines_for(node)
       "",
     }
   end
-  if node.kind == "progress" then
-    return { "_" .. (node.message or "working") .. "_", "" }
+  if node.kind == "execution" then
+    local label = node.message or node.state or "running"
+    if node.fraction ~= nil then
+      label = string.format("%s (%.0f%%)", label, node.fraction * 100)
+    end
+    return { "_" .. label .. "_", "" }
+  end
+  if node.kind == "diagnostic" then
+    local prefix = node.severity and (string.upper(node.severity) .. ": ") or ""
+    return { prefix .. tostring(node.message or node.code or "diagnostic"), "" }
+  end
+  if node.kind == "review" then
+    local review = node.review or {}
+    local state = review.state and review.state.kind or "Pending"
+    return { "### Review", "", "`" .. tostring(state) .. "`", "" }
   end
   return { vim.inspect(node), "" }
 end
