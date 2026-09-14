@@ -1,7 +1,7 @@
 use crate::{
-    assemble_prompt, context_component_id,
+    assemble_prompt, context_component_id, projection_state::ContextProjectionState,
     state_service::{ContextStateService, CONTEXT_PROJECTION_STATE_KEY},
-    PromptSectionKind,
+    PromptSection, PromptSectionKind,
 };
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
@@ -9,12 +9,13 @@ use phenix_core::{
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    context_service, CachePlacement, ContextCandidate, ContextCommand, ContextDescriptor,
-    ContextInjection, ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
-    ContextInvocationPreparation, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    context_service, AdmittedContextItem, CachePlacement, ContextCandidate, ContextCommand,
+    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
+    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
+    ContextProjectionForm, ContextResourceKind, ContextResourceRevision, ContextResponse,
     ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, ProjectionRevision, RepositoryContextSource,
+    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -190,6 +191,19 @@ fn handle(
             input,
         } => Ok(ContextResponse::InvocationPrepared {
             preparation: prepare_invocation(context, state, execution_id, input)?,
+        }),
+        ContextCommand::MaterializeInvocation {
+            execution_id,
+            input,
+            expected_projection,
+        } => Ok(ContextResponse::InvocationMaterialized {
+            materialization: materialize_invocation(
+                context,
+                state,
+                execution_id,
+                input,
+                expected_projection,
+            )?,
         }),
         ContextCommand::GetProjectionState { .. }
         | ContextCommand::Admit { .. }
@@ -545,6 +559,7 @@ fn prepare_invocation(
     let projection = project_context(context, execution_id.clone())?;
     Ok(invocation_preparation(
         &projection,
+        state.projection(&execution_id),
         state.projection_revision(&execution_id),
         &input,
     ))
@@ -552,65 +567,192 @@ fn prepare_invocation(
 
 fn invocation_preparation(
     projection: &ExecutionContextProjection,
-    projection_state: ProjectionRevision,
+    committed: Option<&ContextProjectionState>,
+    projection_revision: ProjectionRevision,
     input: &Bytes,
 ) -> ContextInvocationPreparation {
-    let candidates = assemble_prompt(projection)
+    let mut candidates = assemble_prompt(projection)
         .sections
         .into_iter()
-        .map(|section| {
-            let mandatory = matches!(
-                section.kind,
-                PromptSectionKind::HarnessIdentity
-                    | PromptSectionKind::ProjectInstruction
-                    | PromptSectionKind::Skill
-            );
-            let cache = if mandatory {
-                CachePlacement::StablePrefix
-            } else {
-                CachePlacement::Epoch
-            };
-            let retention = if mandatory {
-                ContextRetention::Pinned
-            } else {
-                ContextRetention::Full
-            };
-            let content_identity = content_hash(section.content.as_ref()).as_str().to_owned();
-            let (id, source, recovery) = match section.reference {
-                Some(reference) => (
-                    format!("{}@{}", reference.resource_id, reference.revision),
-                    ContextSource::Exact {
-                        reference: reference.clone(),
-                    },
-                    Some(reference),
-                ),
-                None => (
-                    "phenix:harness-identity".to_owned(),
-                    ContextSource::Inline {
-                        identity: "phenix:harness-identity".to_owned(),
-                    },
-                    None,
-                ),
-            };
-            ContextCandidate {
-                id,
-                source,
-                content_identity,
-                estimated_tokens: conservative_token_estimate(section.content.as_ref()),
-                content: section.content,
-                mandatory,
-                retention,
-                cache,
-                recovery,
-            }
+        .map(context_candidate)
+        .filter(|candidate| {
+            !committed
+                .and_then(|state| state.admitted.get(&candidate.id))
+                .is_some_and(is_reduced_item)
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    if let Some(checkpoint) = committed
+        .filter(|state| {
+            state
+                .admitted
+                .values()
+                .any(|item| item.retention == ContextRetention::Compact)
+        })
+        .and_then(|state| state.committed_checkpoint.as_ref())
+    {
+        candidates.push(checkpoint_candidate(checkpoint));
+    }
 
     ContextInvocationPreparation {
         request_input_tokens: conservative_token_estimate(input.as_ref()),
         candidates,
-        projection: projection_state,
+        projection: projection_revision,
     }
+}
+
+fn materialize_invocation(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    execution_id: String,
+    input: Bytes,
+    expected_projection: ProjectionRevision,
+) -> Result<ContextInvocationMaterialization, String> {
+    require_active_execution(context, &execution_id)?;
+    let committed = state
+        .projection(&execution_id)
+        .ok_or_else(|| format!("context projection is not admitted: {execution_id}"))?;
+    if committed.revision != expected_projection {
+        return Err(format!(
+            "context projection changed before materialization: expected {:?}, actual {:?}",
+            expected_projection, committed.revision
+        ));
+    }
+
+    let projection = project_context(context, execution_id)?;
+    let mut output = Vec::new();
+    for section in assemble_prompt(&projection).sections {
+        let candidate = context_candidate(section);
+        let Some(item) = committed.admitted.get(&candidate.id) else {
+            continue;
+        };
+        validate_materialized_item(item, &candidate)?;
+        if item.form == ContextProjectionForm::Full
+            && item.retention != ContextRetention::Compact
+        {
+            append_materialized_part(&mut output, candidate.content.as_ref());
+        }
+    }
+
+    if let Some(checkpoint) = committed.committed_checkpoint.as_ref().filter(|_| {
+        committed
+            .admitted
+            .values()
+            .any(|item| item.retention == ContextRetention::Compact)
+    }) {
+        let candidate = checkpoint_candidate(checkpoint);
+        if let Some(item) = committed.admitted.get(&candidate.id) {
+            validate_materialized_item(item, &candidate)?;
+            if item.form == ContextProjectionForm::Full {
+                append_materialized_part(&mut output, candidate.content.as_ref());
+            }
+        }
+    }
+
+    append_materialized_part(&mut output, input.as_ref());
+    Ok(ContextInvocationMaterialization {
+        input: Bytes::from(output),
+        projection: expected_projection,
+    })
+}
+
+fn context_candidate(section: PromptSection) -> ContextCandidate {
+    let mandatory = matches!(
+        section.kind,
+        PromptSectionKind::HarnessIdentity
+            | PromptSectionKind::ProjectInstruction
+            | PromptSectionKind::Skill
+    );
+    let cache = if mandatory {
+        CachePlacement::StablePrefix
+    } else {
+        CachePlacement::Epoch
+    };
+    let retention = if mandatory {
+        ContextRetention::Pinned
+    } else {
+        ContextRetention::Full
+    };
+    let content_identity = content_hash(section.content.as_ref()).as_str().to_owned();
+    let (id, source, recovery) = match section.reference {
+        Some(reference) => (
+            format!("{}@{}", reference.resource_id, reference.revision),
+            ContextSource::Exact {
+                reference: reference.clone(),
+            },
+            Some(reference),
+        ),
+        None => (
+            "phenix:harness-identity".to_owned(),
+            ContextSource::Inline {
+                identity: "phenix:harness-identity".to_owned(),
+            },
+            None,
+        ),
+    };
+    ContextCandidate {
+        id,
+        source,
+        content_identity,
+        estimated_tokens: conservative_token_estimate(section.content.as_ref()),
+        content: section.content,
+        mandatory,
+        retention,
+        cache,
+        recovery,
+    }
+}
+
+fn checkpoint_candidate(checkpoint: &ProjectionCheckpoint) -> ContextCandidate {
+    let identity = checkpoint_candidate_id(checkpoint);
+    ContextCandidate {
+        id: identity.clone(),
+        source: ContextSource::Inline { identity },
+        content_identity: checkpoint.content_identity.clone(),
+        content: checkpoint.compact_view.clone(),
+        estimated_tokens: conservative_token_estimate(checkpoint.compact_view.as_ref()),
+        mandatory: false,
+        retention: ContextRetention::DropAllowed,
+        cache: CachePlacement::Epoch,
+        recovery: None,
+    }
+}
+
+fn checkpoint_candidate_id(checkpoint: &ProjectionCheckpoint) -> String {
+    format!("phenix:checkpoint:{}", checkpoint.checkpoint_id)
+}
+
+fn is_reduced_item(item: &AdmittedContextItem) -> bool {
+    item.retention == ContextRetention::Compact || item.form != ContextProjectionForm::Full
+}
+
+fn validate_materialized_item(
+    item: &AdmittedContextItem,
+    candidate: &ContextCandidate,
+) -> Result<(), String> {
+    if item.source != candidate.source {
+        return Err(format!(
+            "context materialization source changed for {}",
+            candidate.id
+        ));
+    }
+    if item.content_identity != candidate.content_identity {
+        return Err(format!(
+            "context materialization content changed for {}",
+            candidate.id
+        ));
+    }
+    Ok(())
+}
+
+fn append_materialized_part(output: &mut Vec<u8>, content: &[u8]) {
+    if content.is_empty() {
+        return;
+    }
+    if !output.is_empty() {
+        output.extend_from_slice(b"\n\n");
+    }
+    output.extend_from_slice(content);
 }
 
 fn conservative_token_estimate(content: &[u8]) -> u64 {
@@ -706,6 +848,7 @@ mod preparation_tests {
         };
         let preparation = invocation_preparation(
             &projection,
+            None,
             ProjectionRevision {
                 revision: 3,
                 cache_epoch: 2,
@@ -722,5 +865,14 @@ mod preparation_tests {
         assert_eq!(identity.retention, ContextRetention::Pinned);
         assert_eq!(identity.cache, CachePlacement::StablePrefix);
         assert!(matches!(identity.source, ContextSource::Inline { .. }));
+    }
+
+    #[test]
+    fn materialized_parts_are_stable_and_request_is_last() {
+        let mut output = Vec::new();
+        append_materialized_part(&mut output, b"instruction");
+        append_materialized_part(&mut output, b"context");
+        append_materialized_part(&mut output, b"request");
+        assert_eq!(output, b"instruction\n\ncontext\n\nrequest");
     }
 }
