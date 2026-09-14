@@ -39,4 +39,39 @@ assert(image.close(id))
 assert(calls[3].kind == "del" and calls[3].id == id)
 assert(attachment.bytes == "immutable-snapshot", "renderer lifecycle must not mutate attachment bytes")
 
+local model = require("phenix_nvim.compose.model")
+local compose = require("phenix_nvim.compose.buffer")
+local document = model.new()
+local target = compose.ensure(document)
+local win = vim.api.nvim_get_current_win()
+vim.api.nvim_win_set_buf(win, target)
+compose.attach_window(document, win)
+
+local stored = model.add(document, attachment)
+local before_insert = #calls
+compose.insert(document, stored, win)
+assert(#calls > before_insert, "image marker insertion must create a preview when a renderer exists")
+assert(calls[before_insert + 1].value == attachment.bytes)
+local before_detach = #calls
+compose.detach_window(win)
+assert(#calls == before_detach + 1 and calls[#calls].kind == "del", "view teardown must close previews")
+
+compose.attach_window(document, win)
+assert(calls[#calls].kind == "set", "reopening the compose view must restore image previews")
+local before_marker_delete = #calls
+vim.api.nvim_buf_set_lines(target, 0, -1, false, { "" })
+compose.refresh_previews(document, win)
+assert(
+  #calls > before_marker_delete and calls[#calls].kind == "del",
+  "deleting an image marker must close its preview"
+)
+
+compose.clear(document)
+local second = model.add(document, attachment)
+compose.insert(document, second, win)
+local before_wipe = #calls
+vim.api.nvim_buf_delete(target, { force = true })
+assert(#calls > before_wipe and calls[#calls].kind == "del", "buffer teardown must close image previews")
+assert(second.bytes == "immutable-snapshot", "preview cleanup must not mutate the attachment snapshot")
+
 vim.ui.img = original
