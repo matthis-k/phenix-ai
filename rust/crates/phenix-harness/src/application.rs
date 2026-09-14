@@ -1016,7 +1016,9 @@ async fn serve_application_worker(
 
     for (_, execution) in active {
         execution.cancellation.store(true, Ordering::Release);
-        execution.prompt.respond(Err(ApplicationError::Disconnected));
+        execution
+            .prompt
+            .respond(Err(ApplicationError::Disconnected));
     }
     worker.clear_interaction_handlers();
     service.retire_client();
@@ -1039,7 +1041,10 @@ fn start_prompt(
     let key = request.session_id.as_str().to_owned();
     if active.contains_key(&key) {
         invocation.respond(Err(ApplicationError::Conflict {
-            message: format!("session {} already has a running execution", request.session_id),
+            message: format!(
+                "session {} already has a running execution",
+                request.session_id
+            ),
         }));
         return;
     }
@@ -1180,7 +1185,9 @@ fn finish_prompt(
             Err(error)
         }
     };
-    execution.prompt.respond(result.map(|value| value.to_value()));
+    execution
+        .prompt
+        .respond(result.map(|value| value.to_value()));
 }
 
 fn complete_prompt_output(
@@ -1246,16 +1253,16 @@ fn run_agent_execution(
     if cancellation.load(Ordering::Acquire) {
         return Err(ApplicationError::Cancelled);
     }
-    let profile = env::var("PHENIX_ROUTING_PROFILE")
-        .unwrap_or_else(|_| DEFAULT_ROUTING_PROFILE.to_owned());
-    let profile_id = RoutingProfileId::parse(profile).map_err(|error| ApplicationError::InvalidInput {
-        message: format!("invalid PHENIX_ROUTING_PROFILE: {error}"),
-    })?;
-    let callable_id = CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| {
-        ApplicationError::Failed {
+    let profile =
+        env::var("PHENIX_ROUTING_PROFILE").unwrap_or_else(|_| DEFAULT_ROUTING_PROFILE.to_owned());
+    let profile_id =
+        RoutingProfileId::parse(profile).map_err(|error| ApplicationError::InvalidInput {
+            message: format!("invalid PHENIX_ROUTING_PROFILE: {error}"),
+        })?;
+    let callable_id =
+        CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| ApplicationError::Failed {
             message: format!("invalid application agent id: {error}"),
-        }
-    })?;
+        })?;
     let command = AgentLoopCommand::Run {
         profile_id,
         callable_id: Some(callable_id),
@@ -1275,25 +1282,23 @@ fn run_agent_execution(
     if cancellation.load(Ordering::Acquire) {
         return Err(ApplicationError::Cancelled);
     }
-    let value: PhenixValue = serde_json::from_slice(&output).map_err(|error| {
-        ApplicationError::InvalidResponse {
+    let value: PhenixValue =
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let response = AgentLoopResponse::try_from(Project(&value)).map_err(|error| {
         ApplicationError::InvalidResponse {
             message: error.to_string(),
         }
     })?;
     let AgentLoopResponse::Completed {
-        output,
-        tool_calls,
-        ..
+        output, tool_calls, ..
     } = response;
     if !tool_calls.is_empty() {
         return Err(ApplicationError::Failed {
-            message: "agent loop returned tool calls before typed tool-result continuation is available"
-                .to_owned(),
+            message:
+                "agent loop returned tool calls before typed tool-result continuation is available"
+                    .to_owned(),
         });
     }
     String::from_utf8(output.as_ref().to_vec()).map_err(|error| ApplicationError::InvalidResponse {
