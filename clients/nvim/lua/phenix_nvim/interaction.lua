@@ -132,10 +132,10 @@ local function fallback_select(items, options, callback)
 
   local function choose(index)
     local choice = items[index]
+    done(choice, choice ~= nil and index or nil)
     if vim.api.nvim_win_is_valid(win) then
       pcall(vim.api.nvim_win_close, win, true)
     end
-    done(choice, choice ~= nil and index or nil)
   end
 
   vim.keymap.set("n", "<CR>", function()
