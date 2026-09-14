@@ -423,7 +423,7 @@ impl ApplicationWorker {
         &mut self,
         request: SessionRenameInput,
     ) -> Result<SessionInfo, ApplicationError> {
-        let session = self.require_open_application_session(&request.session_id)?;
+        self.require_open_application_session(&request.session_id)?;
         let change = SessionChange::Renamed {
             title: request.title.clone(),
         };
@@ -462,7 +462,7 @@ impl ApplicationWorker {
     }
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
-        self.require_open_application_session(&request.session_id)?;
+        let session = self.require_open_application_session(&request.session_id)?;
         let response = self.invoke_session(SessionCommand::AppendJournal {
             id: request.session_id.clone(),
             entry: session_change_journal(&SessionChange::Message {
@@ -821,12 +821,14 @@ async fn serve_application_worker(
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
 ) {
     while let Some(invocation) = receiver.recv().await {
-        let result = if is_sdk_operation(&invocation.operation) {
-            service.invoke(&invocation.operation, invocation.input)
+        let operation = invocation.operation.clone();
+        let input = invocation.input.clone();
+        let result = if is_sdk_operation(&operation) {
+            service.invoke(&operation, input)
         } else {
             worker.invoke_with_client_callables(
-                &invocation.operation,
-                invocation.input,
+                &operation,
+                input,
                 |callable, schema| service.admit_current_client_callable(callable, schema),
             )
         };
