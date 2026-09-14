@@ -1,7 +1,7 @@
 use phenix_sdk::{
     AdmittedContextItem, CompactionCommit, CompactionProposal, CompactionValidationError,
-    ContextAdmissionResult, ContextProjectionForm, ContextRetention, ProjectionRevision,
-    RetentionTransition,
+    ContextAdmissionResult, ContextProjectionForm, ContextRetention, ProjectionCheckpoint,
+    ProjectionRevision, RetentionTransition,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -11,6 +11,8 @@ pub(crate) struct ContextProjectionState {
     pub execution_id: String,
     pub revision: ProjectionRevision,
     pub admitted: BTreeMap<String, AdmittedContextItem>,
+    #[serde(default)]
+    pub committed_checkpoint: Option<ProjectionCheckpoint>,
     prepared: BTreeMap<String, CompactionProposal>,
 }
 
@@ -47,6 +49,7 @@ impl ContextProjectionState {
                 cache_epoch: 0,
             },
             admitted: BTreeMap::new(),
+            committed_checkpoint: None,
             prepared: BTreeMap::new(),
         }
     }
@@ -126,6 +129,7 @@ impl ContextProjectionState {
             revision: self.revision.revision.saturating_add(1),
             cache_epoch: proposal.next_cache_epoch,
         };
+        self.committed_checkpoint = Some(proposal.checkpoint.clone());
         self.prepared.clear();
         Ok(CompactionCommit {
             proposal,
@@ -174,7 +178,7 @@ impl ContextProjectionState {
 mod tests {
     use super::*;
     use phenix_core::Bytes;
-    use phenix_sdk::{CachePlacement, ContextSource, ProjectionCheckpoint, ToolCallGroupReference};
+    use phenix_sdk::{CachePlacement, ContextSource, ToolCallGroupReference};
 
     fn state() -> ContextProjectionState {
         let mut state = ContextProjectionState::new("execution-1");
@@ -241,7 +245,10 @@ mod tests {
     fn compaction_commit_advances_revision_and_cache_epoch() {
         let mut state = state();
         let original = state.revision.clone();
-        state.prepare_compaction(proposal(&state)).unwrap();
+        let expected_checkpoint = proposal(&state).checkpoint;
+        let mut proposal = proposal(&state);
+        proposal.checkpoint = expected_checkpoint.clone();
+        state.prepare_compaction(proposal).unwrap();
         let commit = state.commit_compaction("checkpoint-1").unwrap();
         assert_eq!(commit.committed_projection.revision, original.revision + 1);
         assert_eq!(
@@ -252,6 +259,7 @@ mod tests {
             state.admitted["item-1"].form,
             ContextProjectionForm::Omitted
         );
+        assert_eq!(state.committed_checkpoint, Some(expected_checkpoint));
     }
 
     #[test]
