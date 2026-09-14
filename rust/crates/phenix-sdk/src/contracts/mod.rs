@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod memory;
 pub mod memory_context;
 pub mod memory_freshness;
+pub mod model_dispatch;
 #[allow(clippy::double_must_use)]
 pub mod models;
 pub mod options;
@@ -43,6 +44,7 @@ pub use jobs::*;
 pub use memory::*;
 pub use memory_context::*;
 pub use memory_freshness::*;
+pub use model_dispatch::*;
 pub use models::*;
 pub use options::*;
 pub use planning::*;
