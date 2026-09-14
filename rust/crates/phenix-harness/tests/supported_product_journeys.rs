@@ -331,7 +331,7 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
         "phenix.context@1",
         json!({"operation": "list"}),
     );
-    assert_eq!(context["result"], "resources");
+    assert_eq!(context["response"], "resources");
 
     let execution = invoke(
         &mut harness,
