@@ -1,7 +1,7 @@
 use phenix_application_interface::{
     types::{
-        ReviewDecision, ReviewDecisionInput, ReviewHunk, ReviewRecord, ReviewState,
-        SessionChange, SessionCreateInput, SessionInfo,
+        ReviewDecision, ReviewDecisionInput, ReviewHunk, ReviewRecord, ReviewState, SessionChange,
+        SessionCreateInput, SessionInfo,
     },
     CreateSession, DecideReview, Operation,
 };
@@ -12,10 +12,7 @@ use phenix_plugin_catalog::{
     WorkspaceFileVersion,
 };
 
-fn invoke_application<O: Operation>(
-    worker: &mut ApplicationWorker,
-    input: O::Input,
-) -> O::Output {
+fn invoke_application<O: Operation>(worker: &mut ApplicationWorker, input: O::Input) -> O::Output {
     let output = worker
         .invoke(&ContractId::parse(O::ID).unwrap(), input.to_value())
         .unwrap();
