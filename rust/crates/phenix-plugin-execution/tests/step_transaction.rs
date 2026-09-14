@@ -281,7 +281,7 @@ fn settle(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
     )
 }
 
-fn attempt(kernel: &mut Kernel) -> phenix_sdk::StepAttemptRecord {
+fn lookup_attempt(kernel: &mut Kernel) -> phenix_sdk::StepAttemptRecord {
     let response: StepAttemptResponse = invoke(
         kernel,
         step_attempt_service(),
@@ -306,7 +306,10 @@ fn failed_atomic_settlement_commits_neither_owner() {
     setup_dispatched(&mut kernel);
 
     assert!(settle(&mut kernel).is_err());
-    assert_eq!(attempt(&mut kernel).phase, StepAttemptPhase::Dispatched);
+    assert_eq!(
+        lookup_attempt(&mut kernel).phase,
+        StepAttemptPhase::Dispatched
+    );
 
     // The reservation must still be active if the resource half did not commit.
     let response: ExecutionResourceResponse = invoke(
@@ -332,10 +335,16 @@ fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
 
     assert!(settle(&mut kernel).is_err());
     let response = settle(&mut kernel).unwrap();
-    let StepTransactionResponse::Settled { attempt, .. } = response;
-    assert_eq!(attempt.phase, StepAttemptPhase::Settled);
-    assert_eq!(attempt.outcome, Some(AttemptOutcome::Succeeded));
-    assert_eq!(attempt(&mut kernel).phase, StepAttemptPhase::Settled);
+    let StepTransactionResponse::Settled {
+        attempt: settled_attempt,
+        ..
+    } = response;
+    assert_eq!(settled_attempt.phase, StepAttemptPhase::Settled);
+    assert_eq!(settled_attempt.outcome, Some(AttemptOutcome::Succeeded));
+    assert_eq!(
+        lookup_attempt(&mut kernel).phase,
+        StepAttemptPhase::Settled
+    );
     drop(kernel);
     let _ = fs::remove_file(path);
 }
