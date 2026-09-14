@@ -341,8 +341,7 @@ pub fn context_service() -> ServiceId {
 
 #[must_use]
 pub fn context_recovery_service() -> ServiceId {
-    ServiceId::parse(CONTEXT_RECOVERY_SERVICE)
-        .expect("static context recovery service id is valid")
+    ServiceId::parse(CONTEXT_RECOVERY_SERVICE).expect("static context recovery service id is valid")
 }
 
 #[must_use]
