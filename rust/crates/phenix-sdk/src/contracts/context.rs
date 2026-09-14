@@ -112,6 +112,9 @@ pub enum ContextCommand {
     Project {
         execution_id: String,
     },
+    GetProjectionState {
+        execution_id: String,
+    },
     Admit {
         request: ContextAdmissionRequest,
     },
@@ -148,6 +151,9 @@ pub enum ContextResponse {
     },
     Projection {
         projection: ExecutionContextProjection,
+    },
+    ProjectionState {
+        projection: ProjectionRevision,
     },
     Admission {
         result: ContextAdmissionResult,
