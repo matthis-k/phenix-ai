@@ -41,6 +41,11 @@ impl DurableKeyCodec<String> for Utf8HexKeyCodec {
     }
 ''',
 )
+replace_exact(
+    durable,
+    "if encoded.len() % 2 != 0 {",
+    "if !encoded.len().is_multiple_of(2) {",
+)
 
 replace_exact(
     durable,
