@@ -332,7 +332,7 @@ mod provider_dispatch {
     use super::*;
 
     #[test]
-    fn compatibility_invoke_keeps_process_local_auth() {
+    fn legacy_invoke_is_rejected_even_when_provider_is_authenticated() {
         let path = temp_db("routing-provider-dispatch");
         let profile = RoutingProfile {
             id: RoutingProfileId::parse("default").unwrap(),
@@ -340,50 +340,33 @@ mod provider_dispatch {
             fallback_targets: Vec::new(),
             callable_targets: BTreeMap::new(),
         };
-        {
-            let mut kernel = kernel_with_provider(&path);
-            invoke_routing(
-                &mut kernel,
-                ModelCommand::RegisterProfile {
-                    profile: profile.clone(),
-                },
-            )
-            .unwrap();
-            invoke_routing(
-                &mut kernel,
-                ModelCommand::SetProviderAuthenticated {
-                    provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                    authenticated: true,
-                },
-            )
-            .unwrap();
-            let response = invoke_routing(
-                &mut kernel,
-                ModelCommand::Invoke {
-                    profile_id: profile.id.clone(),
-                    callable_id: None,
-                    input: b"hello".to_vec().into(),
-                    tools: Vec::<ModelToolDescriptor>::new(),
-                },
-            )
-            .unwrap();
-            assert!(matches!(
-                response,
-                ModelResponse::Inference { response, .. } if response.output.as_ref() == b"hello"
-            ));
-        }
-        let mut restored = kernel_with_provider(&path);
+        let mut kernel = kernel_with_provider(&path);
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            },
+        )
+        .unwrap();
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::SetProviderAuthenticated {
+                provider_plugin: PluginId::parse("fixture.provider").unwrap(),
+                authenticated: true,
+            },
+        )
+        .unwrap();
         assert!(invoke_routing(
-            &mut restored,
+            &mut kernel,
             ModelCommand::Invoke {
                 profile_id: profile.id,
                 callable_id: None,
                 input: b"hello".to_vec().into(),
-                tools: Vec::new(),
+                tools: Vec::<ModelToolDescriptor>::new(),
             },
         )
         .unwrap_err()
-        .contains("authentication required"));
+        .contains("legacy model invocation is disabled"));
         let _ = fs::remove_file(path);
     }
 }
