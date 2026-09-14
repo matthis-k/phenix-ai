@@ -44,9 +44,15 @@ pub enum ExecutionReviewCommand {
 
 #[derive(Clone, Debug, PartialEq, DerivePhenixValue)]
 pub enum ExecutionReviewResponse {
-    Review { review: ReviewRecord },
-    ReviewLookup { review: Option<ReviewRecord> },
-    Reviews { reviews: Vec<ReviewRecord> },
+    Review {
+        review: ReviewRecord,
+    },
+    ReviewLookup {
+        review: Option<ReviewRecord>,
+    },
+    Reviews {
+        reviews: Vec<ReviewRecord>,
+    },
     Conflict {
         message: String,
         review: Option<ReviewRecord>,
@@ -495,10 +501,8 @@ mod tests {
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
         let persistence = LocalPersistence::open(db).unwrap();
-        let mut kernel = Kernel::with_persistence(
-            KernelConfig::new([review, workspace]).unwrap(),
-            persistence,
-        );
+        let mut kernel =
+            Kernel::with_persistence(KernelConfig::new([review, workspace]).unwrap(), persistence);
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();
@@ -652,10 +656,7 @@ mod tests {
                 }
             }
         ));
-        assert_eq!(
-            fs::read_to_string(root.join("a.txt")).unwrap(),
-            "current"
-        );
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "current");
         let _ = fs::remove_file(db);
         let _ = fs::remove_dir_all(root);
     }
@@ -698,10 +699,7 @@ mod tests {
                 },
             },
         );
-        assert!(matches!(
-            stale,
-            ExecutionReviewResponse::Conflict { .. }
-        ));
+        assert!(matches!(stale, ExecutionReviewResponse::Conflict { .. }));
         let _ = fs::remove_file(db);
         let _ = fs::remove_dir_all(root);
     }
