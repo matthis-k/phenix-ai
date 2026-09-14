@@ -31,6 +31,8 @@ pub fn context_manifest() -> PluginManifest {
 }
 
 #[cfg(test)]
+mod materialization_integration;
+#[cfg(test)]
 mod state_integration;
 
 #[cfg(test)]
