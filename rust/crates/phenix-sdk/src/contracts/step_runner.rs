@@ -230,9 +230,16 @@ pub enum StepRunnerResponse {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct HelperInvocationResponse {
+    pub output: Bytes,
+    #[serde(default)]
+    pub tool_calls: Vec<ModelToolCall>,
+}
+
 pub type InvocationResponse = StepRunnerResponse;
 pub type DefaultInvocationResponse = InvocationResponse;
-pub type HelperInvocationResponse = InvocationResponse;
 
 pub struct InvocationInterface;
 
