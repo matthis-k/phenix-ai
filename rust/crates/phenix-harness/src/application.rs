@@ -11,15 +11,15 @@ use phenix_application_interface::{
         SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
         SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    AddClientTool, Cancel, CloseSession, CreateSession, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SetInteractionHandlers,
+    AddClientTool, Cancel, CloseSession, CreateSession, GetSdk, InvokeCallable, InvokeCapability,
+    ListCallables, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession,
+    SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, CapabilityGenerationId, ClientConnectionId, ContractId, HasPhenixSchema,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
-    ValueCodec, ValueId, ValuePath,
+    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
+    ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     sdk_contribution, session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry,
@@ -513,11 +513,12 @@ impl ApplicationWorker {
 
     fn allocate_execution_id(&mut self) -> Result<String, ApplicationError> {
         let ordinal = self.next_execution_ordinal;
-        self.next_execution_ordinal = ordinal
-            .checked_add(1)
-            .ok_or_else(|| ApplicationError::Failed {
-                message: "application execution id space exhausted".to_owned(),
-            })?;
+        self.next_execution_ordinal =
+            ordinal
+                .checked_add(1)
+                .ok_or_else(|| ApplicationError::Failed {
+                    message: "application execution id space exhausted".to_owned(),
+                })?;
         Ok(format!("execution-{ordinal}"))
     }
 
@@ -873,8 +874,8 @@ fn configured_capabilities() -> Vec<ContractId> {
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        types::Content, Cancel, CloseSession, CreateSession, ListSessions, Prompt,
-        RenameSession, ResumeSession,
+        types::Content, Cancel, CloseSession, CreateSession, ListSessions, Prompt, RenameSession,
+        ResumeSession,
     };
     use phenix_core::{Bytes, LocalPersistence, SessionId, ValueAddress};
     use std::{

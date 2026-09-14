@@ -36,9 +36,13 @@
 
       checks = {
         phenix-nvim-load =
-          pkgs.runCommand "phenix-nvim-load-check" {
-            nativeBuildInputs = [ pkgs.neovim phenixAcp ];
-          }
+          pkgs.runCommand "phenix-nvim-load-check"
+            {
+              nativeBuildInputs = [
+                pkgs.neovim
+                phenixAcp
+              ];
+            }
             ''
               test ! -e ${frontendSource}/lua/phenix/init.lua
               test "$(grep -R -l 'require(\"phenix\")' ${frontendSource}/lua | wc -l)" -eq 1
