@@ -2,8 +2,8 @@ use phenix_application_interface::types::{
     ReviewDecision, ReviewDecisionInput, ReviewFile, ReviewHunk, ReviewRecord, ReviewState,
 };
 use phenix_core::{
-    ComponentInterface, DurableSchema, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
-    PluginHost, PluginInstance, Project, ResourceNamespace, ServiceId, TransactionOp,
+    ComponentInterface, DurableSchema, InterfaceId, InterfaceSchema, PluginContext, PluginHost,
+    PluginInstance, ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     workspace_service, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
@@ -426,10 +426,10 @@ fn validate_identity(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution,
-        PluginId, PluginManifest, ServiceContribution,
+        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
+        PluginExecution, PluginId, PluginManifest, Project, ServiceContribution,
     };
-    use phenix_sdk::workspace_service;
+    use sha2::{Digest, Sha256};
     use std::{
         fs,
         path::PathBuf,
@@ -552,11 +552,8 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("a.txt"), "old").unwrap();
         let db = temp_path("review-accept", ".sqlite");
-        let expected = super::version_label(&phenix_sdk::WorkspaceFileVersion::Present {
-            content_hash: format!("{:x}", sha2::Sha256::digest(b"old")),
-        });
         let version = WorkspaceFileVersion::Present {
-            content_hash: expected,
+            content_hash: format!("{:x}", Sha256::digest(b"old")),
         };
         {
             let mut kernel = kernel(&db, &root);
