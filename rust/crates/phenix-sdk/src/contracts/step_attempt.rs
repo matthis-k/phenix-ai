@@ -1,5 +1,8 @@
 use super::{AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttribution};
+use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
+
+pub const STEP_ATTEMPT_SERVICE: &str = "phenix.execution.attempts@1";
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
@@ -54,7 +57,12 @@ impl StepAttemptRecord {
                 plan: plan.policy_revision,
             });
         }
+        validate_identity("root_execution_id", &attribution.root_execution_id)?;
+        validate_identity("execution_id", &attribution.execution_id)?;
         validate_identity("attempt_id", &attribution.attempt_id)?;
+        if let Some(parent) = &attribution.parent_attempt_id {
+            validate_identity("parent_attempt_id", parent)?;
+        }
         Ok(Self {
             attribution,
             plan,
@@ -136,4 +144,64 @@ fn validate_identity(field: &str, value: &str) -> Result<(), StepAttemptTransiti
     } else {
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StepAttemptCommand {
+    Create {
+        attribution: UsageAttribution,
+        plan: StepPlan,
+    },
+    Get {
+        attempt_id: String,
+    },
+    ListRoot {
+        root_execution_id: String,
+    },
+    BindReservation {
+        attempt_id: String,
+        reservation_id: String,
+    },
+    BindRoute {
+        attempt_id: String,
+        decision: RouteDecision,
+    },
+    BindProjection {
+        attempt_id: String,
+        projection: ProjectionRevision,
+    },
+    MarkDispatched {
+        attempt_id: String,
+        dispatch_id: String,
+    },
+    Settle {
+        attempt_id: String,
+        outcome: AttemptOutcome,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StepAttemptResponse {
+    Attempt { attempt: StepAttemptRecord },
+    AttemptLookup { attempt: Option<StepAttemptRecord> },
+    Attempts { attempts: Vec<StepAttemptRecord> },
+}
+
+pub struct StepAttemptInterface;
+
+impl ComponentInterface for StepAttemptInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(STEP_ATTEMPT_SERVICE).expect("static step attempt interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<StepAttemptCommand, StepAttemptResponse>()
+    }
+}
+
+#[must_use]
+pub fn step_attempt_service() -> ServiceId {
+    ServiceId::parse(STEP_ATTEMPT_SERVICE).expect("static step attempt service id is valid")
 }

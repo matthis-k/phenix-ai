@@ -3,6 +3,7 @@
 mod agent_loop;
 #[cfg(test)]
 mod agent_loop_regression;
+mod attempt_service;
 mod component;
 mod configuration;
 #[cfg(test)]
@@ -26,8 +27,10 @@ pub use configuration::{
     OrchestrationNode, EXECUTION_CONFIGURATION_SERVICE,
 };
 pub use phenix_sdk::{
-    execution_resource_service, ExecutionResourceCommand, ExecutionResourceInterface,
-    ExecutionResourceResponse, EXECUTION_RESOURCE_SERVICE,
+    execution_resource_service, step_attempt_service, ExecutionResourceCommand,
+    ExecutionResourceInterface, ExecutionResourceResponse, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse,
+    EXECUTION_RESOURCE_SERVICE, STEP_ATTEMPT_SERVICE,
 };
 pub use tool_schedule::{ScheduledToolBatch, ToolCallPlan, ToolConcurrency, ToolScheduler};
 
@@ -56,12 +59,21 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
         priority: 100,
         required_authority: Authority::default(),
     });
+    manifest.services.push(ServiceContribution {
+        role: phenix_core::ServiceRole::Terminal,
+        service: step_attempt_service(),
+        priority: 100,
+        required_authority: Authority::default(),
+    });
     manifest
         .resource_namespaces
         .push(configuration::execution_configuration_namespace());
     manifest
         .resource_namespaces
         .push(resource_service::execution_resource_namespace());
+    manifest
+        .resource_namespaces
+        .push(attempt_service::attempt_namespace());
     manifest
 }
 
@@ -72,6 +84,7 @@ pub fn execution_factory() -> Box<dyn PluginInstance> {
         configuration: configuration::configuration_factory(),
         agent_loop: agent_loop::agent_loop_factory(),
         resources: resource_service::resource_factory(),
+        attempts: attempt_service::attempt_factory(),
     })
 }
 
@@ -80,6 +93,7 @@ struct ExecutionPackagePlugin {
     configuration: Box<dyn PluginInstance>,
     agent_loop: Box<dyn PluginInstance>,
     resources: Box<dyn PluginInstance>,
+    attempts: Box<dyn PluginInstance>,
 }
 
 impl PluginInstance for ExecutionPackagePlugin {
@@ -87,6 +101,7 @@ impl PluginInstance for ExecutionPackagePlugin {
         self.execution.start(host)?;
         self.configuration.start(host)?;
         self.resources.start(host)?;
+        self.attempts.start(host)?;
         self.agent_loop.start(host)
     }
 
@@ -105,17 +120,23 @@ impl PluginInstance for ExecutionPackagePlugin {
         if service == &execution_resource_service() {
             return self.resources.invoke(service, input, host);
         }
+        if service == &step_attempt_service() {
+            return self.attempts.invoke(service, input, host);
+        }
         self.execution.invoke(service, input, host)
     }
 
     fn stop(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
         self.agent_loop.stop(host)?;
+        self.attempts.stop(host)?;
         self.resources.stop(host)?;
         self.configuration.stop(host)?;
         self.execution.stop(host)
     }
 }
 
+#[cfg(test)]
+mod attempt_integration;
 #[cfg(test)]
 mod resource_integration;
 #[cfg(test)]
