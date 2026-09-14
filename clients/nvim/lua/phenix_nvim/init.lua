@@ -28,6 +28,7 @@ M.send = actions.send
 M.toggle = actions.toggle
 M.cancel = actions.cancel
 M.new_session = actions.new_session
+M.close_session = actions.close_session
 M.choose_session = actions.choose_session
 M.attach_image = actions.attach_image
 
