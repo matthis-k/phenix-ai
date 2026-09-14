@@ -140,6 +140,8 @@ fn recorded_evidence_survives_plugin_restart() {
         .unwrap();
     }
 
+    // The second process appends to the restored snapshot. If restart recovery
+    // lost the first sample, the durable state would contain only one sample.
     let store = LocalPersistence::open(&path).unwrap();
     let raw = store
         .read(
