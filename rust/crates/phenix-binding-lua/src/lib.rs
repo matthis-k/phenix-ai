@@ -1242,10 +1242,10 @@ fn dispatch_local_callback(
 ) -> LuaResult<()> {
     let mut callback = Some(callback);
     let result = (|| -> Result<CallbackResult, BindingError> {
-        let callback = callback
+        let reply = callback
             .as_ref()
             .expect("callback remains available before deferred reservation");
-        let invocation = CapabilityInvokeInput::from_value(&callback.input)
+        let invocation = CapabilityInvokeInput::from_value(&reply.input)
             .map_err(|error| BindingError::conversion(error.to_string()))?;
         let callable = invocation
             .callable
