@@ -70,11 +70,18 @@ impl ContextProjectionState {
         self.prepared.clear();
         self.revision.revision = self.revision.revision.saturating_add(1);
         self.revision.cache_epoch = result.cache_epoch;
-        self.admitted = result
+
+        let mut admitted = result
             .admitted
             .into_iter()
             .map(|item| (item.id.clone(), item))
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        for (id, item) in std::mem::take(&mut self.admitted) {
+            if !admitted.contains_key(&id) && preserves_without_readmission(&item) {
+                admitted.insert(id, item);
+            }
+        }
+        self.admitted = admitted;
         Ok(())
     }
 
@@ -174,6 +181,14 @@ impl ContextProjectionState {
     }
 }
 
+fn preserves_without_readmission(item: &AdmittedContextItem) -> bool {
+    item.retention == ContextRetention::Compact
+        || matches!(
+            item.form,
+            ContextProjectionForm::Reference | ContextProjectionForm::Omitted
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +275,32 @@ mod tests {
             ContextProjectionForm::Omitted
         );
         assert_eq!(state.committed_checkpoint, Some(expected_checkpoint));
+    }
+
+    #[test]
+    fn readmission_preserves_reduced_projection_metadata() {
+        let mut state = state();
+        let proposal = proposal(&state);
+        state.prepare_compaction(proposal).unwrap();
+        state.commit_compaction("checkpoint-1").unwrap();
+        let epoch = state.revision.cache_epoch;
+
+        state
+            .apply_admission(ContextAdmissionResult {
+                execution_id: "execution-1".into(),
+                policy_revision: "policy-1".into(),
+                cache_epoch: epoch,
+                admitted: Vec::new(),
+                used_input_tokens: 0,
+                omitted_input_tokens: 0,
+                deduplicated_items: 0,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.admitted["item-1"].form,
+            ContextProjectionForm::Omitted
+        );
     }
 
     #[test]
