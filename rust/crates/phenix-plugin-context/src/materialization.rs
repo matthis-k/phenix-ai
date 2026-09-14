@@ -1,8 +1,10 @@
-use crate::{projection_state::ContextProjectionState, PromptAssembly, PromptSection, PromptSectionKind};
+use crate::{
+    projection_state::ContextProjectionState, PromptAssembly, PromptSection, PromptSectionKind,
+};
 use phenix_core::Bytes;
 use phenix_sdk::{
-    ContextInvocationMaterialization, ContextProjectionForm, ContextRetention, ExactContextReference,
-    ProjectionRevision,
+    ContextInvocationMaterialization, ContextProjectionForm, ContextRetention,
+    ExactContextReference, ProjectionRevision,
 };
 use std::collections::BTreeSet;
 
@@ -43,13 +45,18 @@ pub(crate) fn materialize_invocation(
             ),
             ContextProjectionForm::Reference => append_reference(
                 &mut output,
-                item.recovery.as_ref().or_else(|| match &item.source {
-                    phenix_sdk::ContextSource::Exact { reference } => Some(reference),
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    format!("context reference has no exact recovery source: {}", item.id)
-                })?,
+                item.recovery
+                    .as_ref()
+                    .or_else(|| match &item.source {
+                        phenix_sdk::ContextSource::Exact { reference } => Some(reference),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "context reference has no exact recovery source: {}",
+                            item.id
+                        )
+                    })?,
             ),
             ContextProjectionForm::Omitted => {}
         }

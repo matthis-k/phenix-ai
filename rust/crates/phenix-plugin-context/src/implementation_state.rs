@@ -1,5 +1,6 @@
 use crate::{
-    assemble_prompt, context_component_id, projection_state::ContextProjectionState,
+    assemble_prompt, context_component_id,
+    projection_state::ContextProjectionState,
     state_service::{ContextStateService, CONTEXT_PROJECTION_STATE_KEY},
     PromptSection, PromptSectionKind,
 };
@@ -627,9 +628,7 @@ fn materialize_invocation(
             continue;
         };
         validate_materialized_item(item, &candidate)?;
-        if item.form == ContextProjectionForm::Full
-            && item.retention != ContextRetention::Compact
-        {
+        if item.form == ContextProjectionForm::Full && item.retention != ContextRetention::Compact {
             append_materialized_part(&mut output, candidate.content.as_ref());
         }
     }

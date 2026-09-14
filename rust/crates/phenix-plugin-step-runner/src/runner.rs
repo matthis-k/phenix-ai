@@ -399,24 +399,26 @@ fn run(
         );
     }
 
-    let materialized: ContextResponse = match context.sdk.context.invoke_projected(
-        &ContextCommand::MaterializeInvocation {
-            execution_id: attribution.execution_id.clone(),
-            input,
-            expected_projection: projection.clone(),
-        },
-    ) {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_before_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                Some(&reservation_id),
-                format!("context materialization failed: {error}"),
-            )
-        }
-    };
+    let materialized: ContextResponse =
+        match context
+            .sdk
+            .context
+            .invoke_projected(&ContextCommand::MaterializeInvocation {
+                execution_id: attribution.execution_id.clone(),
+                input,
+                expected_projection: projection.clone(),
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    format!("context materialization failed: {error}"),
+                )
+            }
+        };
     let ContextResponse::InvocationMaterialized { materialization } = materialized else {
         return fail_before_dispatch(
             context,
