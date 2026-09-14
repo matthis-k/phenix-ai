@@ -1,29 +1,28 @@
 use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
-    model_inference_service, Authority, Kernel, LocalPersistence, ModelId, PhenixValue,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ResolvedHarness,
-    ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole, SessionId,
-};
-use phenix_plugin_models::{
-    model_routing_component_manifest, model_routing_factory, model_routing_manifest,
-    model_routing_service, ModelCommand as RoutingCommand, ModelResponse as RoutingResponse,
-    ModelTarget, RoutingProfile,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
+    LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
+    ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_plugin_sessions::{session_component_manifest, session_factory, session_manifest};
 use phenix_sdk::{
-    memory_service, memory_validate_callable, session_history_resource, session_service,
-    MemoryCommand, MemoryFreshness, MemoryKind, MemoryRecord, MemoryResponse, MemoryScope,
-    MemorySourceReference, SessionCommand, SessionHistoryContentPart, SessionHistoryDraft,
-    SessionHistoryFinishReason, SessionHistoryRole, SessionResponse,
+    helper_invocation_service, memory_service, session_history_resource, session_service,
+    HelperInvocationCommand, HelperInvocationInterface, MemoryCommand, MemoryFreshness, MemoryKind,
+    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference, SessionCommand,
+    SessionHistoryContentPart, SessionHistoryDraft, SessionHistoryFinishReason, SessionHistoryRole,
+    SessionResponse,
 };
 use std::{
-    collections::BTreeMap,
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const FAILING_PROVIDER: &str = "fixture.memory-validation-failure";
+const HELPER_COMPONENT: &str = "fixture.memory-validation-failure";
+const EXECUTION: &str = "execution-1";
+const PARENT_ATTEMPT: &str = "attempt-1";
 
 fn temp_db() -> PathBuf {
     let nonce = SystemTime::now()
@@ -38,20 +37,14 @@ fn temp_db() -> PathBuf {
 
 fn kernel_with(path: &PathBuf) -> Kernel {
     let memory = memory_manifest();
-    let routing = model_routing_manifest(Authority::default());
     let sessions = session_manifest();
     let provider = fixture_provider_manifest();
     let resolved = ResolvedHarness::resolve(
-        [
-            memory.clone(),
-            routing.clone(),
-            sessions.clone(),
-            provider.clone(),
-        ],
+        [memory.clone(), sessions.clone(), provider.clone()],
         [
             memory_component_manifest(),
-            model_routing_component_manifest(Authority::default()),
             session_component_manifest(),
+            helper_component_manifest(),
         ],
         [],
         &memory.maximum_authority,
@@ -62,9 +55,6 @@ fn kernel_with(path: &PathBuf) -> Kernel {
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel
         .register_embedded_factory(memory.id, memory_factory)
-        .unwrap();
-    kernel
-        .register_embedded_factory(routing.id, model_routing_factory)
         .unwrap();
     kernel
         .register_embedded_factory(sessions.id, session_factory)
@@ -84,11 +74,27 @@ fn fixture_provider_manifest() -> PluginManifest {
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
             role: ServiceRole::Terminal,
-            service: model_inference_service(),
+            service: helper_invocation_service(),
             priority: 100,
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
+        maximum_authority: Authority::default(),
+    }
+}
+
+fn helper_component_manifest() -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: ComponentId::parse(HELPER_COMPONENT).unwrap(),
+        owner: PluginId::parse(FAILING_PROVIDER).unwrap(),
+        imports: Vec::new(),
+        exports: vec![ComponentExport {
+            interface: HelperInvocationInterface::interface_id(),
+            schema: HelperInvocationInterface::schema(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
         maximum_authority: Authority::default(),
     }
 }
@@ -103,11 +109,18 @@ impl PluginInstance for FailingProvider {
     fn invoke(
         &mut self,
         service: &ServiceId,
-        _input: &[u8],
+        input: &[u8],
         _host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &model_inference_service() {
+        if service != &helper_invocation_service() {
             return Err(format!("unsupported fixture service: {service}"));
+        }
+        let input: PhenixValue =
+            serde_json::from_slice(input).map_err(|error| error.to_string())?;
+        let command: HelperInvocationCommand = input.project().map_err(|error| error.to_string())?;
+        let HelperInvocationCommand::Invoke { request } = command;
+        if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
+            return Err("memory revalidation lost execution lineage".into());
         }
         Err("fixture validation failure".into())
     }
@@ -137,20 +150,6 @@ fn invoke_sessions(
             &session_service(),
             &input,
             &session_manifest().maximum_authority,
-            None,
-        )
-        .map_err(|error| error.to_string())?;
-    let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
-    output.project().map_err(|error| error.to_string())
-}
-
-fn invoke_routing(kernel: &mut Kernel, command: RoutingCommand) -> Result<RoutingResponse, String> {
-    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
-    let output = kernel
-        .invoke(
-            &model_routing_service(),
-            &input,
-            &model_routing_manifest(Authority::default()).maximum_authority,
             None,
         )
         .map_err(|error| error.to_string())?;
@@ -229,39 +228,13 @@ fn revalidation_failure_leaves_authoritative_session_history_unchanged() {
     )
     .unwrap();
 
-    let provider = PluginId::parse(FAILING_PROVIDER).unwrap();
-    let profile_id = phenix_core::RoutingProfileId::parse("failure-route").unwrap();
-    let target = ModelTarget {
-        provider_plugin: provider.clone(),
-        model: ModelId::parse("validate-fail").unwrap(),
-        options: BTreeMap::new(),
-    };
-    invoke_routing(
-        &mut kernel,
-        RoutingCommand::RegisterProfile {
-            profile: RoutingProfile {
-                id: profile_id.clone(),
-                default_target: target.clone(),
-                fallback_targets: Vec::new(),
-                callable_targets: BTreeMap::from([(memory_validate_callable(), target)]),
-            },
-        },
-    )
-    .unwrap();
-    invoke_routing(
-        &mut kernel,
-        RoutingCommand::SetProviderAuthenticated {
-            provider_plugin: provider,
-            authenticated: true,
-        },
-    )
-    .unwrap();
-
     let error = invoke_memory(
         &mut kernel,
         MemoryCommand::Revalidate {
             id: memory.id.clone(),
-            profile_id,
+            execution_id: EXECUTION.into(),
+            parent_attempt_id: PARENT_ATTEMPT.into(),
+            profile_id: RoutingProfileId::parse("failure-route").unwrap(),
             at: 30,
         },
     )
