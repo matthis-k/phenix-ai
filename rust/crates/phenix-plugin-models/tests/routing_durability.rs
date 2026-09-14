@@ -4,8 +4,8 @@ use phenix_core::{
     PhenixValue, PluginId, Project, ResourceNamespace, SchemaMigration,
 };
 use phenix_plugin_models::{
-    model_routing_factory, model_routing_manifest, model_routing_service, ModelCommand, ModelResponse,
-    ModelTarget, RoutingProfile,
+    model_routing_factory, model_routing_manifest, model_routing_service, ModelCommand,
+    ModelResponse, ModelTarget, RoutingProfile,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits, ModelTurnUsage,
