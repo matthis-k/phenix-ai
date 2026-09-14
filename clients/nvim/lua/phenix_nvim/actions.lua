@@ -71,8 +71,8 @@ function M.attach_image(path)
   end
 end
 
-local function submit(session, content, revision)
-  runtime.prompt(session, content, function(_, error)
+local function submit(session_id, content, revision)
+  runtime.prompt(session_id, content, function(_, error)
     if error ~= nil then
       util.notify(vim.inspect(error), vim.log.levels.ERROR)
       return
@@ -94,9 +94,9 @@ function M.send()
     return
   end
   local revision = state.compose.revision
-  local session = runtime.active_session()
-  if session ~= nil then
-    submit(session, content, revision)
+  local session_id = runtime.active_session()
+  if session_id ~= nil then
+    submit(session_id, content, revision)
     return
   end
   runtime.new_session(function(created, create_error)
@@ -104,7 +104,7 @@ function M.send()
       util.notify(vim.inspect(create_error), vim.log.levels.ERROR)
       return
     end
-    submit(created, content, revision)
+    submit(created.session_id, content, revision)
   end)
 end
 
