@@ -13,8 +13,9 @@ use phenix_sdk::{
     ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
     ModelResponse, ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand,
     StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
-    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, UsageAttemptKind,
-    UsageAttribution, UsagePlanningInput,
+    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
+    StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
+    UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +71,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
                 StepAttemptInterface::schema(),
             ),
             import(
+                StepTransactionInterface::interface_id(),
+                StepTransactionInterface::schema(),
+            ),
+            import(
                 ModelRoutingInterface::interface_id(),
                 ModelRoutingInterface::schema(),
             ),
@@ -98,6 +103,7 @@ struct StepRunnerSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
     attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
+    transactions: SdkClient<'host, 'runtime, StepTransactionInterface>,
     routing: SdkClient<'host, 'runtime, ModelRoutingInterface>,
     dispatch: SdkClient<'host, 'runtime, ModelDispatchInterface>,
     context: SdkClient<'host, 'runtime, ContextInterface>,
@@ -116,6 +122,7 @@ fn context<'host, 'runtime>(
             execution: SdkClient::new(host, component.clone()),
             resources: SdkClient::new(host, component.clone()),
             attempts: SdkClient::new(host, component.clone()),
+            transactions: SdkClient::new(host, component.clone()),
             routing: SdkClient::new(host, component.clone()),
             dispatch: SdkClient::new(host, component.clone()),
             context: SdkClient::new(host, component),
@@ -351,13 +358,14 @@ fn run(
     let ModelDispatchResponse::Inference { response, .. } = dispatched;
 
     let settled = conservative_actual(&plan);
-    settle_budget(
+    let attempt = settle_step(
         context,
         &attribution.root_execution_id,
         &reservation_id,
         settled.clone(),
+        &attribution.attempt_id,
+        AttemptOutcome::Succeeded,
     )?;
-    let attempt = settle_attempt(context, &attribution.attempt_id, AttemptOutcome::Succeeded)?;
 
     Ok(StepRunnerResponse::Completed {
         attempt,
@@ -462,45 +470,27 @@ fn bind_attempt(
     }
 }
 
-fn settle_attempt(
-    context: &StepRunnerContext<'_, '_>,
-    attempt_id: &str,
-    outcome: AttemptOutcome,
-) -> Result<StepAttemptRecord, String> {
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::Settle {
-            attempt_id: attempt_id.to_owned(),
-            outcome,
-        })
-        .map_err(|error| error.to_string())?;
-    let StepAttemptResponse::Attempt { attempt } = response else {
-        return Err("step attempt service returned a non-attempt settlement response".into());
-    };
-    Ok(attempt)
-}
-
-fn settle_budget(
+fn settle_step(
     context: &StepRunnerContext<'_, '_>,
     root_execution_id: &str,
     reservation_id: &str,
     actual: BudgetActual,
-) -> Result<(), String> {
-    let response: ExecutionResourceResponse = context
+    attempt_id: &str,
+    outcome: AttemptOutcome,
+) -> Result<StepAttemptRecord, String> {
+    let response: StepTransactionResponse = context
         .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::SettleReservation {
+        .transactions
+        .invoke_projected(&StepTransactionCommand::Settle {
             root_execution_id: root_execution_id.to_owned(),
             reservation_id: reservation_id.to_owned(),
             actual,
+            attempt_id: attempt_id.to_owned(),
+            outcome,
         })
         .map_err(|error| error.to_string())?;
-    if matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
-        Ok(())
-    } else {
-        Err("execution resource service returned a non-budget response to settle".into())
-    }
+    let StepTransactionResponse::Settled { attempt, .. } = response;
+    Ok(attempt)
 }
 
 fn settle_after_dispatch(
@@ -511,13 +501,15 @@ fn settle_after_dispatch(
     reservation_id: &str,
     outcome: AttemptOutcome,
 ) -> Result<(), String> {
-    settle_budget(
+    settle_step(
         context,
         root_execution_id,
         reservation_id,
         conservative_actual(plan),
-    )?;
-    settle_attempt(context, attempt_id, outcome).map(|_| ())
+        attempt_id,
+        outcome,
+    )
+    .map(|_| ())
 }
 
 fn conservative_actual(plan: &StepPlan) -> BudgetActual {
@@ -543,7 +535,7 @@ mod tests {
     #[test]
     fn component_imports_each_state_owner_once() {
         let component = step_runner_component_manifest(Authority::default());
-        assert_eq!(component.imports.len(), 6);
+        assert_eq!(component.imports.len(), 7);
         assert!(component.imports.iter().all(|import| import.required));
         assert_eq!(component.exports.len(), 1);
         assert_eq!(
