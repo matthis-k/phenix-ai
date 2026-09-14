@@ -223,7 +223,10 @@ fn write_batch(
     let mut conflicts = Vec::new();
     for write in writes {
         if !paths.insert(write.path.clone()) {
-            return Err(format!("workspace write batch contains duplicate path: {}", write.path));
+            return Err(format!(
+                "workspace write batch contains duplicate path: {}",
+                write.path
+            ));
         }
         let resolved = resolve(context, &write.path)?;
         let observed = inspect_version(&resolved, &write.path)?;
@@ -261,7 +264,9 @@ fn write_batch(
 fn inspect_version(resolved: &Path, path: &str) -> Result<WorkspaceFileVersion, String> {
     match fs::read(resolved) {
         Ok(bytes) => Ok(version_for_bytes(&bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(WorkspaceFileVersion::Absent),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(WorkspaceFileVersion::Absent)
+        }
         Err(error) => Err(format!("inspect {path}: {error}")),
     }
 }
@@ -510,7 +515,9 @@ mod tests {
         let write = authority(&[WORKSPACE_WRITE]);
         let a_version = match invoke(
             &mut kernel,
-            WorkspaceCommand::Read { path: "a.txt".into() },
+            WorkspaceCommand::Read {
+                path: "a.txt".into(),
+            },
             &read,
         )
         .unwrap()
@@ -558,7 +565,9 @@ mod tests {
         let write = authority(&[WORKSPACE_WRITE]);
         let version = match invoke(
             &mut kernel,
-            WorkspaceCommand::Read { path: "a.txt".into() },
+            WorkspaceCommand::Read {
+                path: "a.txt".into(),
+            },
             &read,
         )
         .unwrap()

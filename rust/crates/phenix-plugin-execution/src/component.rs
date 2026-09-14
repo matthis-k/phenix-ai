@@ -95,9 +95,7 @@ fn persistence_authority() -> Authority {
 }
 
 fn workspace_write_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")
-    ])
+    Authority::new([CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")])
 }
 
 #[cfg(test)]

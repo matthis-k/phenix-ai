@@ -47,9 +47,15 @@ pub enum ExecutionReviewCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, DerivePhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum ExecutionReviewResponse {
-    Review { review: ReviewRecord },
-    ReviewLookup { review: Option<ReviewRecord> },
-    Reviews { reviews: Vec<ReviewRecord> },
+    Review {
+        review: ReviewRecord,
+    },
+    ReviewLookup {
+        review: Option<ReviewRecord>,
+    },
+    Reviews {
+        reviews: Vec<ReviewRecord>,
+    },
     Conflict {
         message: String,
         review: Option<ReviewRecord>,
@@ -148,7 +154,10 @@ fn handle(
         ExecutionReviewCommand::Get { review_id } => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionReviewResponse::ReviewLookup {
-                review: state.reviews.get(&review_id).map(|stored| stored.record.clone()),
+                review: state
+                    .reviews
+                    .get(&review_id)
+                    .map(|stored| stored.record.clone()),
             })
         }
         ExecutionReviewCommand::ListPending => {
@@ -185,7 +194,10 @@ fn prepare(
         validate_identity("review file uri", &file.uri)?;
         validate_identity("review file path", &file.path)?;
         if !paths.insert(file.path.clone()) {
-            return Err(format!("review contains duplicate workspace path: {}", file.path));
+            return Err(format!(
+                "review contains duplicate workspace path: {}",
+                file.path
+            ));
         }
         if !uris.insert(file.uri.clone()) {
             return Err(format!("review contains duplicate file uri: {}", file.uri));
@@ -483,10 +495,8 @@ mod tests {
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
         let persistence = LocalPersistence::open(db).unwrap();
-        let mut kernel = Kernel::with_persistence(
-            KernelConfig::new([review, workspace]).unwrap(),
-            persistence,
-        );
+        let mut kernel =
+            Kernel::with_persistence(KernelConfig::new([review, workspace]).unwrap(), persistence);
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();
