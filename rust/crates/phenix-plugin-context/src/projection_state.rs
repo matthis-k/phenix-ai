@@ -147,6 +147,7 @@ impl ContextProjectionState {
     pub(crate) fn invalidate_for_context_mutation(&mut self) {
         self.prepared.clear();
         self.revision.revision = self.revision.revision.saturating_add(1);
+        self.revision.cache_epoch = self.revision.cache_epoch.saturating_add(1);
     }
 
     fn apply_transition(
@@ -246,10 +247,13 @@ mod tests {
     }
 
     #[test]
-    fn context_mutation_invalidates_prepared_compaction() {
+    fn context_mutation_invalidates_prepared_compaction_and_cache_epoch() {
         let mut state = state();
+        let original = state.revision.clone();
         state.prepare_compaction(proposal(&state)).unwrap();
         state.invalidate_for_context_mutation();
+        assert_eq!(state.revision.revision, original.revision + 1);
+        assert_eq!(state.revision.cache_epoch, original.cache_epoch + 1);
         assert!(matches!(
             state.commit_compaction("checkpoint-1"),
             Err(ProjectionStateError::UnknownPreparedCheckpoint { .. })
