@@ -96,6 +96,44 @@ local function required_application_error()
   return nil
 end
 
+function M.defer(start)
+  if type(native.defer) ~= "function" then
+    error("native Phenix binding does not support deferred callbacks")
+  end
+  return native.defer(start)
+end
+
+local function permission_handler(request)
+  return M.defer(function(resolve)
+    vim.schedule(function()
+      vim.ui.select({ "Allow once", "Deny" }, {
+        prompt = "Phenix permission: " .. (request.description or "Allow this action?"),
+      }, function(choice)
+        if choice == "Allow once" then
+          resolve({ kind = "AllowOnce" })
+        elseif choice == "Deny" then
+          resolve({ kind = "Deny" })
+        else
+          resolve({ kind = "Cancelled" })
+        end
+      end)
+    end)
+  end)
+end
+
+local function elicitation_handler(_request)
+  return { kind = "Cancelled" }
+end
+
+local function install_interaction_handlers(callback)
+  M.track(state.application.interaction_handlers_set({
+    handlers = {
+      permission = permission_handler,
+      elicitation = elicitation_handler,
+    },
+  }), callback)
+end
+
 local function replace_root_changes(value, changes)
   local next_value = value
   for _, item in ipairs(changes) do
@@ -285,15 +323,22 @@ function M.connect(callback)
       util.safe_call(callback, nil, { message = message })
       return
     end
-    M.refresh_session_state(function(_, state_error)
-      if state_error ~= nil then
-        fail(state_error)
-        util.safe_call(callback, nil, state_error)
+    install_interaction_handlers(function(_, handler_error)
+      if handler_error ~= nil then
+        fail(handler_error)
+        util.safe_call(callback, nil, handler_error)
         return
       end
-      state.connection = "connected"
-      emit("status", M.status())
-      util.safe_call(callback, state, nil)
+      M.refresh_session_state(function(_, state_error)
+        if state_error ~= nil then
+          fail(state_error)
+          util.safe_call(callback, nil, state_error)
+          return
+        end
+        state.connection = "connected"
+        emit("status", M.status())
+        util.safe_call(callback, state, nil)
+      end)
     end)
   end)
 end
