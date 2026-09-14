@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, CapabilityGenerationId, ComponentInterface, Kernel, KernelConfig, LocalPersistence,
     ModelId, ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedHarness, ServiceContribution, ServiceId, ValueError,
+    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -411,11 +411,11 @@ mod planning_guard {
     }
 }
 
-mod pre_dispatch_state {
+mod pre_dispatch_cleanup {
     use super::*;
 
     #[test]
-    fn routing_failure_leaves_reserved_attempt_for_reconciliation() {
+    fn routing_failure_releases_reservation_and_aborts_attempt() {
         let path = temp_db("pre-dispatch");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
@@ -429,9 +429,15 @@ mod pre_dispatch_state {
         )
         .unwrap_err();
         assert!(error.contains("MissingEffectiveCapabilities"));
-        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was created");
-        assert_eq!(attempt.phase, StepAttemptPhase::Reserved);
+        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was recorded");
+        assert_eq!(attempt.phase, StepAttemptPhase::Settled);
+        assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
         assert_eq!(attempt.reservation_id.as_deref(), Some("attempt/attempt-1"));
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.fresh_input_tokens, 4_000);
+        assert_eq!(remaining.output_tokens, 1_000);
+        assert_eq!(remaining.cost_microunits, Some(10_000));
+        assert_eq!(remaining.attempts, 4);
         let _ = fs::remove_file(path);
     }
 }
