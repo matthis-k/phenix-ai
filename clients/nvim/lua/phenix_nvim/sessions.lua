@@ -11,6 +11,15 @@ function M.resume(session_id, callback)
   runtime.resume_session(session_id, callback)
 end
 
+function M.close(session_id, callback)
+  session_id = session_id or runtime.active_session()
+  if session_id == nil then
+    util.safe_call(callback, nil, { message = "no active Phenix session" })
+    return
+  end
+  runtime.close_session(session_id, callback)
+end
+
 function M.choose()
   runtime.list_sessions(function(result, error)
     if error ~= nil then
