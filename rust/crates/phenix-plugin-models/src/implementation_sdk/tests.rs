@@ -320,8 +320,7 @@ mod runtime_persistence {
                 callable_id: None,
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected routing candidates");
         };
         assert_eq!(candidates.len(), 2);

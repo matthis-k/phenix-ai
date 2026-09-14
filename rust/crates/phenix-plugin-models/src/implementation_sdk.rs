@@ -9,8 +9,8 @@ use phenix_core::{
 pub use phenix_sdk::{
     model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
     ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
-    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor, MODEL_DISPATCH_SERVICE,
-    MODEL_ROUTING_SERVICE,
+    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
+    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 

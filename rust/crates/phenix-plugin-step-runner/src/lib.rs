@@ -399,24 +399,26 @@ fn run(
         );
     }
 
-    let prepared: ModelDispatchResponse = match context.sdk.dispatch.invoke_projected(
-        &ModelDispatchCommand::PrepareResolved {
-            decision: decision.clone(),
-            input,
-            tools,
-        },
-    ) {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_before_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                Some(&reservation_id),
-                format!("resolved model preflight failed: {error}"),
-            )
-        }
-    };
+    let prepared: ModelDispatchResponse =
+        match context
+            .sdk
+            .dispatch
+            .invoke_projected(&ModelDispatchCommand::PrepareResolved {
+                decision: decision.clone(),
+                input,
+                tools,
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    format!("resolved model preflight failed: {error}"),
+                )
+            }
+        };
     let ModelDispatchResponse::Ready { prepared } = prepared else {
         return fail_before_dispatch(
             context,
