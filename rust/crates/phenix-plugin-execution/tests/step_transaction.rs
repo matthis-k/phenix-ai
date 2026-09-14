@@ -322,7 +322,10 @@ fn failed_atomic_settlement_commits_neither_owner() {
         },
     )
     .unwrap();
-    assert!(matches!(response, ExecutionResourceResponse::RootBudget { .. }));
+    assert!(matches!(
+        response,
+        ExecutionResourceResponse::RootBudget { .. }
+    ));
     drop(kernel);
     let _ = fs::remove_file(path);
 }
@@ -341,10 +344,7 @@ fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
     } = response;
     assert_eq!(settled_attempt.phase, StepAttemptPhase::Settled);
     assert_eq!(settled_attempt.outcome, Some(AttemptOutcome::Succeeded));
-    assert_eq!(
-        lookup_attempt(&mut kernel).phase,
-        StepAttemptPhase::Settled
-    );
+    assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Settled);
     drop(kernel);
     let _ = fs::remove_file(path);
 }
