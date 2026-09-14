@@ -12,6 +12,7 @@ coverage:
   - rust/crates/phenix-plugin-session-tree/src/implementation.rs
   - rust/crates/phenix-harness/src/persistence.rs
   - rust/crates/phenix-sdk/tests/plugin_attribute_only_gate.rs
+  - rust/crates/phenix-sdk/src/durable.rs
 
 ## Purpose
 
@@ -79,6 +80,7 @@ The baseline backend contract supports generic operations such as:
 - schema registration;
 - schema migration;
 - exact key reads;
+- bounded ordered record scans;
 - atomic namespace transactions;
 - multi-namespace transactions;
 - feature negotiation.
@@ -105,9 +107,9 @@ Migration operations use the same structural mutation vocabulary as ordinary per
 
 ## Backend features
 
-A durable schema may require generic features such as transactions, unique keys, or migrations.
+`Migrations` is the only optional backend operation today. Atomic transactions, one value per `(namespace, record_key)`, and bounded ordered scans are baseline `PersistenceBackend` behavior.
 
-A Provider is eligible only when it supports every required feature in the resolved schema set. Unsupported requirements fail before the namespace is claimed or the target Store is opened.
+A Provider is eligible only when it supports every optional feature required by the resolved schema set. Unsupported requirements fail before the namespace is claimed or the target Store is opened.
 
 ## Bootstrap
 

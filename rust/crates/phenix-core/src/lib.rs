@@ -17,6 +17,7 @@ mod contract;
 mod contract_wire;
 mod events;
 mod frontend_metadata;
+mod graph_util;
 mod identity;
 mod infallible_value;
 mod inspection;
@@ -164,8 +165,9 @@ pub use observable::{
     ValueChange, ValueId, ValuePath, ValuePathSegment, ValueVersion, OBSERVABLE_CONTRACT,
 };
 pub use persistence::{
-    BackendFeature, DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
-    PersistenceError, SchemaMigration, TransactionOp,
+    BackendFeature, DurableKeyRange, DurableRecord, DurableSchema, LocalPersistence,
+    NamespaceTransaction, PersistenceBackend, PersistenceError, ScanDirection, SchemaMigration,
+    TransactionOp,
 };
 pub use persistence_bootstrap::{
     resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBootstrapDependency,

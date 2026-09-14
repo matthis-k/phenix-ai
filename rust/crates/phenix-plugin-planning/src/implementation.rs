@@ -1,3 +1,4 @@
+use petgraph::{algo::is_cyclic_directed, graph::DiGraph};
 use phenix_core::{
     Authority, CapabilityId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
     ServiceId, TransactionOp,
@@ -286,38 +287,21 @@ fn normalize_and_validate_steps(steps: &mut [PlanStep]) -> Result<(), String> {
 }
 
 fn ensure_acyclic(graph: &BTreeMap<String, Vec<String>>, label: &str) -> Result<(), String> {
-    fn visit(
-        node: &str,
-        graph: &BTreeMap<String, Vec<String>>,
-        visiting: &mut BTreeSet<String>,
-        visited: &mut BTreeSet<String>,
-    ) -> bool {
-        if visited.contains(node) {
-            return true;
-        }
-        if !visiting.insert(node.to_owned()) {
-            return false;
-        }
-        if let Some(dependencies) = graph.get(node) {
-            for dependency in dependencies {
-                if !visit(dependency, graph, visiting, visited) {
-                    return false;
-                }
-            }
-        }
-        visiting.remove(node);
-        visited.insert(node.to_owned());
-        true
-    }
-
-    let mut visiting = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    for node in graph.keys() {
-        if !visit(node, graph, &mut visiting, &mut visited) {
-            return Err(format!("{label} cycle detected"));
+    let mut dependency_graph = DiGraph::<&str, ()>::new();
+    let indices = graph
+        .keys()
+        .map(|node| (node.as_str(), dependency_graph.add_node(node.as_str())))
+        .collect::<BTreeMap<_, _>>();
+    for (node, dependencies) in graph {
+        for dependency in dependencies {
+            dependency_graph.add_edge(indices[node.as_str()], indices[dependency.as_str()], ());
         }
     }
-    Ok(())
+    if is_cyclic_directed(&dependency_graph) {
+        Err(format!("{label} cycle detected"))
+    } else {
+        Ok(())
+    }
 }
 
 fn require_objective(
@@ -650,6 +634,25 @@ mod tests {
             other => panic!("unexpected response: {other:?}"),
         }
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn plan_cycle_validation_is_step_order_independent() {
+        let a = PlanStep {
+            id: "a".into(),
+            description: "a".into(),
+            dependencies: vec!["b".into()],
+        };
+        let b = PlanStep {
+            id: "b".into(),
+            description: "b".into(),
+            dependencies: vec!["a".into()],
+        };
+        for mut steps in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+            assert!(normalize_and_validate_steps(&mut steps)
+                .unwrap_err()
+                .contains("cycle"));
+        }
     }
 
     #[test]

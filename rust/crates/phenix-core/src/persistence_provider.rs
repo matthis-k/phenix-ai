@@ -3,11 +3,7 @@ use crate::{
     PersistenceBootstrapError, PersistenceError, PersistenceProviderDescriptor,
     PersistenceProviderTransition, PluginId, ResolvedPersistenceBootstrap, StoreBinding,
 };
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
+use std::collections::BTreeSet;
 
 /// Infrastructure provider capable of opening one Store Binding.
 ///
@@ -25,7 +21,8 @@ pub trait PersistenceProvider: Send {
     ) -> Result<Box<dyn PersistenceBackend>, PersistenceProviderError>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{message}")]
 pub struct PersistenceProviderError {
     pub message: String,
 }
@@ -39,58 +36,22 @@ impl PersistenceProviderError {
     }
 }
 
-impl Display for PersistenceProviderError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for PersistenceProviderError {}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PersistenceCandidateError {
-    Bootstrap(PersistenceBootstrapError),
+    #[error(transparent)]
+    Bootstrap(#[from] PersistenceBootstrapError),
+    #[error("Persistence Provider {provider} preparation failed: {error}")]
     Provider {
         provider: PluginId,
+        #[source]
         error: PersistenceProviderError,
     },
+    #[error("durable schema preparation for {plugin} failed: {error}")]
     Schema {
         plugin: PluginId,
+        #[source]
         error: PersistenceError,
     },
-}
-
-impl Display for PersistenceCandidateError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Bootstrap(error) => Display::fmt(error, f),
-            Self::Provider { provider, error } => {
-                write!(
-                    f,
-                    "Persistence Provider {provider} preparation failed: {error}"
-                )
-            }
-            Self::Schema { plugin, error } => {
-                write!(f, "durable schema preparation for {plugin} failed: {error}")
-            }
-        }
-    }
-}
-
-impl Error for PersistenceCandidateError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Bootstrap(error) => Some(error),
-            Self::Provider { error, .. } => Some(error),
-            Self::Schema { error, .. } => Some(error),
-        }
-    }
-}
-
-impl From<PersistenceBootstrapError> for PersistenceCandidateError {
-    fn from(error: PersistenceBootstrapError) -> Self {
-        Self::Bootstrap(error)
-    }
 }
 
 pub struct PreparedPersistence {

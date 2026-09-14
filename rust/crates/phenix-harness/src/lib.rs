@@ -27,8 +27,6 @@ use phenix_plugin_catalog::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    error::Error,
-    fmt::{self, Display, Formatter},
     sync::Arc,
 };
 
@@ -37,57 +35,21 @@ mod persistence;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum HarnessBuildError {
-    Kernel(KernelError),
-    Resolution(ResolvedHarnessError),
+    #[error(transparent)]
+    Kernel(#[from] KernelError),
+    #[error(transparent)]
+    Resolution(#[from] ResolvedHarnessError),
+    #[error("resolved Harness activation failed: {0:?}")]
     Activation(ResolvedHarnessActivationError),
-    Persistence(phenix_core::PersistenceCandidateError),
-}
-
-impl Display for HarnessBuildError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Kernel(error) => Display::fmt(error, f),
-            Self::Resolution(error) => Display::fmt(error, f),
-            Self::Activation(error) => write!(f, "resolved Harness activation failed: {error:?}"),
-            Self::Persistence(error) => Display::fmt(error, f),
-        }
-    }
-}
-
-impl Error for HarnessBuildError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Kernel(error) => Some(error),
-            Self::Resolution(error) => Some(error),
-            Self::Activation(_) => None,
-            Self::Persistence(error) => Some(error),
-        }
-    }
-}
-
-impl From<KernelError> for HarnessBuildError {
-    fn from(error: KernelError) -> Self {
-        Self::Kernel(error)
-    }
-}
-
-impl From<ResolvedHarnessError> for HarnessBuildError {
-    fn from(error: ResolvedHarnessError) -> Self {
-        Self::Resolution(error)
-    }
+    #[error(transparent)]
+    Persistence(#[from] phenix_core::PersistenceCandidateError),
 }
 
 impl From<ResolvedHarnessActivationError> for HarnessBuildError {
     fn from(error: ResolvedHarnessActivationError) -> Self {
         Self::Activation(error)
-    }
-}
-
-impl From<phenix_core::PersistenceCandidateError> for HarnessBuildError {
-    fn from(error: phenix_core::PersistenceCandidateError) -> Self {
-        Self::Persistence(error)
     }
 }
 

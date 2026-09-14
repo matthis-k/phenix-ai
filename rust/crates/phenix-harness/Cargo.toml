@@ -13,3 +13,4 @@ phenix-core = { path = "../phenix-core" }
 phenix-plugin-catalog = { path = "../phenix-plugin-catalog" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
