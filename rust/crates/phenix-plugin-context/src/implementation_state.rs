@@ -613,46 +613,14 @@ fn materialize_invocation(
     let committed = state
         .projection(&execution_id)
         .ok_or_else(|| format!("context projection is not admitted: {execution_id}"))?;
-    if committed.revision != expected_projection {
-        return Err(format!(
-            "context projection changed before materialization: expected {:?}, actual {:?}",
-            expected_projection, committed.revision
-        ));
-    }
-
     let projection = project_context(context, execution_id)?;
-    let mut output = Vec::new();
-    for section in assemble_prompt(&projection).sections {
-        let candidate = context_candidate(section);
-        let Some(item) = committed.admitted.get(&candidate.id) else {
-            continue;
-        };
-        validate_materialized_item(item, &candidate)?;
-        if item.form == ContextProjectionForm::Full && item.retention != ContextRetention::Compact {
-            append_materialized_part(&mut output, candidate.content.as_ref());
-        }
-    }
-
-    if let Some(checkpoint) = committed.committed_checkpoint.as_ref().filter(|_| {
-        committed
-            .admitted
-            .values()
-            .any(|item| item.retention == ContextRetention::Compact)
-    }) {
-        let candidate = checkpoint_candidate(checkpoint);
-        if let Some(item) = committed.admitted.get(&candidate.id) {
-            validate_materialized_item(item, &candidate)?;
-            if item.form == ContextProjectionForm::Full {
-                append_materialized_part(&mut output, candidate.content.as_ref());
-            }
-        }
-    }
-
-    append_materialized_part(&mut output, input.as_ref());
-    Ok(ContextInvocationMaterialization {
-        input: Bytes::from(output),
-        projection: expected_projection,
-    })
+    let assembly = assemble_prompt(&projection);
+    crate::materialization::materialize_invocation(
+        &assembly,
+        committed,
+        input,
+        &expected_projection,
+    )
 }
 
 fn context_candidate(section: PromptSection) -> ContextCandidate {
@@ -723,35 +691,6 @@ fn checkpoint_candidate_id(checkpoint: &ProjectionCheckpoint) -> String {
 
 fn is_reduced_item(item: &AdmittedContextItem) -> bool {
     item.retention == ContextRetention::Compact || item.form != ContextProjectionForm::Full
-}
-
-fn validate_materialized_item(
-    item: &AdmittedContextItem,
-    candidate: &ContextCandidate,
-) -> Result<(), String> {
-    if item.source != candidate.source {
-        return Err(format!(
-            "context materialization source changed for {}",
-            candidate.id
-        ));
-    }
-    if item.content_identity != candidate.content_identity {
-        return Err(format!(
-            "context materialization content changed for {}",
-            candidate.id
-        ));
-    }
-    Ok(())
-}
-
-fn append_materialized_part(output: &mut Vec<u8>, content: &[u8]) {
-    if content.is_empty() {
-        return;
-    }
-    if !output.is_empty() {
-        output.extend_from_slice(b"\n\n");
-    }
-    output.extend_from_slice(content);
 }
 
 fn conservative_token_estimate(content: &[u8]) -> u64 {
@@ -864,14 +803,5 @@ mod preparation_tests {
         assert_eq!(identity.retention, ContextRetention::Pinned);
         assert_eq!(identity.cache, CachePlacement::StablePrefix);
         assert!(matches!(identity.source, ContextSource::Inline { .. }));
-    }
-
-    #[test]
-    fn materialized_parts_are_stable_and_request_is_last() {
-        let mut output = Vec::new();
-        append_materialized_part(&mut output, b"instruction");
-        append_materialized_part(&mut output, b"context");
-        append_materialized_part(&mut output, b"request");
-        assert_eq!(output, b"instruction\n\ncontext\n\nrequest");
     }
 }
