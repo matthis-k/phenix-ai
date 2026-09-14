@@ -47,7 +47,7 @@ pub(crate) fn materialize_invocation(
                 &mut output,
                 item.recovery
                     .as_ref()
-                    .or_else(|| match &item.source {
+                    .or(match &item.source {
                         phenix_sdk::ContextSource::Exact { reference } => Some(reference),
                         _ => None,
                     })
