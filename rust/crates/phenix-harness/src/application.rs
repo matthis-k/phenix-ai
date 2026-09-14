@@ -261,6 +261,7 @@ pub struct ApplicationWorker {
     authority: Authority,
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
+    event_sender: Option<mpsc::Sender<ApplicationEvent>>,
     next_session_ordinal: u64,
     next_execution_ordinal: u64,
 }
@@ -275,6 +276,7 @@ impl ApplicationWorker {
                 permission: None,
                 elicitation: None,
             },
+            event_sender: None,
             next_session_ordinal: 1,
             next_execution_ordinal: 1,
         })
@@ -288,6 +290,12 @@ impl ApplicationWorker {
     #[must_use]
     pub fn projection_mut(&mut self) -> &mut SessionProjectionStore {
         &mut self.projection
+    }
+
+    #[must_use]
+    pub fn with_event_sender(mut self, sender: mpsc::Sender<ApplicationEvent>) -> Self {
+        self.event_sender = Some(sender);
+        self
     }
 
     #[must_use]
@@ -424,6 +432,7 @@ impl ApplicationWorker {
         request: SessionRenameInput,
     ) -> Result<SessionInfo, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
+        self.reserve_session_event_slot()?;
         let change = SessionChange::Renamed {
             title: request.title.clone(),
         };
@@ -447,6 +456,7 @@ impl ApplicationWorker {
         request: ApplicationSessionInput,
     ) -> Result<Acknowledged, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
+        self.reserve_session_event_slot()?;
         let change = SessionChange::Closed;
         let response = self.invoke_session(SessionCommand::Transition {
             id: request.session_id.clone(),
@@ -463,6 +473,7 @@ impl ApplicationWorker {
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
+        self.reserve_session_event_slot()?;
         let response = self.invoke_session(SessionCommand::AppendJournal {
             id: request.session_id.clone(),
             entry: session_change_journal(&SessionChange::Message {
@@ -637,18 +648,53 @@ impl ApplicationWorker {
             .and_then(|projection| projection.through_sequence.checked_add(1))
             == Some(update.sequence);
         if contiguous {
-            return self
+            self
                 .projection
-                .apply_update(update)
-                .map_err(application_projection_error);
+                .apply_update(update.clone())
+                .map_err(application_projection_error)?;
+        } else {
+            let snapshot = self.load_session_snapshot(SessionResumeInput {
+                session_id: session.session_id,
+                after_sequence: None,
+            })?;
+            self.projection
+                .repair_with_snapshot(snapshot, [update.clone()])
+                .map_err(application_projection_error)?;
         }
-        let snapshot = self.load_session_snapshot(SessionResumeInput {
-            session_id: session.session_id,
-            after_sequence: None,
-        })?;
-        self.projection
-            .repair_with_snapshot(snapshot, [update])
-            .map_err(application_projection_error)
+        self.emit_session_update(update)
+    }
+
+    fn reserve_session_event_slot(&self) -> Result<(), ApplicationError> {
+        let Some(sender) = &self.event_sender else {
+            return Ok(());
+        };
+        if sender.is_closed() {
+            return Err(ApplicationError::Disconnected);
+        }
+        if sender.capacity() == 0 {
+            return Err(ApplicationError::Conflict {
+                message: "application event queue is full".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn emit_session_update(&self, update: SessionUpdate) -> Result<(), ApplicationError> {
+        let Some(sender) = &self.event_sender else {
+            return Ok(());
+        };
+        sender
+            .try_send(ApplicationEvent {
+                event: ContractId::parse("phenix.application.session-update@1")
+                    .expect("static session update event id is valid"),
+                payload: update.to_value(),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => ApplicationError::Conflict {
+                    message: "application event queue is full".to_owned(),
+                },
+                mpsc::error::TrySendError::Closed(_) => ApplicationError::Disconnected,
+            })
     }
 
     fn invoke_session(
@@ -778,7 +824,9 @@ pub async fn serve_configured_application(
     let sdk = harness
         .resolved_harness()
         .resolve_sdk_contributions([sdk_contribution()])?;
-    let worker = ApplicationWorker::new(harness)?;
+    let (event_sender, event_receiver) =
+        mpsc::channel::<ApplicationEvent>(APPLICATION_EVENT_CAPACITY);
+    let worker = ApplicationWorker::new(harness)?.with_event_sender(event_sender);
     let runtime = RuntimeId::parse("phenix.application-runtime")
         .expect("static application runtime id is valid");
     let generation = CapabilityGenerationId::from(worker.harness.generation());
@@ -799,9 +847,6 @@ pub async fn serve_configured_application(
         client,
     )?;
     let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
-    let (_event_sender, event_receiver) =
-        mpsc::channel::<ApplicationEvent>(APPLICATION_EVENT_CAPACITY);
-
     let worker = serve_application_worker(worker, service.clone(), receiver);
     let stdio = serve_stdio_with_events_and_callbacks(
         transport,
@@ -1074,6 +1119,74 @@ mod tests {
         assert_eq!(record.lifecycle, SessionLifecycle::Closed);
         assert_eq!(record.title.as_deref(), Some("renamed"));
         assert_eq!(record.working_directory.as_deref(), Some("/workspace"));
+    }
+
+    #[test]
+    fn worker_emits_journaled_session_updates() {
+        let (sender, mut events) = mpsc::channel(1);
+        let mut worker = application_worker().with_event_sender(sender);
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+
+        invoke_operation::<RenameSession>(
+            &mut worker,
+            SessionRenameInput {
+                session_id: created.session_id,
+                title: "renamed".into(),
+            },
+        )
+        .unwrap();
+
+        let event = events.try_recv().expect("rename event");
+        assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
+        let update = SessionUpdate::from_value(&event.payload).expect("session update payload");
+        assert_eq!(update.sequence, 1);
+        assert!(matches!(
+            update.update,
+            SessionChange::Renamed { title } if title == "renamed"
+        ));
+    }
+
+    #[test]
+    fn full_event_queue_rejects_mutation_before_journaling() {
+        let (sender, _events) = mpsc::channel(1);
+        let mut worker = application_worker().with_event_sender(sender.clone());
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("initial".into()),
+            },
+        )
+        .unwrap();
+        sender
+            .try_send(ApplicationEvent {
+                event: ContractId::parse("phenix.application.session-update@1").unwrap(),
+                payload: Acknowledged {}.to_value(),
+            })
+            .expect("fill the event queue");
+
+        let error = invoke_operation::<RenameSession>(
+            &mut worker,
+            SessionRenameInput {
+                session_id: created.session_id.clone(),
+                title: "renamed".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, ApplicationError::Conflict { .. }));
+        let record = worker.session_record(&created.session_id).unwrap().unwrap();
+        assert_eq!(record.title.as_deref(), Some("initial"));
+        assert_eq!(
+            worker.projection().state().sessions[created.session_id.as_str()].through_sequence,
+            0
+        );
     }
 
     #[test]
