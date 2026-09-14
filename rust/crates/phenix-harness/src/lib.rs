@@ -33,6 +33,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 mod persistence;
+pub mod runtime_config;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 

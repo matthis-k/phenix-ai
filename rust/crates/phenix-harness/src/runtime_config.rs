@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, CallableId, ModelId, PhenixValue, PluginId, Project, RoutingProfileId, ServiceId,
     ValueError,
 };
-use phenix_harness::{default_suite_authority, PhenixHarness};
+use crate::{default_suite_authority, PhenixHarness};
 use phenix_plugin_catalog::{
     execution_configuration_service, model_routing_service, options_component_manifest,
     options_service, AgentDefinition, ExecutionConfigurationCommand,
@@ -94,7 +94,7 @@ impl RuntimeRoutingProfile {
     }
 }
 
-pub(super) fn apply_default_config_directory(
+pub fn apply_default_config_directory(
     harness: &mut PhenixHarness,
     directory: &Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -112,7 +112,7 @@ pub(super) fn apply_default_config_directory(
     Ok(())
 }
 
-pub(super) fn apply_startup_settings(
+pub fn apply_startup_settings(
     harness: &mut PhenixHarness,
     config_directory: Option<&Path>,
     nix_settings: Option<&Path>,

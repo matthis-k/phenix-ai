@@ -43,6 +43,8 @@
         ];
         doCheck = false;
 
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+
         installPhase = ''
           runHook preInstall
           mkdir -p "$out/bin"
@@ -50,6 +52,11 @@
           test -n "$acp_binary"
           cp "$acp_binary" "$out/bin/phenix-acp"
           runHook postInstall
+        '';
+
+        postFixup = ''
+          wrapProgram "$out/bin/phenix-acp" \
+            --set PHENIX_DEFAULT_CONFIG_DIR ${pkgs.lib.escapeShellArg "${phenixHarnessResources}/share/phenix"}
         '';
       };
 

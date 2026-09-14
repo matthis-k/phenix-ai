@@ -17,15 +17,20 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     Authority, CapabilityGenerationId, ClientConnectionId, ContractId, HasPhenixSchema,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    LocalPersistence, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
+    PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     sdk_contribution, session_service, SessionCommand, SessionJournalDraft, SessionJournalEntry,
-    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+    OptionStartupPrecedence, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
 };
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 use tokio::sync::mpsc;
 
 pub const APPLICATION_INVOCATION_CAPACITY: usize = 64;
@@ -803,6 +808,8 @@ pub enum ConfiguredApplicationError {
     Observable(#[from] ObservableError),
     #[error(transparent)]
     Sdk(#[from] phenix_core::SdkResolutionError),
+    #[error("configured application startup failed: {message}")]
+    Configuration { message: String },
     #[error("ACP stdio server failed: {message}")]
     Stdio { message: String },
 }
@@ -812,9 +819,79 @@ pub enum ConfiguredApplicationError {
 /// The worker is deliberately separate from the transport crate: it owns the
 /// mutable product state, while `phenix-acp-stdio` only forwards typed calls.
 pub async fn serve_default_application() -> Result<(), ConfiguredApplicationError> {
-    let mut harness = PhenixHarness::default_suite()?;
+    let state = configured_state_path()?;
+    if let Some(parent) = state.parent() {
+        fs::create_dir_all(parent).map_err(|error| ConfiguredApplicationError::Configuration {
+            message: error.to_string(),
+        })?;
+    }
+    let persistence = LocalPersistence::open(state).map_err(|error| {
+        ConfiguredApplicationError::Configuration {
+            message: error.to_string(),
+        }
+    })?;
+    let mut harness = PhenixHarness::default_suite_with_persistence(persistence)?;
     harness.activate()?;
+    apply_application_configuration(&mut harness)?;
     serve_configured_application(harness).await
+}
+
+fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
+    if let Some(path) = env::var_os("PHENIX_STATE_DB") {
+        return Ok(PathBuf::from(path));
+    }
+    if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
+        return Ok(PathBuf::from(state_home).join("phenix/acp.sqlite"));
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return Ok(PathBuf::from(home).join(".local/state/phenix/acp.sqlite"));
+    }
+    Err(ConfiguredApplicationError::Configuration {
+        message: "cannot determine durable state path; set PHENIX_STATE_DB or XDG_STATE_HOME"
+            .to_owned(),
+    })
+}
+
+fn apply_application_configuration(
+    harness: &mut PhenixHarness,
+) -> Result<(), ConfiguredApplicationError> {
+    if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
+        crate::runtime_config::apply_default_config_directory(harness, Path::new(&path)).map_err(
+            |error| ConfiguredApplicationError::Configuration {
+                message: error.to_string(),
+            },
+        )?;
+    }
+
+    let config_directory = env::var_os("PHENIX_CONFIG_DIR").map(PathBuf::from);
+    let nix_settings = env::var_os("PHENIX_NIX_SETTINGS").map(PathBuf::from);
+    if config_directory.is_some() || nix_settings.is_some() {
+        let precedence = match env::var("PHENIX_SETTINGS_PRECEDENCE") {
+            Ok(value) if value == "file" => OptionStartupPrecedence::File,
+            Ok(value) if value == "nix" => OptionStartupPrecedence::Nix,
+            Err(env::VarError::NotPresent) => OptionStartupPrecedence::Nix,
+            Ok(value) => {
+                return Err(ConfiguredApplicationError::Configuration {
+                    message: format!("invalid PHENIX_SETTINGS_PRECEDENCE: {value}"),
+                });
+            }
+            Err(error) => {
+                return Err(ConfiguredApplicationError::Configuration {
+                    message: error.to_string(),
+                });
+            }
+        };
+        crate::runtime_config::apply_startup_settings(
+            harness,
+            config_directory.as_deref(),
+            nix_settings.as_deref(),
+            precedence,
+        )
+        .map_err(|error| ConfiguredApplicationError::Configuration {
+            message: error.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 pub async fn serve_configured_application(
