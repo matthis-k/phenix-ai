@@ -36,6 +36,7 @@ pub fn execution_component_id() -> ComponentId {
 #[must_use]
 pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let model_authority = maximum_authority.clone();
+    let workspace_authority = maximum_authority.attenuate(&workspace_write_authority());
     let authority = execution_manifest(maximum_authority).maximum_authority;
     ComponentManifest {
         listeners: Vec::new(),
@@ -52,7 +53,7 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
                 interface: WorkspaceInterface::interface_id(),
                 schema: WorkspaceInterface::schema(),
                 required: false,
-                authority: workspace_write_authority(),
+                authority: workspace_authority,
             },
         ],
         exports: vec![
@@ -163,8 +164,15 @@ mod tests {
             component.imports[1].interface,
             WorkspaceInterface::interface_id()
         );
-        assert_eq!(component.imports[1].authority, workspace_write_authority());
+        assert_eq!(component.imports[1].authority, Authority::default());
         assert!(graph.component(&execution_component_id()).is_some());
+    }
+
+    #[test]
+    fn workspace_import_is_limited_to_the_package_ceiling() {
+        let write = CapabilityId::parse(WORKSPACE_WRITE).unwrap();
+        let component = execution_component_manifest(Authority::new([write.clone()]));
+        assert!(component.imports[1].authority.permits(&write));
     }
 
     #[test]
