@@ -148,7 +148,9 @@ impl InvocationPackage {
             })
             .map_err(|error| format!("invocation attempt allocation failed: {error}"))?;
         let StepAttemptResponse::Attribution { attribution } = allocated else {
-            return Err("step attempt service returned a non-attribution allocation response".into());
+            return Err(
+                "step attempt service returned a non-attribution allocation response".into(),
+            );
         };
 
         let task = params.intent.derive_task(&preparation);
