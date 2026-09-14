@@ -40,6 +40,5 @@ impl ComponentInterface for StepTransactionInterface {
 
 #[must_use]
 pub fn step_transaction_service() -> ServiceId {
-    ServiceId::parse(STEP_TRANSACTION_SERVICE)
-        .expect("static step transaction service id is valid")
+    ServiceId::parse(STEP_TRANSACTION_SERVICE).expect("static step transaction service id is valid")
 }
