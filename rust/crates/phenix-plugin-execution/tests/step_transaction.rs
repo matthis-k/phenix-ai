@@ -180,7 +180,7 @@ fn route() -> RouteDecision {
     }
 }
 
-fn setup_dispatched(kernel: &mut Kernel) {
+fn setup_root_and_reservation(kernel: &mut Kernel) {
     let _: ExecutionResourceResponse = invoke(
         kernel,
         execution_resource_service(),
@@ -214,7 +214,9 @@ fn setup_dispatched(kernel: &mut Kernel) {
         },
     )
     .unwrap();
+}
 
+fn create_attempt(kernel: &mut Kernel) {
     let attribution = UsageAttribution {
         root_execution_id: "root".into(),
         execution_id: "root".into(),
@@ -233,6 +235,11 @@ fn setup_dispatched(kernel: &mut Kernel) {
         },
     )
     .unwrap();
+}
+
+fn setup_routed(kernel: &mut Kernel) {
+    setup_root_and_reservation(kernel);
+    create_attempt(kernel);
     for command in [
         StepAttemptCommand::BindReservation {
             attempt_id: "attempt-1".into(),
@@ -242,6 +249,14 @@ fn setup_dispatched(kernel: &mut Kernel) {
             attempt_id: "attempt-1".into(),
             decision: route(),
         },
+    ] {
+        let _: StepAttemptResponse = invoke(kernel, step_attempt_service(), &command).unwrap();
+    }
+}
+
+fn setup_dispatched(kernel: &mut Kernel) {
+    setup_routed(kernel);
+    for command in [
         StepAttemptCommand::BindProjection {
             attempt_id: "attempt-1".into(),
             projection: ProjectionRevision {
@@ -281,6 +296,19 @@ fn settle(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
     )
 }
 
+fn abort(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
+    invoke(
+        kernel,
+        step_transaction_service(),
+        &StepTransactionCommand::AbortBeforeDispatch {
+            root_execution_id: "root".into(),
+            reservation_id: Some("reservation-1".into()),
+            attempt_id: "attempt-1".into(),
+            outcome: AttemptOutcome::Failed,
+        },
+    )
+}
+
 fn lookup_attempt(kernel: &mut Kernel) -> phenix_sdk::StepAttemptRecord {
     let response: StepAttemptResponse = invoke(
         kernel,
@@ -301,7 +329,7 @@ fn lookup_attempt(kernel: &mut Kernel) -> phenix_sdk::StepAttemptRecord {
 
 #[test]
 fn failed_atomic_settlement_commits_neither_owner() {
-    let path = temp_db("failure");
+    let path = temp_db("settlement-failure");
     let mut kernel = kernel(&path);
     setup_dispatched(&mut kernel);
 
@@ -311,7 +339,6 @@ fn failed_atomic_settlement_commits_neither_owner() {
         StepAttemptPhase::Dispatched
     );
 
-    // The reservation must still be active if the resource half did not commit.
     let response: ExecutionResourceResponse = invoke(
         &mut kernel,
         execution_resource_service(),
@@ -332,19 +359,74 @@ fn failed_atomic_settlement_commits_neither_owner() {
 
 #[test]
 fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
-    let path = temp_db("retry");
+    let path = temp_db("settlement-retry");
     let mut kernel = kernel(&path);
     setup_dispatched(&mut kernel);
 
     assert!(settle(&mut kernel).is_err());
     let response = settle(&mut kernel).unwrap();
-    let StepTransactionResponse::Settled {
-        attempt: settled_attempt,
-        ..
-    } = response;
+    let settled_attempt = match response {
+        StepTransactionResponse::Settled { attempt, .. } => attempt,
+        StepTransactionResponse::Aborted { .. } => panic!("expected settlement response"),
+    };
     assert_eq!(settled_attempt.phase, StepAttemptPhase::Settled);
     assert_eq!(settled_attempt.outcome, Some(AttemptOutcome::Succeeded));
     assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Settled);
+    drop(kernel);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn failed_atomic_abort_commits_neither_owner() {
+    let path = temp_db("abort-failure");
+    let mut kernel = kernel(&path);
+    setup_routed(&mut kernel);
+
+    assert!(abort(&mut kernel).is_err());
+    assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Routed);
+
+    let response: ExecutionResourceResponse = invoke(
+        &mut kernel,
+        execution_resource_service(),
+        &ExecutionResourceCommand::ReleaseReservation {
+            root_execution_id: "root".into(),
+            reservation_id: "reservation-1".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        response,
+        ExecutionResourceResponse::RootBudget { .. }
+    ));
+    drop(kernel);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn failed_atomic_abort_can_be_retried_without_double_release() {
+    let path = temp_db("abort-retry");
+    let mut kernel = kernel(&path);
+    setup_routed(&mut kernel);
+
+    assert!(abort(&mut kernel).is_err());
+    let response = abort(&mut kernel).unwrap();
+    let aborted_attempt = match response {
+        StepTransactionResponse::Aborted { attempt, .. } => attempt,
+        StepTransactionResponse::Settled { .. } => panic!("expected abort response"),
+    };
+    assert_eq!(aborted_attempt.phase, StepAttemptPhase::Settled);
+    assert_eq!(aborted_attempt.outcome, Some(AttemptOutcome::Failed));
+    assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Settled);
+
+    let release_again: Result<ExecutionResourceResponse, String> = invoke(
+        &mut kernel,
+        execution_resource_service(),
+        &ExecutionResourceCommand::ReleaseReservation {
+            root_execution_id: "root".into(),
+            reservation_id: "reservation-1".into(),
+        },
+    );
+    assert!(release_again.is_err());
     drop(kernel);
     let _ = fs::remove_file(path);
 }
