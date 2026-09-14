@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
-    RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_plugin_catalog::{
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
@@ -162,7 +162,9 @@ impl PluginInstance for InvocationDefaultsPlugin {
                 }
             }
         }
-        Err(format!("unsupported invocation defaults service: {service}"))
+        Err(format!(
+            "unsupported invocation defaults service: {service}"
+        ))
     }
 }
 
@@ -248,7 +250,10 @@ mod tests {
 
         let component = invocation_defaults_component_manifest(authority);
         assert_eq!(component.imports.len(), 1);
-        assert_eq!(component.imports[0].interface, OptionsInterface::interface_id());
+        assert_eq!(
+            component.imports[0].interface,
+            OptionsInterface::interface_id()
+        );
         assert_eq!(component.exports.len(), 2);
         assert!(component
             .exports

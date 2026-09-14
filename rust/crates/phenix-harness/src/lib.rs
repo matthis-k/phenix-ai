@@ -141,10 +141,7 @@ impl HarnessBuilder {
             model_routing_manifest(authority.clone()),
             model_routing_factory,
         )?;
-        builder.add_embedded(
-            step_runner_manifest(authority.clone()),
-            step_runner_factory,
-        )?;
+        builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
         builder.add_embedded(hook_manifest(authority.clone()), hook_factory)?;

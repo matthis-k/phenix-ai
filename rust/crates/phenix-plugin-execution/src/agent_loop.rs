@@ -145,9 +145,7 @@ fn handle(
                 })
                 .map_err(|error| error.to_string())?;
             let StepRunnerResponse::Completed {
-                output,
-                tool_calls,
-                ..
+                output, tool_calls, ..
             } = response;
             let tool_call_count = u32::try_from(tool_calls.len())
                 .map_err(|_| "model returned too many tool calls".to_owned())?;
