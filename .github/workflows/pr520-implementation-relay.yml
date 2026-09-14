@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/pr520-implementation-relay.yml
       - .phenix/pr520-edit.py
+      - .phenix/pr520-register-test.py
 
 permissions:
   contents: write
@@ -20,10 +21,12 @@ jobs:
           ref: refactor/durable-collections
           fetch-depth: 0
       - name: Apply source transformations
-        run: python .phenix/pr520-edit.py
+        run: |
+          python .phenix/pr520-edit.py
+          python .phenix/pr520-register-test.py
       - name: Remove relay files
         run: |
-          rm .phenix/pr520-edit.py .github/workflows/pr520-implementation-relay.yml
+          rm .phenix/pr520-edit.py .phenix/pr520-register-test.py .github/workflows/pr520-implementation-relay.yml
           rmdir .phenix || true
       - name: Format
         working-directory: rust
