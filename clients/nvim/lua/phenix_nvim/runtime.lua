@@ -1,4 +1,5 @@
 local native = require("phenix")
+local interaction = require("phenix_nvim.interaction")
 local util = require("phenix_nvim.util")
 
 local M = {}
@@ -123,25 +124,31 @@ function M.defer(start)
 end
 
 local function permission_handler(request)
-  return M.defer(function(resolve)
+  return M.defer(function(resolve, reject)
     vim.schedule(function()
-      vim.ui.select({ "Allow once", "Deny" }, {
-        prompt = "Phenix permission: " .. (request.description or "Allow this action?"),
-      }, function(choice)
-        if choice == "Allow once" then
-          resolve({ kind = "AllowOnce" })
-        elseif choice == "Deny" then
-          resolve({ kind = "Deny" })
-        else
-          resolve({ kind = "Cancelled" })
-        end
-      end)
+      local ok, error = pcall(interaction.permission, request, resolve)
+      if not ok then
+        reject(tostring(error))
+      end
     end)
   end)
 end
 
-local function elicitation_handler(_request)
-  return { kind = "Cancelled" }
+local function elicitation_handler(request)
+  return M.defer(function(resolve, reject)
+    vim.schedule(function()
+      local ok, error = pcall(interaction.elicitation, request, function(response, form_error)
+        if form_error ~= nil then
+          reject(form_error)
+        else
+          resolve(response)
+        end
+      end)
+      if not ok then
+        reject(tostring(error))
+      end
+    end)
+  end)
 end
 
 local function install_interaction_handlers(callback)
