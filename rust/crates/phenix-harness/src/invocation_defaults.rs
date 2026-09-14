@@ -1,0 +1,262 @@
+use phenix_core::{
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
+    RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+};
+use phenix_plugin_catalog::{
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
+    OptionsInterface,
+};
+use phenix_sdk::{
+    default_invocation_service, invocation_clock_service, invocation_defaults_service,
+    DelegationResourcePolicy, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
+    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
+    RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
+};
+use std::collections::BTreeSet;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const INVOCATION_DEFAULTS_PLUGIN: &str = "phenix.harness.invocation-defaults";
+pub const INVOCATION_DEFAULTS_COMPONENT: &str = "phenix.harness.invocation-defaults";
+const ROUTING_PROFILE_OPTION: &str = "routing.profile";
+const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v1";
+const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v1";
+
+#[must_use]
+pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManifest {
+    PluginManifest {
+        id: PluginId::parse(INVOCATION_DEFAULTS_PLUGIN).expect("static plugin id is valid"),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: vec![PluginId::parse("phenix.options").expect("static plugin id is valid")],
+        services: vec![
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: invocation_defaults_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: invocation_clock_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+        ],
+        resource_namespaces: Vec::new(),
+        maximum_authority,
+    }
+}
+
+#[must_use]
+pub fn invocation_defaults_component_id() -> ComponentId {
+    ComponentId::parse(INVOCATION_DEFAULTS_COMPONENT).expect("static component id is valid")
+}
+
+#[must_use]
+pub fn invocation_defaults_component_manifest(maximum_authority: Authority) -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: invocation_defaults_component_id(),
+        owner: PluginId::parse(INVOCATION_DEFAULTS_PLUGIN).expect("static plugin id is valid"),
+        imports: vec![ComponentImport {
+            interface: OptionsInterface::interface_id(),
+            schema: OptionsInterface::schema(),
+            required: true,
+            authority: maximum_authority.clone(),
+        }],
+        exports: vec![
+            ComponentExport {
+                interface: InvocationDefaultsInterface::interface_id(),
+                schema: InvocationDefaultsInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: InvocationClockInterface::interface_id(),
+                schema: InvocationClockInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+        ],
+        maximum_authority,
+    }
+}
+
+#[must_use]
+pub fn invocation_defaults_factory() -> Box<dyn PluginInstance> {
+    Box::new(InvocationDefaultsPlugin)
+}
+
+struct InvocationDefaultsSdk<'host, 'runtime> {
+    options: SdkClient<'host, 'runtime, OptionsInterface>,
+}
+
+type InvocationDefaultsContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, InvocationDefaultsSdk<'host, 'runtime>>;
+
+fn context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> InvocationDefaultsContext<'host, 'runtime> {
+    PluginContext::new(
+        host,
+        InvocationDefaultsSdk {
+            options: SdkClient::new(host, invocation_defaults_component_id()),
+        },
+        (),
+        (),
+    )
+}
+
+struct InvocationDefaultsPlugin;
+
+impl PluginInstance for InvocationDefaultsPlugin {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        let context = context(host);
+        if service == &invocation_defaults_service() {
+            let command = context
+                .kernel
+                .decode_projected::<InvocationDefaultsCommand>(
+                    &InvocationDefaultsInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let InvocationDefaultsCommand::Resolve { request } = command;
+            return context
+                .kernel
+                .encode_value(&InvocationDefaultsResponse::Params {
+                    params: resolve_defaults(&context, &request)?,
+                })
+                .map_err(|error| error.to_string());
+        }
+        if service == &invocation_clock_service() {
+            let command = context
+                .kernel
+                .decode_projected::<InvocationClockCommand>(
+                    &InvocationClockInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            match command {
+                InvocationClockCommand::Now => {
+                    let millis = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|error| format!("system clock is before unix epoch: {error}"))?
+                        .as_millis();
+                    let now_ms = u64::try_from(millis)
+                        .map_err(|_| "system clock does not fit u64 milliseconds".to_owned())?;
+                    return context
+                        .kernel
+                        .encode_value(&InvocationClockResponse::Time { now_ms })
+                        .map_err(|error| error.to_string());
+                }
+            }
+        }
+        Err(format!("unsupported invocation defaults service: {service}"))
+    }
+}
+
+fn resolve_defaults(
+    context: &InvocationDefaultsContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<InvocationParams, String> {
+    let option_context = OptionContext {
+        session: None,
+        agent: request
+            .callable_id
+            .as_ref()
+            .map(|callable| OptionSubjectId::parse(callable.as_str().to_owned()))
+            .transpose()?,
+    };
+    let response: OptionResponse = context
+        .sdk
+        .options
+        .invoke_projected(&OptionCommand::Resolve {
+            key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
+            context: option_context,
+        })
+        .map_err(|error| format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}"))?;
+    let OptionResponse::Value { option } = response else {
+        return Err(format!(
+            "options service returned a non-value response for {ROUTING_PROFILE_OPTION}"
+        ));
+    };
+    let OptionValue::String(profile) = option.value else {
+        return Err(format!("{ROUTING_PROFILE_OPTION} must be a string"));
+    };
+    let profile_id = RoutingProfileId::parse(profile)
+        .map_err(|error| format!("invalid {ROUTING_PROFILE_OPTION}: {error}"))?;
+    let optional_tools = request
+        .tools
+        .iter()
+        .map(|tool| tool.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    Ok(InvocationParams {
+        profile_id,
+        policy: UsagePolicy {
+            revision: DEFAULT_POLICY_REVISION.into(),
+            max_fresh_input_tokens: 128 * 1024,
+            max_output_tokens: 16 * 1024,
+            max_cost_microunits: None,
+            max_retries: 1,
+            max_tool_result_bytes: 1024 * 1024,
+            max_tool_schemas: 128,
+            max_skills: 64,
+            require_known_capacity: false,
+            delegation: DelegationResourcePolicy::default(),
+        },
+        intent: InvocationIntent {
+            output_reserve_tokens: 8 * 1024,
+            required_context_capabilities: BTreeSet::new(),
+            required_capabilities: BTreeSet::new(),
+            required_tools: BTreeSet::new(),
+            optional_tools,
+            required_skills: BTreeSet::new(),
+            optional_skills: BTreeSet::new(),
+            requested_reasoning: None,
+            deadline_at_ms: None,
+        },
+        route_policy: RouteSelectionPolicy {
+            revision: DEFAULT_ROUTE_POLICY_REVISION.into(),
+            estimates: RoutingEstimateMode::Ignore,
+            max_candidate_attempts: 8,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_exports_replaceable_defaults_and_clock_interfaces() {
+        let authority = Authority::default();
+        let manifest = invocation_defaults_manifest(authority.clone());
+        assert_eq!(manifest.services.len(), 2);
+        assert_eq!(manifest.dependencies.len(), 1);
+
+        let component = invocation_defaults_component_manifest(authority);
+        assert_eq!(component.imports.len(), 1);
+        assert_eq!(component.imports[0].interface, OptionsInterface::interface_id());
+        assert_eq!(component.exports.len(), 2);
+        assert!(component
+            .exports
+            .iter()
+            .any(|export| export.interface == InvocationDefaultsInterface::interface_id()));
+        assert!(component
+            .exports
+            .iter()
+            .any(|export| export.interface == InvocationClockInterface::interface_id()));
+    }
+}
