@@ -1,6 +1,7 @@
 use crate::{
-    agent_loop_service, execution_component_id, execution_component_manifest, execution_factory,
-    execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
+    agent_loop_component_id, agent_loop_component_manifest, agent_loop_service,
+    execution_component_manifest, execution_factory, execution_manifest, AgentLoopCommand,
+    AgentLoopResponse, AgentLoopUsage,
 };
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
@@ -112,7 +113,10 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     let execution = execution_manifest(Authority::default());
     let ceiling = execution.maximum_authority.clone();
     let mut plugins = vec![execution];
-    let mut components = vec![execution_component_manifest(Authority::default())];
+    let mut components = vec![
+        execution_component_manifest(Authority::default()),
+        agent_loop_component_manifest(Authority::default()),
+    ];
     if with_provider {
         plugins.push(provider_manifest());
         components.push(provider_component());
@@ -145,7 +149,7 @@ fn invoke_agent_loop(kernel: &mut Kernel, execution: &PluginId) -> Result<Vec<u8
         tools: Vec::new(),
     };
     kernel.invoke_component(
-        &execution_component_id(),
+        &agent_loop_component_id(),
         &agent_loop_service(),
         &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
         &Authority::default(),
@@ -189,7 +193,7 @@ fn agent_loop_preserves_typed_model_tool_calls() {
     };
     let output = kernel
         .invoke_component(
-            &execution_component_id(),
+            &agent_loop_component_id(),
             &agent_loop_service(),
             &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
             &Authority::default(),
@@ -231,7 +235,7 @@ fn agent_loop_without_model_provider_fails_at_optional_import_boundary() {
                 message,
                 format!(
                     "component {} has no bound provider for optional import {}",
-                    execution_component_id(),
+                    agent_loop_component_id(),
                     ModelRoutingInterface::interface_id()
                 )
             );
