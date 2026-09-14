@@ -8,14 +8,14 @@ use phenix_core::{
     ServiceId, ServiceRole,
 };
 use phenix_sdk::{
-    context_service, default_invocation_service, invocation_service, step_runner_service,
-    ContextCommand, ContextInterface, ContextResponse, DefaultInvocationCommand,
-    DefaultInvocationInterface, ExecutionCommand, ExecutionInterface, ExecutionResponse,
-    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse, InvocationCommand,
-    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
-    InvocationInterface, InvocationParams, InvocationRequest, PlannedStepRequest,
-    StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
-    UsageAttemptKind,
+    context_service, default_invocation_service, helper_invocation_service, invocation_service,
+    step_runner_service, ContextCommand, ContextInterface, ContextResponse,
+    DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
+    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface, InvocationClockCommand,
+    InvocationClockInterface, InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
+    InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
+    InvocationRequest, PlannedStepRequest, StepAttemptCommand, StepAttemptInterface,
+    StepAttemptResponse, StepRunnerCommand, UsageAttemptKind,
 };
 use std::collections::BTreeSet;
 
@@ -24,7 +24,11 @@ pub use runner::{step_runner_component_id, STEP_RUNNER_COMPONENT, STEP_RUNNER_PL
 #[must_use]
 pub fn step_runner_manifest(maximum_authority: Authority) -> PluginManifest {
     let mut manifest = runner::step_runner_manifest(maximum_authority);
-    for service in [invocation_service(), default_invocation_service()] {
+    for service in [
+        invocation_service(),
+        default_invocation_service(),
+        helper_invocation_service(),
+    ] {
         manifest.services.push(ServiceContribution {
             role: ServiceRole::Terminal,
             service,
@@ -58,6 +62,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
         (
             DefaultInvocationInterface::interface_id(),
             DefaultInvocationInterface::schema(),
+        ),
+        (
+            HelperInvocationInterface::interface_id(),
+            HelperInvocationInterface::schema(),
         ),
     ] {
         manifest.exports.push(ComponentExport {
@@ -118,6 +126,22 @@ impl InvocationPackage {
         request: InvocationRequest,
         params: InvocationParams,
     ) -> Result<Vec<u8>, String> {
+        let kind = if request.parent_attempt_id.is_some() {
+            UsageAttemptKind::Retry
+        } else {
+            UsageAttemptKind::Root
+        };
+        self.invoke_with_kind(context, host, request, params, kind)
+    }
+
+    fn invoke_with_kind(
+        &mut self,
+        context: &InvocationContext<'_, '_>,
+        host: &PluginHost<'_>,
+        request: InvocationRequest,
+        params: InvocationParams,
+        kind: UsageAttemptKind,
+    ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
         let prepared: ContextResponse = context
             .sdk
@@ -138,11 +162,6 @@ impl InvocationPackage {
             .map_err(|error| format!("invocation clock unavailable: {error}"))?;
         let InvocationClockResponse::Time { now_ms } = clock;
 
-        let kind = if request.parent_attempt_id.is_some() {
-            UsageAttemptKind::Retry
-        } else {
-            UsageAttemptKind::Root
-        };
         let allocated: StepAttemptResponse = context
             .sdk
             .attempts
@@ -223,6 +242,32 @@ impl PluginInstance for InvocationPackage {
             let InvocationDefaultsResponse::Params { params } = resolved;
             return self.invoke_explicit(&context, host, request, params);
         }
+        if service == &helper_invocation_service() {
+            let command = context
+                .kernel
+                .decode_projected::<HelperInvocationCommand>(
+                    &HelperInvocationInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let HelperInvocationCommand::Invoke { request } = command;
+            let resolved: InvocationDefaultsResponse = context
+                .sdk
+                .defaults
+                .invoke_projected(&InvocationDefaultsCommand::ResolveHelper {
+                    request: request.clone(),
+                })
+                .map_err(|error| format!("helper invocation parameters unavailable: {error}"))?;
+            let InvocationDefaultsResponse::Params { params } = resolved;
+            let kind = request.kind.usage_kind();
+            return self.invoke_with_kind(
+                &context,
+                host,
+                request.as_invocation_request(),
+                params,
+                kind,
+            );
+        }
         self.runner.invoke(service, input, host)
     }
 
@@ -269,13 +314,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_package_exports_direct_default_and_prepared_invocation() {
+    fn public_package_exports_direct_default_helper_and_prepared_invocation() {
         let authority = Authority::default();
         let manifest = step_runner_manifest(authority.clone());
         assert!(manifest.dependencies.is_empty());
         for service in [
             invocation_service(),
             default_invocation_service(),
+            helper_invocation_service(),
             step_runner_service(),
         ] {
             assert!(manifest
@@ -288,6 +334,7 @@ mod tests {
         for interface in [
             InvocationInterface::interface_id(),
             DefaultInvocationInterface::interface_id(),
+            HelperInvocationInterface::interface_id(),
             phenix_sdk::StepRunnerInterface::interface_id(),
         ] {
             assert!(component
@@ -299,7 +346,7 @@ mod tests {
             .imports
             .iter()
             .find(|import| import.interface == InvocationDefaultsInterface::interface_id())
-            .expect("default invocation imports the defaults provider");
+            .expect("default and helper invocation import the defaults provider");
         assert!(!defaults.required);
         let clock = component
             .imports
