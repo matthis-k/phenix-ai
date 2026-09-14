@@ -164,6 +164,7 @@ mod tests {
     fn public_package_exports_direct_default_and_prepared_invocation() {
         let authority = Authority::default();
         let manifest = step_runner_manifest(authority.clone());
+        assert!(manifest.dependencies.is_empty());
         for service in [
             invocation_service(),
             default_invocation_service(),
