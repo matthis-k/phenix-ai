@@ -9,6 +9,8 @@ use phenix_core::{
 use serde::{Deserialize, Serialize};
 
 pub const INVOCATION_SERVICE: &str = "phenix.invocation@1";
+pub const DEFAULT_INVOCATION_SERVICE: &str = "phenix.invocation.default@1";
+pub const INVOCATION_DEFAULTS_SERVICE: &str = "phenix.invocation.defaults@1";
 pub const STEP_RUNNER_SERVICE: &str = "phenix.step-runner@1";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -77,6 +79,24 @@ pub enum InvocationCommand {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DefaultInvocationCommand {
+    Invoke { request: InvocationRequest },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InvocationDefaultsCommand {
+    Resolve { request: InvocationRequest },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InvocationDefaultsResponse {
+    Params { params: InvocationParams },
+}
+
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
 )]
@@ -122,6 +142,7 @@ pub enum StepRunnerResponse {
 }
 
 pub type InvocationResponse = StepRunnerResponse;
+pub type DefaultInvocationResponse = InvocationResponse;
 
 pub struct InvocationInterface;
 
@@ -132,6 +153,32 @@ impl ComponentInterface for InvocationInterface {
 
     fn schema() -> phenix_core::InterfaceSchema {
         phenix_core::InterfaceSchema::of::<InvocationCommand, InvocationResponse>()
+    }
+}
+
+pub struct DefaultInvocationInterface;
+
+impl ComponentInterface for DefaultInvocationInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(DEFAULT_INVOCATION_SERVICE)
+            .expect("static default invocation interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<DefaultInvocationCommand, DefaultInvocationResponse>()
+    }
+}
+
+pub struct InvocationDefaultsInterface;
+
+impl ComponentInterface for InvocationDefaultsInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(INVOCATION_DEFAULTS_SERVICE)
+            .expect("static invocation defaults interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<InvocationDefaultsCommand, InvocationDefaultsResponse>()
     }
 }
 
@@ -150,6 +197,18 @@ impl ComponentInterface for StepRunnerInterface {
 #[must_use]
 pub fn invocation_service() -> ServiceId {
     ServiceId::parse(INVOCATION_SERVICE).expect("static invocation service id is valid")
+}
+
+#[must_use]
+pub fn default_invocation_service() -> ServiceId {
+    ServiceId::parse(DEFAULT_INVOCATION_SERVICE)
+        .expect("static default invocation service id is valid")
+}
+
+#[must_use]
+pub fn invocation_defaults_service() -> ServiceId {
+    ServiceId::parse(INVOCATION_DEFAULTS_SERVICE)
+        .expect("static invocation defaults service id is valid")
 }
 
 #[must_use]
