@@ -17,12 +17,14 @@ use phenix_sdk::{
     memory_extract_callable, memory_resolve_callable, memory_service, memory_summarize_callable,
     memory_validate_callable, ContextCheckpoint, ContextCompactionCommand,
     ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
-    MemoryCanonicalReference, MemoryCommand, MemoryConsolidationRequest, MemoryDependencyRevision,
-    MemoryEmbeddingInterface, MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryExpansion,
-    MemoryExtractionRequest, MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind,
-    MemoryNode, MemoryRankCandidate, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome, MemoryScope,
-    MemorySourceReference, ModelCommand, ModelResponse, ModelRoutingInterface,
+    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
+    HelperInvocationRequest, MemoryCanonicalReference, MemoryCommand, MemoryConsolidationRequest,
+    MemoryDependencyRevision, MemoryEmbeddingInterface, MemoryEmbeddingRequest,
+    MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
+    MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
+    MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
+    MemoryResponse, MemoryRevalidationOutcome, MemoryScope, MemorySourceReference,
+    StepRunnerResponse,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -39,7 +41,7 @@ pub(crate) const COMPACTION_EVENT: &str = "phenix.memory.compaction";
 pub(crate) const REVALIDATION_EVENT: &str = "phenix.memory.revalidation";
 
 pub(crate) struct MemorySdk<'host, 'runtime> {
-    models: SdkClient<'host, 'runtime, ModelRoutingInterface>,
+    invocation: SdkClient<'host, 'runtime, HelperInvocationInterface>,
     embed: SdkClient<'host, 'runtime, MemoryEmbeddingInterface>,
     rank: SdkClient<'host, 'runtime, MemoryRankInterface>,
 }
@@ -105,7 +107,7 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> MemoryContext<
     PluginContext::new(
         host,
         MemorySdk {
-            models: SdkClient::new(host, crate::memory_component_id()),
+            invocation: SdkClient::new(host, crate::memory_component_id()),
             embed: SdkClient::new(host, crate::memory_component_id()),
             rank: SdkClient::new(host, crate::memory_component_id()),
         },
@@ -233,8 +235,21 @@ fn handle(context: &MemoryContext<'_, '_>, command: MemoryCommand) -> MemoryResu
                 observed_at,
             )?),
         }),
-        MemoryCommand::Revalidate { id, profile_id, at } => {
-            let state = revalidate_memory(context, id.clone(), profile_id, at)?;
+        MemoryCommand::Revalidate {
+            id,
+            execution_id,
+            parent_attempt_id,
+            profile_id,
+            at,
+        } => {
+            let state = revalidate_memory(
+                context,
+                id.clone(),
+                execution_id,
+                parent_attempt_id,
+                profile_id,
+                at,
+            )?;
             observe(
                 context,
                 REVALIDATION_EVENT,
@@ -280,6 +295,8 @@ fn extract_memory(
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
     let content = routed_memory_text(
         context,
+        &request.execution_id,
+        &request.parent_attempt_id,
         &request.profile_id,
         memory_extract_callable(),
         input,
@@ -305,12 +322,19 @@ fn consolidate_memory(
     context: &MemoryContext<'_, '_>,
     request: MemoryConsolidationRequest,
 ) -> MemoryResult<MemoryRecord> {
-    if !(2..=100).contains(&request.ids.len()) {
+    let MemoryConsolidationRequest {
+        execution_id,
+        parent_attempt_id,
+        profile_id,
+        mut ids,
+        consolidated_id,
+        created_at,
+    } = request;
+    if !(2..=100).contains(&ids.len()) {
         return Err(MemoryError::Invalid(
             "memory consolidation requires between 2 and 100 records".into(),
         ));
     }
-    let mut ids = request.ids;
     ids.sort();
     let original_len = ids.len();
     ids.dedup();
@@ -345,7 +369,9 @@ fn consolidate_memory(
         serde_json::to_vec(&records).map_err(|error| MemoryError::Provider(error.to_string()))?;
     let content = routed_memory_text(
         context,
-        &request.profile_id,
+        &execution_id,
+        &parent_attempt_id,
+        &profile_id,
         memory_consolidate_callable(),
         input,
         "memory consolidation",
@@ -353,7 +379,7 @@ fn consolidate_memory(
     record_memory(
         context,
         MemoryRecord {
-            id: request.consolidated_id,
+            id: consolidated_id,
             kind: first.kind,
             scope: first.scope.clone(),
             content,
@@ -361,7 +387,7 @@ fn consolidate_memory(
             supersedes: ids,
             valid_from: None,
             valid_until: None,
-            created_at: request.created_at,
+            created_at,
         },
     )
 }
@@ -514,6 +540,8 @@ fn observe_conflict(
 fn revalidate_memory(
     context: &MemoryContext<'_, '_>,
     id: String,
+    execution_id: String,
+    parent_attempt_id: String,
     profile_id: RoutingProfileId,
     at: u64,
 ) -> MemoryResult<MemoryFreshnessRecord> {
@@ -532,6 +560,8 @@ fn revalidate_memory(
         MemoryRevalidationOutcome::NeedsValidation => {
             let validated = routed_revalidation(
                 context,
+                &execution_id,
+                &parent_attempt_id,
                 &profile_id,
                 memory_validate_callable(),
                 &record,
@@ -540,6 +570,8 @@ fn revalidate_memory(
             if validated == MemoryRevalidationOutcome::NeedsValidation {
                 routed_revalidation(
                     context,
+                    &execution_id,
+                    &parent_attempt_id,
                     &profile_id,
                     memory_resolve_callable(),
                     &record,
@@ -569,6 +601,8 @@ fn revalidate_memory(
 
 fn routed_revalidation(
     context: &MemoryContext<'_, '_>,
+    execution_id: &str,
+    parent_attempt_id: &str,
     profile_id: &RoutingProfileId,
     callable_id: CallableId,
     record: &MemoryRecord,
@@ -578,7 +612,10 @@ fn routed_revalidation(
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
     let output = routed_model_bytes(
         context,
+        execution_id,
+        parent_attempt_id,
         profile_id,
+        HelperInvocationKind::Verification,
         callable_id,
         input,
         "memory revalidation",
@@ -590,12 +627,23 @@ fn routed_revalidation(
 
 fn routed_memory_text(
     context: &MemoryContext<'_, '_>,
+    execution_id: &str,
+    parent_attempt_id: &str,
     profile_id: &RoutingProfileId,
     callable_id: CallableId,
     input: Vec<u8>,
     label: &str,
 ) -> MemoryResult<String> {
-    let output = routed_model_bytes(context, profile_id, callable_id, input, label)?;
+    let output = routed_model_bytes(
+        context,
+        execution_id,
+        parent_attempt_id,
+        profile_id,
+        HelperInvocationKind::Helper,
+        callable_id,
+        input,
+        label,
+    )?;
     let text = String::from_utf8(output)
         .map_err(|error| MemoryError::Provider(error.to_string()))?
         .trim()
@@ -606,27 +654,36 @@ fn routed_memory_text(
 
 fn routed_model_bytes(
     context: &MemoryContext<'_, '_>,
+    execution_id: &str,
+    parent_attempt_id: &str,
     profile_id: &RoutingProfileId,
+    kind: HelperInvocationKind,
     callable_id: CallableId,
     input: Vec<u8>,
     label: &str,
 ) -> MemoryResult<Vec<u8>> {
-    let response: ModelResponse = context
+    let response: StepRunnerResponse = context
         .sdk
-        .models
-        .invoke_projected(&ModelCommand::Invoke {
-            profile_id: profile_id.clone(),
-            callable_id: Some(callable_id),
-            input: Bytes::new(input),
-            tools: Vec::new(),
+        .invocation
+        .invoke_projected(&HelperInvocationCommand::Invoke {
+            request: HelperInvocationRequest {
+                execution_id: execution_id.to_owned(),
+                parent_attempt_id: parent_attempt_id.to_owned(),
+                profile_id: profile_id.clone(),
+                kind,
+                callable_id,
+                input: Bytes::new(input),
+                tools: Vec::new(),
+            },
         })
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
-    let ModelResponse::Inference { response, .. } = response else {
+    let StepRunnerResponse::Completed { output, .. } = response;
+    if output.as_ref().is_empty() {
         return Err(MemoryError::Provider(format!(
-            "{label} returned a non-inference response"
+            "{label} returned an empty model response"
         )));
-    };
-    Ok(response.output.as_ref().to_vec())
+    }
+    Ok(output.as_ref().to_vec())
 }
 
 fn recall_memory(
@@ -930,6 +987,8 @@ fn compact_context(
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
     let summary = routed_memory_text(
         context,
+        &request.execution_id,
+        &request.parent_attempt_id,
         &request.profile_id,
         memory_summarize_callable(),
         input,
