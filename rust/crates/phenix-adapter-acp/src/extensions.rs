@@ -108,6 +108,10 @@ pub fn extension_meta(
         "phenix.extensions".to_owned(),
         json!({
             "interface": catalog.interface.as_str(),
+            "capabilities": capabilities
+                .iter()
+                .map(|capability| capability.as_str())
+                .collect::<Vec<_>>(),
             "methods": catalog.methods.iter().map(|method| json!({
                 "method": method.method,
                 "operation": method.operation.as_str(),

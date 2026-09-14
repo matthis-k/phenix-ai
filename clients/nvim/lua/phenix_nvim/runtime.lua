@@ -15,6 +15,20 @@ local required_operations = {
   "review_decide",
 }
 
+local required_capabilities = {
+  "phenix.application.capability.discovery@1",
+  "phenix.application.capability.sessions@1",
+  "phenix.application.capability.session-list@1",
+  "phenix.application.capability.session-resume@1",
+  "phenix.application.capability.prompt@1",
+  "phenix.application.capability.sdk@1",
+  "phenix.application.capability.capabilities@1",
+  "phenix.application.capability.interaction@1",
+  "phenix.application.capability.permission@1",
+  "phenix.application.capability.elicitation@1",
+  "phenix.application.capability.review@1",
+}
+
 local state = {
   config = nil,
   client = nil,
@@ -87,10 +101,15 @@ local function session_resource()
   return resource
 end
 
-local function required_application_error()
+local function required_application_error(capabilities)
   for _, name in ipairs(required_operations) do
     if type(state.application[name]) ~= "function" then
       return "missing application operation " .. name
+    end
+  end
+  for _, capability in ipairs(required_capabilities) do
+    if capabilities[capability] ~= true then
+      return "missing negotiated application capability " .. capability
     end
   end
   return nil
@@ -315,7 +334,8 @@ function M.connect(callback)
     end
     state.sdk = sdk
     state.application = client:application()
-    local application_error = required_application_error()
+    local capabilities = client:capabilities()
+    local application_error = required_application_error(capabilities)
     local _, resource_error = session_resource()
     if application_error ~= nil or resource_error ~= nil then
       local message = application_error or resource_error

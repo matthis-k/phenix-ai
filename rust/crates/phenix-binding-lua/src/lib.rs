@@ -1055,14 +1055,12 @@ fn run_client(
                     );
                 }
                 if let Ok(mut capabilities) = worker_state.capabilities.lock() {
-                    capabilities.extend([
-                        "phenix.application.capability.discovery@1".to_owned(),
-                        "phenix.application.capability.sessions@1".to_owned(),
-                        "phenix.application.capability.prompt@1".to_owned(),
-                    ]);
-                    for extension in &negotiated_extensions {
-                        capabilities.insert(extension.capability.to_string());
-                    }
+                    capabilities.extend(
+                        connection
+                            .extensions()
+                            .advertised_capabilities()
+                            .map(ToString::to_string),
+                    );
                 }
 
                 while let Some(command) = commands.next().await {

@@ -331,6 +331,12 @@ impl DescriptorExtensions {
     pub fn supports(&self, capability: &ContractId) -> bool {
         self.advertised_capabilities.contains(capability)
     }
+
+    /// Returns every application capability advertised during ACP initialization.
+    #[must_use]
+    pub fn advertised_capabilities(&self) -> impl Iterator<Item = &ContractId> {
+        self.advertised_capabilities.iter()
+    }
 }
 
 /// One runtime-to-client callback admitted to a bounded host queue.
@@ -1059,16 +1065,11 @@ fn descriptor_extensions(
             "ACP peer advertises application interface {interface}; expected {INTERFACE_ID}"
         )));
     }
-    let capabilities = ["methods", "events", "callbacks"]
+    let capabilities = extension
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
         .into_iter()
-        .flat_map(|kind| {
-            extension
-                .get(kind)
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .filter_map(|entry| entry.get("capability"))
+        .flatten()
         .filter_map(serde_json::Value::as_str)
         .map(ContractId::parse)
         .collect::<Result<Vec<_>, _>>()
@@ -1354,6 +1355,30 @@ mod tests {
             extensions.require(&operation),
             Err(ClientError::UnsupportedCapability { .. })
         ));
+    }
+
+    #[test]
+    fn descriptor_metadata_preserves_capabilities_without_extensions() {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "phenix.extensions".to_owned(),
+            serde_json::json!({
+                "interface": INTERFACE_ID,
+                "capabilities": [
+                    "phenix.application.capability.discovery@1",
+                    "phenix.application.capability.sessions@1",
+                ],
+                "methods": [],
+                "events": [],
+                "callbacks": [],
+            }),
+        );
+        let response = InitializeResponse::new(ProtocolVersion::V1).meta(meta);
+        let extensions = descriptor_extensions(&response).expect("valid descriptor metadata");
+        let discovery = ContractId::parse("phenix.application.capability.discovery@1")
+            .expect("static capability id");
+        assert!(extensions.supports(&discovery));
+        assert_eq!(extensions.advertised_capabilities().count(), 2);
     }
 
     #[test]
