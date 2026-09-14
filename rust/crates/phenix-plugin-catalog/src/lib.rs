@@ -125,9 +125,9 @@ pub use phenix_plugin_sessions::{
     SESSION_SERVICE,
 };
 pub use phenix_plugin_step_runner::{
-    helper_invocation_component_id, helper_invocation_component_manifest,
-    step_runner_component_id, step_runner_component_manifest, step_runner_factory,
-    step_runner_manifest, HELPER_INVOCATION_COMPONENT, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
+    helper_invocation_component_id, helper_invocation_component_manifest, step_runner_component_id,
+    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
+    HELPER_INVOCATION_COMPONENT, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
 };
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,

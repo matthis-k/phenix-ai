@@ -5,25 +5,25 @@ mod runner;
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentInvocationError, ComponentManifest, ContextResourceId, PhenixValue, PluginContext,
-    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
-    ServiceRole,
+    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
+    ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     context_service, default_invocation_service, helper_invocation_service, invocation_service,
     step_runner_service, ContextAnchor, ContextCommand, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextInterface, ContextInvocationPreparation, ContextRecoveryCommand,
-    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
-    ContextRecoveryResponse, ContextResourceKind, ContextResponse, ContextScope,
-    DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
-    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    ContextInjectionRequester, ContextInterface, ContextInvocationPreparation,
+    ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
+    ContextRecoveryRequest, ContextRecoveryResponse, ContextResourceKind, ContextResponse,
+    ContextScope, DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand,
+    ExecutionInterface, ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
     HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
     InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
     InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
-    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse, MemoryScope,
-    PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution, StepAttemptCommand,
-    StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
-    UsageAttemptKind,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
+    MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
+    StepRunnerResponse, UsageAttemptKind,
 };
 use std::collections::BTreeSet;
 
@@ -343,42 +343,46 @@ fn recover_invocation_context(
         has_explicit_resource: !projection.entries.is_empty(),
     };
     let prompt = String::from_utf8_lossy(request.input.as_ref()).into_owned();
-    let assessed: ContextRecoveryResponse = match context.sdk.recovery.invoke_projected(
-        &ContextRecoveryCommand::Assess {
-            request: ContextRecoveryRequest {
-                profile_id: profile_id.clone(),
-                prompt: prompt.clone(),
-                state,
-                at: now_ms,
-            },
-        },
-    ) {
-        Ok(response) => response,
-        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
-        Err(error) => return Err(format!("context recovery assessment failed: {error}")),
-    };
+    let assessed: ContextRecoveryResponse =
+        match context
+            .sdk
+            .recovery
+            .invoke_projected(&ContextRecoveryCommand::Assess {
+                request: ContextRecoveryRequest {
+                    profile_id: profile_id.clone(),
+                    prompt: prompt.clone(),
+                    state,
+                    at: now_ms,
+                },
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+            Err(error) => return Err(format!("context recovery assessment failed: {error}")),
+        };
     let ContextRecoveryResponse::Decision { decision } = assessed;
     let ContextRecoveryDecision::Missing { needs } = decision else {
         return Ok(preparation);
     };
 
-    let recall: MemoryContextResponse = match context.sdk.memory_context.invoke_projected(
-        &MemoryContextCommand::Recall {
-            request: MemoryContextRecallRequest {
-                request_id: format!("recovery:{}:{now_ms}", request.execution_id),
-                scopes: vec![MemoryScope::Global],
-                prompt,
-                known: anchors,
-                needs: needs.clone(),
-                at: now_ms,
-                limit: 8,
-            },
-        },
-    ) {
-        Ok(response) => response,
-        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
-        Err(error) => return Err(format!("memory context recall failed: {error}")),
-    };
+    let recall: MemoryContextResponse =
+        match context
+            .sdk
+            .memory_context
+            .invoke_projected(&MemoryContextCommand::Recall {
+                request: MemoryContextRecallRequest {
+                    request_id: format!("recovery:{}:{now_ms}", request.execution_id),
+                    scopes: vec![MemoryScope::Global],
+                    prompt,
+                    known: anchors,
+                    needs: needs.clone(),
+                    at: now_ms,
+                    limit: 8,
+                },
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+            Err(error) => return Err(format!("memory context recall failed: {error}")),
+        };
     let MemoryContextResponse::Recall {
         candidates,
         completeness,
@@ -440,7 +444,9 @@ fn recover_invocation_context(
         })
         .map_err(|error| format!("recovered memory registration failed: {error}"))?;
     let ContextResponse::Registered { resource } = registered else {
-        return Err("context service returned a non-registration response for recovered memory".into());
+        return Err(
+            "context service returned a non-registration response for recovered memory".into(),
+        );
     };
     let loaded: ContextResponse = context
         .sdk

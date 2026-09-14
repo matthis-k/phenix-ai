@@ -117,7 +117,8 @@ impl PluginInstance for FailingProvider {
         }
         let input: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
-        let command: HelperInvocationCommand = input.project().map_err(|error| error.to_string())?;
+        let command: HelperInvocationCommand =
+            input.project().map_err(|error| error.to_string())?;
         let HelperInvocationCommand::Invoke { request } = command;
         if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
             return Err("memory revalidation lost execution lineage".into());

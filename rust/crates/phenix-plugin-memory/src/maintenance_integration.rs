@@ -6,10 +6,11 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
-    helper_invocation_service, memory_consolidate_callable, memory_extract_callable, memory_service,
-    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse, MemoryCommand,
-    MemoryConsolidationRequest, MemoryExtractionObservation, MemoryExtractionRequest, MemoryKind,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_consolidate_callable, memory_extract_callable,
+    memory_service, HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
+    MemoryCommand, MemoryConsolidationRequest, MemoryExtractionObservation,
+    MemoryExtractionRequest, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
+    MemoryScope, MemorySourceReference,
 };
 use std::{
     fs,
@@ -84,15 +85,13 @@ impl PluginInstance for HelperProvider {
         }
         let input: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
-        let command: HelperInvocationCommand = input.project().map_err(|error| error.to_string())?;
+        let command: HelperInvocationCommand =
+            input.project().map_err(|error| error.to_string())?;
         let HelperInvocationCommand::Invoke { request } = command;
         if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
             return Err("memory helper lost execution lineage".into());
         }
-        let output = match (
-            request.profile_id.as_str(),
-            request.callable_id.as_str(),
-        ) {
+        let output = match (request.profile_id.as_str(), request.callable_id.as_str()) {
             ("extract-profile", "memory.extract") => "extracted durable fact",
             ("consolidate-profile", "memory.consolidate") => "consolidated durable fact",
             ("failure-profile", "memory.consolidate") => {

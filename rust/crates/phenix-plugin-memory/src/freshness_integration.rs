@@ -120,15 +120,13 @@ impl PluginInstance for RevalidationProvider {
         }
         let input: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
-        let request: HelperInvocationCommand = input.project().map_err(|error| error.to_string())?;
+        let request: HelperInvocationCommand =
+            input.project().map_err(|error| error.to_string())?;
         let HelperInvocationCommand::Invoke { request } = request;
         if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
             return Err("memory revalidation lost execution lineage".into());
         }
-        let output = match (
-            request.profile_id.as_str(),
-            request.callable_id.as_str(),
-        ) {
+        let output = match (request.profile_id.as_str(), request.callable_id.as_str()) {
             ("validate-route", callable) if callable == memory_validate_callable().as_str() => {
                 b"\"keep_current\"".to_vec()
             }
