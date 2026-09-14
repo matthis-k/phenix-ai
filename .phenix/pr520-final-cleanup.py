@@ -48,6 +48,11 @@ replace_exact(
 )
 replace_exact(
     durable,
+    "for pair in bytes.chunks_exact(2) {",
+    "for pair in bytes.as_chunks::<2>().0 {",
+)
+replace_exact(
+    durable,
     '''    fn entry_prefix(&self) -> String {
         format!("{}/map/", self.collection)
     }''',
@@ -126,6 +131,15 @@ replace_exact(
             assert!(duplicate_error.contains("configuration/config-1"));''',
     '''            assert!(duplicate_error.contains("persistence assertion conflicted"));
             assert!(duplicate_error.contains("configuration/config-1"));''',
+)
+
+session_tree = "rust/crates/phenix-plugin-session-tree/src/session_tree_atomicity_regression.rs"
+replace_exact(
+    session_tree,
+    '''    assert!(error.contains("transaction assertion failed"));
+    assert!(session_exists(&mut kernel, "root"));''',
+    '''    assert!(error.contains("persistence assertion conflicted"));
+    assert!(session_exists(&mut kernel, "root"));''',
 )
 
 persistence_doc = "spec/plugin-persistence.md"
