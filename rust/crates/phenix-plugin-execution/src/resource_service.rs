@@ -80,7 +80,9 @@ impl PluginInstance for ExecutionResourcePlugin {
 fn is_mutation(command: &ExecutionResourceCommand) -> bool {
     !matches!(
         command,
-        ExecutionResourceCommand::Remaining { .. } | ExecutionResourceCommand::GetDelegated { .. }
+        ExecutionResourceCommand::Remaining { .. }
+            | ExecutionResourceCommand::RemainingWithin { .. }
+            | ExecutionResourceCommand::GetDelegated { .. }
     )
 }
 
@@ -93,6 +95,15 @@ fn read(
             .remaining(&root_execution_id)
             .map(|budget| ExecutionResourceResponse::Remaining { budget })
             .map_err(|error| format!("execution resource remaining failed: {error:?}")),
+        ExecutionResourceCommand::RemainingWithin {
+            root_execution_id,
+            reservation_id,
+        } => state
+            .remaining_within(&root_execution_id, &reservation_id)
+            .map(|budget| ExecutionResourceResponse::Remaining { budget })
+            .map_err(|error| {
+                format!("execution resource nested remaining failed: {error:?}")
+            }),
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),
@@ -190,6 +201,7 @@ fn mutate(
                 .map_err(|error| format!("delegated resource failure failed: {error:?}"))?
         }
         ExecutionResourceCommand::Remaining { .. }
+        | ExecutionResourceCommand::RemainingWithin { .. }
         | ExecutionResourceCommand::GetDelegated { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
