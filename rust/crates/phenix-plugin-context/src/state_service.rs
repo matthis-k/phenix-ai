@@ -53,6 +53,11 @@ impl ContextStateService {
         command: ContextCommand,
     ) -> Option<Result<ContextResponse, String>> {
         let response = match command {
+            ContextCommand::GetProjectionState { execution_id } => {
+                Ok(ContextResponse::ProjectionState {
+                    projection: self.projection_revision(&execution_id),
+                })
+            }
             ContextCommand::Admit { request } => {
                 let execution_id = request.execution_id.clone();
                 request
@@ -119,6 +124,16 @@ impl ContextStateService {
         Some(response)
     }
 
+    pub(crate) fn projection_revision(&self, execution_id: &str) -> ProjectionRevision {
+        self.projections
+            .get(execution_id)
+            .map(|state| state.revision.clone())
+            .unwrap_or(ProjectionRevision {
+                revision: 0,
+                cache_epoch: 0,
+            })
+    }
+
     pub(crate) fn invalidate_if_present(
         &mut self,
         execution_id: &str,
@@ -138,5 +153,60 @@ impl ContextStateService {
                 execution_id: execution_id.to_owned(),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_state_read_is_initial_without_creating_state() {
+        let mut service = ContextStateService::default();
+        let response = service
+            .handle_state_command(ContextCommand::GetProjectionState {
+                execution_id: "execution-1".into(),
+            })
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            response,
+            ContextResponse::ProjectionState {
+                projection: ProjectionRevision {
+                    revision: 0,
+                    cache_epoch: 0,
+                },
+            }
+        );
+        assert!(service.projections.is_empty());
+    }
+
+    #[test]
+    fn projection_state_read_returns_owned_revision() {
+        let mut service = ContextStateService::default();
+        let mut state = ContextProjectionState::new("execution-1");
+        state.revision = ProjectionRevision {
+            revision: 4,
+            cache_epoch: 2,
+        };
+        service.projections.insert("execution-1".into(), state);
+
+        let response = service
+            .handle_state_command(ContextCommand::GetProjectionState {
+                execution_id: "execution-1".into(),
+            })
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            response,
+            ContextResponse::ProjectionState {
+                projection: ProjectionRevision {
+                    revision: 4,
+                    cache_epoch: 2,
+                },
+            }
+        );
     }
 }
