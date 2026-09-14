@@ -38,25 +38,19 @@ impl AttemptLedger {
         execution_id: String,
         parent_attempt_id: Option<String>,
         policy_revision: String,
+        kind: UsageAttemptKind,
     ) -> Result<UsageAttribution, String> {
         require_identity("root execution id", &root_execution_id)?;
         require_identity("execution id", &execution_id)?;
         require_identity("policy revision", &policy_revision)?;
+        validate_parent_shape(kind, parent_attempt_id.as_deref())?;
         if let Some(parent_id) = &parent_attempt_id {
             require_identity("parent attempt id", parent_id)?;
             let parent = self
                 .attempts
                 .get(parent_id)
                 .ok_or_else(|| format!("unknown parent step attempt: {parent_id}"))?;
-            if parent.attribution.root_execution_id != root_execution_id {
-                return Err("step attempt parent belongs to a different root execution".into());
-            }
-            if parent.phase != StepAttemptPhase::Settled {
-                return Err("retry parent step attempt is not settled".into());
-            }
-            if parent.outcome == Some(AttemptOutcome::Succeeded) {
-                return Err("successful step attempt cannot be retried".into());
-            }
+            validate_parent(root_execution_id.as_str(), kind, parent)?;
         }
 
         let attempt_id = loop {
@@ -73,13 +67,9 @@ impl AttemptLedger {
             root_execution_id,
             execution_id,
             attempt_id,
-            parent_attempt_id: parent_attempt_id.clone(),
+            parent_attempt_id,
             policy_revision,
-            kind: if parent_attempt_id.is_some() {
-                UsageAttemptKind::Retry
-            } else {
-                UsageAttemptKind::Root
-            },
+            kind,
             task_id: None,
         })
     }
@@ -98,31 +88,17 @@ impl AttemptLedger {
         if attribution.parent_attempt_id.as_deref() == Some(attribution.attempt_id.as_str()) {
             return Err("step attempt cannot parent itself".into());
         }
-        match attribution.kind {
-            UsageAttemptKind::Root if attribution.parent_attempt_id.is_some() => {
-                return Err("root step attempt cannot have a parent attempt".into())
-            }
-            UsageAttemptKind::Retry if attribution.parent_attempt_id.is_none() => {
-                return Err("retry step attempt requires a parent attempt".into())
-            }
-            _ => {}
-        }
+        validate_parent_shape(attribution.kind, attribution.parent_attempt_id.as_deref())?;
         if let Some(parent_id) = &attribution.parent_attempt_id {
             let parent = self
                 .attempts
                 .get(parent_id)
                 .ok_or_else(|| format!("unknown parent step attempt: {parent_id}"))?;
-            if parent.attribution.root_execution_id != attribution.root_execution_id {
-                return Err("step attempt parent belongs to a different root execution".into());
-            }
-            if attribution.kind == UsageAttemptKind::Retry {
-                if parent.phase != StepAttemptPhase::Settled {
-                    return Err("retry parent step attempt is not settled".into());
-                }
-                if parent.outcome == Some(AttemptOutcome::Succeeded) {
-                    return Err("successful step attempt cannot be retried".into());
-                }
-            }
+            validate_parent(
+                attribution.root_execution_id.as_str(),
+                attribution.kind,
+                parent,
+            )?;
         }
         let record = StepAttemptRecord::new(attribution, plan)
             .map_err(|error| format!("step attempt creation failed: {error:?}"))?;
@@ -154,6 +130,34 @@ impl AttemptLedger {
         mutation(record)?;
         Ok(record.clone())
     }
+}
+
+fn validate_parent_shape(kind: UsageAttemptKind, parent: Option<&str>) -> Result<(), String> {
+    match (kind, parent) {
+        (UsageAttemptKind::Root, Some(_)) => Err("root step attempt cannot have a parent attempt".into()),
+        (UsageAttemptKind::Root, None) => Ok(()),
+        (_, None) => Err(format!("{kind:?} step attempt requires a parent attempt")),
+        (_, Some(_)) => Ok(()),
+    }
+}
+
+fn validate_parent(
+    root_execution_id: &str,
+    kind: UsageAttemptKind,
+    parent: &StepAttemptRecord,
+) -> Result<(), String> {
+    if parent.attribution.root_execution_id != root_execution_id {
+        return Err("step attempt parent belongs to a different root execution".into());
+    }
+    if kind == UsageAttemptKind::Retry {
+        if parent.phase != StepAttemptPhase::Settled {
+            return Err("retry parent step attempt is not settled".into());
+        }
+        if parent.outcome == Some(AttemptOutcome::Succeeded) {
+            return Err("successful step attempt cannot be retried".into());
+        }
+    }
+    Ok(())
 }
 
 fn require_identity(label: &str, value: &str) -> Result<(), String> {
@@ -250,12 +254,14 @@ fn mutate(
             execution_id,
             parent_attempt_id,
             policy_revision,
+            kind,
         } => StepAttemptResponse::Attribution {
             attribution: next.allocate_identity(
                 root_execution_id,
                 execution_id,
                 parent_attempt_id,
                 policy_revision,
+                kind,
             )?,
         },
         StepAttemptCommand::Create { attribution, plan } => StepAttemptResponse::Attempt {
