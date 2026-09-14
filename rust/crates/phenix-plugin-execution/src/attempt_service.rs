@@ -134,7 +134,9 @@ impl AttemptLedger {
 
 fn validate_parent_shape(kind: UsageAttemptKind, parent: Option<&str>) -> Result<(), String> {
     match (kind, parent) {
-        (UsageAttemptKind::Root, Some(_)) => Err("root step attempt cannot have a parent attempt".into()),
+        (UsageAttemptKind::Root, Some(_)) => {
+            Err("root step attempt cannot have a parent attempt".into())
+        }
         (UsageAttemptKind::Root, None) => Ok(()),
         (_, None) => Err(format!("{kind:?} step attempt requires a parent attempt")),
         (_, Some(_)) => Ok(()),

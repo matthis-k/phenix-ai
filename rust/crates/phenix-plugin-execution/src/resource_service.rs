@@ -101,9 +101,7 @@ fn read(
         } => state
             .remaining_within(&root_execution_id, &reservation_id)
             .map(|budget| ExecutionResourceResponse::Remaining { budget })
-            .map_err(|error| {
-                format!("execution resource nested remaining failed: {error:?}")
-            }),
+            .map_err(|error| format!("execution resource nested remaining failed: {error:?}")),
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),

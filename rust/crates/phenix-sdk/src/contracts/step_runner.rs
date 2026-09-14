@@ -323,7 +323,8 @@ pub fn default_invocation_service() -> ServiceId {
 
 #[must_use]
 pub fn helper_invocation_service() -> ServiceId {
-    ServiceId::parse(HELPER_INVOCATION_SERVICE).expect("static helper invocation service id is valid")
+    ServiceId::parse(HELPER_INVOCATION_SERVICE)
+        .expect("static helper invocation service id is valid")
 }
 
 #[must_use]
