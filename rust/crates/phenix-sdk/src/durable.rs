@@ -1,16 +1,4 @@
-from pathlib import Path
-
-
-def replace_once(path, old, new):
-    file = Path(path)
-    text = file.read_text()
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{path}: expected one match, found {count}: {old[:120]!r}")
-    file.write_text(text.replace(old, new, 1))
-
-
-durable = r'''use phenix_core::{
+use phenix_core::{
     DurableKeyRange, DurableRecord, KernelAccess, KernelError, PluginId, ResourceNamespace,
     ScanDirection, TransactionOp,
 };
@@ -486,9 +474,10 @@ where
         records
             .into_iter()
             .map(|record| {
-                let encoded = record.key.strip_prefix(&prefix).ok_or_else(|| {
-                    DurableCollectionError::MalformedEntryKey(record.key.clone())
-                })?;
+                let encoded = record
+                    .key
+                    .strip_prefix(&prefix)
+                    .ok_or_else(|| DurableCollectionError::MalformedEntryKey(record.key.clone()))?;
                 let sequence = decode_sequence(encoded)?;
                 let value = decode_value(&record.value)?;
                 Ok(DurableLogEntry { sequence, value })
@@ -534,7 +523,8 @@ fn decode_sequence(value: &str) -> Result<u64, DurableCollectionError> {
 }
 
 fn encode_value<T: Serialize>(value: &T) -> Result<Vec<u8>, DurableCollectionError> {
-    serde_json::to_vec(value).map_err(|error| DurableCollectionError::EncodeValue(error.to_string()))
+    serde_json::to_vec(value)
+        .map_err(|error| DurableCollectionError::EncodeValue(error.to_string()))
 }
 
 fn decode_value<T: DeserializeOwned>(value: &[u8]) -> Result<T, DurableCollectionError> {
@@ -799,12 +789,7 @@ mod tests {
         );
 
         let prefixed = map
-            .scan_prefix_with(
-                &access,
-                &"alpha".to_owned(),
-                ScanDirection::Reverse,
-                None,
-            )
+            .scan_prefix_with(&access, &"alpha".to_owned(), ScanDirection::Reverse, None)
             .unwrap();
         assert_eq!(
             prefixed
@@ -966,151 +951,3 @@ mod tests {
         ));
     }
 }
-'''
-Path("rust/crates/phenix-sdk/src/durable.rs").write_text(durable)
-
-lib = "rust/crates/phenix-sdk/src/lib.rs"
-replace_once(
-    lib,
-    "mod authoring;\npub mod contracts;",
-    "mod authoring;\nmod durable;\npub mod contracts;",
-)
-replace_once(
-    lib,
-    "pub use contracts::*;\npub use phenix_core::{",
-    "pub use contracts::*;\npub use durable::*;\npub use phenix_core::{",
-)
-replace_once(
-    lib,
-    "Contract, ContractId, ContractValue, DurableSchema, Exact, HasPhenixSchema, Key, LayerResult,",
-    "Contract, ContractId, ContractValue, DurableKeyRange, DurableRecord, DurableSchema, Exact,\n    HasPhenixSchema, KernelError, Key, LayerResult,",
-)
-replace_once(
-    lib,
-    "PluginId, Project, ReferenceId, RuntimeId, Type, TypeKind, ValueError,",
-    "PluginId, Project, ReferenceId, ResourceNamespace, RuntimeId, ScanDirection, TransactionOp, Type,\n    TypeKind, ValueError,",
-)
-
-runtime_tests = "rust/crates/phenix-core/src/runtime/tests.rs"
-replace_once(
-    runtime_tests,
-    '''            b"write" => {
-                host.transact_durable(
-                    &self.namespace,
-                    &[TransactionOp::Put {
-                        key: "changed".into(),
-                        value: b"yes".to_vec(),
-                    }],
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(b"written".to_vec())
-            }
-            _ => Err("unsupported input".into()),''',
-    '''            b"write" => {
-                host.transact_durable(
-                    &self.namespace,
-                    &[TransactionOp::Put {
-                        key: "changed".into(),
-                        value: b"yes".to_vec(),
-                    }],
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(b"written".to_vec())
-            }
-            b"scan" => host
-                .scan_durable(
-                    &self.namespace,
-                    &DurableKeyRange::all(),
-                    ScanDirection::Forward,
-                    None,
-                )
-                .map(|records| {
-                    records
-                        .into_iter()
-                        .map(|record| record.key)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                        .into_bytes()
-                })
-                .map_err(|error| error.to_string()),
-            _ => Err("unsupported input".into()),''',
-)
-replace_once(
-    runtime_tests,
-    '''    let error = kernel
-        .invoke(
-            &service("storage@1"),
-            b"write",
-            &Authority::new([read, write]),
-            None,
-        )
-        .unwrap();''',
-    '''    assert_eq!(
-        kernel
-            .invoke(
-                &service("storage@1"),
-                b"scan",
-                &Authority::new([read.clone()]),
-                None,
-            )
-            .unwrap(),
-        b"seed"
-    );
-    let denied_scan = kernel
-        .invoke(
-            &service("storage@1"),
-            b"scan",
-            &Authority::default(),
-            None,
-        )
-        .unwrap_err();
-    assert!(denied_scan.to_string().contains(PERSISTENCE_READ));
-
-    let error = kernel
-        .invoke(
-            &service("storage@1"),
-            b"write",
-            &Authority::new([read, write]),
-            None,
-        )
-        .unwrap();''',
-)
-replace_once(
-    runtime_tests,
-    '''        maximum_authority: Authority::new([capability(PERSISTENCE_SCHEMA)]),
-    };
-    let kernel = Kernel::new(KernelConfig::new([owner]).unwrap());
-    let authority = Authority::new([capability(PERSISTENCE_SCHEMA)]);''',
-    '''        maximum_authority: Authority::new([
-            capability(PERSISTENCE_SCHEMA),
-            capability(PERSISTENCE_READ),
-        ]),
-    };
-    let kernel = Kernel::new(KernelConfig::new([owner]).unwrap());
-    let authority = Authority::new([
-        capability(PERSISTENCE_SCHEMA),
-        capability(PERSISTENCE_READ),
-    ]);''',
-)
-replace_once(
-    runtime_tests,
-    '''    assert!(matches!(
-        host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
-        Err(KernelError::HostOperationDenied { .. })
-    ));
-}''',
-    '''    assert!(matches!(
-        host.register_durable_schema(&DurableSchema::new(other_namespace.clone(), 1)),
-        Err(KernelError::HostOperationDenied { .. })
-    ));
-    assert!(matches!(
-        host.scan_durable(
-            &other_namespace,
-            &DurableKeyRange::all(),
-            ScanDirection::Forward,
-            None,
-        ),
-        Err(KernelError::HostOperationDenied { .. })
-    ));
-}''',
-)

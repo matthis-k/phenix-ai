@@ -130,6 +130,22 @@ impl PluginInstance for PersistencePlugin {
                 .map_err(|error| error.to_string())?;
                 Ok(b"written".to_vec())
             }
+            b"scan" => host
+                .scan_durable(
+                    &self.namespace,
+                    &DurableKeyRange::all(),
+                    ScanDirection::Forward,
+                    None,
+                )
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(|record| record.key)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                        .into_bytes()
+                })
+                .map_err(|error| error.to_string()),
             _ => Err("unsupported input".into()),
         }
     }
@@ -314,6 +330,22 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
             .unwrap(),
         b"ready"
     );
+
+    assert_eq!(
+        kernel
+            .invoke(
+                &service("storage@1"),
+                b"scan",
+                &Authority::new([read.clone()]),
+                None,
+            )
+            .unwrap(),
+        b"seed"
+    );
+    let denied_scan = kernel
+        .invoke(&service("storage@1"), b"scan", &Authority::default(), None)
+        .unwrap_err();
+    assert!(denied_scan.to_string().contains(PERSISTENCE_READ));
 
     let error = kernel
         .invoke(
@@ -653,10 +685,13 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         dependencies: Vec::new(),
         services: Vec::new(),
         resource_namespaces: vec![namespace],
-        maximum_authority: Authority::new([capability(PERSISTENCE_SCHEMA)]),
+        maximum_authority: Authority::new([
+            capability(PERSISTENCE_SCHEMA),
+            capability(PERSISTENCE_READ),
+        ]),
     };
     let kernel = Kernel::new(KernelConfig::new([owner]).unwrap());
-    let authority = Authority::new([capability(PERSISTENCE_SCHEMA)]);
+    let authority = Authority::new([capability(PERSISTENCE_SCHEMA), capability(PERSISTENCE_READ)]);
     let owner_plugin = plugin("owner");
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
     let host = PluginHost {
@@ -679,7 +714,16 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         active_component_endpoints: BTreeSet::new(),
     };
     assert!(matches!(
-        host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
+        host.register_durable_schema(&DurableSchema::new(other_namespace.clone(), 1)),
+        Err(KernelError::HostOperationDenied { .. })
+    ));
+    assert!(matches!(
+        host.scan_durable(
+            &other_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Forward,
+            None,
+        ),
         Err(KernelError::HostOperationDenied { .. })
     ));
 }
