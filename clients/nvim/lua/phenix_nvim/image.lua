@@ -29,14 +29,46 @@ function M.from_file(path)
   }
 end
 
+local function backend()
+  local value = vim.ui and vim.ui.img or nil
+  if type(value) ~= "table" or type(value.set) ~= "function" or type(value.del) ~= "function" then
+    return nil
+  end
+  return value
+end
+
+function M.available()
+  return backend() ~= nil
+end
+
 function M.preview(image, placement)
-  if vim.ui ~= nil and type(vim.ui.img) == "function" then
-    local ok, handle = pcall(vim.ui.img, image.path, placement or {})
-    if ok then
-      return handle
-    end
+  local renderer = backend()
+  if renderer == nil then
+    return nil
+  end
+  local ok, id = pcall(renderer.set, image.bytes, placement or {})
+  if ok and type(id) == "number" then
+    return id
   end
   return nil
+end
+
+function M.update(id, placement)
+  local renderer = backend()
+  if renderer == nil or id == nil then
+    return false
+  end
+  local ok = pcall(renderer.set, id, placement or {})
+  return ok
+end
+
+function M.close(id)
+  local renderer = backend()
+  if renderer == nil or id == nil then
+    return false
+  end
+  local ok, found = pcall(renderer.del, id)
+  return ok and found ~= false
 end
 
 function M.fallback(image)
