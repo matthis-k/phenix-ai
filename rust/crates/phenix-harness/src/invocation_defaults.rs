@@ -8,18 +8,18 @@ use phenix_plugin_catalog::{
     OptionsInterface,
 };
 use phenix_sdk::{
-    default_invocation_service, invocation_clock_service, invocation_defaults_service,
-    DelegationResourcePolicy, InvocationClockCommand, InvocationClockInterface,
-    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
-    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
-    RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
+    invocation_clock_service, invocation_defaults_service, DelegationResourcePolicy,
+    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
+    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
+    InvocationIntent, InvocationParams, InvocationRequest, RouteSelectionPolicy,
+    RoutingEstimateMode, UsagePolicy,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const INVOCATION_DEFAULTS_PLUGIN: &str = "phenix.harness.invocation-defaults";
 pub const INVOCATION_DEFAULTS_COMPONENT: &str = "phenix.harness.invocation-defaults";
-const ROUTING_PROFILE_OPTION: &str = "routing.profile";
+const ROUTING_PROFILE_OPTION: &str = "model.default";
 const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v1";
 const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v1";
 
