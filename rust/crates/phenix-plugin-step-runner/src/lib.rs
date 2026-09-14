@@ -4,18 +4,24 @@ mod runner;
 
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, PhenixValue, PluginContext, PluginHost, PluginId, PluginInstance,
-    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    ComponentInvocationError, ComponentManifest, ContextResourceId, PhenixValue, PluginContext,
+    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    ServiceRole,
 };
 use phenix_sdk::{
     context_service, default_invocation_service, helper_invocation_service, invocation_service,
-    step_runner_service, ContextCommand, ContextInterface, ContextInvocationPreparation,
-    ContextResponse, DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand,
-    ExecutionInterface, ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    step_runner_service, ContextAnchor, ContextCommand, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextInterface, ContextInvocationPreparation, ContextRecoveryCommand,
+    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
+    ContextRecoveryResponse, ContextResourceKind, ContextResponse, ContextScope,
+    DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
+    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
     HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
     InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
-    InvocationRequest, PlannedStepRequest, ProjectionRevision, StepAttemptCommand,
+    InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse, MemoryScope,
+    PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution, StepAttemptCommand,
     StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
     UsageAttemptKind,
 };
@@ -46,18 +52,34 @@ pub fn step_runner_manifest(maximum_authority: Authority) -> PluginManifest {
 #[must_use]
 pub fn step_runner_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let mut manifest = runner::step_runner_component_manifest(maximum_authority);
-    manifest.imports.push(ComponentImport {
-        interface: InvocationDefaultsInterface::interface_id(),
-        schema: InvocationDefaultsInterface::schema(),
+    let optional_import = |interface, schema| ComponentImport {
+        interface,
+        schema,
         required: false,
         authority: manifest.maximum_authority.clone(),
-    });
+    };
+    manifest.imports.push(optional_import(
+        InvocationDefaultsInterface::interface_id(),
+        InvocationDefaultsInterface::schema(),
+    ));
     manifest.imports.push(ComponentImport {
         interface: InvocationClockInterface::interface_id(),
         schema: InvocationClockInterface::schema(),
         required: true,
         authority: manifest.maximum_authority.clone(),
     });
+    manifest.imports.push(optional_import(
+        ContextRecoveryInterface::interface_id(),
+        ContextRecoveryInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        MemoryContextInterface::interface_id(),
+        MemoryContextInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        MemoryInterface::interface_id(),
+        MemoryInterface::schema(),
+    ));
     for interface in [
         (
             InvocationInterface::interface_id(),
@@ -139,6 +161,9 @@ struct InvocationSdk<'host, 'runtime> {
     defaults: SdkClient<'host, 'runtime, InvocationDefaultsInterface>,
     clock: SdkClient<'host, 'runtime, InvocationClockInterface>,
     context: SdkClient<'host, 'runtime, ContextInterface>,
+    recovery: SdkClient<'host, 'runtime, ContextRecoveryInterface>,
+    memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
+    memory: SdkClient<'host, 'runtime, MemoryInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
 }
@@ -156,6 +181,9 @@ fn invocation_context<'host, 'runtime>(
             defaults: SdkClient::new(host, component.clone()),
             clock: SdkClient::new(host, component.clone()),
             context: SdkClient::new(host, component.clone()),
+            recovery: SdkClient::new(host, component.clone()),
+            memory_context: SdkClient::new(host, component.clone()),
+            memory: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
             attempts: SdkClient::new(host, component),
         },
@@ -193,7 +221,7 @@ impl InvocationPackage {
         kind: UsageAttemptKind,
     ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
-        let preparation = if is_isolated_helper(kind) {
+        let mut preparation = if is_isolated_helper(kind) {
             ContextInvocationPreparation {
                 request_input_tokens: u64::try_from(request.input.as_ref().len())
                     .unwrap_or(u64::MAX),
@@ -204,18 +232,7 @@ impl InvocationPackage {
                 },
             }
         } else {
-            let prepared: ContextResponse = context
-                .sdk
-                .context
-                .invoke_projected(&ContextCommand::PrepareInvocation {
-                    execution_id: request.execution_id.clone(),
-                    input: request.input.clone(),
-                })
-                .map_err(|error| format!("invocation context preparation failed: {error}"))?;
-            let ContextResponse::InvocationPrepared { preparation } = prepared else {
-                return Err("context service returned a non-preparation response".into());
-            };
-            preparation
+            prepare_invocation_context(context, &request)?
         };
 
         let clock: InvocationClockResponse = context
@@ -224,6 +241,16 @@ impl InvocationPackage {
             .invoke_projected(&InvocationClockCommand::Now)
             .map_err(|error| format!("invocation clock unavailable: {error}"))?;
         let InvocationClockResponse::Time { now_ms } = clock;
+
+        if !is_isolated_helper(kind) {
+            preparation = recover_invocation_context(
+                context,
+                &request,
+                &params.profile_id,
+                now_ms,
+                preparation,
+            )?;
+        }
 
         let allocated: StepAttemptResponse = context
             .sdk
@@ -264,6 +291,173 @@ impl InvocationPackage {
             .map_err(|error| error.to_string())?;
         self.runner.invoke(&step_runner_service(), &encoded, host)
     }
+}
+
+fn prepare_invocation_context(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<ContextInvocationPreparation, String> {
+    let prepared: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::PrepareInvocation {
+            execution_id: request.execution_id.clone(),
+            input: request.input.clone(),
+        })
+        .map_err(|error| format!("invocation context preparation failed: {error}"))?;
+    let ContextResponse::InvocationPrepared { preparation } = prepared else {
+        return Err("context service returned a non-preparation response".into());
+    };
+    Ok(preparation)
+}
+
+fn recover_invocation_context(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+    profile_id: &phenix_core::RoutingProfileId,
+    now_ms: u64,
+    preparation: ContextInvocationPreparation,
+) -> Result<ContextInvocationPreparation, String> {
+    let projected: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Project {
+            execution_id: request.execution_id.clone(),
+        })
+        .map_err(|error| format!("context recovery projection failed: {error}"))?;
+    let ContextResponse::Projection { projection } = projected else {
+        return Err("context service returned a non-projection response during recovery".into());
+    };
+    let anchors = projection
+        .entries
+        .iter()
+        .take(32)
+        .map(|entry| ContextAnchor::Resource {
+            service: context_service(),
+            resource: entry.resource.descriptor.resource_id.as_str().to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let state = phenix_sdk::ContextRecoveryState {
+        anchors: anchors.clone(),
+        has_durable_session_history: false,
+        has_explicit_resource: !projection.entries.is_empty(),
+    };
+    let prompt = String::from_utf8_lossy(request.input.as_ref()).into_owned();
+    let assessed: ContextRecoveryResponse = match context.sdk.recovery.invoke_projected(
+        &ContextRecoveryCommand::Assess {
+            request: ContextRecoveryRequest {
+                profile_id: profile_id.clone(),
+                prompt: prompt.clone(),
+                state,
+                at: now_ms,
+            },
+        },
+    ) {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+        Err(error) => return Err(format!("context recovery assessment failed: {error}")),
+    };
+    let ContextRecoveryResponse::Decision { decision } = assessed;
+    let ContextRecoveryDecision::Missing { needs } = decision else {
+        return Ok(preparation);
+    };
+
+    let recall: MemoryContextResponse = match context.sdk.memory_context.invoke_projected(
+        &MemoryContextCommand::Recall {
+            request: MemoryContextRecallRequest {
+                request_id: format!("recovery:{}:{now_ms}", request.execution_id),
+                scopes: vec![MemoryScope::Global],
+                prompt,
+                known: anchors,
+                needs: needs.clone(),
+                at: now_ms,
+                limit: 8,
+            },
+        },
+    ) {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+        Err(error) => return Err(format!("memory context recall failed: {error}")),
+    };
+    let MemoryContextResponse::Recall {
+        candidates,
+        completeness,
+    } = recall
+    else {
+        return Err("memory context service returned a non-recall response".into());
+    };
+    if candidates.is_empty() {
+        return Ok(preparation);
+    }
+    let evidence = candidates
+        .into_iter()
+        .map(|candidate| RecallEvidence {
+            query_relevant: candidate.evidence_class() >= 2,
+            live_validated: true,
+            candidate,
+            resolved_needs: needs.clone(),
+            missing_needs: Vec::new(),
+            completeness: completeness.clone(),
+        })
+        .collect();
+    let resolved: MemoryContextResponse = context
+        .sdk
+        .memory_context
+        .invoke_projected(&MemoryContextCommand::Resolve { evidence })
+        .map_err(|error| format!("memory context resolution failed: {error}"))?;
+    let MemoryContextResponse::Resolution { resolution } = resolved else {
+        return Err("memory context service returned a non-resolution response".into());
+    };
+    let RecallResolution::Unique { winner } = resolution else {
+        return Ok(preparation);
+    };
+
+    let memory: MemoryResponse = match context.sdk.memory.invoke_projected(&MemoryCommand::Get {
+        id: winner.candidate.memory_id.clone(),
+    }) {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+        Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
+    };
+    let MemoryResponse::Memory {
+        record: Some(record),
+    } = memory
+    else {
+        return Ok(preparation);
+    };
+    let source = format!("memory:{}", record.id);
+    let resource_id = ContextResourceId::parse(source.clone())
+        .map_err(|error| format!("recovered memory id is not a context resource id: {error}"))?;
+    let registered: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: ContextResourceKind::External,
+            source,
+            scope: ContextScope::Workspace,
+            content: record.content.into_bytes().into(),
+        })
+        .map_err(|error| format!("recovered memory registration failed: {error}"))?;
+    let ContextResponse::Registered { resource } = registered else {
+        return Err("context service returned a non-registration response for recovered memory".into());
+    };
+    let loaded: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Load {
+            execution_id: request.execution_id.clone(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: ContextInjectionRequester::ContextPolicy,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: "fall-through memory recovery".into(),
+        })
+        .map_err(|error| format!("recovered memory injection failed: {error}"))?;
+    if !matches!(loaded, ContextResponse::Loaded { .. }) {
+        return Err("context service returned a non-load response for recovered memory".into());
+    }
+    prepare_invocation_context(context, request)
 }
 
 impl PluginInstance for InvocationPackage {
@@ -430,6 +624,12 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == HelperInvocationInterface::interface_id()));
+        assert!(central.imports.iter().any(|import| {
+            import.interface == ContextRecoveryInterface::interface_id() && !import.required
+        }));
+        assert!(central.imports.iter().any(|import| {
+            import.interface == MemoryContextInterface::interface_id() && !import.required
+        }));
 
         let helper = helper_invocation_component_manifest(authority);
         assert_eq!(helper.id, helper_invocation_component_id());
@@ -442,18 +642,10 @@ mod tests {
             .imports
             .iter()
             .any(|import| import.interface == ContextInterface::interface_id()));
-        let defaults = helper
-            .imports
-            .iter()
-            .find(|import| import.interface == InvocationDefaultsInterface::interface_id())
-            .expect("helper invocation imports the defaults provider");
-        assert!(!defaults.required);
-        let clock = helper
-            .imports
-            .iter()
-            .find(|import| import.interface == InvocationClockInterface::interface_id())
-            .expect("helper invocation imports a clock provider");
-        assert!(clock.required);
+        assert!(!helper.imports.iter().any(|import| {
+            import.interface == MemoryContextInterface::interface_id()
+                || import.interface == MemoryInterface::interface_id()
+        }));
     }
 
     #[test]
