@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
+#[allow(dead_code)]
 mod association_store;
 mod component;
+#[allow(dead_code)]
 mod context_service_state;
 mod error;
 mod freshness;
