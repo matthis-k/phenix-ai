@@ -10,7 +10,6 @@ pub(crate) const MAX_CONTEXT_PROJECTION_STATE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) enum ContextStateServiceError {
     InvalidSnapshot(String),
     SnapshotTooLarge { bytes: usize, allowed: usize },
-    Admission(String),
     UnknownExecution { execution_id: String },
     Projection(ProjectionStateError),
 }
@@ -118,12 +117,6 @@ impl ContextStateService {
             | ContextCommand::Project { .. } => return None,
         };
         Some(response)
-    }
-
-    pub(crate) fn projection_revision(&self, execution_id: &str) -> Option<&ProjectionRevision> {
-        self.projections
-            .get(execution_id)
-            .map(|state| &state.revision)
     }
 
     pub(crate) fn invalidate_if_present(
