@@ -826,11 +826,9 @@ async fn serve_application_worker(
         let result = if is_sdk_operation(&operation) {
             service.invoke(&operation, input)
         } else {
-            worker.invoke_with_client_callables(
-                &operation,
-                input,
-                |callable, schema| service.admit_current_client_callable(callable, schema),
-            )
+            worker.invoke_with_client_callables(&operation, input, |callable, schema| {
+                service.admit_current_client_callable(callable, schema)
+            })
         };
         invocation.respond(result);
     }
