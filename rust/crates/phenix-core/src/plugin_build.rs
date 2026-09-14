@@ -2,35 +2,23 @@ use crate::{Authority, PhenixValue, PluginArtifact};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     collections::BTreeMap,
-    error::Error,
     fmt::{self, Display, Formatter},
     str::FromStr,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PluginBuildPlanError {
+    #[error("{0} must not be empty")]
     EmptyValue(&'static str),
+    #[error("{0} must not contain NUL")]
     ContainsNul(&'static str),
+    #[error("invalid build environment variable name")]
     InvalidEnvironmentName,
+    #[error("{0} must be a normalized relative path")]
     InvalidRelativePath(&'static str),
+    #[error("plugin build plan must contain at least one step")]
     EmptySteps,
 }
-
-impl Display for PluginBuildPlanError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyValue(field) => write!(f, "{field} must not be empty"),
-            Self::ContainsNul(field) => write!(f, "{field} must not contain NUL"),
-            Self::InvalidEnvironmentName => f.write_str("invalid build environment variable name"),
-            Self::InvalidRelativePath(field) => {
-                write!(f, "{field} must be a normalized relative path")
-            }
-            Self::EmptySteps => f.write_str("plugin build plan must contain at least one step"),
-        }
-    }
-}
-
-impl Error for PluginBuildPlanError {}
 
 macro_rules! validated_string {
     ($name:ident, $validator:ident) => {

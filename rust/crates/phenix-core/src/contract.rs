@@ -871,19 +871,25 @@ impl Display for TypeKind {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ValueError {
+    #[error("expected {expected}, got {actual}")]
     TypeMismatch {
         expected: TypeKind,
         actual: TypeKind,
     },
+    #[error("missing key {0}")]
     MissingKey(Key),
+    #[error("unexpected key {0}")]
     UnexpectedKey(Key),
+    #[error("unknown variant {0}")]
     UnknownVariant(Key),
+    #[error("expected contract {expected}, got {actual}")]
     ContractMismatch {
         expected: ContractId,
         actual: ContractId,
     },
+    #[error("{0}")]
     InvalidValue(String),
 }
 
@@ -900,25 +906,6 @@ impl ValueError {
         Self::ContractMismatch { expected, actual }
     }
 }
-
-impl Display for ValueError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TypeMismatch { expected, actual } => {
-                write!(f, "expected {expected}, got {actual}")
-            }
-            Self::MissingKey(key) => write!(f, "missing key {key}"),
-            Self::UnexpectedKey(key) => write!(f, "unexpected key {key}"),
-            Self::UnknownVariant(tag) => write!(f, "unknown variant {tag}"),
-            Self::ContractMismatch { expected, actual } => {
-                write!(f, "expected contract {expected}, got {actual}")
-            }
-            Self::InvalidValue(message) => f.write_str(message),
-        }
-    }
-}
-
-impl Error for ValueError {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
