@@ -26,10 +26,64 @@ pub(crate) fn attempt_namespace() -> ResourceNamespace {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct AttemptLedger {
+    #[serde(default)]
+    next_sequence: u64,
     attempts: BTreeMap<String, StepAttemptRecord>,
 }
 
 impl AttemptLedger {
+    fn allocate_identity(
+        &mut self,
+        root_execution_id: String,
+        execution_id: String,
+        parent_attempt_id: Option<String>,
+        policy_revision: String,
+    ) -> Result<UsageAttribution, String> {
+        require_identity("root execution id", &root_execution_id)?;
+        require_identity("execution id", &execution_id)?;
+        require_identity("policy revision", &policy_revision)?;
+        if let Some(parent_id) = &parent_attempt_id {
+            require_identity("parent attempt id", parent_id)?;
+            let parent = self
+                .attempts
+                .get(parent_id)
+                .ok_or_else(|| format!("unknown parent step attempt: {parent_id}"))?;
+            if parent.attribution.root_execution_id != root_execution_id {
+                return Err("step attempt parent belongs to a different root execution".into());
+            }
+            if parent.phase != StepAttemptPhase::Settled {
+                return Err("retry parent step attempt is not settled".into());
+            }
+            if parent.outcome == Some(AttemptOutcome::Succeeded) {
+                return Err("successful step attempt cannot be retried".into());
+            }
+        }
+
+        let attempt_id = loop {
+            self.next_sequence = self
+                .next_sequence
+                .checked_add(1)
+                .ok_or_else(|| "step attempt identity sequence exhausted".to_owned())?;
+            let candidate = format!("attempt-{}", self.next_sequence);
+            if !self.attempts.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        Ok(UsageAttribution {
+            root_execution_id,
+            execution_id,
+            attempt_id,
+            parent_attempt_id: parent_attempt_id.clone(),
+            policy_revision,
+            kind: if parent_attempt_id.is_some() {
+                UsageAttemptKind::Retry
+            } else {
+                UsageAttemptKind::Root
+            },
+            task_id: None,
+        })
+    }
+
     fn create(
         &mut self,
         attribution: UsageAttribution,
@@ -99,6 +153,14 @@ impl AttemptLedger {
             .ok_or_else(|| format!("unknown step attempt: {attempt_id}"))?;
         mutation(record)?;
         Ok(record.clone())
+    }
+}
+
+fn require_identity(label: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        Err(format!("{label} must not be empty"))
+    } else {
+        Ok(())
     }
 }
 
@@ -182,56 +244,83 @@ fn mutate(
         .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
         .map_err(|error| error.to_string())?;
     let mut next = ledger.clone();
-    let attempt = match command {
-        StepAttemptCommand::Create { attribution, plan } => next.create(attribution, plan)?,
+    let response = match command {
+        StepAttemptCommand::AllocateIdentity {
+            root_execution_id,
+            execution_id,
+            parent_attempt_id,
+            policy_revision,
+        } => StepAttemptResponse::Attribution {
+            attribution: next.allocate_identity(
+                root_execution_id,
+                execution_id,
+                parent_attempt_id,
+                policy_revision,
+            )?,
+        },
+        StepAttemptCommand::Create { attribution, plan } => StepAttemptResponse::Attempt {
+            attempt: next.create(attribution, plan)?,
+        },
         StepAttemptCommand::BindReservation {
             attempt_id,
             reservation_id,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .bind_reservation(reservation_id)
-                .map_err(|error| format!("reservation binding failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .bind_reservation(reservation_id)
+                    .map_err(|error| format!("reservation binding failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::BindRoute {
             attempt_id,
             decision,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .bind_route(decision)
-                .map_err(|error| format!("route binding failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .bind_route(decision)
+                    .map_err(|error| format!("route binding failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::BindProjection {
             attempt_id,
             projection,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .bind_projection(projection)
-                .map_err(|error| format!("projection binding failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .bind_projection(projection)
+                    .map_err(|error| format!("projection binding failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::MarkDispatched {
             attempt_id,
             dispatch_id,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .mark_dispatched(dispatch_id)
-                .map_err(|error| format!("dispatch binding failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .mark_dispatched(dispatch_id)
+                    .map_err(|error| format!("dispatch binding failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::Abort {
             attempt_id,
             outcome,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .abort(outcome)
-                .map_err(|error| format!("attempt abort failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .abort(outcome)
+                    .map_err(|error| format!("attempt abort failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::Settle {
             attempt_id,
             outcome,
-        } => next.mutate(&attempt_id, |attempt| {
-            attempt
-                .settle(outcome)
-                .map_err(|error| format!("attempt settlement failed: {error:?}"))
-        })?,
+        } => StepAttemptResponse::Attempt {
+            attempt: next.mutate(&attempt_id, |attempt| {
+                attempt
+                    .settle(outcome)
+                    .map_err(|error| format!("attempt settlement failed: {error:?}"))
+            })?,
+        },
         StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. } => {
             return Err("read-only step attempt command reached mutation path".into())
         }
@@ -259,7 +348,7 @@ fn mutate(
         )
         .map_err(|error| error.to_string())?;
     *ledger = next;
-    Ok(StepAttemptResponse::Attempt { attempt })
+    Ok(response)
 }
 
 fn restore(snapshot: Option<&[u8]>) -> Result<AttemptLedger, String> {
