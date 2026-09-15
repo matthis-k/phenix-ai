@@ -1,8 +1,8 @@
+use crate::{default_suite_authority, PhenixHarness};
 use phenix_core::{
     Authority, CallableId, CapabilityGenerationId, ModelId, PhenixValue, PluginId, Project,
     RoutingProfileId, ServiceId, ValueError,
 };
-use crate::{default_suite_authority, PhenixHarness};
 use phenix_plugin_catalog::{
     execution_configuration_service, model_routing_service, options_component_manifest,
     options_service, AgentDefinition, ExecutionConfigurationCommand,
