@@ -1,0 +1,11 @@
+[package]
+name = "phenix-sdk-external-canonical-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.phenix]
+role = "passive-library"
+
+[dependencies]
+phenix-sdk = { path = "../../../.." }

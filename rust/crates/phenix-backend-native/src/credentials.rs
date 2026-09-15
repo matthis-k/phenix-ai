@@ -1,6 +1,7 @@
 use crate::providers;
 use genai::resolver::AuthData;
 use genai::ModelIden;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -20,19 +21,97 @@ struct StoredCredentials {
     providers: BTreeMap<String, StoredCredential>,
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub(crate) enum StoredCredential {
     ApiKey {
-        secret: String,
+        secret: SecretString,
     },
     OAuth {
-        access_token: String,
-        refresh_token: String,
-        id_token: String,
+        access_token: SecretString,
+        refresh_token: SecretString,
+        id_token: SecretString,
         account_id: String,
         expires_at: u64,
     },
+}
+
+// The persisted credential file and the client auth wire both carry the secret
+// as a plain string, so `Serialize`/`Deserialize` are implemented manually to
+// expose the wrapped secrets at this single persistence/transport boundary.
+// `secrecy` withholds automatic serialization from `SecretBox` to prevent
+// accidental exfiltration; the credential store is the explicit, intentional
+// implementation of that, so no `Serialize` in the runtime derives.
+impl Serialize for StoredCredential {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        match self {
+            Self::ApiKey { secret } => {
+                let mut state = serializer.serialize_struct("ApiKey", 2)?;
+                state.serialize_field("type", "api_key")?;
+                state.serialize_field("secret", secret.expose_secret())?;
+                state.end()
+            }
+            Self::OAuth {
+                access_token,
+                refresh_token,
+                id_token,
+                account_id,
+                expires_at,
+            } => {
+                let mut state = serializer.serialize_struct("OAuth", 6)?;
+                state.serialize_field("type", "o_auth")?;
+                state.serialize_field("access_token", access_token.expose_secret())?;
+                state.serialize_field("refresh_token", refresh_token.expose_secret())?;
+                state.serialize_field("id_token", id_token.expose_secret())?;
+                state.serialize_field("account_id", account_id)?;
+                state.serialize_field("expires_at", expires_at)?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StoredCredential {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+        enum Untagged {
+            ApiKey {
+                secret: String,
+            },
+            OAuth {
+                access_token: String,
+                refresh_token: String,
+                id_token: String,
+                account_id: String,
+                expires_at: u64,
+            },
+        }
+        match Untagged::deserialize(deserializer)? {
+            Untagged::ApiKey { secret } => Ok(Self::ApiKey {
+                secret: SecretString::from(secret),
+            }),
+            Untagged::OAuth {
+                access_token,
+                refresh_token,
+                id_token,
+                account_id,
+                expires_at,
+            } => Ok(Self::OAuth {
+                access_token: SecretString::from(access_token),
+                refresh_token: SecretString::from(refresh_token),
+                id_token: SecretString::from(id_token),
+                account_id,
+                expires_at,
+            }),
+        }
+    }
 }
 
 impl CredentialStore {
@@ -81,7 +160,7 @@ impl CredentialStore {
         credentials.providers.insert(
             provider.to_owned(),
             StoredCredential::ApiKey {
-                secret: secret.to_owned(),
+                secret: SecretString::from(secret.to_owned()),
             },
         );
         self.write(&credentials)
@@ -89,7 +168,9 @@ impl CredentialStore {
 
     pub(crate) fn api_key(&self, provider: &str) -> Result<Option<String>, String> {
         match self.resolve(provider)? {
-            Some(StoredCredential::ApiKey { secret }) => Ok(Some(secret)),
+            Some(StoredCredential::ApiKey { secret }) => {
+                Ok(Some(secret.expose_secret().to_owned()))
+            }
             Some(StoredCredential::OAuth { .. }) => Err(format!(
                 "provider {provider:?} has an OAuth credential, not an API key"
             )),
@@ -196,16 +277,20 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn api_key_round_trips_through_secure_store() {
+    fn temp_root(label: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "phenix-credential-test-{}-{unique}",
+        std::env::temp_dir().join(format!(
+            "phenix-{label}-test-{}-{unique}",
             std::process::id()
-        ));
+        ))
+    }
+
+    #[test]
+    fn api_key_round_trips_through_secure_store() {
+        let root = temp_root("credential");
         let store = CredentialStore {
             path: root.join("credentials.json"),
         };
@@ -215,5 +300,53 @@ mod tests {
             Some("test-secret")
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn oauth_credential_persists_with_unchanged_wire_shape() {
+        let root = temp_root("credential-oauth");
+        let store = CredentialStore {
+            path: root.join("credentials.json"),
+        };
+        let credential = StoredCredential::OAuth {
+            access_token: SecretString::from("access".to_owned()),
+            refresh_token: SecretString::from("refresh".to_owned()),
+            id_token: SecretString::from("id".to_owned()),
+            account_id: "account".to_owned(),
+            expires_at: 99,
+        };
+        store.save_oauth("openai-codex", credential).unwrap();
+
+        let source = fs::read_to_string(&store.path).unwrap();
+        assert!(source.contains(r#""type": "o_auth""#));
+        assert!(source.contains(r#""access_token": "access""#));
+        assert!(!source.contains("<redacted>"));
+
+        let resolved = store.resolve("openai-codex").unwrap().unwrap();
+        let StoredCredential::OAuth {
+            access_token,
+            refresh_token,
+            id_token,
+            account_id,
+            expires_at,
+        } = resolved
+        else {
+            panic!("expected OAuth credential");
+        };
+        assert_eq!(access_token.expose_secret(), "access");
+        assert_eq!(refresh_token.expose_secret(), "refresh");
+        assert_eq!(id_token.expose_secret(), "id");
+        assert_eq!(account_id, "account");
+        assert_eq!(expires_at, 99);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn credential_wire_rejects_unknown_fields() {
+        let error = serde_json::from_str::<StoredCredential>(
+            r#"{"type":"api_key","secret":"test-secret","unexpected":true}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 }

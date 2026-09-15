@@ -93,33 +93,21 @@ pub struct ContextCatalog {
     current: BTreeMap<ContextResourceId, ContextRevision>,
     revisions: BTreeMap<(ContextResourceId, ContextRevision), ContextResourceRevision>,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ContextCatalogError {
+    #[error("context resource {id} revision {revision} changed after registration")]
     ConflictingRevision {
         id: ContextResourceId,
         revision: ContextRevision,
     },
+    #[error("unknown context resource: {0}")]
     UnknownResource(ContextResourceId),
+    #[error("unknown context resource revision: {id}@{revision}")]
     UnknownRevision {
         id: ContextResourceId,
         revision: ContextRevision,
     },
 }
-impl Display for ContextCatalogError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ConflictingRevision { id, revision } => write!(
-                f,
-                "context resource {id} revision {revision} changed after registration"
-            ),
-            Self::UnknownResource(id) => write!(f, "unknown context resource: {id}"),
-            Self::UnknownRevision { id, revision } => {
-                write!(f, "unknown context resource revision: {id}@{revision}")
-            }
-        }
-    }
-}
-impl std::error::Error for ContextCatalogError {}
 impl ContextCatalog {
     pub fn register_revision(
         &mut self,

@@ -9,3 +9,4 @@ role = "passive-library"
 
 [dependencies]
 phenix-domain = { path = "../phenix-domain" }
+thiserror.workspace = true
