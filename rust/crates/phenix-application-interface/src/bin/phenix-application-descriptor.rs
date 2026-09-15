@@ -11,7 +11,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.as_slice() {
         [] => io::stdout().write_all(application_descriptor().canonical_json()?.as_bytes())?,
         [flag, path] if flag == "--check" => {
-            if fs::read_to_string(path)? != application_descriptor().canonical_json()? {
+            let canonical = application_descriptor().canonical_json()?;
+            if fs::read_to_string(path)? != canonical {
+                eprintln!("{canonical}");
                 return Err(format!("application descriptor is stale: {path}").into());
             }
         }
