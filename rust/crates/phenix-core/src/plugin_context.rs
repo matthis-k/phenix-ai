@@ -1,8 +1,9 @@
 use crate::{
     Authority, CallCancellationToken, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventError, EventTypeId, Exact, GraphGenerationId,
-    InterfaceId, KernelError, PhenixValue, PluginHost, PluginId, PreparedMutationHandle, Project,
-    ResourceNamespace, SchemaMigration, ServiceId, TaskScope, TransactionOp, ValueError,
+    DurableKeyRange, DurableRecord, DurableSchema, EventAdmissionReceipt, EventError, EventTypeId,
+    Exact, GraphGenerationId, InterfaceId, KernelError, PhenixValue, PluginHost, PluginId,
+    PreparedMutationHandle, Project, ResourceNamespace, ScanDirection, SchemaMigration, ServiceId,
+    TaskScope, TransactionOp, ValueError,
 };
 use std::marker::PhantomData;
 
@@ -192,6 +193,16 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         key: &str,
     ) -> Result<Option<Vec<u8>>, KernelError> {
         self.host.read_durable(namespace, key)
+    }
+
+    pub fn scan_durable(
+        &self,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, KernelError> {
+        self.host.scan_durable(namespace, range, direction, limit)
     }
 
     pub fn transact_durable(

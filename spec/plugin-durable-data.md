@@ -88,15 +88,16 @@ A backend commits the complete mutation set or none of it.
 
 ## Queries
 
-The generic contract should support only the smallest useful query set:
+The generic contract supports the smallest useful record operations:
 
 - exact key lookup;
-- bounded scan/list;
-- declared indexed equality/range filters;
-- declared insert/update/delete or append-only mutation;
-- transaction-scoped reads where required.
+- bounded ordered scan/list;
+- atomic put/delete mutations;
+- value assertions for optimistic compare-and-swap coordination.
 
-FTS, vector search, graph traversal, semantic ranking, and other specialized query systems should remain separate service capabilities.
+`phenix-sdk` builds typed collections on that contract. `DurableMap` provides deterministic encoded-key lookup and scans. `DurableLog` uses fixed-width sequence keys plus a tail assertion in one transaction. Collection names and map keys are encoded so collection prefixes cannot overlap through separator characters.
+
+FTS, vector search, graph traversal, semantic ranking, and other specialized query systems remain separate service capabilities.
 
 ## Migrations
 
@@ -118,7 +119,7 @@ The kernel never assumes two implementations assign the same domain meaning to b
 
 A conforming persistence backend stores kernel-private infrastructure schemas plus arbitrary valid plugin schemas without understanding plugin domain semantics.
 
-Schema contracts expose required generic backend features such as transactions, unique keys, foreign keys, ordered append, or indexed range operations.
+Schema contracts may require optional backend operations. `Migrations` is the only optional backend feature today; transactions, unique record keys, and bounded ordered scans are baseline behavior.
 
 An incompatible backend is rejected before store activation.
 

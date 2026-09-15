@@ -3,10 +3,6 @@ use phenix_provider_sdk::{
     provider_auth_service, Auth, AuthDescriptor, AuthKind, ProviderAuthCommand,
     ProviderAuthResponse,
 };
-use std::{
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
 
 #[derive(Clone, Copy)]
 pub struct Providers<'host, 'runtime> {
@@ -105,35 +101,16 @@ impl<'host, 'runtime, Sdk, Settings, State> ProviderSdkExt<'host, 'runtime>
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProviderSdkError {
+    #[error("provider id must not be empty")]
     InvalidProviderId,
+    #[error(transparent)]
     Kernel(KernelError),
-    Encode(serde_json::Error),
-    Decode(serde_json::Error),
+    #[error("cannot encode provider SDK request: {0}")]
+    Encode(#[source] serde_json::Error),
+    #[error("cannot decode provider SDK response: {0}")]
+    Decode(#[source] serde_json::Error),
+    #[error("unexpected provider SDK response while {0}")]
     UnexpectedResponse(&'static str),
-}
-
-impl Display for ProviderSdkError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidProviderId => f.write_str("provider id must not be empty"),
-            Self::Kernel(error) => Display::fmt(error, f),
-            Self::Encode(error) => write!(f, "cannot encode provider SDK request: {error}"),
-            Self::Decode(error) => write!(f, "cannot decode provider SDK response: {error}"),
-            Self::UnexpectedResponse(operation) => {
-                write!(f, "unexpected provider SDK response while {operation}")
-            }
-        }
-    }
-}
-
-impl Error for ProviderSdkError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Kernel(error) => Some(error),
-            Self::Encode(error) | Self::Decode(error) => Some(error),
-            Self::InvalidProviderId | Self::UnexpectedResponse(_) => None,
-        }
-    }
 }

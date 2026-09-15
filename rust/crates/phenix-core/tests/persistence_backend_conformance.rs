@@ -1,8 +1,12 @@
 use phenix_core::{
-    BackendFeature, DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
-    PersistenceError, PluginId, ResourceNamespace, SchemaMigration, TransactionOp,
+    BackendFeature, DurableKeyRange, DurableRecord, DurableSchema, LocalPersistence,
+    NamespaceTransaction, PersistenceBackend, PersistenceError, PluginId, ResourceNamespace,
+    ScanDirection, SchemaMigration, TransactionOp,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Bound,
+};
 
 fn plugin(value: &str) -> PluginId {
     PluginId::parse(value).unwrap()
@@ -12,10 +16,30 @@ fn namespace(value: &str) -> ResourceNamespace {
     ResourceNamespace::parse(value).unwrap()
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct MemoryPersistence {
     schemas: BTreeMap<ResourceNamespace, (PluginId, u32)>,
     records: BTreeMap<(ResourceNamespace, String), Vec<u8>>,
+    supports_migrations: bool,
+}
+
+impl Default for MemoryPersistence {
+    fn default() -> Self {
+        Self {
+            schemas: BTreeMap::new(),
+            records: BTreeMap::new(),
+            supports_migrations: true,
+        }
+    }
+}
+
+impl MemoryPersistence {
+    fn without_migrations() -> Self {
+        Self {
+            supports_migrations: false,
+            ..Self::default()
+        }
+    }
 }
 
 impl MemoryPersistence {
@@ -83,13 +107,11 @@ impl MemoryPersistence {
 
 impl PersistenceBackend for MemoryPersistence {
     fn supported_features(&self) -> BTreeSet<BackendFeature> {
-        [
-            BackendFeature::Transactions,
-            BackendFeature::UniqueKeys,
-            BackendFeature::Migrations,
-        ]
-        .into_iter()
-        .collect()
+        if self.supports_migrations {
+            BTreeSet::from([BackendFeature::Migrations])
+        } else {
+            BTreeSet::new()
+        }
     }
 
     fn register_schema(
@@ -183,6 +205,46 @@ impl PersistenceBackend for MemoryPersistence {
             .cloned())
     }
 
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError> {
+        self.require_owner(caller, namespace)?;
+        let in_range = |key: &str| {
+            let above_lower = match range.lower() {
+                Bound::Included(bound) => key >= bound.as_str(),
+                Bound::Excluded(bound) => key > bound.as_str(),
+                Bound::Unbounded => true,
+            };
+            let below_upper = match range.upper() {
+                Bound::Included(bound) => key <= bound.as_str(),
+                Bound::Excluded(bound) => key < bound.as_str(),
+                Bound::Unbounded => true,
+            };
+            above_lower && below_upper
+        };
+        let mut records: Vec<_> = self
+            .records
+            .iter()
+            .filter(|((record_namespace, key), _)| record_namespace == namespace && in_range(key))
+            .map(|((_, key), value)| DurableRecord {
+                key: key.clone(),
+                value: value.clone(),
+            })
+            .collect();
+        if direction == ScanDirection::Reverse {
+            records.reverse();
+        }
+        if let Some(limit) = limit {
+            records.truncate(limit);
+        }
+        Ok(records)
+    }
+
     fn transact_many(
         &mut self,
         transactions: &[NamespaceTransaction],
@@ -210,11 +272,7 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
     backend
         .register_schema(
             &first_owner,
-            &DurableSchema::requiring(
-                first_namespace.clone(),
-                1,
-                [BackendFeature::Transactions, BackendFeature::UniqueKeys],
-            ),
+            &DurableSchema::new(first_namespace.clone(), 1),
         )
         .unwrap();
     backend
@@ -292,11 +350,139 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
         Some(b"second".to_vec())
     );
 
-    let migrated_schema = DurableSchema::requiring(
-        first_namespace.clone(),
-        2,
-        [BackendFeature::Transactions, BackendFeature::Migrations],
+    backend
+        .transact(
+            &first_owner,
+            &first_namespace,
+            &[
+                TransactionOp::Put {
+                    key: "alpha".into(),
+                    value: b"a".to_vec(),
+                },
+                TransactionOp::Put {
+                    key: "beta".into(),
+                    value: b"b".to_vec(),
+                },
+                TransactionOp::Put {
+                    key: "beta-2".into(),
+                    value: b"b2".to_vec(),
+                },
+                TransactionOp::Put {
+                    key: "gamma".into(),
+                    value: b"g".to_vec(),
+                },
+            ],
+        )
+        .unwrap();
+
+    let bounded = backend
+        .scan(
+            &first_owner,
+            &first_namespace,
+            &DurableKeyRange::new(
+                Bound::Included("alpha".into()),
+                Bound::Excluded("gamma".into()),
+            ),
+            ScanDirection::Forward,
+            Some(10),
+        )
+        .unwrap();
+    assert_eq!(
+        bounded
+            .iter()
+            .map(|record| record.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "beta", "beta-2"]
     );
+
+    let unbounded = backend
+        .scan(
+            &first_owner,
+            &first_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Forward,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        unbounded
+            .iter()
+            .map(|record| record.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "beta", "beta-2", "gamma", "record"]
+    );
+
+    let prefixed = backend
+        .scan(
+            &first_owner,
+            &first_namespace,
+            &DurableKeyRange::prefix("beta"),
+            ScanDirection::Forward,
+            Some(10),
+        )
+        .unwrap();
+    assert_eq!(
+        prefixed
+            .iter()
+            .map(|record| record.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["beta", "beta-2"]
+    );
+
+    let reverse = backend
+        .scan(
+            &first_owner,
+            &first_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Reverse,
+            Some(2),
+        )
+        .unwrap();
+    assert_eq!(
+        reverse
+            .iter()
+            .map(|record| record.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["record", "gamma"]
+    );
+    assert!(backend
+        .scan(
+            &first_owner,
+            &first_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Forward,
+            Some(0),
+        )
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        backend.scan(
+            &outsider,
+            &first_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Forward,
+            Some(1),
+        ),
+        Err(PersistenceError::WrongNamespaceOwner { .. })
+    ));
+    assert_eq!(
+        backend
+            .scan(
+                &second_owner,
+                &second_namespace,
+                &DurableKeyRange::all(),
+                ScanDirection::Forward,
+                Some(10),
+            )
+            .unwrap(),
+        vec![DurableRecord {
+            key: "record".into(),
+            value: b"second".to_vec(),
+        }]
+    );
+
+    let migrated_schema =
+        DurableSchema::requiring(first_namespace.clone(), 2, [BackendFeature::Migrations]);
     backend
         .migrate_schema(
             &first_owner,
@@ -330,11 +516,11 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
 
 fn assert_unsupported_feature(mut backend: impl PersistenceBackend) {
     let requested =
-        DurableSchema::requiring(namespace("feature.test"), 1, [BackendFeature::IndexedRange]);
+        DurableSchema::requiring(namespace("feature.test"), 1, [BackendFeature::Migrations]);
     assert!(matches!(
         backend.register_schema(&plugin("owner"), &requested),
         Err(PersistenceError::UnsupportedFeature {
-            feature: BackendFeature::IndexedRange,
+            feature: BackendFeature::Migrations,
             ..
         })
     ));
@@ -352,6 +538,5 @@ fn alternate_memory_backend_matches_generic_persistence_contract() {
 
 #[test]
 fn unsupported_features_fail_before_namespace_claim() {
-    assert_unsupported_feature(LocalPersistence::open_in_memory().unwrap());
-    assert_unsupported_feature(MemoryPersistence::default());
+    assert_unsupported_feature(MemoryPersistence::without_migrations());
 }
