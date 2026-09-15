@@ -1,6 +1,6 @@
 use crate::routing_state::RoutingRuntimeState;
 use phenix_core::RoutingProfileId;
-use phenix_sdk::{ModelCommand, ModelResponse, RoutingProfile};
+use phenix_sdk::{ModelCommand, ModelResponse, RouteDecision, RoutingProfile};
 
 pub(crate) const ROUTING_RUNTIME_KEY: &str = "runtime/routing-state";
 pub(crate) const MAX_ROUTING_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
@@ -46,9 +46,13 @@ impl RoutingServiceState {
         Ok(bytes)
     }
 
-    /// Handles the SDK routing operations that depend on effective capability or
-    /// historical routing state. Legacy profile/auth/invoke operations remain on
-    /// the compatibility path until the plugin wire enum is fully replaced.
+    pub(crate) fn validate_decision(&self, decision: &RouteDecision) -> Result<(), String> {
+        self.runtime
+            .validate_decision(decision)
+            .map(|_| ())
+            .map_err(|error| format!("resolved routing decision is invalid: {error:?}"))
+    }
+
     pub(crate) fn handle_state_command<F>(
         &mut self,
         command: ModelCommand,

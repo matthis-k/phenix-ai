@@ -1,4 +1,4 @@
-use phenix_core::CallableId;
+use phenix_core::{CallableId, CapabilityGenerationId};
 use phenix_sdk::{
     select_route, EffectiveModelCapabilities, ModelTarget, RouteDecision, RouteSelection,
     RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate, RoutingEvidence,
@@ -17,7 +17,14 @@ pub(crate) struct RoutingRuntimeState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RoutingRuntimeError {
     InvalidTargetIdentity,
-    MissingEffectiveCapabilities { target: ModelTarget },
+    MissingEffectiveCapabilities {
+        target: ModelTarget,
+    },
+    StaleCapabilityGeneration {
+        target: ModelTarget,
+        decision: CapabilityGenerationId,
+        current: CapabilityGenerationId,
+    },
     Selection(RouteSelectionError),
 }
 
@@ -31,21 +38,12 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn publish_estimate(
-        &mut self,
-        target: &ModelTarget,
-        estimate: RoutingEstimate,
-    ) -> Result<(), RoutingRuntimeError> {
-        self.estimates.insert(target_key(target)?, estimate);
-        Ok(())
-    }
-
     pub(crate) fn record_evidence(
         &mut self,
         decision: &RouteDecision,
         evidence: RoutingEvidence,
     ) -> Result<(), RoutingRuntimeError> {
+        self.validate_decision(decision)?;
         self.evidence
             .entry(target_key(&decision.target)?)
             .or_default()
@@ -53,16 +51,24 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn evidence_for(
+    pub(crate) fn validate_decision(
         &self,
-        target: &ModelTarget,
-    ) -> Result<&[RoutingEvidence], RoutingRuntimeError> {
-        Ok(self
-            .evidence
-            .get(&target_key(target)?)
-            .map(Vec::as_slice)
-            .unwrap_or_default())
+        decision: &RouteDecision,
+    ) -> Result<&EffectiveModelCapabilities, RoutingRuntimeError> {
+        let current = self
+            .capabilities
+            .get(&target_key(&decision.target)?)
+            .ok_or_else(|| RoutingRuntimeError::MissingEffectiveCapabilities {
+                target: decision.target.clone(),
+            })?;
+        if current.generation != decision.capability_generation {
+            return Err(RoutingRuntimeError::StaleCapabilityGeneration {
+                target: decision.target.clone(),
+                decision: decision.capability_generation.clone(),
+                current: current.generation.clone(),
+            });
+        }
+        Ok(current)
     }
 
     pub(crate) fn candidates(
@@ -119,7 +125,7 @@ fn target_key(target: &ModelTarget) -> Result<String, RoutingRuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId, RoutingProfileId};
+    use phenix_core::{ModelId, PluginId, RoutingProfileId};
     use phenix_sdk::{
         CapacityKnowledge, ContextControl, ContextDemand, ModelLimits, RoutingEstimateMode,
     };
@@ -132,10 +138,10 @@ mod tests {
         }
     }
 
-    fn capabilities(target: ModelTarget) -> EffectiveModelCapabilities {
+    fn capabilities(target: ModelTarget, generation: &str) -> EffectiveModelCapabilities {
         EffectiveModelCapabilities {
             target,
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: CapabilityGenerationId::parse(generation).unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity: CapacityKnowledge::Known {
                 limits: ModelLimits {
@@ -161,19 +167,46 @@ mod tests {
         let mut state = RoutingRuntimeState::default();
         let profile = profile();
         state
-            .publish_capabilities(capabilities(profile.default_target.clone()))
+            .publish_capabilities(capabilities(profile.default_target.clone(), "generation-1"))
             .unwrap();
         assert!(matches!(
             state.candidates(&profile, None),
             Err(RoutingRuntimeError::MissingEffectiveCapabilities { .. })
         ));
         state
-            .publish_capabilities(capabilities(profile.fallback_targets[0].clone()))
+            .publish_capabilities(capabilities(
+                profile.fallback_targets[0].clone(),
+                "generation-1",
+            ))
             .unwrap();
         let candidates = state.candidates(&profile, None).unwrap();
         assert_eq!(candidates[0].ordinal, 0);
         assert_eq!(candidates[0].capabilities.target.model.as_str(), "primary");
         assert_eq!(candidates[1].ordinal, 1);
+    }
+
+    #[test]
+    fn stale_route_decision_is_rejected_after_capability_refresh() {
+        let mut state = RoutingRuntimeState::default();
+        let target = target("primary");
+        state
+            .publish_capabilities(capabilities(target.clone(), "generation-1"))
+            .unwrap();
+        let decision = RouteDecision {
+            target: target.clone(),
+            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            policy_revision: "policy-1".into(),
+            candidate_ordinal: 0,
+            estimate: None,
+        };
+        state.validate_decision(&decision).unwrap();
+        state
+            .publish_capabilities(capabilities(target, "generation-2"))
+            .unwrap();
+        assert!(matches!(
+            state.validate_decision(&decision),
+            Err(RoutingRuntimeError::StaleCapabilityGeneration { .. })
+        ));
     }
 
     #[test]
@@ -184,7 +217,7 @@ mod tests {
             std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
         {
             state
-                .publish_capabilities(capabilities(target.clone()))
+                .publish_capabilities(capabilities(target.clone(), "generation-1"))
                 .unwrap();
         }
         let selection = state
