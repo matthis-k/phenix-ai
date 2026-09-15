@@ -162,6 +162,9 @@ fn handle(
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
         }),
+        ContextCommand::Admit { .. } => {
+            Err("context admission is not implemented by this contract-only layer".into())
+        }
     }
 }
 
