@@ -1,8 +1,8 @@
 use crate::{
-    Authority, ComponentExport, ComponentId, ComponentListener, ComponentManifest, EventBus,
-    EventEnvelope, EventError, EventHandler, EventSubscription, InterfaceCompatibility,
-    InterfaceId, InterfaceSchemaMismatch, PluginExecution, PluginId, PluginManifest,
-    ProviderCompositionPolicy, ProviderSelectionReason, SubscriptionSpec,
+    graph_util::DirectedGraph, Authority, ComponentExport, ComponentId, ComponentListener,
+    ComponentManifest, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
+    InterfaceCompatibility, InterfaceId, InterfaceSchemaMismatch, PluginExecution, PluginId,
+    PluginManifest, ProviderCompositionPolicy, ProviderSelectionReason, SubscriptionSpec,
 };
 use std::sync::Arc;
 use std::{
@@ -541,44 +541,25 @@ impl ResolvedComponentGraph {
 fn validate_required_import_dag(
     components: &BTreeMap<ComponentId, ResolvedComponent>,
 ) -> Result<(), ComponentGraphError> {
-    fn visit(
-        component: &ComponentId,
-        components: &BTreeMap<ComponentId, ResolvedComponent>,
-        visiting: &mut Vec<ComponentId>,
-        visited: &mut BTreeSet<ComponentId>,
-    ) -> Result<(), ComponentGraphError> {
-        if let Some(start) = visiting.iter().position(|candidate| candidate == component) {
-            let mut path = visiting[start..].to_vec();
-            path.push(component.clone());
-            return Err(ComponentGraphError::RequiredImportCycle { path });
-        }
-        if visited.contains(component) {
-            return Ok(());
-        }
-
-        visiting.push(component.clone());
-        if let Some(resolved) = components.get(component) {
-            for import in &resolved.imports {
-                if !import.required {
-                    continue;
-                }
-                if let Some(binding) = &import.binding {
-                    visit(binding.exporter(), components, visiting, visited)?;
-                }
-                for fallback in &import.fallbacks {
-                    visit(fallback.exporter(), components, visiting, visited)?;
-                }
+    let mut graph = DirectedGraph::from_nodes(components.keys().cloned());
+    for (component, resolved) in components {
+        for import in &resolved.imports {
+            if !import.required {
+                continue;
+            }
+            if let Some(binding) = &import.binding {
+                graph.add_edge(component, binding.exporter());
+            }
+            for fallback in &import.fallbacks {
+                graph.add_edge(component, fallback.exporter());
             }
         }
-        visiting.pop();
-        visited.insert(component.clone());
-        Ok(())
     }
 
-    let mut visiting = Vec::new();
-    let mut visited = BTreeSet::new();
     for component in components.keys() {
-        visit(component, components, &mut visiting, &mut visited)?;
+        if let Some(path) = graph.cycle_path_from(component) {
+            return Err(ComponentGraphError::RequiredImportCycle { path });
+        }
     }
     Ok(())
 }
@@ -989,31 +970,34 @@ mod tests {
             }],
             maximum_authority: authority.clone(),
         };
-
-        let error = ResolvedComponentGraph::compile(
-            [
-                plugin_manifest("plugin-a", authority.clone()),
-                plugin_manifest("plugin-b", authority.clone()),
+        let plugin_a = plugin_manifest("plugin-a", authority.clone());
+        let plugin_b = plugin_manifest("plugin-b", authority.clone());
+        let expected = ComponentGraphError::RequiredImportCycle {
+            path: vec![
+                component("component-a"),
+                component("component-b"),
+                component("component-a"),
             ],
-            [component_a, component_b],
-            &authority,
-        )
-        .unwrap_err();
+        };
 
-        assert_eq!(
-            error,
-            ComponentGraphError::RequiredImportCycle {
-                path: vec![
-                    component("component-a"),
-                    component("component-b"),
-                    component("component-a"),
-                ],
-            }
-        );
-        assert_eq!(
-            error.to_string(),
-            "required component import cycle: component-a -> component-b -> component-a"
-        );
+        for (plugins, components) in [
+            (
+                vec![plugin_a.clone(), plugin_b.clone()],
+                vec![component_a.clone(), component_b.clone()],
+            ),
+            (
+                vec![plugin_b.clone(), plugin_a.clone()],
+                vec![component_b.clone(), component_a.clone()],
+            ),
+        ] {
+            let error =
+                ResolvedComponentGraph::compile(plugins, components, &authority).unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(
+                error.to_string(),
+                "required component import cycle: component-a -> component-b -> component-a"
+            );
+        }
     }
 
     #[test]
