@@ -10,7 +10,6 @@ pub(crate) const MAX_CONTEXT_PROJECTION_STATE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) enum ContextStateServiceError {
     InvalidSnapshot(String),
     SnapshotTooLarge { bytes: usize, allowed: usize },
-    Admission(String),
     UnknownExecution { execution_id: String },
     Projection(ProjectionStateError),
 }
@@ -49,8 +48,6 @@ impl ContextStateService {
         Ok(bytes)
     }
 
-    /// Handles projection-owner operations. Resource registration/load/project
-    /// remain on the existing context persistence path.
     pub(crate) fn handle_state_command(
         &mut self,
         command: ContextCommand,
@@ -69,7 +66,10 @@ impl ContextStateService {
                         state.apply_admission(result.clone()).map_err(|error| {
                             format!("context projection update failed: {error:?}")
                         })?;
-                        Ok(ContextResponse::Admission { result })
+                        Ok(ContextResponse::Admission {
+                            result,
+                            projection: state.revision.clone(),
+                        })
                     })
             }
             ContextCommand::PrepareCompaction { proposal } => {
@@ -119,10 +119,14 @@ impl ContextStateService {
         Some(response)
     }
 
-    pub(crate) fn projection_revision(&self, execution_id: &str) -> Option<&ProjectionRevision> {
-        self.projections
-            .get(execution_id)
-            .map(|state| &state.revision)
+    pub(crate) fn invalidate_if_present(
+        &mut self,
+        execution_id: &str,
+    ) -> Option<ProjectionRevision> {
+        self.projections.get_mut(execution_id).map(|state| {
+            state.invalidate_for_context_mutation();
+            state.revision.clone()
+        })
     }
 
     fn projection_mut(

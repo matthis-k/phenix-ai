@@ -2,35 +2,35 @@
 
 use phenix_core::{PluginId, PluginManifest};
 pub use phenix_sdk::{
-    ContextInjection, ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind,
+    ContextAdmissionRequest, ContextAdmissionResult, ContextCommand, ContextInjection,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
     ContextScope, ExactContextReference, ExecutionContextProjection, ProjectedContextEntry,
 };
 
 mod component;
-mod implementation;
-#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+mod implementation_state;
 mod projection_state;
 mod prompt;
-#[allow(dead_code)]
 mod state_service;
 
 pub use component::*;
-pub use implementation::context_factory;
+pub use implementation_state::context_factory;
 pub use prompt::{
     assemble_prompt, PromptAssembly, PromptSection, PromptSectionKind, PromptSectionRole,
     PHENIX_HARNESS_IDENTITY,
 };
 
-/// Context loads validate execution liveness through `phenix.execution`.
-/// Activation therefore depends on the execution plugin rather than failing at
-/// the first load request when that service is absent.
 #[must_use]
 pub fn context_manifest() -> PluginManifest {
-    let mut manifest = implementation::context_manifest();
+    let mut manifest = implementation_state::context_manifest();
     manifest.dependencies =
         vec![PluginId::parse("phenix.execution").expect("static execution plugin id is valid")];
     manifest
 }
+
+#[cfg(test)]
+mod state_integration;
 
 #[cfg(test)]
 mod manifest_tests {

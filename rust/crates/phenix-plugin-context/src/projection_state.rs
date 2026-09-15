@@ -17,10 +17,24 @@ pub(crate) struct ContextProjectionState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectionStateError {
     ExecutionMismatch,
-    StaleAdmissionEpoch { current: u64, incoming: u64 },
-    DuplicatePreparedCheckpoint { checkpoint_id: String },
-    UnknownPreparedCheckpoint { checkpoint_id: String },
-    UnknownContextItem { item_id: String },
+    StaleAdmissionEpoch {
+        current: u64,
+        incoming: u64,
+    },
+    DuplicatePreparedCheckpoint {
+        checkpoint_id: String,
+    },
+    UnknownPreparedCheckpoint {
+        checkpoint_id: String,
+    },
+    UnknownContextItem {
+        item_id: String,
+    },
+    RetentionMismatch {
+        item_id: String,
+        actual: ContextRetention,
+        declared: ContextRetention,
+    },
     Compaction(CompactionValidationError),
 }
 
@@ -50,7 +64,6 @@ impl ContextProjectionState {
                 incoming: result.cache_epoch,
             });
         }
-
         self.prepared.clear();
         self.revision.revision = self.revision.revision.saturating_add(1);
         self.revision.cache_epoch = result.cache_epoch;
@@ -72,6 +85,20 @@ impl ContextProjectionState {
         proposal
             .validate_against(&self.revision)
             .map_err(ProjectionStateError::Compaction)?;
+        for transition in &proposal.transitions {
+            let Some(item) = self.admitted.get(&transition.item_id) else {
+                return Err(ProjectionStateError::UnknownContextItem {
+                    item_id: transition.item_id.clone(),
+                });
+            };
+            if item.retention != transition.from {
+                return Err(ProjectionStateError::RetentionMismatch {
+                    item_id: transition.item_id.clone(),
+                    actual: item.retention,
+                    declared: transition.from,
+                });
+            }
+        }
         let checkpoint_id = proposal.checkpoint.checkpoint_id.clone();
         if self.prepared.contains_key(&checkpoint_id) {
             return Err(ProjectionStateError::DuplicatePreparedCheckpoint { checkpoint_id });
@@ -92,7 +119,6 @@ impl ContextProjectionState {
         proposal
             .validate_against(&self.revision)
             .map_err(ProjectionStateError::Compaction)?;
-
         for transition in &proposal.transitions {
             self.apply_transition(transition)?;
         }
@@ -101,7 +127,6 @@ impl ContextProjectionState {
             cache_epoch: proposal.next_cache_epoch,
         };
         self.prepared.clear();
-
         Ok(CompactionCommit {
             proposal,
             committed_projection: self.revision.clone(),
@@ -122,6 +147,13 @@ impl ContextProjectionState {
                 item_id: transition.item_id.clone(),
             });
         };
+        if item.retention != transition.from {
+            return Err(ProjectionStateError::RetentionMismatch {
+                item_id: transition.item_id.clone(),
+                actual: item.retention,
+                declared: transition.from,
+            });
+        }
         item.retention = transition.to;
         item.recovery = transition
             .recovery
@@ -142,7 +174,7 @@ impl ContextProjectionState {
 mod tests {
     use super::*;
     use phenix_core::Bytes;
-    use phenix_sdk::{CachePlacement, ContextSource, ToolCallGroupReference};
+    use phenix_sdk::{CachePlacement, ContextSource, ProjectionCheckpoint, ToolCallGroupReference};
 
     fn state() -> ContextProjectionState {
         let mut state = ContextProjectionState::new("execution-1");
@@ -182,7 +214,7 @@ mod tests {
                 to: ContextRetention::DropAllowed,
                 recovery: None,
             }],
-            checkpoint: phenix_sdk::contracts::context_compaction::ContextCheckpoint {
+            checkpoint: ProjectionCheckpoint {
                 checkpoint_id: "checkpoint-1".into(),
                 execution_id: state.execution_id.clone(),
                 source_revision: state.revision.clone(),
@@ -220,5 +252,16 @@ mod tests {
             state.admitted["item-1"].form,
             ContextProjectionForm::Omitted
         );
+    }
+
+    #[test]
+    fn prepare_rejects_declared_retention_that_does_not_match_current_item() {
+        let mut state = state();
+        let mut proposal = proposal(&state);
+        proposal.transitions[0].from = ContextRetention::Reference;
+        assert!(matches!(
+            state.prepare_compaction(proposal),
+            Err(ProjectionStateError::RetentionMismatch { .. })
+        ));
     }
 }

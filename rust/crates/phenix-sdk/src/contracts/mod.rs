@@ -1,4 +1,5 @@
 pub mod budget;
+#[allow(clippy::large_enum_variant)]
 pub mod context;
 pub mod context_admission;
 pub mod context_compaction;
@@ -11,6 +12,7 @@ pub mod jobs;
 pub mod memory;
 pub mod memory_context;
 pub mod memory_freshness;
+#[allow(clippy::double_must_use)]
 pub mod models;
 pub mod options;
 pub mod planning;
@@ -25,8 +27,8 @@ pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::{
     CompactionCommit, CompactionProposal, CompactionValidationError,
-    ContextCheckpoint as ContextCompactionCheckpoint, ProjectionRevision, RetentionTransition,
-    ToolCallGroupReference,
+    ContextCheckpoint as ContextCompactionCheckpoint, ContextCheckpoint as ProjectionCheckpoint,
+    ProjectionRevision, RetentionTransition, ToolCallGroupReference,
 };
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;
