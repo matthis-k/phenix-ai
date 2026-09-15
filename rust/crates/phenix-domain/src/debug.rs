@@ -7,8 +7,6 @@ use crate::{
 use phenix_core::PhenixValue;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 
 pub const SESSION_DEBUG_SCHEMA_VERSION: u32 = 1;
 
@@ -141,16 +139,9 @@ impl SessionDebugSerializer for JsonSessionDebugSerializer {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{0}")]
 pub struct DebugSerializeError(String);
-
-impl Display for DebugSerializeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for DebugSerializeError {}
 
 #[cfg(test)]
 mod tests {

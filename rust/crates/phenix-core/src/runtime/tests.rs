@@ -130,6 +130,22 @@ impl PluginInstance for PersistencePlugin {
                 .map_err(|error| error.to_string())?;
                 Ok(b"written".to_vec())
             }
+            b"scan" => host
+                .scan_durable(
+                    &self.namespace,
+                    &DurableKeyRange::all(),
+                    ScanDirection::Forward,
+                    None,
+                )
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(|record| record.key)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                        .into_bytes()
+                })
+                .map_err(|error| error.to_string()),
             _ => Err("unsupported input".into()),
         }
     }
@@ -315,6 +331,22 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         b"ready"
     );
 
+    assert_eq!(
+        kernel
+            .invoke(
+                &service("storage@1"),
+                b"scan",
+                &Authority::new([read.clone()]),
+                None,
+            )
+            .unwrap(),
+        b"seed"
+    );
+    let denied_scan = kernel
+        .invoke(&service("storage@1"), b"scan", &Authority::default(), None)
+        .unwrap_err();
+    assert!(denied_scan.to_string().contains(PERSISTENCE_READ));
+
     let error = kernel
         .invoke(
             &service("storage@1"),
@@ -335,6 +367,75 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         .unwrap_err();
     assert!(matches!(denied, KernelError::ServiceInvoke { .. }));
     assert!(denied.to_string().contains(PERSISTENCE_WRITE));
+}
+
+#[test]
+fn persistence_assertion_conflict_preserves_namespace_and_key() {
+    let namespace = ResourceNamespace::parse("conflict.state").unwrap();
+    let owner = plugin("conflict-owner");
+    let manifest = PluginManifest {
+        id: owner.clone(),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: Vec::new(),
+        resource_namespaces: vec![namespace.clone()],
+        maximum_authority: Authority::new([capability(PERSISTENCE_WRITE)]),
+    };
+    let kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+    kernel
+        .persistence
+        .lock()
+        .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))
+        .unwrap();
+    let authority = Authority::new([capability(PERSISTENCE_WRITE)]);
+    let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
+    let host = PluginHost {
+        graph_generation: kernel.graph_generation(),
+        component_graph: kernel.component_graph(),
+        config: kernel.config(),
+        states: &kernel.states,
+        instances: &kernel.instances,
+        plugin: &owner,
+        authority: &authority,
+        call_cancellation: None,
+        call_stack: BTreeSet::from([owner.clone()]),
+        events: &kernel.events,
+        tasks: &kernel.tasks,
+        persistence: &kernel.persistence,
+        prepared_mutations: &prepared_mutations,
+        provenance: &kernel.provenance,
+        continuation: None,
+        active_services: BTreeSet::new(),
+        active_component_endpoints: BTreeSet::new(),
+    };
+
+    host.transact_durable(
+        &namespace,
+        &[TransactionOp::Put {
+            key: "tail".into(),
+            value: b"1".to_vec(),
+        }],
+    )
+    .unwrap();
+    let error = host
+        .transact_durable(
+            &namespace,
+            &[TransactionOp::AssertValue {
+                key: "tail".into(),
+                expected: Some(b"0".to_vec()),
+            }],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        KernelError::PersistenceConflict {
+            plugin: owner,
+            namespace,
+            key: "tail".into(),
+        }
+    );
 }
 
 #[test]
@@ -584,10 +685,13 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         dependencies: Vec::new(),
         services: Vec::new(),
         resource_namespaces: vec![namespace],
-        maximum_authority: Authority::new([capability(PERSISTENCE_SCHEMA)]),
+        maximum_authority: Authority::new([
+            capability(PERSISTENCE_SCHEMA),
+            capability(PERSISTENCE_READ),
+        ]),
     };
     let kernel = Kernel::new(KernelConfig::new([owner]).unwrap());
-    let authority = Authority::new([capability(PERSISTENCE_SCHEMA)]);
+    let authority = Authority::new([capability(PERSISTENCE_SCHEMA), capability(PERSISTENCE_READ)]);
     let owner_plugin = plugin("owner");
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
     let host = PluginHost {
@@ -610,7 +714,16 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         active_component_endpoints: BTreeSet::new(),
     };
     assert!(matches!(
-        host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
+        host.register_durable_schema(&DurableSchema::new(other_namespace.clone(), 1)),
+        Err(KernelError::HostOperationDenied { .. })
+    ));
+    assert!(matches!(
+        host.scan_durable(
+            &other_namespace,
+            &DurableKeyRange::all(),
+            ScanDirection::Forward,
+            None,
+        ),
         Err(KernelError::HostOperationDenied { .. })
     ));
 }
