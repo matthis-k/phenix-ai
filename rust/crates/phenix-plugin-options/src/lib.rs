@@ -1,16 +1,19 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
-    PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceId,
-    TransactionOp,
+    Authority, CapabilityId, ComponentId, ComponentManifest, PluginContext, PluginId,
+    PluginInstance, PluginManifest, ResourceNamespace, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{self, Display, Formatter};
+pub use phenix_sdk::{
+    options_service, OptionAssignment, OptionCommand, OptionContext, OptionDefinition, OptionKey,
+    OptionResponse, OptionScope, OptionScopeKind, OptionStartupPrecedence, OptionSubjectId,
+    OptionValue, OptionValueLayer, OptionValueSource, OptionsInterface, ResolvedOption,
+    OPTIONS_SERVICE,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-pub const OPTIONS_SERVICE: &str = "phenix.options@1";
 pub const OPTIONS_PLUGIN: &str = "phenix.options";
 pub const OPTIONS_COMPONENT: &str = "phenix.options";
 const OPTIONS_NAMESPACE: &str = "phenix.options.state";
@@ -20,420 +23,6 @@ const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 
 type OptionsContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct OptionKey(String);
-
-impl OptionKey {
-    pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
-        let value = value.into();
-        if value.is_empty() {
-            return Err("option key must not be empty");
-        }
-        if !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        {
-            return Err("option key contains unsupported characters");
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Display for OptionKey {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Serialize for OptionKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for OptionKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(D::Error::custom)
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct OptionSubjectId(String);
-
-impl OptionSubjectId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
-        let value = value.into();
-        if value.trim().is_empty() {
-            return Err("option scope subject must not be empty");
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Serialize for OptionSubjectId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for OptionSubjectId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(D::Error::custom)
-    }
-}
-
-macro_rules! validated_string_value {
-    ($ty:ty, $parse:path) => {
-        impl phenix_core::ValueCodec for $ty {
-            fn phenix_type() -> phenix_core::Type {
-                phenix_core::Type::String
-            }
-
-            fn to_value(&self) -> phenix_core::PhenixValue {
-                phenix_core::PhenixValue::String(self.as_str().to_owned())
-            }
-
-            fn from_value(
-                value: &phenix_core::PhenixValue,
-            ) -> Result<Self, phenix_core::ValueError> {
-                let value = String::try_from(phenix_core::Exact(value))?;
-                $parse(value).map_err(|error| phenix_core::ValueError::InvalidValue(error.into()))
-            }
-
-            fn project_from_value(
-                value: &phenix_core::PhenixValue,
-            ) -> Result<Self, phenix_core::ValueError> {
-                let value = String::try_from(phenix_core::Project(value))?;
-                $parse(value).map_err(|error| phenix_core::ValueError::InvalidValue(error.into()))
-            }
-        }
-
-        impl From<&$ty> for phenix_core::PhenixValue {
-            fn from(value: &$ty) -> Self {
-                <$ty as phenix_core::ValueCodec>::to_value(value)
-            }
-        }
-
-        impl<'value> TryFrom<phenix_core::Exact<&'value phenix_core::PhenixValue>> for $ty {
-            type Error = phenix_core::ValueError;
-
-            fn try_from(
-                value: phenix_core::Exact<&'value phenix_core::PhenixValue>,
-            ) -> Result<Self, Self::Error> {
-                <Self as phenix_core::ValueCodec>::from_value(value.0)
-            }
-        }
-
-        impl<'value> TryFrom<phenix_core::Project<&'value phenix_core::PhenixValue>> for $ty {
-            type Error = phenix_core::ValueError;
-
-            fn try_from(
-                value: phenix_core::Project<&'value phenix_core::PhenixValue>,
-            ) -> Result<Self, Self::Error> {
-                <Self as phenix_core::ValueCodec>::project_from_value(value.0)
-            }
-        }
-    };
-}
-
-validated_string_value!(OptionKey, OptionKey::parse);
-validated_string_value!(OptionSubjectId, OptionSubjectId::parse);
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-    phenix_sdk_macros::PhenixValue,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OptionScopeKind {
-    Global,
-    Session,
-    Agent,
-}
-
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Eq,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-    phenix_sdk_macros::PhenixValue,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OptionScope {
-    Global,
-    Session(OptionSubjectId),
-    Agent(OptionSubjectId),
-}
-
-impl OptionScope {
-    fn kind(&self) -> OptionScopeKind {
-        match self {
-            Self::Global => OptionScopeKind::Global,
-            Self::Session(_) => OptionScopeKind::Session,
-            Self::Agent(_) => OptionScopeKind::Agent,
-        }
-    }
-
-    fn storage_key(&self) -> String {
-        match self {
-            Self::Global => "global".into(),
-            Self::Session(session) => format!("session:{}", encode_subject(session.as_str())),
-            Self::Agent(agent) => format!("agent:{}", encode_subject(agent.as_str())),
-        }
-    }
-}
-
-#[derive(
-    Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue,
-)]
-#[serde(deny_unknown_fields)]
-pub struct OptionContext {
-    pub session: Option<OptionSubjectId>,
-    pub agent: Option<OptionSubjectId>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum OptionValue {
-    Bool(bool),
-    Integer(i64),
-    String(String),
-}
-
-impl OptionValue {
-    fn has_same_type(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Bool(_), Self::Bool(_))
-                | (Self::Integer(_), Self::Integer(_))
-                | (Self::String(_), Self::String(_))
-        )
-    }
-}
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Serialize,
-    phenix_sdk_macros::PhenixValue,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OptionStartupPrecedence {
-    #[default]
-    Nix,
-    File,
-}
-
-#[derive(
-    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OptionValueLayer {
-    Runtime,
-    Nix,
-    File,
-    Default,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(deny_unknown_fields)]
-pub struct OptionDefinition {
-    key: OptionKey,
-    default: OptionValue,
-    scopes: BTreeSet<OptionScopeKind>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OptionDefinitionWire {
-    key: OptionKey,
-    default: OptionValue,
-    scopes: BTreeSet<OptionScopeKind>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(deny_unknown_fields)]
-pub struct OptionAssignment {
-    pub key: OptionKey,
-    pub scope: OptionScope,
-    pub value: OptionValue,
-}
-
-impl OptionDefinition {
-    pub fn new(
-        key: OptionKey,
-        default: OptionValue,
-        scopes: impl IntoIterator<Item = OptionScopeKind>,
-    ) -> Result<Self, String> {
-        let scopes = scopes.into_iter().collect::<BTreeSet<_>>();
-        if scopes.is_empty() {
-            return Err(format!("option {key} has no writable scope"));
-        }
-        Ok(Self {
-            key,
-            default,
-            scopes,
-        })
-    }
-
-    #[must_use]
-    pub fn key(&self) -> &OptionKey {
-        &self.key
-    }
-
-    #[must_use]
-    pub fn default_value(&self) -> &OptionValue {
-        &self.default
-    }
-
-    pub fn scopes(&self) -> impl Iterator<Item = OptionScopeKind> + '_ {
-        self.scopes.iter().copied()
-    }
-}
-
-impl TryFrom<OptionDefinitionWire> for OptionDefinition {
-    type Error = String;
-
-    fn try_from(wire: OptionDefinitionWire) -> Result<Self, Self::Error> {
-        Self::new(wire.key, wire.default, wire.scopes)
-    }
-}
-
-impl<'de> Deserialize<'de> for OptionDefinition {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        OptionDefinitionWire::deserialize(deserializer)?
-            .try_into()
-            .map_err(D::Error::custom)
-    }
-}
-
-#[derive(
-    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OptionValueSource {
-    Default,
-    Global,
-    Session,
-    Agent,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(deny_unknown_fields)]
-pub struct ResolvedOption {
-    pub key: OptionKey,
-    pub value: OptionValue,
-    pub source: OptionValueSource,
-    pub layer: OptionValueLayer,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub enum OptionCommand {
-    Define {
-        definition: OptionDefinition,
-    },
-    GetDefinition {
-        key: OptionKey,
-    },
-    Configure {
-        file_values: Vec<OptionAssignment>,
-        nix_values: Vec<OptionAssignment>,
-        precedence: OptionStartupPrecedence,
-    },
-    Set {
-        key: OptionKey,
-        scope: OptionScope,
-        value: OptionValue,
-    },
-    Unset {
-        key: OptionKey,
-        scope: OptionScope,
-    },
-    Resolve {
-        key: OptionKey,
-        context: OptionContext,
-    },
-    List {
-        context: OptionContext,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
-pub enum OptionResponse {
-    Defined {
-        definition: OptionDefinition,
-    },
-    Definition {
-        definition: Option<OptionDefinition>,
-    },
-    Configured {
-        count: usize,
-    },
-    Updated {
-        key: OptionKey,
-        scope: OptionScope,
-    },
-    Value {
-        option: ResolvedOption,
-    },
-    Options {
-        options: Vec<ResolvedOption>,
-    },
-}
-
-pub struct OptionsInterface;
-
-impl ComponentInterface for OptionsInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(OPTIONS_SERVICE).expect("static options interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<OptionCommand, OptionResponse>()
-    }
-}
 
 struct OptionsStore;
 
@@ -467,11 +56,6 @@ pub struct Plugin {
 
     #[phenix(resource, id = "phenix.options.state")]
     _state: phenix_sdk::Durable<OptionsStore>,
-}
-
-#[must_use]
-pub fn options_service() -> ServiceId {
-    ServiceId::parse(OPTIONS_SERVICE).expect("static options service id is valid")
 }
 
 #[must_use]
@@ -581,16 +165,17 @@ struct OptionState {
 impl OptionState {
     fn with_defaults(mut self) -> Result<Self, String> {
         for definition in default_option_definitions() {
-            match self.definitions.get(&definition.key) {
+            match self.definitions.get(definition.key()) {
                 Some(existing) if existing == &definition => {}
                 Some(_) => {
                     return Err(format!(
                         "persisted definition for {} conflicts with built-in definition",
-                        definition.key
+                        definition.key()
                     ));
                 }
                 None => {
-                    self.definitions.insert(definition.key.clone(), definition);
+                    self.definitions
+                        .insert(definition.key().clone(), definition);
                 }
             }
         }
@@ -598,14 +183,15 @@ impl OptionState {
     }
 
     fn define(&mut self, definition: OptionDefinition) -> Result<bool, String> {
-        match self.definitions.get(&definition.key) {
+        match self.definitions.get(definition.key()) {
             Some(existing) if existing == &definition => Ok(false),
             Some(_) => Err(format!(
                 "option {} is already defined differently",
-                definition.key
+                definition.key()
             )),
             None => {
-                self.definitions.insert(definition.key.clone(), definition);
+                self.definitions
+                    .insert(definition.key().clone(), definition);
                 Ok(true)
             }
         }
@@ -638,7 +224,7 @@ impl OptionState {
         let mut layer = BTreeMap::<String, BTreeMap<OptionKey, OptionValue>>::new();
         for assignment in values {
             self.validate_value(&assignment.key, &assignment.scope, &assignment.value)?;
-            let scope = assignment.scope.storage_key();
+            let scope = option_scope_storage_key(&assignment.scope);
             if layer
                 .entry(scope.clone())
                 .or_default()
@@ -661,7 +247,10 @@ impl OptionState {
         value: OptionValue,
     ) -> Result<bool, String> {
         self.validate_value(key, &scope, &value)?;
-        let values = self.values.entry(scope.storage_key()).or_default();
+        let values = self
+            .values
+            .entry(option_scope_storage_key(&scope))
+            .or_default();
         if values.get(key) == Some(&value) {
             return Ok(false);
         }
@@ -679,13 +268,13 @@ impl OptionState {
             .definitions
             .get(key)
             .ok_or_else(|| format!("unknown option: {key}"))?;
-        if !definition.scopes.contains(&scope.kind()) {
+        let scope_kind = option_scope_kind(scope);
+        if !definition.scopes().any(|allowed| allowed == scope_kind) {
             return Err(format!(
-                "option {key} cannot be set at {:?} scope",
-                scope.kind()
+                "option {key} cannot be set at {scope_kind:?} scope"
             ));
         }
-        if !definition.default.has_same_type(value) {
+        if !option_values_have_same_type(definition.default_value(), value) {
             return Err(format!(
                 "option {key} value type does not match its definition"
             ));
@@ -697,7 +286,7 @@ impl OptionState {
         if !self.definitions.contains_key(key) {
             return Err(format!("unknown option: {key}"));
         }
-        let storage_key = scope.storage_key();
+        let storage_key = option_scope_storage_key(scope);
         let Some(values) = self.values.get_mut(&storage_key) else {
             return Ok(false);
         };
@@ -746,11 +335,36 @@ impl OptionState {
 
         Ok(ResolvedOption {
             key: key.clone(),
-            value: definition.default.clone(),
+            value: definition.default_value().clone(),
             source: OptionValueSource::Default,
             layer: OptionValueLayer::Default,
         })
     }
+}
+
+fn option_scope_kind(scope: &OptionScope) -> OptionScopeKind {
+    match scope {
+        OptionScope::Global => OptionScopeKind::Global,
+        OptionScope::Session(_) => OptionScopeKind::Session,
+        OptionScope::Agent(_) => OptionScopeKind::Agent,
+    }
+}
+
+fn option_scope_storage_key(scope: &OptionScope) -> String {
+    match scope {
+        OptionScope::Global => "global".into(),
+        OptionScope::Session(session) => format!("session:{}", encode_subject(session.as_str())),
+        OptionScope::Agent(agent) => format!("agent:{}", encode_subject(agent.as_str())),
+    }
+}
+
+fn option_values_have_same_type(left: &OptionValue, right: &OptionValue) -> bool {
+    matches!(
+        (left, right),
+        (OptionValue::Bool(_), OptionValue::Bool(_))
+            | (OptionValue::Integer(_), OptionValue::Integer(_))
+            | (OptionValue::String(_), OptionValue::String(_))
+    )
 }
 
 fn resolve_layer<'a>(
@@ -778,7 +392,7 @@ fn value_at<'a>(
     key: &OptionKey,
     scope: &OptionScope,
 ) -> Option<&'a OptionValue> {
-    values.get(&scope.storage_key())?.get(key)
+    values.get(&option_scope_storage_key(scope))?.get(key)
 }
 
 fn handle(
@@ -889,6 +503,7 @@ fn persistence_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_core::ComponentInterface;
 
     fn subject(value: &str) -> OptionSubjectId {
         OptionSubjectId::parse(value).unwrap()

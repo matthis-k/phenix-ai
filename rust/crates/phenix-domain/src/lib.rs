@@ -72,25 +72,19 @@ pub use client_tools::*;
 pub use debug::*;
 pub use delegation::*;
 pub use failures::*;
-pub use phenix_core::{CallableId, ModelId, PhenixSchema, PhenixValue, RoutingProfileId, SkillId};
+pub use phenix_core::{
+    CallableId, ModelId, PhenixSchema, PhenixValue, RoutingProfileId, SessionId, SkillId,
+};
 pub use workspace::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Formatter};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("identifier must not be empty")]
 pub struct InvalidId;
 
-impl Display for InvalidId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("identifier must not be empty")
-    }
-}
-
-impl std::error::Error for InvalidId {}
-
-domain_id_type!(SessionId);
 domain_id_type!(ExecutionId);
 domain_id_type!(OrchestrationNodeId);
 domain_id_type!(ToolCallId);
@@ -488,6 +482,7 @@ mod tests {
     #[test]
     fn core_ids_reject_blank_wire_values() {
         assert!(serde_json::from_str::<SessionId>("\"\"").is_err());
+        assert!(serde_json::from_str::<SessionId>("\"session id\"").is_err());
         assert!(serde_json::from_str::<ExecutionId>("\"  \"").is_err());
         assert!(serde_json::from_str::<ModelId>("\"\t\"").is_err());
         assert!(serde_json::from_str::<WorkspaceId>("\"\n\"").is_err());

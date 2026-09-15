@@ -1,20 +1,22 @@
 use crate::{
     prepared_mutation::PreparedMutationScope, ArtifactRevision, Authority, CallCancellationToken,
     CapabilityId, ComponentGraphError, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
-    EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
-    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
+    DurableKeyRange, DurableRecord, DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope,
+    EventError, EventHandler, EventSubscription, EventTypeId, GraphGenerationId, InterfaceId,
+    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence,
+    PersistenceBackend, PersistenceError, PluginArtifact, PluginExecution, PluginId,
+    PluginManifest, ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
+    ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain,
+    ResourceNamespace, RuntimeId, ScanDirection, SchemaMigration, ServiceId, ServiceRole,
     SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
+use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -390,9 +392,7 @@ fn stage_listener_subscriptions(
             .instances
             .get(&resolved_listener.owning_plugin)
             .ok_or_else(|| KernelError::PluginNotActive(resolved_listener.owning_plugin.clone()))?;
-        let mut instance = instance
-            .lock()
-            .expect("plugin instance mutex poisoned during listener binding");
+        let mut instance = instance.lock();
         let handler = catch_unwind(AssertUnwindSafe(|| {
             match instance.bind_plugin_listener(resolved_listener, sources.generation) {
                 Some(handler) => handler.map(|handler| {

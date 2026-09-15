@@ -12,6 +12,7 @@ phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 phenix-plugin-models = { path = "../phenix-plugin-models" }
