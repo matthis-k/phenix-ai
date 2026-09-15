@@ -63,6 +63,7 @@ pub(crate) fn materialize_invocation(
     }
 
     if let Some(checkpoint) = &state.committed_checkpoint {
+        represented.insert(format!("phenix:checkpoint:{}", checkpoint.checkpoint_id));
         append_section(
             &mut output,
             "compact-context",
@@ -239,8 +240,25 @@ mod tests {
         let mut admitted = item(reference.clone());
         admitted.retention = ContextRetention::Compact;
         state.admitted.insert(admitted.id.clone(), admitted);
+        let checkpoint_id = "checkpoint-1";
+        let checkpoint_item_id = format!("phenix:checkpoint:{checkpoint_id}");
+        state.admitted.insert(
+            checkpoint_item_id.clone(),
+            AdmittedContextItem {
+                id: checkpoint_item_id.clone(),
+                source: ContextSource::Inline {
+                    identity: checkpoint_item_id,
+                },
+                content_identity: "sha256:summary".into(),
+                form: ContextProjectionForm::Full,
+                cache: CachePlacement::Epoch,
+                retention: ContextRetention::Full,
+                estimated_tokens: 4,
+                recovery: None,
+            },
+        );
         state.committed_checkpoint = Some(ProjectionCheckpoint {
-            checkpoint_id: "checkpoint-1".into(),
+            checkpoint_id: checkpoint_id.into(),
             execution_id: "execution-1".into(),
             source_revision: ProjectionRevision {
                 revision: 3,
