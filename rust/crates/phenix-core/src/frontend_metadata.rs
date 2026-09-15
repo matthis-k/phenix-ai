@@ -3,100 +3,40 @@ use crate::{
     FrontendConfigContribution, FrontendConfigError, MetadataResolutionError, PluginId,
     ResolvedHarness,
 };
-use std::{
-    collections::BTreeMap,
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
+use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum FrontendMetadataResolutionError {
+    #[error("configuration frontend {frontend} is declared by both {first} and {second}")]
     DuplicateOwner {
         frontend: ConfigurationFrontendId,
         first: PluginId,
         second: PluginId,
     },
+    #[error("duplicate configuration frontend metadata: {0}")]
     DuplicateMetadata(ConfigurationFrontendId),
+    #[error("configuration frontend {0} has no owning plugin package")]
     Undeclared(ConfigurationFrontendId),
+    #[error("plugin package {plugin} declares configuration frontend {frontend} without metadata")]
     MissingMetadata {
         frontend: ConfigurationFrontendId,
         plugin: PluginId,
     },
+    #[error("configuration frontend {0} has version zero")]
     InvalidMetadataVersion(ConfigurationFrontendId),
+    #[error("configuration frontend {0} accepts no source kinds")]
     MissingAcceptedSourceKinds(ConfigurationFrontendId),
+    #[error("configuration frontend {0} declares an empty source kind")]
     EmptyAcceptedSourceKind(ConfigurationFrontendId),
+    #[error("configuration frontend {0} exposes no configuration namespaces")]
     MissingExposedNamespaces(ConfigurationFrontendId),
+    #[error("configuration frontend {frontend} rejected contribution: {error:?}")]
     Contribution {
         frontend: ConfigurationFrontendId,
         error: FrontendConfigError,
     },
-    Metadata(MetadataResolutionError),
-}
-
-impl Display for FrontendMetadataResolutionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateOwner {
-                frontend,
-                first,
-                second,
-            } => write!(
-                f,
-                "configuration frontend {frontend} is declared by both {first} and {second}"
-            ),
-            Self::DuplicateMetadata(frontend) => {
-                write!(f, "duplicate configuration frontend metadata: {frontend}")
-            }
-            Self::Undeclared(frontend) => {
-                write!(
-                    f,
-                    "configuration frontend {frontend} has no owning plugin package"
-                )
-            }
-            Self::MissingMetadata { frontend, plugin } => {
-                write!(
-                    f,
-                    "plugin package {plugin} declares configuration frontend {frontend} without metadata"
-                )
-            }
-            Self::InvalidMetadataVersion(frontend) => {
-                write!(f, "configuration frontend {frontend} has version zero")
-            }
-            Self::MissingAcceptedSourceKinds(frontend) => {
-                write!(
-                    f,
-                    "configuration frontend {frontend} accepts no source kinds"
-                )
-            }
-            Self::EmptyAcceptedSourceKind(frontend) => {
-                write!(
-                    f,
-                    "configuration frontend {frontend} declares an empty source kind"
-                )
-            }
-            Self::MissingExposedNamespaces(frontend) => {
-                write!(
-                    f,
-                    "configuration frontend {frontend} exposes no configuration namespaces"
-                )
-            }
-            Self::Contribution { frontend, error } => {
-                write!(
-                    f,
-                    "configuration frontend {frontend} rejected contribution: {error:?}"
-                )
-            }
-            Self::Metadata(error) => Display::fmt(error, f),
-        }
-    }
-}
-
-impl Error for FrontendMetadataResolutionError {}
-
-impl From<MetadataResolutionError> for FrontendMetadataResolutionError {
-    fn from(error: MetadataResolutionError) -> Self {
-        Self::Metadata(error)
-    }
+    #[error(transparent)]
+    Metadata(#[from] MetadataResolutionError),
 }
 
 fn validate_frontend_metadata(

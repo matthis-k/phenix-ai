@@ -44,10 +44,7 @@ impl Kernel {
             }
         }
 
-        let mut persistence = self
-            .persistence
-            .lock()
-            .expect("persistence backend mutex poisoned");
+        let mut persistence = self.persistence.lock();
         prepare_durable_schema_set(persistence.as_mut(), registrations).map_err(|error| match error
         {
             PersistenceCandidateError::Schema { plugin, error } => {
@@ -72,7 +69,8 @@ fn persistence_error(plugin: &PluginId, error: PersistenceError) -> KernelError 
 mod tests {
     use super::*;
     use crate::{
-        BackendFeature, DurableSchema, NamespaceTransaction, ResourceNamespace, TransactionOp,
+        BackendFeature, DurableKeyRange, DurableRecord, DurableSchema, NamespaceTransaction,
+        ResourceNamespace, ScanDirection, TransactionOp,
     };
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -159,6 +157,17 @@ mod tests {
             Ok(None)
         }
 
+        fn scan(
+            &self,
+            _caller: &PluginId,
+            _namespace: &ResourceNamespace,
+            _range: &DurableKeyRange,
+            _direction: ScanDirection,
+            _limit: Option<usize>,
+        ) -> Result<Vec<DurableRecord>, PersistenceError> {
+            Ok(Vec::new())
+        }
+
         fn transact_many(
             &mut self,
             _transactions: &[NamespaceTransaction],
@@ -189,7 +198,7 @@ mod tests {
         let second_namespace = namespace("second.state");
         let state = Arc::new(Mutex::new(RecordingState::default()));
         let backend = RecordingBackend {
-            features: BTreeSet::from([BackendFeature::Transactions]),
+            features: BTreeSet::new(),
             state: Arc::clone(&state),
         };
         let config = KernelConfig::new([
@@ -202,7 +211,7 @@ mod tests {
             DurableSchemaRegistration::new(first_owner, DurableSchema::new(first_namespace, 1)),
             DurableSchemaRegistration::new(
                 second_owner,
-                DurableSchema::requiring(second_namespace, 1, [BackendFeature::IndexedRange]),
+                DurableSchema::requiring(second_namespace, 1, [BackendFeature::Migrations]),
             ),
         ];
 

@@ -32,26 +32,46 @@ pub use session::*;
 record!(Empty, "phenix.application.type.empty@1", {});
 record!(Acknowledged, "phenix.application.type.acknowledged@1", {});
 
-variants!(ApplicationError, "phenix.application.error@1", {
+#[derive(Clone, Debug, PartialEq, PhenixValue, PhenixContract, thiserror::Error)]
+#[phenix(id = "phenix.application.error@1")]
+pub enum ApplicationError {
+    #[error("unsupported capability: {capability}")]
     UnsupportedCapability { capability: ContractId },
+    #[error("invalid input: {message}")]
     InvalidInput { message: String },
+    #[error("invalid response: {message}")]
     InvalidResponse { message: String },
+    #[error("resource not found: {resource}")]
     NotFound { resource: String },
+    #[error("authentication required: {message}")]
     Unauthenticated { message: String },
+    #[error("permission denied: {message}")]
     PermissionDenied { message: String },
+    #[error("conflict: {message}")]
     Conflict { message: String },
+    #[error("cancelled")]
     Cancelled,
+    #[error("disconnected")]
     Disconnected,
+    #[error("application failure: {message}")]
     Failed { message: String },
+    #[error("unknown observable value: {value}")]
     UnknownValue { value: String },
+    #[error("invalid observable path: {message}")]
     InvalidPath { message: String },
+    #[error("observable schema mismatch: {message}")]
     SchemaMismatch { message: String },
+    #[error("stale observable reference: {value}")]
     StaleReference { value: String },
+    #[error("unsupported observable snapshot policy: {message}")]
     UnsupportedSnapshotPolicy { message: String },
+    #[error("observable transaction conflict: {message}")]
     TransactionConflict { message: String },
+    #[error("observable subscription capacity reached")]
     SubscriptionCapacity,
+    #[error("observable store is closed")]
     Closed,
-});
+}
 
 impl ApplicationError {
     #[must_use]
@@ -153,38 +173,6 @@ impl From<phenix_core::CapabilityError> for ApplicationError {
         }
     }
 }
-
-impl std::fmt::Display for ApplicationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedCapability { capability } => {
-                write!(f, "unsupported capability: {capability}")
-            }
-            Self::NotFound { resource } => write!(f, "resource not found: {resource}"),
-            Self::InvalidInput { message } => write!(f, "invalid input: {message}"),
-            Self::InvalidResponse { message } => write!(f, "invalid response: {message}"),
-            Self::Unauthenticated { message } => write!(f, "authentication required: {message}"),
-            Self::PermissionDenied { message } => write!(f, "permission denied: {message}"),
-            Self::Conflict { message } => write!(f, "conflict: {message}"),
-            Self::Failed { message } => write!(f, "application failure: {message}"),
-            Self::Cancelled => f.write_str("cancelled"),
-            Self::Disconnected => f.write_str("disconnected"),
-            Self::UnknownValue { value } => write!(f, "unknown observable value: {value}"),
-            Self::InvalidPath { message } => write!(f, "invalid observable path: {message}"),
-            Self::SchemaMismatch { message } => write!(f, "observable schema mismatch: {message}"),
-            Self::StaleReference { value } => write!(f, "stale observable reference: {value}"),
-            Self::UnsupportedSnapshotPolicy { message } => {
-                write!(f, "unsupported observable snapshot policy: {message}")
-            }
-            Self::TransactionConflict { message } => {
-                write!(f, "observable transaction conflict: {message}")
-            }
-            Self::SubscriptionCapacity => f.write_str("observable subscription capacity reached"),
-            Self::Closed => f.write_str("observable store is closed"),
-        }
-    }
-}
-impl std::error::Error for ApplicationError {}
 
 #[cfg(test)]
 mod tests {
