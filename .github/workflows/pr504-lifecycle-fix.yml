@@ -25,12 +25,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace(path, old, new, label, count=1):
+          def replace(path, old, new, label, expected=1):
               file = Path(path)
               text = file.read_text()
-              if text.count(old) < count:
-                  raise SystemExit(f'{label} anchor missing')
-              file.write_text(text.replace(old, new, count))
+              if text.count(old) != expected:
+                  raise SystemExit(f'{label}: expected {expected} anchors, found {text.count(old)}')
+              file.write_text(text.replace(old, new))
 
           replace(
               'rust/crates/phenix-plugin-step-runner/src/runner.rs',
@@ -53,68 +53,88 @@ jobs:
               'mutable harness invoke',
           )
 
+          replace(
+              'rust/crates/phenix-harness/src/basic_suite.rs',
+              '''                &SessionCommand::Create {\n                    id: SessionId::parse("root").unwrap(),\n                },\n''',
+              '''                &SessionCommand::Create {\n                    session: phenix_plugin_catalog::SessionRecord::new(\n                        SessionId::parse("root").unwrap(),\n                    ),\n                },\n''',
+              'basic suite session constructor',
+          )
+
+          replace(
+              'rust/crates/phenix-harness/src/lib.rs',
+              '''        let create = serde_json::to_vec(&PhenixValue::from(&SessionCommand::Create {\n            id: SessionId::parse("session-1").unwrap(),\n        }))\n''',
+              '''        let create = serde_json::to_vec(&PhenixValue::from(&SessionCommand::Create {\n            session: phenix_plugin_catalog::SessionRecord::new(\n                SessionId::parse("session-1").unwrap(),\n            ),\n        }))\n''',
+              'harness session constructor',
+          )
+
           cargo = Path('rust/crates/phenix-harness/Cargo.toml')
           cargo_text = cargo.read_text()
           if 'parking_lot.workspace = true\n' not in cargo_text:
               anchor = 'phenix-sdk = { path = "../phenix-sdk" }\n'
               if anchor not in cargo_text:
                   raise SystemExit('parking_lot dependency anchor missing')
-              cargo_text = cargo_text.replace(anchor, anchor + 'parking_lot.workspace = true\n', 1)
-              cargo.write_text(cargo_text)
+              cargo.write_text(cargo_text.replace(anchor, anchor + 'parking_lot.workspace = true\n', 1))
 
           path = Path('rust/crates/phenix-harness/src/application.rs')
           text = path.read_text()
-
           old = '''use phenix_sdk::{\n    execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,\n    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, RootBudgetLedger,\n    RootBudgetLimits,\n};\n'''
-          new = old + 'use parking_lot::Mutex;\n'
-          if old not in text:
+          if text.count(old) != 1:
               raise SystemExit('parking_lot import anchor missing')
-          text = text.replace(old, new, 1)
+          text = text.replace(old, old + 'use parking_lot::Mutex;\n', 1)
 
-          replacements = [
+          for old, new, label in [
               ('    harness: Arc<PhenixHarness>,\n', '    harness: Arc<Mutex<PhenixHarness>>,\n', 'worker harness type'),
               ('            harness: Arc::new(harness),\n', '            harness: Arc::new(Mutex::new(harness)),\n', 'worker harness constructor'),
               ("        R: for<'a> TryFrom<Project<'a>, Error = phenix_core::ValueError>,\n", "        R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,\n", 'runtime projection bound'),
               ('fn run_agent_execution(\n    harness: Arc<PhenixHarness>,\n', 'fn run_agent_execution(\n    harness: Arc<Mutex<PhenixHarness>>,\n', 'agent harness type'),
               ('    let output = harness\n        .invoke(&agent_loop_service(), &input, &authority, None)\n', '    let output = harness\n        .lock()\n        .invoke(&agent_loop_service(), &input, &authority, None)\n', 'agent harness lock'),
-          ]
-          for old, new, label in replacements:
-              if old not in text:
-                  raise SystemExit(f'{label} anchor missing')
+          ]:
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected 1 anchor, found {text.count(old)}')
               text = text.replace(old, new, 1)
 
-          shared_invoke = '''        let output = self\n            .harness\n            .invoke('''
-          if text.count(shared_invoke) != 3:
-              raise SystemExit(f'expected 3 mutable harness invoke sites, found {text.count(shared_invoke)}')
-          text = text.replace(
-              shared_invoke,
-              '''        let output = self\n            .harness\n            .lock()\n            .invoke(''',
-          )
+          shared = '''        let output = self\n            .harness\n            .invoke('''
+          if text.count(shared) != 3:
+              raise SystemExit(f'expected 3 worker invoke sites, found {text.count(shared)}')
+          text = text.replace(shared, '''        let output = self\n            .harness\n            .lock()\n            .invoke(''')
 
-          generation = '    let generation = CapabilityGenerationId::from(worker.harness.generation());\n'
-          generation_new = '''    let generation = {\n        let harness = worker.harness.lock();\n        CapabilityGenerationId::from(harness.generation())\n    };\n'''
-          if generation not in text:
+          old = '    let generation = CapabilityGenerationId::from(worker.harness.generation());\n'
+          new = '''    let generation = {\n        let harness = worker.harness.lock();\n        CapabilityGenerationId::from(harness.generation())\n    };\n'''
+          if text.count(old) != 1:
               raise SystemExit('generation lock anchor missing')
-          text = text.replace(generation, generation_new, 1)
+          text = text.replace(old, new, 1)
 
           old = '''        self.prepare_root_execution(&execution_id)?;\n        self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        )?;\n        Ok(PromptResult {\n'''
           new = '''        self.prepare_root_execution(&execution_id)?;\n        if let Err(error) = self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        ) {\n            let _ = self.finish_root_execution(&execution_id, false);\n            return Err(error);\n        }\n        Ok(PromptResult {\n'''
-          if old not in text:
+          if text.count(old) != 1:
               raise SystemExit('prompt lifecycle anchor missing')
           text = text.replace(old, new, 1)
 
           old = '''        let response =\n            self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {\n                ledger: RootBudgetLedger {\n                    root_execution_id: execution_id.to_owned(),\n                    limits: RootBudgetLimits {\n                        fresh_input_tokens: 128 * 1024,\n                        output_tokens: 16 * 1024,\n                        cost_microunits: None,\n                        attempts: 16,\n                    },\n                    reservations: BTreeMap::new(),\n                },\n            })?;\n        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {\n            return Err(ApplicationError::InvalidResponse {\n                message: format!("unexpected root-budget registration response: {response:?}"),\n            });\n        }\n        Ok(())\n'''
           new = '''        let response = match self\n            .invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {\n                ledger: RootBudgetLedger {\n                    root_execution_id: execution_id.to_owned(),\n                    limits: RootBudgetLimits {\n                        fresh_input_tokens: 128 * 1024,\n                        output_tokens: 16 * 1024,\n                        cost_microunits: None,\n                        attempts: 16,\n                    },\n                    reservations: BTreeMap::new(),\n                },\n            }) {\n            Ok(response) => response,\n            Err(error) => {\n                let _ = self.finish_root_execution(execution_id, false);\n                return Err(error);\n            }\n        };\n        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {\n            let error = ApplicationError::InvalidResponse {\n                message: format!("unexpected root-budget registration response: {response:?}"),\n            };\n            let _ = self.finish_root_execution(execution_id, false);\n            return Err(error);\n        }\n        Ok(())\n'''
-          if old not in text:
+          if text.count(old) != 1:
               raise SystemExit('root budget lifecycle anchor missing')
           text = text.replace(old, new, 1)
 
           test_anchor = '''    #[test]\n    fn full_event_queue_rejects_mutation_before_journaling() {\n'''
           test = '''    #[test]\n    fn prompt_journal_failure_finishes_prepared_root_execution() {\n        let (sender, _events) = mpsc::channel(1);\n        let mut worker = application_worker().with_event_sender(sender.clone());\n        let created = invoke_operation::<CreateSession>(\n            &mut worker,\n            SessionCreateInput {\n                working_directory: "/workspace".into(),\n                title: None,\n            },\n        )\n        .unwrap();\n        sender\n            .try_send(ApplicationEvent {\n                event: ContractId::parse("phenix.application.session-update@1").unwrap(),\n                payload: Acknowledged {}.to_value(),\n            })\n            .expect("fill event queue");\n\n        let error = invoke_operation::<Prompt>(\n            &mut worker,\n            PromptInput {\n                session_id: created.session_id,\n                content: vec![Content::Text { text: "hello".into() }],\n            },\n        )\n        .unwrap_err();\n        assert!(matches!(error, ApplicationError::Conflict { .. }));\n\n        let response = worker\n            .invoke_execution(ExecutionCommand::GetExecution {\n                id: "execution-1".into(),\n            })\n            .unwrap();\n        let ExecutionResponse::ExecutionLookup { execution: Some(execution) } = response else {\n            panic!("prepared execution must remain queryable");\n        };\n        assert_eq!(execution.state, phenix_sdk::ExecutionState::Failed);\n    }\n\n'''
-          if test_anchor not in text:
+          if text.count(test_anchor) != 1:
               raise SystemExit('test insertion anchor missing')
           text = text.replace(test_anchor, test + test_anchor, 1)
           path.write_text(text)
+
+          replace(
+              'rust/crates/phenix-plugin-execution/src/review.rs',
+              '    PluginHost, PluginInstance, Project, ResourceNamespace, ServiceId, TransactionOp, ValueCodec,\n',
+              '    PluginHost, PluginInstance, ResourceNamespace, ServiceId, TransactionOp, ValueCodec,\n',
+              'review unused Project import',
+          )
+          replace(
+              'rust/crates/phenix-acp-stdio/src/transport.rs',
+              '        ClientToolRemoveInput as ApplicationClientToolRemoveInput, ElicitationHandlerRef,\n',
+              '        ClientToolRemoveInput as ApplicationClientToolRemoveInput,\n',
+              'transport unused ElicitationHandlerRef import',
+          )
           PY
       - name: Format and targeted test
         run: |
