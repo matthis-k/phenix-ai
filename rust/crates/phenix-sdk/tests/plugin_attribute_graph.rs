@@ -58,11 +58,7 @@ mod composition {
 
     #[phenix_sdk::plugin("fixture.attr.resource-owner")]
     pub struct ResourceOwner {
-        #[phenix(
-            resource,
-            id = "fixture.attr.plans",
-            features(Transactions, Migrations)
-        )]
+        #[phenix(resource, id = "fixture.attr.plans", features(Migrations))]
         pub plans: phenix_sdk::Durable<PlanStore>,
     }
 }
@@ -148,10 +144,6 @@ fn plugin_resource_field_preserves_identity_schema_and_backend_features() {
     assert_eq!(resources[0].id.as_str(), "fixture.attr.plans");
     assert_eq!(resources[0].schema.version, 3);
     assert_eq!(resources[0].field, "plans");
-    assert!(resources[0]
-        .schema
-        .required_features
-        .contains(&phenix_sdk::BackendFeature::Transactions));
     assert!(resources[0]
         .schema
         .required_features

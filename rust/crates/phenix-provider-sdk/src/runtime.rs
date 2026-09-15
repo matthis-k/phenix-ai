@@ -1,14 +1,14 @@
 use crate::{
     normalize_http_error, provider_auth_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind,
-    CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError,
-    ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
+    CredentialStore, ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderRequest,
+    ProviderResponse, ProviderSpec, RateLimits, Token,
 };
+use http::header::{HeaderMap, HeaderName as HttpHeaderName, HeaderValue, AUTHORIZATION};
 use phenix_core::{
     model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
 };
-use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 pub(crate) struct ProviderPlugin {
     spec: Arc<ProviderSpec>,
@@ -84,7 +84,7 @@ impl ProviderPlugin {
         let endpoint = self.spec.endpoint.clone();
         self.runtime()?.block_on(async move {
             let response = send_http(&client, outgoing).await?;
-            if !(200..300).contains(&response.status) {
+            if !response.status.is_success() {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
@@ -210,16 +210,13 @@ impl PluginInstance for ProviderPlugin {
 
 fn apply_auth(
     spec: &ProviderSpec,
-    headers: &mut BTreeMap<String, String>,
+    headers: &mut HeaderMap,
     auth: Option<&Auth>,
 ) -> Result<(), ProviderError> {
     match auth {
         None => Ok(()),
         Some(Auth::OAuth { access_token, .. }) if spec.auth.oauth.is_some() => {
-            headers.insert(
-                AUTHORIZATION.as_str().to_owned(),
-                format!("Bearer {}", access_token.expose()),
-            );
+            headers.insert(AUTHORIZATION, bearer_value(access_token));
             Ok(())
         }
         Some(Auth::ApiToken { source }) => {
@@ -233,13 +230,12 @@ fn apply_auth(
                     })?;
             match scheme {
                 ApiTokenScheme::Bearer => {
-                    headers.insert(
-                        AUTHORIZATION.as_str().to_owned(),
-                        format!("Bearer {}", token.expose()),
-                    );
+                    headers.insert(AUTHORIZATION, bearer_value(&token));
                 }
                 ApiTokenScheme::Header { name } => {
-                    headers.insert(name.as_str().to_owned(), token.expose().to_owned());
+                    let name = HttpHeaderName::from_bytes(name.as_str().as_bytes())
+                        .expect("configured provider header name remains valid");
+                    headers.insert(name, token_value(&token));
                 }
             }
             Ok(())
@@ -248,6 +244,16 @@ fn apply_auth(
             message: "credential type does not match provider auth configuration".to_owned(),
         }),
     }
+}
+
+fn bearer_value(token: &Token) -> HeaderValue {
+    HeaderValue::from_str(&format!("Bearer {}", token.expose()))
+        .expect("validated provider token remains a valid bearer header value")
+}
+
+fn token_value(token: &Token) -> HeaderValue {
+    HeaderValue::from_str(token.expose())
+        .expect("validated provider token remains a valid header value")
 }
 
 fn resolve_api_token(source: &ApiTokenSource) -> Result<Token, ProviderError> {
@@ -276,50 +282,29 @@ async fn send_http(
     client: &reqwest::Client,
     request: ProviderRequest,
 ) -> Result<ProviderResponse, ProviderError> {
-    let method = match request.method {
-        HttpMethod::Get => reqwest::Method::GET,
-        HttpMethod::Post => reqwest::Method::POST,
-        HttpMethod::Put => reqwest::Method::PUT,
-        HttpMethod::Patch => reqwest::Method::PATCH,
-        HttpMethod::Delete => reqwest::Method::DELETE,
-    };
-    let mut outgoing = client.request(method, &request.url);
-    for (name, value) in request.headers {
-        let header_name =
-            HeaderName::from_bytes(name.as_bytes()).map_err(|_| ProviderError::Protocol {
-                message: format!("protocol produced invalid HTTP header name {name:?}"),
-            })?;
-        let header_value = HeaderValue::from_str(&value).map_err(|_| ProviderError::Protocol {
-            message: format!("protocol produced invalid HTTP header value for {name:?}"),
+    let ProviderRequest {
+        method,
+        url,
+        headers,
+        body,
+    } = request;
+    let response = client
+        .request(method, url)
+        .headers(headers)
+        .body(body)
+        .send()
+        .await
+        .map_err(|error| ProviderError::Transport {
+            message: error.to_string(),
         })?;
-        outgoing = outgoing.header(header_name, header_value);
-    }
-    let response =
-        outgoing
-            .body(request.body)
-            .send()
-            .await
-            .map_err(|error| ProviderError::Transport {
-                message: error.to_string(),
-            })?;
-    let status = response.status().as_u16();
-    let headers = response
-        .headers()
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_owned()))
-        })
-        .collect();
+    let status = response.status();
+    let headers = response.headers().clone();
     let body = response
         .bytes()
         .await
         .map_err(|error| ProviderError::Transport {
             message: error.to_string(),
-        })?
-        .to_vec();
+        })?;
     Ok(ProviderResponse {
         status,
         headers,
