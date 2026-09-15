@@ -2,7 +2,6 @@ use crate::{ApiTokenSource, Auth, AuthDescriptor, AuthKind, ProviderError, Secre
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fmt::{self, Display, Formatter},
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
@@ -259,47 +258,17 @@ fn duplicate_credential(provider: &str, kind: AuthKind) -> ProviderError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CredentialStoreError {
+    #[error("set {CREDENTIAL_FILE_ENV}, XDG_STATE_HOME, or HOME for provider credentials")]
     MissingStateDirectory,
+    #[error("provider credential path {} has no parent", .0.display())]
     NoParent(PathBuf),
+    #[error("provider credential I/O at {}: {message}", path.display())]
     Io { path: PathBuf, message: String },
+    #[error("provider credential parse at {}: {message}", path.display())]
     Parse { path: PathBuf, message: String },
 }
-
-impl Display for CredentialStoreError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingStateDirectory => write!(
-                f,
-                "set {CREDENTIAL_FILE_ENV}, XDG_STATE_HOME, or HOME for provider credentials"
-            ),
-            Self::NoParent(path) => {
-                write!(
-                    f,
-                    "provider credential path {} has no parent",
-                    path.display()
-                )
-            }
-            Self::Io { path, message } => {
-                write!(
-                    f,
-                    "provider credential I/O at {}: {message}",
-                    path.display()
-                )
-            }
-            Self::Parse { path, message } => {
-                write!(
-                    f,
-                    "provider credential parse at {}: {message}",
-                    path.display()
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for CredentialStoreError {}
 
 fn store_error(error: CredentialStoreError) -> ProviderError {
     ProviderError::Protocol {

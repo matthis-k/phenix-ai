@@ -1,8 +1,10 @@
 use proc_macro2::TokenStream;
 use quote::quote;
+use std::num::NonZeroU64;
 use syn::{Fields, ItemStruct, LitStr};
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let id = syn::parse2::<LitStr>(args)?;
     let item = syn::parse2::<ItemStruct>(input)?;
     if !item.generics.params.is_empty() || !matches!(item.fields, Fields::Unit) {
@@ -17,9 +19,9 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
     Ok(quote! {
         #item
 
-        impl ::phenix_sdk::InterfaceMarker for #name {
-            fn interface_id() -> ::phenix_sdk::__phenix_plugin::InterfaceId {
-                ::phenix_sdk::__phenix_plugin::InterfaceId::parse(#id)
+        impl #sdk::InterfaceMarker for #name {
+            fn interface_id() -> #sdk::__phenix_plugin::InterfaceId {
+                #sdk::__phenix_plugin::InterfaceId::parse(#id)
                     .expect("interface attribute contains a valid static interface id")
             }
         }
@@ -38,12 +40,9 @@ pub(crate) fn validate_interface_id(value: &str) -> Result<(), &'static str> {
     }) {
         return Err("interface id contains unsupported characters");
     }
-    let version = version
-        .parse::<u64>()
+    version
+        .parse::<NonZeroU64>()
         .map_err(|_| "interface id version must be a positive integer")?;
-    if version == 0 {
-        return Err("interface id version must be a positive integer");
-    }
     Ok(())
 }
 

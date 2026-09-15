@@ -1,8 +1,8 @@
 use crate::{
-    Authority, ComponentId, ComponentManifest, ConfigContribution, ConfigurationFrontendId,
-    ConfigurationFrontendMetadata, FrontendConfigContribution, GraphGenerationId, InterfaceId,
-    LayerPolicy, PluginManifest, ResolvedHarness, ResolvedHarnessError, ServiceId,
-    SkillResourceMetadata,
+    graph_util::DirectedGraph, Authority, ComponentId, ComponentManifest, ConfigContribution,
+    ConfigurationFrontendId, ConfigurationFrontendMetadata, FrontendConfigContribution,
+    GraphGenerationId, InterfaceId, LayerPolicy, PluginManifest, ResolvedHarness,
+    ResolvedHarnessError, ServiceId, SkillResourceMetadata,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -258,6 +258,8 @@ fn transition_plan(
 ) -> Vec<ReconciliationAction> {
     let mut actions = Vec::new();
     let mut restart = BTreeSet::new();
+    let previous_dependencies = required_dependency_graph(previous);
+    let next_dependencies = required_dependency_graph(next);
 
     for change in &diff.components {
         match change.kind {
@@ -272,9 +274,8 @@ fn transition_plan(
                 ));
             }
             ComponentChangeKind::Reconfigured => {
-                restart.insert(change.component.clone());
-                collect_required_dependents(previous, &change.component, &mut restart);
-                collect_required_dependents(next, &change.component, &mut restart);
+                restart.extend(previous_dependencies.reachable_from(&change.component));
+                restart.extend(next_dependencies.reachable_from(&change.component));
             }
         }
     }
@@ -316,31 +317,21 @@ fn transition_plan(
     actions
 }
 
-fn collect_required_dependents(
-    harness: &ResolvedHarness,
-    provider: &ComponentId,
-    affected: &mut BTreeSet<ComponentId>,
-) {
-    let direct: Vec<_> = harness
-        .component_graph()
-        .components()
-        .filter(|component| {
-            component.imports.iter().any(|import| {
-                import.required
-                    && import
-                        .binding
-                        .as_ref()
-                        .is_some_and(|binding| binding.exporter() == provider)
-            })
-        })
-        .map(|component| component.id.clone())
-        .collect();
-
-    for dependent in direct {
-        if affected.insert(dependent.clone()) {
-            collect_required_dependents(harness, &dependent, affected);
+fn required_dependency_graph(harness: &ResolvedHarness) -> DirectedGraph<ComponentId> {
+    let components = harness.component_graph().components().collect::<Vec<_>>();
+    let mut graph =
+        DirectedGraph::from_nodes(components.iter().map(|component| component.id.clone()));
+    for component in components {
+        for import in &component.imports {
+            if !import.required {
+                continue;
+            }
+            if let Some(binding) = &import.binding {
+                graph.add_edge(binding.exporter(), &component.id);
+            }
         }
     }
+    graph
 }
 
 fn component_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<ComponentChange> {
