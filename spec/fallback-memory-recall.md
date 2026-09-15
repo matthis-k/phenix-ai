@@ -2,6 +2,10 @@
 
 status: specification-only
 
+The SDK structs on this branch are an initial scaffold. The typed bootstrap
+operation scope, selection receipt, coverage/completeness result, and idempotency
+fields specified below remain implementation work; their behavior is not yet shipped.
+
 ## Goal
 
 Recover omitted project/task context across sessions only when the current request and environment are insufficient.
@@ -93,7 +97,14 @@ The normal suite enables it. Kernel/basic fixture suites omit it. An alternate p
 
 The component exports `ContextRecoveryInterface` and requires `ModelRoutingInterface`. It owns no durable namespace.
 
-The SDK contract is:
+Model routing is a service dependency, not a dependency on one provider package.
+Use the helper defaults and effective capabilities in `model-routing.md` and
+`model-turn-protocol.md`. A concrete root target needs no separately configured
+routing profile: resolve the classifier selection from that target or an explicit
+helper policy. The implementation replaces the scaffold's profile-only request
+field with the existing canonical selection/request context, not a second enum.
+
+The initial SDK scaffold is:
 
 ```rust
 pub struct ContextRecoveryState {
@@ -147,6 +158,15 @@ Classifier output rules:
 - malformed, empty, oversized, or duplicate output fails the recovery attempt and falls back to ordinary discovery;
 - classification failure never triggers broad memory search.
 
+Default limits: one classifier attempt, 512 output tokens, 10 seconds for that call,
+and 30 seconds for the whole recovery attempt. Lower caller deadlines win. These
+limits belong to the pinned product policy and may be configured. Cancellation
+ends preparation and leaves the current runtime active. No helper may recursively
+invoke recovery, compaction, or delegation. A bounded structural classifier view
+uses at most 4096 UTF-8 bytes of prompt evidence and 32 anchors; an oversized input
+skips model recovery rather than silently losing explicit constraints. The original
+root prompt stays intact.
+
 The routed model response is parsed directly into `ContextRecoveryDecision`. Free-form explanatory text is invalid.
 
 ## Native recovery lifecycle
@@ -197,7 +217,8 @@ bound
 
 A recovery handoff is legal only in `bootstrap`.
 
-Preparing another workspace constructs a complete candidate Harness/runtime with its own Store Binding. It does not alter the current runtime.
+Preparing another workspace constructs a staged candidate from the configured
+Harness recipe with its own Store Binding. It does not alter the current runtime.
 
 Activation order:
 
@@ -205,14 +226,36 @@ Activation order:
 2. derive/validate workspace identity;
 3. open/prepare that workspace Store Binding;
 4. build the same configured Harness recipe;
-5. activate all required plugins and product configuration;
+5. prepare only the declared discovery/memory/live-validation dependency closure;
 6. query candidate memory and live repository identity;
 7. select candidate only if resolution rules below succeed;
-8. swap the manager's bootstrap runtime pointer;
-9. drop the losing bootstrap runtime;
-10. create the durable session/root execution in the selected runtime.
+8. prepare normal services for the winner, keeping autonomous effects suspended;
+9. commit the selected runtime and root admission receipt;
+10. activate normal execution once, then drop unused prepared runtimes.
 
-If any step fails, the original bootstrap runtime remains unchanged.
+If preparation fails before admission is recorded, the original bootstrap runtime
+remains unchanged. After admission is recorded, recover the
+selected runtime from its durable receipt; do not create a second root in the old
+workspace. Candidate preparation may read authorized state and perform necessary
+store initialization, but it cannot start workers, run repository hooks, load
+untrusted workspace code, or dispatch model/tool work. Providers must declare a
+preparation mode without autonomous effects. A provider that cannot do so is
+unavailable for automatic probing; explicit workspace opening remains possible.
+
+Each recovery attempt carries caller identity, discovery authority, request ID,
+deadline, and a shared helper budget before any workspace exists. Access filters
+apply before reading descriptors or memory. Candidate scopes attenuate from that
+bootstrap authority; stored workspace permissions are never reused as grants.
+
+Serialize new-root admission per bootstrap manager. First persist a prepared
+request-ID receipt that pins the selected workspace and execution identity. Create
+the root in a target-store transaction with a unique request ID, then mark the
+receipt committed. On restart, reconcile a prepared receipt against that same
+target store and finish admission; do not select another workspace. A definitive
+pre-root failure may abort the receipt explicitly. `ConfirmUse` follows successful
+admission and is idempotent by receipt ID plus association identity. The receipt uses product lifecycle
+persistence and contains no global semantic memory. External model dispatch has
+the separate uncertainty semantics in `model-turn-protocol.md`.
 
 There is no in-place Store Binding mutation.
 
@@ -258,6 +301,12 @@ Deleting every `discovery.json` loses no sessions, memory, decisions, or other s
 
 An aggregate discovery database is explicitly out of scope for v1. Scan the bounded descriptors first; add an index only after measurement shows the scan is a bottleneck.
 
+Version 1 descriptors and shell switching cover local filesystem workspaces.
+Keep them in the Harness adapter, outside the memory and model contracts. A remote
+workspace requires its owning provider's locator/open/validation operations; a remote
+path is never interpreted on the local machine. Missing remote discovery disables
+that optimization without preventing explicit use of a remote backend/workspace.
+
 ## Repository identity
 
 `ContextAnchor::Repository.canonical_remote` and descriptor repository remotes use one normalized identity.
@@ -265,14 +314,22 @@ An aggregate discovery database is explicitly out of scope for v1. Scan the boun
 Normalization rules:
 
 1. trim whitespace;
-2. HTTPS/SSH URLs lowercase scheme and host;
+2. HTTPS/SSH URLs lowercase scheme and host; remove credentials, user info, query,
+   and fragment before persistence or diagnostics;
 3. strip default ports;
 4. strip trailing `/` and one trailing `.git`;
 5. scp-like `user@host:path` normalizes to `ssh://host/path`; username is not repository identity;
-6. local-path remotes canonicalize to an absolute filesystem path;
+6. local-path remotes canonicalize relative to the owning repository root;
 7. an empty host/path is invalid.
 
 Live validation reads repository identity through the selected workspace provider. A remembered path alone never proves repository identity.
+
+Transport normalization is not universal repository equivalence. A trusted forge
+adapter may establish HTTPS/SSH aliases; generic hosts require exact normalized
+identity or an explicit alias. Case-sensitive repository paths remain unchanged.
+A local repository with no remote is a valid current Repository anchor using the
+workspace owner's identity. For cross-session recovery, treat it as a validated
+workspace/path association and detect deletion or replacement through that owner.
 
 ## Discovery terms
 
@@ -304,6 +361,13 @@ workspace_id                                      ascending tie-break
 This ordering chooses at most three workspaces to prepare/query. It does **not** by itself authorize automatic switching.
 
 Recency alone can make a workspace worth checking, but can never make it the automatic winner.
+
+Discovery returns candidate-set completeness and the excluded count. The scan
+bound, three-runtime limit, timeouts, and recall truncation must not make an
+unexamined plausible competitor appear absent. When omitted candidates cannot be
+excluded by authoritative identity/scope evidence, return ambiguity or incomplete
+discovery and keep the current binding. Never claim a globally unique winner from
+an arbitrary top-three sample.
 
 ## Memory association service
 
@@ -371,6 +435,24 @@ The caller invokes it only after the anchor survives live validation and is actu
 
 Confirmed use is ranking evidence. It does not change memory freshness or authority.
 
+Replaying the same admission receipt changes no counts. Automatic confirmed use
+can strengthen an already relevant match; it cannot make an unrelated query a
+match. Repeated observation means distinct canonical source events, not retries.
+
+### Producing associations by default
+
+The normal suite records a small derived episode through existing memory operations
+when a user selects a workspace or a durable task/project is bound to it. Its exact
+source is the owning service's selection/binding record. Associate the validated
+workspace/repository/task anchors with that episode using `memory.context@1`.
+Use source-event identity to make event replay idempotent. This requires no model
+extraction and does not promote transcripts or compaction summaries.
+
+Install consumers before publishing startup/binding events. Rebuild missed derived
+associations from retained owner records within the same scope. Rebuild descriptors
+from those associations. A fresh installation with no such sources returns no
+memory match and proceeds through ordinary discovery.
+
 ## Memory recall
 
 `MemoryContextRecallRequest` rules:
@@ -404,6 +486,12 @@ Candidate generation combines:
 - associations attached to those records;
 - optional semantic candidates only when deterministic candidates do not produce a decisive result.
 
+Match evidence must be tied to each requested need. A valid repository association
+does not alone resolve an unrelated task need. Group compatible associations into
+a proposed resolution and require coverage of every need needed for the automatic
+handoff. Partial coverage may narrow a clarification but cannot silently select a
+task. Recall reports truncation, so the coordinator can detect incomplete decisions.
+
 Optional reranking may reorder candidates only **within the same deterministic evidence class**. It cannot promote stale/out-of-scope memory or a weaker class over a stronger class.
 
 ## Memory evidence classes
@@ -412,7 +500,7 @@ Each candidate exposes signals, while selection uses this fixed class:
 
 ```text
 4: ExplicitLink | ExactAnchor | ExactSource
-3: ConfirmedUse
+3: ConfirmedUse on a current exact/lexical need match
 2: Lexical
 1: RepeatedObservation
 0: Recency | Semantic only
@@ -435,12 +523,14 @@ The public result does not expose an implementation-specific float score.
 
 After at most three workspace runtimes are prepared and queried, discard every memory candidate that fails live anchor validation.
 
-Automatic handoff is allowed only when:
+Automatic handoff requires live validation, complete required-need coverage, and a
+decisive candidate set as defined above. It is allowed only when:
 
-- exactly one valid workspace has a best candidate with evidence class >= 1; or
+- exactly one valid workspace has a best candidate with evidence class >= 2; or
 - the best workspace's evidence class is >= 2 and strictly greater than every other valid workspace's best class.
 
-A class-0 result never causes automatic handoff.
+Class 0 or 1 never causes automatic handoff. Observation counts alone prove use,
+not relevance to the present request.
 
 A tie at the winning class is ambiguous. Return the candidates for user clarification; do not use recency as a hidden tie-break for execution.
 
@@ -474,17 +564,21 @@ A failed validation rejects that association for the attempt. When the failure p
 4. if `Sufficient`, stop;
 5. query current workspace `memory.context@1` first;
 6. live-validate current-workspace candidates;
-7. if one wins, `ConfirmUse` and stop without workspace discovery;
+7. if a complete current-workspace resolution wins, select it without discovery;
 8. otherwise scan/rank workspace descriptors;
 9. prepare at most three candidate workspace runtimes in order;
 10. query each candidate's `memory.context@1` with the same needs;
 11. live-validate returned anchors in that candidate runtime;
 12. apply the automatic winner rule;
-13. if one wins, swap the bootstrap runtime, call `ConfirmUse`, and continue session creation there;
+13. if one wins, commit root admission in that runtime, then record `ConfirmUse`;
 14. if ambiguous, return candidate labels/roots for user selection;
 15. if none wins, fall back to ordinary discovery.
 
 The original user prompt is preserved byte-for-byte through this process. It is submitted exactly once to the eventual root execution.
+
+The same admission/confirmation rule applies to a current-workspace winner. Exactly
+once here means one durable root admission per request ID, not guaranteed one-shot
+delivery to an external provider after a network failure.
 
 The coordinator performs at most one automatic workspace handoff for a user request. After a handoff it does not recursively search another workspace.
 
@@ -541,7 +635,15 @@ Result is one of:
 {"status":"not_found"}
 ```
 
-The CLI performs descriptor ranking and live root/workspace/repository validation. It does not perform semantic task recall until the agent has moved into the selected workspace and can use normal `phenix.memory` there.
+The CLI calls the shared Harness resolver through an existing application/service
+adapter. That resolver performs scoped candidate preparation, memory recall,
+need coverage, and live validation using the same native winner rule. The CLI does
+not implement a second ranking algorithm or open memory databases itself.
+
+A descriptor-only fallback can list plausible candidates but returns `ambiguous`
+or `not_found`. It may return `switch` only for an explicit uniquely identified and
+live-validated workspace target; observation counts or recency never suffice.
+Known `--need` input bypasses the model classifier, not validation or authority.
 
 Default primitive-agent skill rule:
 
@@ -549,13 +651,18 @@ Default primitive-agent skill rule:
 If the request requires project/repository/task context and the current environment does not identify it, call phenix-context before asking the user. Validate a returned target. Change directory only for status=switch. Then inspect live repository/task state. Do not call it when current context already identifies the work.
 ```
 
-The primitive adapter may `cd` because its shell process owns its working directory. That is not equivalent to native Phenix runtime Store Binding replacement.
+The resolver returns a target; the invoking agent/shell changes its own directory
+after validating `switch`. A child CLI process cannot change its parent's working
+directory. This is separate from native Phenix runtime admission.
 
 ## Model cost policy
 
-The only mandatory model call in recovery is `context.identify_needs`, and the cold gate avoids it for established context.
+The only model call in default recovery is `context.identify_needs`, when a compatible
+helper is available and the cold gate cannot establish context. Explicit needs from
+the CLI bypass it. Ordinary work remains possible when that helper is unavailable.
 
-Route it to the cheapest configured model that reliably returns the typed decision. The plugin carries no provider-specific model name.
+Use the inherited selected deployment by default. A configured helper policy may
+choose a cheaper compatible target. The plugin carries no provider-specific name.
 
 Memory recall itself is deterministic by default. Embedding/reranking are optional and not required for correctness.
 
@@ -643,6 +750,9 @@ Do not put semantic memory, cross-workspace product policy, or repository valida
 7. Wire default new-root-session entrypoints through the coordinator before session creation.
 8. Add descriptor publication from validated workspace/repository/memory events.
 9. Add `phenix-context` and the default primitive-agent skill.
+   Include deterministic association production, idempotent admission/confirmation,
+   candidate-set completeness, and preparation without autonomous effects in their
+   owning slices before enabling automatic recovery in the normal suite.
 10. Add optional embedding/reranking augmentation without changing evidence-class precedence.
 11. Reconcile PR body against exact HEAD and run Source, Rust, Product, Docs, Maintenance.
 
@@ -673,6 +783,16 @@ Do not put semantic memory, cross-workspace product policy, or repository valida
 - memory/recovery failure falls back to ordinary discovery;
 - primitive CLI returns `switch` only after live target validation;
 - disabling context-recovery/memory preserves normal non-memory execution behavior.
+- fresh install creates reusable associations from canonical bindings without an LLM;
+- classifier and recall timeouts preserve the current runtime and original prompt;
+- candidate preparation starts no worker/hook or untrusted repository code;
+- unrelated confirmed use and repeated observations cannot win;
+- unresolved needs or unexamined plausible competitors prevent automatic switching;
+- native and CLI resolution apply the same evidence/coverage rule;
+- retry/restart admits one root and confirms each association once per receipt;
+- credential-bearing remotes never leak into descriptors or diagnostics;
+- a repository without remotes still takes the current-repository cold gate;
+- a concrete target works without configuring a second routing profile.
 
 ## Non-goals
 
