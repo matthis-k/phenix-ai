@@ -226,9 +226,8 @@ impl<'a> PluginHost<'a> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .register_schema(self.plugin, schema)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error))
     }
 
     pub fn migrate_durable_schema(
@@ -240,9 +239,8 @@ impl<'a> PluginHost<'a> {
         self.require_capability(PERSISTENCE_WRITE)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .migrate_schema(self.plugin, schema, migrations)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error))
     }
 
     pub fn read_durable(
@@ -253,9 +251,22 @@ impl<'a> PluginHost<'a> {
         self.require_persistence_operation(PERSISTENCE_READ, namespace)?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .read(self.plugin, namespace, key)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error))
+    }
+
+    pub fn scan_durable(
+        &self,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, KernelError> {
+        self.require_persistence_operation(PERSISTENCE_READ, namespace)?;
+        self.persistence
+            .lock()
+            .scan(self.plugin, namespace, range, direction, limit)
+            .map_err(|error| self.persistence_error(error))
     }
 
     pub fn transact_durable(
@@ -267,9 +278,8 @@ impl<'a> PluginHost<'a> {
         self.require_not_cancelled("durable transaction")?;
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error))
     }
 
     pub fn prepare_durable_transaction(
@@ -283,7 +293,7 @@ impl<'a> PluginHost<'a> {
         self.require_prepared_scope_generation()?;
         self.prepared_mutations
             .prepare(self.plugin, namespace, operations, self.authority)
-            .map_err(|message| self.persistence_error(message))
+            .map_err(|message| self.persistence_message(message))
     }
 
     pub fn transact_prepared(
@@ -378,9 +388,8 @@ impl<'a> PluginHost<'a> {
             .collect();
         self.persistence
             .lock()
-            .expect("kernel persistence mutex poisoned")
             .transact_many(&transactions)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error))
     }
 
     fn require_prepared_scope_generation(&self) -> Result<(), KernelError> {
@@ -444,7 +453,20 @@ impl<'a> PluginHost<'a> {
         })
     }
 
-    fn persistence_error(&self, message: String) -> KernelError {
+    fn persistence_error(&self, error: PersistenceError) -> KernelError {
+        match error {
+            PersistenceError::AssertionFailed { namespace, key } => {
+                KernelError::PersistenceConflict {
+                    plugin: self.plugin.clone(),
+                    namespace,
+                    key,
+                }
+            }
+            error => self.persistence_message(error.to_string()),
+        }
+    }
+
+    fn persistence_message(&self, message: String) -> KernelError {
         KernelError::Persistence {
             plugin: self.plugin.clone(),
             message,

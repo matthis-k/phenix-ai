@@ -102,10 +102,7 @@ impl Kernel {
     }
 
     pub fn service_invocation_provenance(&self) -> Vec<ServiceInvocationProvenance> {
-        self.provenance
-            .lock()
-            .expect("service provenance mutex poisoned")
-            .clone()
+        self.provenance.lock().clone()
     }
 
     pub fn state(&self, plugin: &PluginId) -> Option<PluginState> {
@@ -240,7 +237,7 @@ impl Kernel {
                             active_services: BTreeSet::new(),
                             active_component_endpoints: BTreeSet::new(),
                         };
-                        let mut provider = provider.lock().expect("plugin instance mutex poisoned");
+                        let mut provider = provider.lock();
                         let contract = provider.runtime_provider().ok_or_else(|| {
                             KernelError::RuntimeProviderContractUnavailable {
                                 runtime: runtime.clone(),
@@ -513,7 +510,7 @@ impl Kernel {
                 active_services: BTreeSet::new(),
                 active_component_endpoints: BTreeSet::new(),
             };
-            let mut instance = instance.lock().expect("plugin instance mutex poisoned");
+            let mut instance = instance.lock();
             let stopped = catch_unwind(AssertUnwindSafe(|| instance.stop(&host)));
             match stopped {
                 Ok(Ok(())) if cancellation.is_cancelled() => {

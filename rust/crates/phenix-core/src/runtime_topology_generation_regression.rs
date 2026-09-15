@@ -310,3 +310,30 @@ fn listener_dependency_cycles_fail_during_candidate_resolution() {
         ))
     ));
 }
+
+#[test]
+fn equivalent_registration_order_preserves_graph_generation_identity() {
+    let authority = Authority::default();
+    let plugin_a = plugin("fixture.registration-a", None);
+    let mut plugin_b = plugin("fixture.registration-b", None);
+    plugin_b.dependencies.push(plugin_a.id.clone());
+    let component_a = listener_component(&plugin_a.id, "fixture.registration-a", None);
+    let component_b = listener_component(&plugin_b.id, "fixture.registration-b", None);
+
+    let first = ResolvedHarness::resolve(
+        [plugin_a.clone(), plugin_b.clone()],
+        [component_a.clone(), component_b.clone()],
+        [],
+        &authority,
+    )
+    .unwrap();
+    let second = ResolvedHarness::resolve(
+        [plugin_b, plugin_a],
+        [component_b, component_a],
+        [],
+        &authority,
+    )
+    .unwrap();
+
+    assert_eq!(first.generation(), second.generation());
+}

@@ -1,14 +1,16 @@
-use crate::{Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId};
+use crate::{
+    graph_util::DirectedGraph, Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId,
+};
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    error::Error,
-    fmt::{self, Display, Formatter},
+    fmt::{self, Formatter},
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Condvar, Mutex,
+        Arc,
     },
     thread,
 };
@@ -99,8 +101,9 @@ pub struct EventDispatchReport {
     pub graph_generation: Option<GraphGenerationId>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EventDeliveryCancellation {
+    #[error("event delivery cancelled because subscriptions changed")]
     SubscriptionSetChanged,
 }
 
@@ -140,94 +143,50 @@ impl EventAdmissionReceipt {
 
     #[must_use]
     pub fn status(&self) -> EventDeliveryStatus {
-        self.state
-            .status
-            .lock()
-            .expect("event receipt lock poisoned")
-            .clone()
+        self.state.status.lock().clone()
     }
 
     pub fn wait(&self) -> EventDeliveryStatus {
-        let mut status = self
-            .state
-            .status
-            .lock()
-            .expect("event receipt lock poisoned");
+        let mut status = self.state.status.lock();
         while matches!(*status, EventDeliveryStatus::Accepted) {
-            status = self
-                .state
-                .ready
-                .wait(status)
-                .expect("event receipt lock poisoned while waiting");
+            self.state.ready.wait(&mut status);
         }
         status.clone()
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EventError {
+    #[error("duplicate event subscription: {0}")]
     DuplicateSubscription(SubscriptionId),
+    #[error("event subscription {subscription} has cross-event dependency {dependency}")]
     CrossEventDependency {
         subscription: SubscriptionId,
         dependency: SubscriptionId,
     },
+    #[error("event subscription {subscription} depends on unknown subscription {dependency}")]
     UnknownDependency {
         subscription: SubscriptionId,
         dependency: SubscriptionId,
     },
+    #[error("event subscription cycle includes {0}")]
     DependencyCycle(SubscriptionId),
+    #[error("event subscription causal re-entry: {0}")]
     CausalReentry(SubscriptionId),
+    #[error("event subscription authority denied: {0}")]
     AuthorityDenied(SubscriptionId),
+    #[error("event subscription {subscription} failed: {message}")]
     HandlerFailed {
         subscription: SubscriptionId,
         message: String,
     },
-    QueueSaturated {
-        capacity: usize,
-    },
+    #[error("event delivery queue is full at capacity {capacity}")]
+    QueueSaturated { capacity: usize },
+    #[error("event delivery queue is unavailable: {0}")]
     QueueUnavailable(String),
+    #[error(transparent)]
     DeliveryCancelled(EventDeliveryCancellation),
 }
-
-impl Display for EventError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateSubscription(id) => write!(f, "duplicate event subscription: {id}"),
-            Self::CrossEventDependency {
-                subscription,
-                dependency,
-            } => write!(
-                f,
-                "event subscription {subscription} has cross-event dependency {dependency}"
-            ),
-            Self::UnknownDependency {
-                subscription,
-                dependency,
-            } => write!(
-                f,
-                "event subscription {subscription} depends on unknown subscription {dependency}"
-            ),
-            Self::DependencyCycle(id) => write!(f, "event subscription cycle includes {id}"),
-            Self::CausalReentry(id) => write!(f, "event subscription causal re-entry: {id}"),
-            Self::AuthorityDenied(id) => write!(f, "event subscription authority denied: {id}"),
-            Self::HandlerFailed {
-                subscription,
-                message,
-            } => write!(f, "event subscription {subscription} failed: {message}"),
-            Self::QueueSaturated { capacity } => {
-                write!(f, "event delivery queue is full at capacity {capacity}")
-            }
-            Self::QueueUnavailable(message) => {
-                write!(f, "event delivery queue is unavailable: {message}")
-            }
-            Self::DeliveryCancelled(EventDeliveryCancellation::SubscriptionSetChanged) => {
-                f.write_str("event delivery cancelled because subscriptions changed")
-            }
-        }
-    }
-}
-
-impl Error for EventError {}
 
 const DEFAULT_DELIVERY_CAPACITY: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
@@ -292,17 +251,13 @@ impl EventBus {
 
     pub fn subscribe(&self) -> Receiver<KernelEvent> {
         let (sender, receiver) = mpsc::channel();
-        self.kernel_subscribers
-            .lock()
-            .expect("event subscriber lock poisoned")
-            .push(sender);
+        self.kernel_subscribers.lock().push(sender);
         receiver
     }
 
     pub fn publish(&self, event: KernelEvent) {
         self.kernel_subscribers
             .lock()
-            .expect("event subscriber lock poisoned")
             .retain(|sender| sender.send(event.clone()).is_ok());
     }
 
@@ -312,10 +267,7 @@ impl EventBus {
     ) -> Result<(), EventError> {
         let indexed = index_subscriptions(subscriptions)?;
         validate_dependencies(&indexed)?;
-        let mut current = self
-            .subscriptions
-            .lock()
-            .expect("event subscription lock poisoned");
+        let mut current = self.subscriptions.lock();
         *current = indexed;
         self.subscription_revision.fetch_add(1, Ordering::AcqRel);
         Ok(())
@@ -325,10 +277,7 @@ impl EventBus {
         &self,
         subscriptions: impl IntoIterator<Item = EventSubscription>,
     ) -> Result<Vec<SubscriptionId>, EventError> {
-        let mut current = self
-            .subscriptions
-            .lock()
-            .expect("event subscription lock poisoned");
+        let mut current = self.subscriptions.lock();
         let mut candidate = current.clone();
         let mut installed = Vec::new();
         for subscription in subscriptions {
@@ -348,10 +297,7 @@ impl EventBus {
         &self,
         subscriptions: impl IntoIterator<Item = SubscriptionId>,
     ) -> Result<(), EventError> {
-        let mut current = self
-            .subscriptions
-            .lock()
-            .expect("event subscription lock poisoned");
+        let mut current = self.subscriptions.lock();
         let mut candidate = current.clone();
         for subscription in subscriptions {
             candidate.remove(&subscription);
@@ -410,10 +356,7 @@ impl EventBus {
             event.clone()
         };
         let (subscriptions, revision) = {
-            let current = self
-                .subscriptions
-                .lock()
-                .expect("event subscription lock poisoned");
+            let current = self.subscriptions.lock();
             (
                 current.clone(),
                 self.subscription_revision.load(Ordering::Acquire),
@@ -432,7 +375,6 @@ impl EventBus {
         let ancestry = self
             .active_causality
             .lock()
-            .expect("event causality lock poisoned")
             .get(&event.causality_id)
             .cloned()
             .unwrap_or_default();
@@ -460,7 +402,7 @@ impl EventBus {
             .name(format!("phenix-event-{id}"))
             .spawn(move || {
                 let status = bus.execute_delivery(delivery);
-                *state.status.lock().expect("event receipt lock poisoned") = status;
+                *state.status.lock() = status;
                 state.ready.notify_all();
                 bus.in_flight.fetch_sub(1, Ordering::AcqRel);
             });
@@ -588,10 +530,7 @@ impl EventBus {
         causality_id: u64,
         subscriptions: &[SubscriptionId],
     ) -> Result<(), EventError> {
-        let mut active = self
-            .active_causality
-            .lock()
-            .expect("event causality lock poisoned");
+        let mut active = self.active_causality.lock();
         let active_for_cause = active.entry(causality_id).or_default();
         let mut inserted = Vec::new();
         for id in subscriptions {
@@ -610,10 +549,7 @@ impl EventBus {
     }
 
     fn leave_causality(&self, causality_id: u64, subscriptions: &[SubscriptionId]) {
-        let mut active = self
-            .active_causality
-            .lock()
-            .expect("event causality lock poisoned");
+        let mut active = self.active_causality.lock();
         let Some(active_for_cause) = active.get_mut(&causality_id) else {
             return;
         };
@@ -690,7 +626,7 @@ fn dependency_levels(
     event_type: &EventTypeId,
     event_version: u32,
 ) -> Result<Vec<Vec<SubscriptionId>>, EventError> {
-    let mut remaining = subscriptions
+    let event_subscriptions = subscriptions
         .values()
         .filter(|subscription| {
             &subscription.spec.event_type == event_type
@@ -698,8 +634,25 @@ fn dependency_levels(
         })
         .map(|subscription| subscription.spec.id.clone())
         .collect::<BTreeSet<_>>();
-    let mut levels = Vec::new();
 
+    let mut graph = DirectedGraph::from_nodes(event_subscriptions.iter().cloned());
+    for id in &event_subscriptions {
+        for dependency in &subscriptions[id].spec.dependencies {
+            graph.add_edge(id, dependency);
+        }
+    }
+    for id in &event_subscriptions {
+        if let Some(path) = graph.cycle_path_from(id) {
+            return Err(EventError::DependencyCycle(
+                path.first()
+                    .cloned()
+                    .expect("cycle path contains its repeated root"),
+            ));
+        }
+    }
+
+    let mut remaining = event_subscriptions;
+    let mut levels = Vec::new();
     while !remaining.is_empty() {
         let ready = remaining
             .iter()
@@ -884,6 +837,28 @@ mod tests {
     }
 
     #[test]
+    fn dependency_levels_are_registration_order_independent() {
+        let a = subscription_with("a-root", &[]);
+        let b = subscription_with("b-root", &[]);
+        let z = subscription_with("z-dependent", &["a-root", "b-root"]);
+        let expected = vec![
+            vec![subscription("a-root"), subscription("b-root")],
+            vec![subscription("z-dependent")],
+        ];
+
+        for entries in [
+            vec![z.clone(), b.clone(), a.clone()],
+            vec![a.clone(), z.clone(), b.clone()],
+        ] {
+            let indexed = index_subscriptions(entries).unwrap();
+            assert_eq!(
+                dependency_levels(&indexed, &event_type("demo.changed"), 1).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn independent_subscribers_run_concurrently() {
         #[derive(Default)]
         struct GateState {
@@ -941,21 +916,23 @@ mod tests {
 
     #[test]
     fn dependency_cycles_are_rejected_atomically() {
-        let bus = EventBus::default();
         let noop: Arc<dyn EventHandler> = Arc::new(|_: &EventEnvelope, _: &Authority| Ok(()));
-        let error = bus
-            .replace_subscriptions([
-                EventSubscription {
-                    spec: spec("a", &["b"]),
-                    handler: Arc::clone(&noop),
-                },
-                EventSubscription {
-                    spec: spec("b", &["a"]),
-                    handler: noop,
-                },
-            ])
-            .unwrap_err();
-        assert!(matches!(error, EventError::DependencyCycle(_)));
+        let a = EventSubscription {
+            spec: spec("a", &["b"]),
+            handler: Arc::clone(&noop),
+        };
+        let b = EventSubscription {
+            spec: spec("b", &["a"]),
+            handler: noop,
+        };
+
+        for entries in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+            let bus = EventBus::default();
+            assert_eq!(
+                bus.replace_subscriptions(entries).unwrap_err(),
+                EventError::DependencyCycle(subscription("a"))
+            );
+        }
     }
 
     #[test]
