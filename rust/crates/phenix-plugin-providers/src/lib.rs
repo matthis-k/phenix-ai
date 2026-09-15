@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{Authority, PluginExecution, PluginId, PluginManifest};
-use phenix_provider_sdk::{auth, Endpoint, Protocol, ProviderDefinition};
+use phenix_provider_sdk::{auth, Auth, Endpoint, Protocol, ProviderDefinition};
 
 pub const PROVIDERS_PLUGIN: &str = "phenix.providers";
 
@@ -17,15 +17,22 @@ pub struct ProviderPreset {
     endpoint: &'static str,
     protocol: Protocol,
     api_token: ApiTokenAuth,
+    environment: &'static str,
 }
 
 impl ProviderPreset {
-    const fn bearer(id: &'static str, endpoint: &'static str, protocol: Protocol) -> Self {
+    const fn bearer(
+        id: &'static str,
+        endpoint: &'static str,
+        protocol: Protocol,
+        environment: &'static str,
+    ) -> Self {
         Self {
             id,
             endpoint,
             protocol,
             api_token: ApiTokenAuth::Bearer,
+            environment,
         }
     }
 
@@ -34,12 +41,14 @@ impl ProviderPreset {
         endpoint: &'static str,
         protocol: Protocol,
         header: &'static str,
+        environment: &'static str,
     ) -> Self {
         Self {
             id,
             endpoint,
             protocol,
             api_token: ApiTokenAuth::Header(header),
+            environment,
         }
     }
 
@@ -53,6 +62,10 @@ impl ProviderPreset {
 
     pub const fn protocol(self) -> Protocol {
         self.protocol
+    }
+
+    pub const fn environment(self) -> &'static str {
+        self.environment
     }
 
     #[must_use]
@@ -69,6 +82,10 @@ impl ProviderPreset {
     #[must_use]
     pub fn definition(self) -> ProviderDefinition {
         self.definition_with_auth(self.auth())
+            .with_default_auth(Auth::api_token(
+                auth::ApiToken::env(self.environment)
+                    .expect("common provider environment variable is valid"),
+            ))
     }
 
     #[must_use]
@@ -84,55 +101,65 @@ impl ProviderPreset {
 
 pub const COMMON_PROVIDERS: [ProviderPreset; 10] = [
     ProviderPreset::bearer(
-        "phenix.provider.openai",
+        "openai-api",
         "https://api.openai.com/v1",
         Protocol::OpenAiResponses,
+        "OPENAI_API_KEY",
     ),
     ProviderPreset::header(
-        "phenix.provider.anthropic",
+        "anthropic",
         "https://api.anthropic.com/v1",
         Protocol::AnthropicMessages,
         "x-api-key",
+        "ANTHROPIC_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.openrouter",
+        "open-router",
         "https://openrouter.ai/api/v1",
         Protocol::OpenAiChatCompletions,
+        "OPEN_ROUTER_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.groq",
+        "groq",
         "https://api.groq.com/openai/v1",
         Protocol::OpenAiResponses,
+        "GROQ_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.gemini",
+        "gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         Protocol::OpenAiChatCompletions,
+        "GEMINI_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.deepseek",
+        "deepseek",
         "https://api.deepseek.com",
         Protocol::OpenAiChatCompletions,
+        "DEEPSEEK_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.together",
+        "together",
         "https://api.together.xyz/v1",
         Protocol::OpenAiChatCompletions,
+        "TOGETHER_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.mistral",
+        "mistral",
         "https://api.mistral.ai/v1",
         Protocol::OpenAiChatCompletions,
+        "MISTRAL_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.xai",
+        "xai",
         "https://api.x.ai/v1",
         Protocol::OpenAiResponses,
+        "XAI_API_KEY",
     ),
     ProviderPreset::bearer(
-        "phenix.provider.fireworks",
+        "fireworks",
         "https://api.fireworks.ai/inference/v1",
         Protocol::OpenAiChatCompletions,
+        "FIREWORKS_API_KEY",
     ),
 ];
 
@@ -179,6 +206,16 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), COMMON_PROVIDERS.len());
         assert_eq!(endpoints.len(), COMMON_PROVIDERS.len());
+    }
+
+    #[test]
+    fn runtime_openai_provider_id_is_present() {
+        let openai = COMMON_PROVIDERS
+            .into_iter()
+            .find(|provider| provider.id() == "openai-api")
+            .expect("runtime OpenAI API provider is part of the common catalog");
+        assert_eq!(openai.environment(), "OPENAI_API_KEY");
+        assert_eq!(openai.protocol(), Protocol::OpenAiResponses);
     }
 
     #[test]

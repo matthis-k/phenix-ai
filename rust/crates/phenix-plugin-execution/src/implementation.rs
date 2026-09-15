@@ -376,7 +376,7 @@ fn mutate(
         ExecutionCommand::CreateDelegatedTask { .. }
         | ExecutionCommand::CompleteDelegatedTask { .. }
         | ExecutionCommand::GetDelegatedTask { .. } => {
-            Err("delegated task runtime is not active at this stack layer".into())
+            Err("delegated task lifecycle is owned by phenix.execution.resources@1".into())
         }
         ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }

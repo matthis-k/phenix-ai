@@ -45,15 +45,16 @@ pub use phenix_plugin_debug::{
     DEBUG_SERVICE,
 };
 pub use phenix_plugin_execution::{
-    agent_loop_service, execution_component_id, execution_component_manifest,
-    execution_configuration_service, execution_factory, execution_manifest,
-    execution_resource_service, step_attempt_service, AgentDefinition, AgentLoopCommand,
-    AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse, AgentLoopUsage, CallablePolicy,
-    ExecutionConfigurationCommand, ExecutionConfigurationResponse, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, OrchestrationDefinition,
-    OrchestrationNode, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
-    StepAttemptRecord, StepAttemptResponse, AGENT_LOOP_SERVICE, DEFAULT_MAX_PARALLEL_TOOL_CALLS,
-    EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE, STEP_ATTEMPT_SERVICE,
+    agent_loop_component_id, agent_loop_component_manifest, agent_loop_service,
+    execution_component_id, execution_component_manifest, execution_configuration_service,
+    execution_factory, execution_manifest, execution_resource_service, step_attempt_service,
+    AgentDefinition, AgentLoopCommand, AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse,
+    AgentLoopUsage, CallablePolicy, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    OrchestrationDefinition, OrchestrationNode, StepAttemptCommand, StepAttemptInterface,
+    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, AGENT_LOOP_SERVICE,
+    DEFAULT_MAX_PARALLEL_TOOL_CALLS, EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE,
+    STEP_ATTEMPT_SERVICE,
 };
 pub use phenix_plugin_frontend::{
     frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
@@ -124,8 +125,9 @@ pub use phenix_plugin_sessions::{
     SESSION_SERVICE,
 };
 pub use phenix_plugin_step_runner::{
-    step_runner_component_id, step_runner_component_manifest, step_runner_factory,
-    step_runner_manifest, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
+    helper_invocation_component_id, helper_invocation_component_manifest, step_runner_component_id,
+    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
+    HELPER_INVOCATION_COMPONENT, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
 };
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,

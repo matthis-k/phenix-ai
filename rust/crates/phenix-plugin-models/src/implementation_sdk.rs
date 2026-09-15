@@ -2,9 +2,9 @@ pub use phenix_core::{
     model_inference_service, ModelInferenceRequest, ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    Authority, CallableId, CapabilityId, ComponentInterface, DurableSchema, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
-    RoutingProfileId, ServiceContribution, ServiceId, TransactionOp,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, RoutingProfileId,
+    ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
     model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
@@ -193,22 +193,6 @@ fn handle_routing(
                 authenticated,
             })
         }
-        ModelCommand::Resolve {
-            profile_id,
-            callable_id,
-        } => Ok(ModelResponse::Target {
-            target: resolve_compat_target(context, &profile_id, callable_id.as_ref())?,
-        }),
-        ModelCommand::Invoke {
-            profile_id,
-            callable_id,
-            input,
-            tools,
-        } => {
-            let target = resolve_compat_target(context, &profile_id, callable_id.as_ref())?;
-            let response = invoke_target(context, &target, input, tools)?;
-            Ok(ModelResponse::Inference { target, response })
-        }
         ModelCommand::PublishCapabilities { .. }
         | ModelCommand::ListCandidates { .. }
         | ModelCommand::ResolveWithRequirements { .. }
@@ -263,17 +247,6 @@ fn ensure_authenticated(
             "provider authentication required: {provider_plugin}"
         ))
     }
-}
-
-fn invoke_target(
-    context: &mut ModelContext<'_, '_, '_>,
-    target: &ModelTarget,
-    input: phenix_core::Bytes,
-    tools: Vec<phenix_core::ModelToolDescriptor>,
-) -> Result<ModelInferenceResponse, String> {
-    ensure_authenticated(context, &target.provider_plugin)?;
-    let request = encode_request(context, target, input, tools)?;
-    invoke_encoded_target(context, target, request)
 }
 
 fn encode_request(
@@ -365,19 +338,6 @@ fn descriptor(profile: &RoutingProfile) -> RoutingProfileDescriptor {
         id: profile.id.clone(),
         providers: providers.into_iter().collect(),
     }
-}
-
-fn resolve_compat_target(
-    context: &ModelContext<'_, '_, '_>,
-    profile_id: &RoutingProfileId,
-    callable_id: Option<&CallableId>,
-) -> Result<ModelTarget, String> {
-    let profile = read_profile(context, profile_id)?
-        .ok_or_else(|| format!("unknown routing profile: {profile_id}"))?;
-    Ok(callable_id
-        .and_then(|callable| profile.callable_targets.get(callable))
-        .unwrap_or(&profile.default_target)
-        .clone())
 }
 
 fn insert_profile(

@@ -1,7 +1,6 @@
 use super::*;
 use phenix_core::{
-    CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, ModelToolDescriptor,
-    PhenixValue, Project,
+    CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixValue, Project,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities,
@@ -85,7 +84,7 @@ fn profile() -> RoutingProfile {
         default_target: target("provider.default", "root"),
         fallback_targets: vec![target("provider.fallback", "fallback")],
         callable_targets: BTreeMap::from([(
-            CallableId::parse("agent.scout").unwrap(),
+            phenix_core::CallableId::parse("agent.scout").unwrap(),
             target("provider.scout", "scout"),
         )]),
     }
@@ -324,66 +323,6 @@ mod runtime_persistence {
             panic!("expected routing candidates");
         };
         assert_eq!(candidates.len(), 2);
-        let _ = fs::remove_file(path);
-    }
-}
-
-mod provider_dispatch {
-    use super::*;
-
-    #[test]
-    fn compatibility_invoke_keeps_process_local_auth() {
-        let path = temp_db("routing-provider-dispatch");
-        let profile = RoutingProfile {
-            id: RoutingProfileId::parse("default").unwrap(),
-            default_target: target("fixture.provider", "fixture"),
-            fallback_targets: Vec::new(),
-            callable_targets: BTreeMap::new(),
-        };
-        {
-            let mut kernel = kernel_with_provider(&path);
-            invoke_routing(
-                &mut kernel,
-                ModelCommand::RegisterProfile {
-                    profile: profile.clone(),
-                },
-            )
-            .unwrap();
-            invoke_routing(
-                &mut kernel,
-                ModelCommand::SetProviderAuthenticated {
-                    provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                    authenticated: true,
-                },
-            )
-            .unwrap();
-            let response = invoke_routing(
-                &mut kernel,
-                ModelCommand::Invoke {
-                    profile_id: profile.id.clone(),
-                    callable_id: None,
-                    input: b"hello".to_vec().into(),
-                    tools: Vec::<ModelToolDescriptor>::new(),
-                },
-            )
-            .unwrap();
-            assert!(matches!(
-                response,
-                ModelResponse::Inference { response, .. } if response.output.as_ref() == b"hello"
-            ));
-        }
-        let mut restored = kernel_with_provider(&path);
-        assert!(invoke_routing(
-            &mut restored,
-            ModelCommand::Invoke {
-                profile_id: profile.id,
-                callable_id: None,
-                input: b"hello".to_vec().into(),
-                tools: Vec::new(),
-            },
-        )
-        .unwrap_err()
-        .contains("authentication required"));
         let _ = fs::remove_file(path);
     }
 }

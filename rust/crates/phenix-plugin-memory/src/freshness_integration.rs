@@ -1,28 +1,26 @@
 use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
-    model_inference_service, Authority, Bytes, Kernel, KernelConfig, LocalPersistence, ModelId,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
+    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
+    KernelConfig, LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
-use phenix_plugin_models::{
-    model_routing_component_manifest, model_routing_factory, model_routing_manifest,
-    model_routing_service, ModelCommand as RoutingCommand, ModelResponse as RoutingResponse,
-    ModelTarget, RoutingProfile,
-};
 use phenix_sdk::{
-    memory_resolve_callable, memory_service, memory_validate_callable, MemoryCanonicalReference,
-    MemoryCommand, MemoryFreshness, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
-    MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
+    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
+    MemoryCanonicalReference, MemoryCommand, MemoryFreshness, MemoryKind, MemoryRecallQuery,
+    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
 };
 use std::{
-    collections::BTreeMap,
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const FIXTURE_PROVIDER: &str = "fixture.memory-model";
+const HELPER_PROVIDER: &str = "fixture.memory-helper";
+const HELPER_COMPONENT: &str = "fixture.memory-helper";
+const EXECUTION: &str = "execution-1";
+const PARENT_ATTEMPT: &str = "attempt-1";
 
 fn temp_db(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
@@ -49,15 +47,11 @@ fn kernel_with(path: &PathBuf) -> Kernel {
 
 fn routed_kernel_with(path: &PathBuf) -> Kernel {
     let memory = memory_manifest();
-    let routing = model_routing_manifest(Authority::default());
-    let provider = fixture_provider_manifest();
+    let helper = helper_manifest();
     let authority = memory.maximum_authority.clone();
     let resolved = ResolvedHarness::resolve(
-        [memory.clone(), routing.clone(), provider.clone()],
-        [
-            memory_component_manifest(),
-            model_routing_component_manifest(Authority::default()),
-        ],
+        [memory.clone(), helper.clone()],
+        [memory_component_manifest(), helper_component_manifest()],
         [],
         &authority,
     )
@@ -69,28 +63,41 @@ fn routed_kernel_with(path: &PathBuf) -> Kernel {
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();
     kernel
-        .register_embedded_factory(routing.id, model_routing_factory)
-        .unwrap();
-    kernel
-        .register_embedded_factory(provider.id, || Box::new(RevalidationProvider))
+        .register_embedded_factory(helper.id, || Box::new(RevalidationProvider))
         .unwrap();
     kernel.activate_all().unwrap();
     kernel
 }
 
-fn fixture_provider_manifest() -> PluginManifest {
+fn helper_manifest() -> PluginManifest {
     PluginManifest {
-        id: PluginId::parse(FIXTURE_PROVIDER).unwrap(),
+        id: PluginId::parse(HELPER_PROVIDER).unwrap(),
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
             role: ServiceRole::Terminal,
-            service: model_inference_service(),
+            service: helper_invocation_service(),
             priority: 100,
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
+        maximum_authority: Authority::default(),
+    }
+}
+
+fn helper_component_manifest() -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: ComponentId::parse(HELPER_COMPONENT).unwrap(),
+        owner: PluginId::parse(HELPER_PROVIDER).unwrap(),
+        imports: Vec::new(),
+        exports: vec![ComponentExport {
+            interface: HelperInvocationInterface::interface_id(),
+            schema: HelperInvocationInterface::schema(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
         maximum_authority: Authority::default(),
     }
 }
@@ -108,20 +115,38 @@ impl PluginInstance for RevalidationProvider {
         input: &[u8],
         _host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &model_inference_service() {
+        if service != &helper_invocation_service() {
             return Err(format!("unsupported fixture service: {service}"));
         }
         let input: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
-        let request: ModelInferenceRequest = input.project().map_err(|error| error.to_string())?;
-        let output = match request.model.as_str() {
-            "validate-keep" | "resolve-keep" => b"\"keep_current\"".to_vec(),
-            "validate-ambiguous" => b"\"needs_validation\"".to_vec(),
-            model => return Err(format!("unexpected revalidation model: {model}")),
+        let request: HelperInvocationCommand =
+            input.project().map_err(|error| error.to_string())?;
+        let HelperInvocationCommand::Invoke { request } = request;
+        if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
+            return Err("memory revalidation lost execution lineage".into());
+        }
+        let output = match (request.profile_id.as_str(), request.callable_id.as_str()) {
+            ("validate-route", callable) if callable == memory_validate_callable().as_str() => {
+                b"\"keep_current\"".to_vec()
+            }
+            ("resolve-route", callable) if callable == memory_validate_callable().as_str() => {
+                b"\"needs_validation\"".to_vec()
+            }
+            ("resolve-route", callable) if callable == memory_resolve_callable().as_str() => {
+                b"\"keep_current\"".to_vec()
+            }
+            ("deterministic-route", callable) => {
+                return Err(format!("deterministic revalidation invoked {callable}"))
+            }
+            (profile, callable) => {
+                return Err(format!(
+                    "unexpected revalidation helper: {profile}/{callable}"
+                ))
+            }
         };
-        serde_json::to_vec(&PhenixValue::from(&ModelInferenceResponse {
+        serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {
             output: Bytes::new(output),
-            provider_metadata: BTreeMap::new(),
             tool_calls: Vec::new(),
         }))
         .map_err(|error| error.to_string())
@@ -142,57 +167,13 @@ fn invoke(kernel: &mut Kernel, command: MemoryCommand) -> Result<MemoryResponse,
     output.project().map_err(|error| error.to_string())
 }
 
-fn invoke_routing(kernel: &mut Kernel, command: RoutingCommand) -> Result<RoutingResponse, String> {
-    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
-    let output = kernel
-        .invoke(
-            &model_routing_service(),
-            &input,
-            &model_routing_manifest(Authority::default()).maximum_authority,
-            None,
-        )
-        .map_err(|error| error.to_string())?;
-    let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
-    output.project().map_err(|error| error.to_string())
-}
-
 fn configure_revalidation_routing(
-    kernel: &mut Kernel,
+    _kernel: &mut Kernel,
     profile: &str,
-    validate_model: &str,
-    resolve_model: &str,
-) -> phenix_core::RoutingProfileId {
-    let provider = PluginId::parse(FIXTURE_PROVIDER).unwrap();
-    let profile_id = phenix_core::RoutingProfileId::parse(profile).unwrap();
-    let target = |model: &str| ModelTarget {
-        provider_plugin: provider.clone(),
-        model: ModelId::parse(model).unwrap(),
-        options: BTreeMap::new(),
-    };
-    invoke_routing(
-        kernel,
-        RoutingCommand::RegisterProfile {
-            profile: RoutingProfile {
-                id: profile_id.clone(),
-                default_target: target("unexpected-default"),
-                fallback_targets: Vec::new(),
-                callable_targets: BTreeMap::from([
-                    (memory_validate_callable(), target(validate_model)),
-                    (memory_resolve_callable(), target(resolve_model)),
-                ]),
-            },
-        },
-    )
-    .unwrap();
-    invoke_routing(
-        kernel,
-        RoutingCommand::SetProviderAuthenticated {
-            provider_plugin: provider,
-            authenticated: true,
-        },
-    )
-    .unwrap();
-    profile_id
+    _validate_model: &str,
+    _resolve_model: &str,
+) -> RoutingProfileId {
+    RoutingProfileId::parse(profile).unwrap()
 }
 
 fn scope() -> MemoryScope {
@@ -589,6 +570,8 @@ fn semantic_revalidation_uses_the_validate_callable_without_resolve_when_decisiv
         &mut kernel,
         MemoryCommand::Revalidate {
             id: fact.id,
+            execution_id: EXECUTION.into(),
+            parent_attempt_id: PARENT_ATTEMPT.into(),
             profile_id: profile,
             at: 30,
         },
@@ -626,6 +609,8 @@ fn ambiguous_validation_escalates_to_the_resolve_callable() {
         &mut kernel,
         MemoryCommand::Revalidate {
             id: fact.id,
+            execution_id: EXECUTION.into(),
+            parent_attempt_id: PARENT_ATTEMPT.into(),
             profile_id: profile,
             at: 30,
         },
@@ -663,6 +648,8 @@ fn deterministic_expiry_revalidation_does_not_invoke_a_model() {
         &mut kernel,
         MemoryCommand::Revalidate {
             id: fact.id,
+            execution_id: EXECUTION.into(),
+            parent_attempt_id: PARENT_ATTEMPT.into(),
             profile_id: profile,
             at: 20,
         },

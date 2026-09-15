@@ -9,7 +9,7 @@ use phenix_sdk::{
 };
 
 const EXECUTION_RESOURCE_NAMESPACE: &str = "phenix.execution.resources.state";
-pub(crate) const RESOURCE_STATE_KEY: &str = "state";
+const RESOURCE_STATE_KEY: &str = "state";
 const MAX_RESOURCE_STATE_BYTES: usize = 16 * 1024 * 1024;
 
 type ResourceContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
@@ -24,10 +24,14 @@ pub(crate) fn execution_resource_namespace() -> ResourceNamespace {
 
 #[must_use]
 pub(crate) fn resource_factory() -> Box<dyn PluginInstance> {
-    Box::new(ExecutionResourcePlugin)
+    Box::new(ExecutionResourcePlugin {
+        state: ExecutionResourceState::default(),
+    })
 }
 
-struct ExecutionResourcePlugin;
+struct ExecutionResourcePlugin {
+    state: ExecutionResourceState,
+}
 
 impl PluginInstance for ExecutionResourcePlugin {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
@@ -40,7 +44,8 @@ impl PluginInstance for ExecutionResourcePlugin {
             .kernel
             .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
             .map_err(|error| error.to_string())?;
-        restore(snapshot.as_deref()).map(|_| ())
+        self.state = restore(snapshot.as_deref())?;
+        Ok(())
     }
 
     fn invoke(
@@ -60,15 +65,10 @@ impl PluginInstance for ExecutionResourcePlugin {
                 input,
             )
             .map_err(|error| error.to_string())?;
-        let old = context
-            .kernel
-            .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
-            .map_err(|error| error.to_string())?;
-        let state = restore(old.as_deref())?;
         let response = if is_mutation(&command) {
-            mutate(&context, old, state, command)?
+            mutate(&context, &mut self.state, command)?
         } else {
-            read(&state, command)?
+            read(&self.state, command)?
         };
         context
             .kernel
@@ -80,7 +80,9 @@ impl PluginInstance for ExecutionResourcePlugin {
 fn is_mutation(command: &ExecutionResourceCommand) -> bool {
     !matches!(
         command,
-        ExecutionResourceCommand::Remaining { .. } | ExecutionResourceCommand::GetDelegated { .. }
+        ExecutionResourceCommand::Remaining { .. }
+            | ExecutionResourceCommand::RemainingWithin { .. }
+            | ExecutionResourceCommand::GetDelegated { .. }
     )
 }
 
@@ -93,6 +95,13 @@ fn read(
             .remaining(&root_execution_id)
             .map(|budget| ExecutionResourceResponse::Remaining { budget })
             .map_err(|error| format!("execution resource remaining failed: {error:?}")),
+        ExecutionResourceCommand::RemainingWithin {
+            root_execution_id,
+            reservation_id,
+        } => state
+            .remaining_within(&root_execution_id, &reservation_id)
+            .map(|budget| ExecutionResourceResponse::Remaining { budget })
+            .map_err(|error| format!("execution resource nested remaining failed: {error:?}")),
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),
@@ -104,10 +113,14 @@ fn read(
 
 fn mutate(
     context: &ResourceContext<'_, '_>,
-    old: Option<Vec<u8>>,
-    mut next: ExecutionResourceState,
+    state: &mut ExecutionResourceState,
     command: ExecutionResourceCommand,
 ) -> Result<ExecutionResourceResponse, String> {
+    let old = context
+        .kernel
+        .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
+        .map_err(|error| error.to_string())?;
+    let mut next = state.clone();
     let response = match command {
         ExecutionResourceCommand::RegisterRootBudget { ledger } => next
             .register_root_budget(ledger)
@@ -186,11 +199,17 @@ fn mutate(
                 .map_err(|error| format!("delegated resource failure failed: {error:?}"))?
         }
         ExecutionResourceCommand::Remaining { .. }
+        | ExecutionResourceCommand::RemainingWithin { .. }
         | ExecutionResourceCommand::GetDelegated { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
     };
-    let encoded = encode_state(&next)?;
+    let encoded = serde_json::to_vec(&next).map_err(|error| error.to_string())?;
+    if encoded.len() > MAX_RESOURCE_STATE_BYTES {
+        return Err(format!(
+            "execution resource state exceeds {MAX_RESOURCE_STATE_BYTES} bytes"
+        ));
+    }
     context
         .kernel
         .transact_durable(
@@ -207,20 +226,11 @@ fn mutate(
             ],
         )
         .map_err(|error| error.to_string())?;
+    *state = next;
     Ok(response)
 }
 
-pub(crate) fn encode_state(state: &ExecutionResourceState) -> Result<Vec<u8>, String> {
-    let encoded = serde_json::to_vec(state).map_err(|error| error.to_string())?;
-    if encoded.len() > MAX_RESOURCE_STATE_BYTES {
-        return Err(format!(
-            "execution resource state exceeds {MAX_RESOURCE_STATE_BYTES} bytes"
-        ));
-    }
-    Ok(encoded)
-}
-
-pub(crate) fn restore(snapshot: Option<&[u8]>) -> Result<ExecutionResourceState, String> {
+fn restore(snapshot: Option<&[u8]>) -> Result<ExecutionResourceState, String> {
     let Some(bytes) = snapshot else {
         return Ok(ExecutionResourceState::default());
     };

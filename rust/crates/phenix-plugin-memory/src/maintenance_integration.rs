@@ -1,28 +1,27 @@
 use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
-    model_inference_service, Authority, Bytes, Kernel, LocalPersistence, ModelId,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
+    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
+    LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
-use phenix_plugin_models::{
-    model_routing_component_manifest, model_routing_factory, model_routing_manifest,
-    model_routing_service, ModelCommand as RoutingCommand, ModelResponse as RoutingResponse,
-    ModelTarget, RoutingProfile,
-};
 use phenix_sdk::{
-    memory_consolidate_callable, memory_extract_callable, memory_service, MemoryCommand,
-    MemoryConsolidationRequest, MemoryExtractionObservation, MemoryExtractionRequest, MemoryKind,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_consolidate_callable, memory_extract_callable,
+    memory_service, HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
+    MemoryCommand, MemoryConsolidationRequest, MemoryExtractionObservation,
+    MemoryExtractionRequest, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
+    MemoryScope, MemorySourceReference,
 };
 use std::{
-    collections::BTreeMap,
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const PROVIDER: &str = "fixture.memory-maintenance";
+const HELPER_PROVIDER: &str = "fixture.memory-helper";
+const HELPER_COMPONENT: &str = "fixture.memory-helper";
+const EXECUTION: &str = "execution-1";
+const PARENT_ATTEMPT: &str = "attempt-1";
 
 fn temp_db(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
@@ -35,15 +34,15 @@ fn temp_db(name: &str) -> PathBuf {
     ))
 }
 
-fn provider_manifest() -> PluginManifest {
+fn helper_manifest() -> PluginManifest {
     PluginManifest {
-        id: PluginId::parse(PROVIDER).unwrap(),
+        id: PluginId::parse(HELPER_PROVIDER).unwrap(),
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
             role: ServiceRole::Terminal,
-            service: model_inference_service(),
+            service: helper_invocation_service(),
             priority: 100,
             required_authority: Authority::default(),
         }],
@@ -52,9 +51,25 @@ fn provider_manifest() -> PluginManifest {
     }
 }
 
-struct Provider;
+fn helper_component_manifest() -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: ComponentId::parse(HELPER_COMPONENT).unwrap(),
+        owner: PluginId::parse(HELPER_PROVIDER).unwrap(),
+        imports: Vec::new(),
+        exports: vec![ComponentExport {
+            interface: HelperInvocationInterface::interface_id(),
+            schema: HelperInvocationInterface::schema(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
+        maximum_authority: Authority::default(),
+    }
+}
 
-impl PluginInstance for Provider {
+struct HelperProvider;
+
+impl PluginInstance for HelperProvider {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         Ok(())
     }
@@ -63,40 +78,46 @@ impl PluginInstance for Provider {
         &mut self,
         service: &ServiceId,
         input: &[u8],
-        _host: &PluginHost<'_>,
+        host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &model_inference_service() {
+        if service != &helper_invocation_service() {
             return Err(format!("unsupported fixture service: {service}"));
         }
         let input: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
-        let request: ModelInferenceRequest = input.project().map_err(|error| error.to_string())?;
-        let output = match request.model.as_str() {
-            "extract" => "extracted durable fact",
-            "consolidate" => "consolidated durable fact",
-            "fail" => return Err("fixture maintenance failure".into()),
-            model => return Err(format!("unexpected maintenance model: {model}")),
+        let command: HelperInvocationCommand =
+            input.project().map_err(|error| error.to_string())?;
+        let HelperInvocationCommand::Invoke { request } = command;
+        if request.execution_id != EXECUTION || request.parent_attempt_id != PARENT_ATTEMPT {
+            return Err("memory helper lost execution lineage".into());
+        }
+        let output = match (request.profile_id.as_str(), request.callable_id.as_str()) {
+            ("extract-profile", "memory.extract") => "extracted durable fact",
+            ("consolidate-profile", "memory.consolidate") => "consolidated durable fact",
+            ("failure-profile", "memory.consolidate") => {
+                return Err("fixture maintenance failure".into())
+            }
+            (profile, callable) => {
+                return Err(format!(
+                    "unexpected memory helper route: {profile}/{callable}"
+                ))
+            }
         };
-        serde_json::to_vec(&PhenixValue::from(&ModelInferenceResponse {
+        host.encode_value(&HelperInvocationResponse {
             output: Bytes::new(output.as_bytes().to_vec()),
-            provider_metadata: BTreeMap::new(),
             tool_calls: Vec::new(),
-        }))
+        })
         .map_err(|error| error.to_string())
     }
 }
 
 fn kernel_with(path: &PathBuf) -> Kernel {
     let memory = memory_manifest();
-    let routing = model_routing_manifest(Authority::default());
-    let provider = provider_manifest();
+    let helper = helper_manifest();
     let authority = memory.maximum_authority.clone();
     let resolved = ResolvedHarness::resolve(
-        [memory.clone(), routing.clone(), provider.clone()],
-        [
-            memory_component_manifest(),
-            model_routing_component_manifest(Authority::default()),
-        ],
+        [memory.clone(), helper.clone()],
+        [memory_component_manifest(), helper_component_manifest()],
         [],
         &authority,
     )
@@ -108,10 +129,7 @@ fn kernel_with(path: &PathBuf) -> Kernel {
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();
     kernel
-        .register_embedded_factory(routing.id, model_routing_factory)
-        .unwrap();
-    kernel
-        .register_embedded_factory(provider.id, || Box::new(Provider))
+        .register_embedded_factory(helper.id, || Box::new(HelperProvider))
         .unwrap();
     kernel.activate_all().unwrap();
     kernel
@@ -131,56 +149,8 @@ fn invoke(kernel: &mut Kernel, command: MemoryCommand) -> Result<MemoryResponse,
     output.project().map_err(|error| error.to_string())
 }
 
-fn routing(
-    kernel: &mut Kernel,
-    name: &str,
-    extract: &str,
-    consolidate: &str,
-) -> phenix_core::RoutingProfileId {
-    let profile_id = phenix_core::RoutingProfileId::parse(name).unwrap();
-    let provider = PluginId::parse(PROVIDER).unwrap();
-    let target = |model: &str| ModelTarget {
-        provider_plugin: provider.clone(),
-        model: ModelId::parse(model).unwrap(),
-        options: BTreeMap::new(),
-    };
-    let profile = RoutingProfile {
-        id: profile_id.clone(),
-        default_target: target("fail"),
-        fallback_targets: Vec::new(),
-        callable_targets: BTreeMap::from([
-            (memory_extract_callable(), target(extract)),
-            (memory_consolidate_callable(), target(consolidate)),
-        ]),
-    };
-    let input = serde_json::to_vec(&PhenixValue::from(&RoutingCommand::RegisterProfile {
-        profile,
-    }))
-    .unwrap();
-    let output = kernel
-        .invoke(
-            &model_routing_service(),
-            &input,
-            &model_routing_manifest(Authority::default()).maximum_authority,
-            None,
-        )
-        .unwrap();
-    let value: PhenixValue = serde_json::from_slice(&output).unwrap();
-    let _: RoutingResponse = value.project().unwrap();
-    let command = RoutingCommand::SetProviderAuthenticated {
-        provider_plugin: provider,
-        authenticated: true,
-    };
-    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
-    kernel
-        .invoke(
-            &model_routing_service(),
-            &input,
-            &model_routing_manifest(Authority::default()).maximum_authority,
-            None,
-        )
-        .unwrap();
-    profile_id
+fn profile(name: &str) -> RoutingProfileId {
+    RoutingProfileId::parse(name).unwrap()
 }
 
 fn scope() -> MemoryScope {
@@ -213,16 +183,17 @@ fn fact(id: &str, content: &str, resource: &str, created_at: u64) -> MemoryRecor
 }
 
 #[test]
-fn extraction_uses_routed_model_but_keeps_caller_owned_exact_provenance() {
+fn extraction_uses_helper_profile_and_keeps_caller_owned_exact_provenance() {
     let path = temp_db("extract");
     let mut kernel = kernel_with(&path);
-    let profile_id = routing(&mut kernel, "extract-profile", "extract", "consolidate");
     let expected_source = source("history/42");
     let response = invoke(
         &mut kernel,
         MemoryCommand::Extract {
             request: MemoryExtractionRequest {
-                profile_id,
+                execution_id: EXECUTION.into(),
+                parent_attempt_id: PARENT_ATTEMPT.into(),
+                profile_id: profile("extract-profile"),
                 id: "extracted".into(),
                 kind: MemoryKind::Fact,
                 scope: scope(),
@@ -247,7 +218,6 @@ fn extraction_uses_routed_model_but_keeps_caller_owned_exact_provenance() {
 fn consolidation_unions_provenance_and_supersedes_inputs() {
     let path = temp_db("consolidate");
     let mut kernel = kernel_with(&path);
-    let profile_id = routing(&mut kernel, "consolidate-profile", "extract", "consolidate");
     for record in [
         fact("a", "fact A", "history/a", 10),
         fact("b", "fact B", "history/b", 11),
@@ -258,7 +228,9 @@ fn consolidation_unions_provenance_and_supersedes_inputs() {
         &mut kernel,
         MemoryCommand::Consolidate {
             request: MemoryConsolidationRequest {
-                profile_id,
+                execution_id: EXECUTION.into(),
+                parent_attempt_id: PARENT_ATTEMPT.into(),
+                profile_id: profile("consolidate-profile"),
                 ids: vec!["a".into(), "b".into()],
                 consolidated_id: "ab".into(),
                 created_at: 20,
@@ -302,7 +274,6 @@ fn consolidation_unions_provenance_and_supersedes_inputs() {
 fn failed_consolidation_does_not_mutate_existing_memory() {
     let path = temp_db("failure");
     let mut kernel = kernel_with(&path);
-    let profile_id = routing(&mut kernel, "failure-profile", "extract", "fail");
     for record in [
         fact("a", "shared fact A", "history/a", 10),
         fact("b", "shared fact B", "history/b", 11),
@@ -313,7 +284,9 @@ fn failed_consolidation_does_not_mutate_existing_memory() {
         &mut kernel,
         MemoryCommand::Consolidate {
             request: MemoryConsolidationRequest {
-                profile_id,
+                execution_id: EXECUTION.into(),
+                parent_attempt_id: PARENT_ATTEMPT.into(),
+                profile_id: profile("failure-profile"),
                 ids: vec!["a".into(), "b".into()],
                 consolidated_id: "ab".into(),
                 created_at: 20,

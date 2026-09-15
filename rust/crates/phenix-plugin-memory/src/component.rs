@@ -3,8 +3,8 @@ use phenix_core::{
     ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    ContextCompactionInterface, ContextExpansionInterface, MemoryContextInterface,
-    MemoryEmbeddingInterface, MemoryInterface, MemoryRankInterface, ModelRoutingInterface,
+    ContextCompactionInterface, ContextExpansionInterface, HelperInvocationInterface,
+    MemoryContextInterface, MemoryEmbeddingInterface, MemoryInterface, MemoryRankInterface,
     OptionsInterface,
 };
 
@@ -25,8 +25,8 @@ pub fn memory_component_manifest() -> ComponentManifest {
         owner: PluginId::parse(MEMORY_PLUGIN).expect("static plugin id is valid"),
         imports: vec![
             ComponentImport {
-                interface: ModelRoutingInterface::interface_id(),
-                schema: ModelRoutingInterface::schema(),
+                interface: HelperInvocationInterface::interface_id(),
+                schema: HelperInvocationInterface::schema(),
                 required: true,
                 authority: authority.clone(),
             },
@@ -88,7 +88,7 @@ mod tests {
         assert_eq!(manifest.imports.len(), 4);
         assert_eq!(
             manifest.imports[0].interface,
-            ModelRoutingInterface::interface_id()
+            HelperInvocationInterface::interface_id()
         );
         assert!(manifest.imports[0].required);
         assert_eq!(

@@ -10,6 +10,7 @@ pub use phenix_sdk::{
 mod component;
 #[allow(clippy::too_many_arguments)]
 mod implementation_state;
+mod materialization;
 mod projection_state;
 mod prompt;
 mod state_service;
@@ -29,6 +30,8 @@ pub fn context_manifest() -> PluginManifest {
     manifest
 }
 
+#[cfg(test)]
+mod materialization_integration;
 #[cfg(test)]
 mod state_integration;
 

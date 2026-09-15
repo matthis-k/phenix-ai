@@ -1,6 +1,8 @@
 use crate::{
-    context_component_id,
+    assemble_prompt, context_component_id,
+    projection_state::ContextProjectionState,
     state_service::{ContextStateService, CONTEXT_PROJECTION_STATE_KEY},
+    PromptSection, PromptSectionKind,
 };
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
@@ -8,11 +10,13 @@ use phenix_core::{
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    context_service, ContextCommand, ContextDescriptor, ContextInjection, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextInterface, ContextResourceKind, ContextResourceRevision,
-    ContextResponse, ContextScope, ExactContextReference, ExecutionCommand,
+    context_service, AdmittedContextItem, CachePlacement, ContextCandidate, ContextCommand,
+    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
+    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
+    ContextProjectionForm, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, RepositoryContextSource,
+    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -183,7 +187,27 @@ fn handle(
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
         }),
-        ContextCommand::Admit { .. }
+        ContextCommand::PrepareInvocation {
+            execution_id,
+            input,
+        } => Ok(ContextResponse::InvocationPrepared {
+            preparation: prepare_invocation(context, state, execution_id, input)?,
+        }),
+        ContextCommand::MaterializeInvocation {
+            execution_id,
+            input,
+            expected_projection,
+        } => Ok(ContextResponse::InvocationMaterialized {
+            materialization: materialize_invocation(
+                context,
+                state,
+                execution_id,
+                input,
+                expected_projection,
+            )?,
+        }),
+        ContextCommand::GetProjectionState { .. }
+        | ContextCommand::Admit { .. }
         | ContextCommand::PrepareCompaction { .. }
         | ContextCommand::CommitCompaction { .. }
         | ContextCommand::InvalidateProjection { .. } => {
@@ -196,7 +220,8 @@ fn state_command_execution(command: &ContextCommand) -> Option<&str> {
     match command {
         ContextCommand::Admit { request } => Some(&request.execution_id),
         ContextCommand::PrepareCompaction { proposal } => Some(&proposal.execution_id),
-        ContextCommand::CommitCompaction { execution_id, .. }
+        ContextCommand::GetProjectionState { execution_id }
+        | ContextCommand::CommitCompaction { execution_id, .. }
         | ContextCommand::InvalidateProjection { execution_id } => Some(execution_id),
         _ => None,
     }
@@ -207,6 +232,12 @@ fn handle_state_command(
     state: &mut ContextStateService,
     command: ContextCommand,
 ) -> Result<ContextResponse, String> {
+    if matches!(&command, ContextCommand::GetProjectionState { .. }) {
+        return state
+            .handle_state_command(command)
+            .ok_or_else(|| "projection state command leaked past state service".to_owned())?;
+    }
+
     let previous = read_raw(context, CONTEXT_PROJECTION_STATE_KEY)?;
     let response = match state.handle_state_command(command) {
         Some(Ok(response)) => response,
@@ -519,6 +550,153 @@ fn project_context(
     })
 }
 
+fn prepare_invocation(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    execution_id: String,
+    input: Bytes,
+) -> Result<ContextInvocationPreparation, String> {
+    require_active_execution(context, &execution_id)?;
+    let projection = project_context(context, execution_id.clone())?;
+    Ok(invocation_preparation(
+        &projection,
+        state.projection(&execution_id),
+        state.projection_revision(&execution_id),
+        &input,
+    ))
+}
+
+fn invocation_preparation(
+    projection: &ExecutionContextProjection,
+    committed: Option<&ContextProjectionState>,
+    projection_revision: ProjectionRevision,
+    input: &Bytes,
+) -> ContextInvocationPreparation {
+    let mut candidates = assemble_prompt(projection)
+        .sections
+        .into_iter()
+        .map(context_candidate)
+        .filter(|candidate| {
+            !committed
+                .and_then(|state| state.admitted.get(&candidate.id))
+                .is_some_and(is_reduced_item)
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(checkpoint) = committed
+        .filter(|state| {
+            state
+                .admitted
+                .values()
+                .any(|item| item.retention == ContextRetention::Compact)
+        })
+        .and_then(|state| state.committed_checkpoint.as_ref())
+    {
+        candidates.push(checkpoint_candidate(checkpoint));
+    }
+
+    ContextInvocationPreparation {
+        request_input_tokens: conservative_token_estimate(input.as_ref()),
+        candidates,
+        projection: projection_revision,
+    }
+}
+
+fn materialize_invocation(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    execution_id: String,
+    input: Bytes,
+    expected_projection: ProjectionRevision,
+) -> Result<ContextInvocationMaterialization, String> {
+    require_active_execution(context, &execution_id)?;
+    let committed = state
+        .projection(&execution_id)
+        .ok_or_else(|| format!("context projection is not admitted: {execution_id}"))?;
+    let projection = project_context(context, execution_id)?;
+    let assembly = assemble_prompt(&projection);
+    crate::materialization::materialize_invocation(
+        &assembly,
+        committed,
+        input,
+        &expected_projection,
+    )
+}
+
+fn context_candidate(section: PromptSection) -> ContextCandidate {
+    let mandatory = matches!(
+        section.kind,
+        PromptSectionKind::HarnessIdentity
+            | PromptSectionKind::ProjectInstruction
+            | PromptSectionKind::Skill
+    );
+    let cache = if mandatory {
+        CachePlacement::StablePrefix
+    } else {
+        CachePlacement::Epoch
+    };
+    let retention = if mandatory {
+        ContextRetention::Pinned
+    } else {
+        ContextRetention::Full
+    };
+    let content_identity = content_hash(section.content.as_ref()).as_str().to_owned();
+    let (id, source, recovery) = match section.reference {
+        Some(reference) => (
+            format!("{}@{}", reference.resource_id, reference.revision),
+            ContextSource::Exact {
+                reference: reference.clone(),
+            },
+            Some(reference),
+        ),
+        None => (
+            "phenix:harness-identity".to_owned(),
+            ContextSource::Inline {
+                identity: "phenix:harness-identity".to_owned(),
+            },
+            None,
+        ),
+    };
+    ContextCandidate {
+        id,
+        source,
+        content_identity,
+        estimated_tokens: conservative_token_estimate(section.content.as_ref()),
+        content: section.content,
+        mandatory,
+        retention,
+        cache,
+        recovery,
+    }
+}
+
+fn checkpoint_candidate(checkpoint: &ProjectionCheckpoint) -> ContextCandidate {
+    let identity = checkpoint_candidate_id(checkpoint);
+    ContextCandidate {
+        id: identity.clone(),
+        source: ContextSource::Inline { identity },
+        content_identity: checkpoint.content_identity.clone(),
+        content: checkpoint.compact_view.clone(),
+        estimated_tokens: conservative_token_estimate(checkpoint.compact_view.as_ref()),
+        mandatory: false,
+        retention: ContextRetention::DropAllowed,
+        cache: CachePlacement::Epoch,
+        recovery: None,
+    }
+}
+
+fn checkpoint_candidate_id(checkpoint: &ProjectionCheckpoint) -> String {
+    format!("phenix:checkpoint:{}", checkpoint.checkpoint_id)
+}
+
+fn is_reduced_item(item: &AdmittedContextItem) -> bool {
+    item.retention == ContextRetention::Compact || item.form != ContextProjectionForm::Full
+}
+
+fn conservative_token_estimate(content: &[u8]) -> u64 {
+    u64::try_from(content.len()).unwrap_or(u64::MAX)
+}
+
 fn read_resource(
     context: &ContextPluginContext<'_, '_>,
     resource_id: &ContextResourceId,
@@ -594,4 +772,36 @@ fn file_name(path: &str) -> &str {
 
 fn parent_path(path: &str) -> Option<&str> {
     path.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+
+    #[test]
+    fn invocation_preparation_keeps_request_budget_separate_from_context_candidates() {
+        let projection = ExecutionContextProjection {
+            execution_id: "execution-1".into(),
+            entries: Vec::new(),
+        };
+        let preparation = invocation_preparation(
+            &projection,
+            None,
+            ProjectionRevision {
+                revision: 3,
+                cache_epoch: 2,
+            },
+            &Bytes::from(b"request".to_vec()),
+        );
+
+        assert_eq!(preparation.request_input_tokens, 7);
+        assert_eq!(preparation.projection.revision, 3);
+        assert_eq!(preparation.projection.cache_epoch, 2);
+        assert_eq!(preparation.candidates.len(), 1);
+        let identity = &preparation.candidates[0];
+        assert!(identity.mandatory);
+        assert_eq!(identity.retention, ContextRetention::Pinned);
+        assert_eq!(identity.cache, CachePlacement::StablePrefix);
+        assert!(matches!(identity.source, ContextSource::Inline { .. }));
+    }
 }

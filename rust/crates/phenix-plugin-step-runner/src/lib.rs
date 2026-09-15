@@ -1,92 +1,148 @@
 #![forbid(unsafe_code)]
 
+mod runner;
+
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    ComponentInvocationError, ComponentManifest, ContextResourceId, PhenixValue, PluginContext,
+    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
+    ServiceId, ServiceRole,
 };
 use phenix_sdk::{
-    step_runner_service, AttemptOutcome, BudgetActual, BudgetReservationPurpose,
-    BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInterface,
-    ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ModelCommand, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, PlannedStepRequest, StepAttemptCommand,
-    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
-    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
-    StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
-    UsagePlanningInput,
+    context_service, default_invocation_service, helper_invocation_service, invocation_service,
+    step_runner_service, ContextAnchor, ContextCommand, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextInterface, ContextInvocationPreparation,
+    ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
+    ContextRecoveryRequest, ContextRecoveryResponse, ContextResourceKind, ContextResponse,
+    ContextScope, DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand,
+    ExecutionInterface, ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
+    InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
+    InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
+    MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
+    StepRunnerResponse, UsageAttemptKind,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-pub const STEP_RUNNER_PLUGIN: &str = "phenix.step-runner";
-pub const STEP_RUNNER_COMPONENT: &str = "phenix.step-runner";
+pub use runner::{step_runner_component_id, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN};
+
+pub const HELPER_INVOCATION_COMPONENT: &str = "phenix.helper-invocation";
 
 #[must_use]
 pub fn step_runner_manifest(maximum_authority: Authority) -> PluginManifest {
-    PluginManifest {
-        id: PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid"),
-        version: 1,
-        execution: PluginExecution::Embedded,
-        dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: phenix_core::ServiceRole::Terminal,
-            service: step_runner_service(),
+    let mut manifest = runner::step_runner_manifest(maximum_authority);
+    for service in [
+        invocation_service(),
+        default_invocation_service(),
+        helper_invocation_service(),
+    ] {
+        manifest.services.push(ServiceContribution {
+            role: ServiceRole::Terminal,
+            service,
             priority: 100,
             required_authority: Authority::default(),
-        }],
-        resource_namespaces: Vec::new(),
-        maximum_authority,
+        });
     }
-}
-
-#[must_use]
-pub fn step_runner_component_id() -> ComponentId {
-    ComponentId::parse(STEP_RUNNER_COMPONENT).expect("static step runner component id is valid")
+    manifest
 }
 
 #[must_use]
 pub fn step_runner_component_manifest(maximum_authority: Authority) -> ComponentManifest {
-    let import = |interface, schema| ComponentImport {
+    let mut manifest = runner::step_runner_component_manifest(maximum_authority);
+    let optional_import = |interface, schema| ComponentImport {
         interface,
         schema,
+        required: false,
+        authority: manifest.maximum_authority.clone(),
+    };
+    manifest.imports.push(optional_import(
+        InvocationDefaultsInterface::interface_id(),
+        InvocationDefaultsInterface::schema(),
+    ));
+    manifest.imports.push(ComponentImport {
+        interface: InvocationClockInterface::interface_id(),
+        schema: InvocationClockInterface::schema(),
         required: true,
+        authority: manifest.maximum_authority.clone(),
+    });
+    manifest.imports.push(optional_import(
+        ContextRecoveryInterface::interface_id(),
+        ContextRecoveryInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        MemoryContextInterface::interface_id(),
+        MemoryContextInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        MemoryInterface::interface_id(),
+        MemoryInterface::schema(),
+    ));
+    for interface in [
+        (
+            InvocationInterface::interface_id(),
+            InvocationInterface::schema(),
+        ),
+        (
+            DefaultInvocationInterface::interface_id(),
+            DefaultInvocationInterface::schema(),
+        ),
+    ] {
+        manifest.exports.push(ComponentExport {
+            interface: interface.0,
+            schema: interface.1,
+            priority: 100,
+            required_authority: Authority::default(),
+        });
+    }
+    manifest
+}
+
+#[must_use]
+pub fn helper_invocation_component_id() -> ComponentId {
+    ComponentId::parse(HELPER_INVOCATION_COMPONENT)
+        .expect("static helper invocation component id is valid")
+}
+
+#[must_use]
+pub fn helper_invocation_component_manifest(maximum_authority: Authority) -> ComponentManifest {
+    let import = |interface, schema, required| ComponentImport {
+        interface,
+        schema,
+        required,
         authority: maximum_authority.clone(),
     };
     ComponentManifest {
         listeners: Vec::new(),
-        id: step_runner_component_id(),
+        id: helper_invocation_component_id(),
         owner: PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid"),
         imports: vec![
             import(
-                ExecutionInterface::interface_id(),
-                ExecutionInterface::schema(),
+                InvocationDefaultsInterface::interface_id(),
+                InvocationDefaultsInterface::schema(),
+                false,
             ),
             import(
-                ExecutionResourceInterface::interface_id(),
-                ExecutionResourceInterface::schema(),
+                InvocationClockInterface::interface_id(),
+                InvocationClockInterface::schema(),
+                true,
+            ),
+            import(
+                ExecutionInterface::interface_id(),
+                ExecutionInterface::schema(),
+                true,
             ),
             import(
                 StepAttemptInterface::interface_id(),
                 StepAttemptInterface::schema(),
+                true,
             ),
-            import(
-                StepTransactionInterface::interface_id(),
-                StepTransactionInterface::schema(),
-            ),
-            import(
-                ModelRoutingInterface::interface_id(),
-                ModelRoutingInterface::schema(),
-            ),
-            import(
-                ModelDispatchInterface::interface_id(),
-                ModelDispatchInterface::schema(),
-            ),
-            import(ContextInterface::interface_id(), ContextInterface::schema()),
         ],
         exports: vec![ComponentExport {
-            interface: StepRunnerInterface::interface_id(),
-            schema: StepRunnerInterface::schema(),
+            interface: HelperInvocationInterface::interface_id(),
+            schema: HelperInvocationInterface::schema(),
             priority: 100,
             required_authority: Authority::default(),
         }],
@@ -96,47 +152,323 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
 
 #[must_use]
 pub fn step_runner_factory() -> Box<dyn PluginInstance> {
-    Box::new(StepRunnerPlugin)
+    Box::new(InvocationPackage {
+        runner: runner::step_runner_factory(),
+    })
 }
 
-struct StepRunnerSdk<'host, 'runtime> {
-    execution: SdkClient<'host, 'runtime, ExecutionInterface>,
-    resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
-    attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
-    transactions: SdkClient<'host, 'runtime, StepTransactionInterface>,
-    routing: SdkClient<'host, 'runtime, ModelRoutingInterface>,
-    dispatch: SdkClient<'host, 'runtime, ModelDispatchInterface>,
+struct InvocationSdk<'host, 'runtime> {
+    defaults: SdkClient<'host, 'runtime, InvocationDefaultsInterface>,
+    clock: SdkClient<'host, 'runtime, InvocationClockInterface>,
     context: SdkClient<'host, 'runtime, ContextInterface>,
+    recovery: SdkClient<'host, 'runtime, ContextRecoveryInterface>,
+    memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
+    memory: SdkClient<'host, 'runtime, MemoryInterface>,
+    execution: SdkClient<'host, 'runtime, ExecutionInterface>,
+    attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
 }
 
-type StepRunnerContext<'host, 'runtime> =
-    PluginContext<'host, 'runtime, StepRunnerSdk<'host, 'runtime>>;
+type InvocationContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, InvocationSdk<'host, 'runtime>>;
 
-fn context<'host, 'runtime>(
+fn invocation_context<'host, 'runtime>(
     host: &'host PluginHost<'runtime>,
-) -> StepRunnerContext<'host, 'runtime> {
-    let component = step_runner_component_id();
+    component: ComponentId,
+) -> InvocationContext<'host, 'runtime> {
     PluginContext::new(
         host,
-        StepRunnerSdk {
+        InvocationSdk {
+            defaults: SdkClient::new(host, component.clone()),
+            clock: SdkClient::new(host, component.clone()),
+            context: SdkClient::new(host, component.clone()),
+            recovery: SdkClient::new(host, component.clone()),
+            memory_context: SdkClient::new(host, component.clone()),
+            memory: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
-            resources: SdkClient::new(host, component.clone()),
-            attempts: SdkClient::new(host, component.clone()),
-            transactions: SdkClient::new(host, component.clone()),
-            routing: SdkClient::new(host, component.clone()),
-            dispatch: SdkClient::new(host, component.clone()),
-            context: SdkClient::new(host, component),
+            attempts: SdkClient::new(host, component),
         },
         (),
         (),
     )
 }
 
-struct StepRunnerPlugin;
+struct InvocationPackage {
+    runner: Box<dyn PluginInstance>,
+}
 
-impl PluginInstance for StepRunnerPlugin {
-    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
-        Ok(())
+impl InvocationPackage {
+    fn invoke_explicit(
+        &mut self,
+        context: &InvocationContext<'_, '_>,
+        host: &PluginHost<'_>,
+        request: InvocationRequest,
+        params: InvocationParams,
+    ) -> Result<Vec<u8>, String> {
+        let kind = if request.parent_attempt_id.is_some() {
+            UsageAttemptKind::Retry
+        } else {
+            UsageAttemptKind::Root
+        };
+        self.invoke_with_kind(context, host, request, params, kind)
+    }
+
+    fn invoke_with_kind(
+        &mut self,
+        context: &InvocationContext<'_, '_>,
+        host: &PluginHost<'_>,
+        request: InvocationRequest,
+        params: InvocationParams,
+        kind: UsageAttemptKind,
+    ) -> Result<Vec<u8>, String> {
+        let root_execution_id = root_execution_id(context, &request.execution_id)?;
+        let mut preparation = if is_isolated_helper(kind) {
+            ContextInvocationPreparation {
+                request_input_tokens: u64::try_from(request.input.as_ref().len())
+                    .unwrap_or(u64::MAX),
+                candidates: Vec::new(),
+                projection: ProjectionRevision {
+                    revision: 0,
+                    cache_epoch: 0,
+                },
+            }
+        } else {
+            prepare_invocation_context(context, &request)?
+        };
+
+        let clock: InvocationClockResponse = context
+            .sdk
+            .clock
+            .invoke_projected(&InvocationClockCommand::Now)
+            .map_err(|error| format!("invocation clock unavailable: {error}"))?;
+        let InvocationClockResponse::Time { now_ms } = clock;
+
+        if !is_isolated_helper(kind) {
+            preparation = recover_invocation_context(
+                context,
+                &request,
+                &params.profile_id,
+                now_ms,
+                preparation,
+            )?;
+        }
+
+        let allocated: StepAttemptResponse = context
+            .sdk
+            .attempts
+            .invoke_projected(&StepAttemptCommand::AllocateIdentity {
+                root_execution_id,
+                execution_id: request.execution_id.clone(),
+                parent_attempt_id: request.parent_attempt_id.clone(),
+                policy_revision: params.policy.revision.clone(),
+                kind,
+            })
+            .map_err(|error| format!("invocation attempt allocation failed: {error}"))?;
+        let StepAttemptResponse::Attribution { attribution } = allocated else {
+            return Err(
+                "step attempt service returned a non-attribution allocation response".into(),
+            );
+        };
+
+        let task = params.intent.derive_task(&preparation);
+        let step = StepRunnerCommand::Run {
+            request: PlannedStepRequest {
+                attribution,
+                profile_id: params.profile_id,
+                callable_id: request.callable_id,
+                input: request.input,
+                tools: request.tools,
+                policy: params.policy,
+                task,
+                context_candidates: preparation.candidates,
+                cache_epoch: preparation.projection.cache_epoch,
+                route_policy: params.route_policy,
+                now_ms,
+            },
+        };
+        let encoded = context
+            .kernel
+            .encode_value(&step)
+            .map_err(|error| error.to_string())?;
+        self.runner.invoke(&step_runner_service(), &encoded, host)
+    }
+}
+
+fn prepare_invocation_context(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<ContextInvocationPreparation, String> {
+    let prepared: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::PrepareInvocation {
+            execution_id: request.execution_id.clone(),
+            input: request.input.clone(),
+        })
+        .map_err(|error| format!("invocation context preparation failed: {error}"))?;
+    let ContextResponse::InvocationPrepared { preparation } = prepared else {
+        return Err("context service returned a non-preparation response".into());
+    };
+    Ok(preparation)
+}
+
+fn recover_invocation_context(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+    profile_id: &phenix_core::RoutingProfileId,
+    now_ms: u64,
+    preparation: ContextInvocationPreparation,
+) -> Result<ContextInvocationPreparation, String> {
+    let projected: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Project {
+            execution_id: request.execution_id.clone(),
+        })
+        .map_err(|error| format!("context recovery projection failed: {error}"))?;
+    let ContextResponse::Projection { projection } = projected else {
+        return Err("context service returned a non-projection response during recovery".into());
+    };
+    let anchors = projection
+        .entries
+        .iter()
+        .take(32)
+        .map(|entry| ContextAnchor::Resource {
+            service: context_service(),
+            resource: entry.resource.descriptor.resource_id.as_str().to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let state = phenix_sdk::ContextRecoveryState {
+        anchors: anchors.clone(),
+        has_durable_session_history: false,
+        has_explicit_resource: !projection.entries.is_empty(),
+    };
+    let prompt = String::from_utf8_lossy(request.input.as_ref()).into_owned();
+    let assessed: ContextRecoveryResponse =
+        match context
+            .sdk
+            .recovery
+            .invoke_projected(&ContextRecoveryCommand::Assess {
+                request: ContextRecoveryRequest {
+                    profile_id: profile_id.clone(),
+                    prompt: prompt.clone(),
+                    state,
+                    at: now_ms,
+                },
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+            Err(error) => return Err(format!("context recovery assessment failed: {error}")),
+        };
+    let ContextRecoveryResponse::Decision { decision } = assessed;
+    let ContextRecoveryDecision::Missing { needs } = decision else {
+        return Ok(preparation);
+    };
+
+    let recall: MemoryContextResponse =
+        match context
+            .sdk
+            .memory_context
+            .invoke_projected(&MemoryContextCommand::Recall {
+                request: MemoryContextRecallRequest {
+                    request_id: format!("recovery:{}:{now_ms}", request.execution_id),
+                    scopes: vec![MemoryScope::Global],
+                    prompt,
+                    known: anchors,
+                    needs: needs.clone(),
+                    at: now_ms,
+                    limit: 8,
+                },
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+            Err(error) => return Err(format!("memory context recall failed: {error}")),
+        };
+    let MemoryContextResponse::Recall {
+        candidates,
+        completeness,
+    } = recall
+    else {
+        return Err("memory context service returned a non-recall response".into());
+    };
+    if candidates.is_empty() {
+        return Ok(preparation);
+    }
+    let evidence = candidates
+        .into_iter()
+        .map(|candidate| RecallEvidence {
+            query_relevant: candidate.evidence_class() >= 2,
+            live_validated: true,
+            candidate,
+            resolved_needs: needs.clone(),
+            missing_needs: Vec::new(),
+            completeness: completeness.clone(),
+        })
+        .collect();
+    let resolved: MemoryContextResponse = context
+        .sdk
+        .memory_context
+        .invoke_projected(&MemoryContextCommand::Resolve { evidence })
+        .map_err(|error| format!("memory context resolution failed: {error}"))?;
+    let MemoryContextResponse::Resolution { resolution } = resolved else {
+        return Err("memory context service returned a non-resolution response".into());
+    };
+    let RecallResolution::Unique { winner } = resolution else {
+        return Ok(preparation);
+    };
+
+    let memory: MemoryResponse = match context.sdk.memory.invoke_projected(&MemoryCommand::Get {
+        id: winner.candidate.memory_id.clone(),
+    }) {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+        Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
+    };
+    let MemoryResponse::Memory {
+        record: Some(record),
+    } = memory
+    else {
+        return Ok(preparation);
+    };
+    let source = format!("memory:{}", record.id);
+    let resource_id = ContextResourceId::parse(source.clone())
+        .map_err(|error| format!("recovered memory id is not a context resource id: {error}"))?;
+    let registered: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: ContextResourceKind::External,
+            source,
+            scope: ContextScope::Workspace,
+            content: record.content.into_bytes().into(),
+        })
+        .map_err(|error| format!("recovered memory registration failed: {error}"))?;
+    let ContextResponse::Registered { resource } = registered else {
+        return Err(
+            "context service returned a non-registration response for recovered memory".into(),
+        );
+    };
+    let loaded: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Load {
+            execution_id: request.execution_id.clone(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: ContextInjectionRequester::ContextPolicy,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: "fall-through memory recovery".into(),
+        })
+        .map_err(|error| format!("recovered memory injection failed: {error}"))?;
+    if !matches!(loaded, ContextResponse::Loaded { .. }) {
+        return Err("context service returned a non-load response for recovered memory".into());
+    }
+    prepare_invocation_context(context, request)
+}
+
+impl PluginInstance for InvocationPackage {
+    fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
+        self.runner.start(host)
     }
 
     fn invoke(
@@ -145,555 +477,120 @@ impl PluginInstance for StepRunnerPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &step_runner_service() {
-            return Err(format!("unsupported step runner service: {service}"));
-        }
-        let context = context(host);
-        let command = context
-            .kernel
-            .decode_projected::<StepRunnerCommand>(&StepRunnerInterface::interface_id(), input)
-            .map_err(|error| error.to_string())?;
-        let response = match command {
-            StepRunnerCommand::Run { request } => run(&context, request)?,
-        };
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
-    }
-}
-
-fn run(
-    context: &StepRunnerContext<'_, '_>,
-    request: PlannedStepRequest,
-) -> Result<StepRunnerResponse, String> {
-    let PlannedStepRequest {
-        attribution,
-        profile_id,
-        callable_id,
-        input,
-        tools,
-        policy,
-        task,
-        context_candidates,
-        cache_epoch,
-        route_policy,
-        now_ms,
-    } = request;
-
-    if !matches!(
-        attribution.kind,
-        UsageAttemptKind::Root | UsageAttemptKind::Retry
-    ) {
-        return Err("planned step runner accepts root and retry attempts only".into());
-    }
-    if attribution.policy_revision != policy.revision {
-        return Err("planned step attribution policy revision does not match UsagePolicy".into());
-    }
-
-    let execution: ExecutionResponse = context
-        .sdk
-        .execution
-        .invoke_projected(&ExecutionCommand::GetExecution {
-            id: attribution.execution_id.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-    let ExecutionResponse::ExecutionLookup {
-        execution: Some(execution),
-    } = execution
-    else {
-        return Err(format!(
-            "unknown planned step execution: {}",
-            attribution.execution_id
-        ));
-    };
-    if execution.state != ExecutionState::Active {
-        return Err(format!(
-            "planned step execution is not active: {}",
-            attribution.execution_id
-        ));
-    }
-
-    let remaining: ExecutionResourceResponse = context
-        .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::Remaining {
-            root_execution_id: attribution.root_execution_id.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-    let ExecutionResourceResponse::Remaining { budget: remaining } = remaining else {
-        return Err("execution resource service returned a non-remaining response".into());
-    };
-    let plan = policy
-        .plan(&UsagePlanningInput {
-            task,
-            execution_state: execution.state,
-            remaining,
-            now_ms,
-        })
-        .map_err(|error| format!("usage planning failed: {error:?}"))?;
-    validate_tools(&tools, &plan)?;
-    validate_retry_lineage(context, &attribution, &plan)?;
-
-    let created: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::Create {
-            attribution: attribution.clone(),
-            plan: plan.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-    let StepAttemptResponse::Attempt { .. } = created else {
-        return Err("step attempt service returned a non-attempt response to create".into());
-    };
-
-    let reservation_id = format!("attempt/{}", attribution.attempt_id);
-    let purpose = match attribution.kind {
-        UsageAttemptKind::Root => BudgetReservationPurpose::RootStep,
-        UsageAttemptKind::Retry => BudgetReservationPurpose::Retry,
-        _ => unreachable!("attempt kind checked above"),
-    };
-    let reserved: ExecutionResourceResponse =
-        match context
-            .sdk
-            .resources
-            .invoke_projected(&ExecutionResourceCommand::Reserve {
-                root_execution_id: attribution.root_execution_id.clone(),
-                reservation: BudgetReservationRequest {
-                    reservation_id: reservation_id.clone(),
-                    parent_reservation_id: None,
-                    policy_revision: plan.policy_revision.clone(),
-                    purpose,
-                    budget: plan.reservation.clone(),
-                    attempts: 1,
-                },
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    None,
-                    format!("root budget reservation failed: {error}"),
+        if service == &helper_invocation_service() {
+            let context = invocation_context(host, helper_invocation_component_id());
+            let command = context
+                .kernel
+                .decode_projected::<HelperInvocationCommand>(
+                    &HelperInvocationInterface::interface_id(),
+                    input,
                 )
-            }
-        };
-    if !matches!(reserved, ExecutionResourceResponse::RootBudget { .. }) {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "execution resource service returned a non-budget response to reserve".into(),
-        );
-    }
-    if let Err(error) = bind_attempt(
-        context,
-        StepAttemptCommand::BindReservation {
-            attempt_id: attribution.attempt_id.clone(),
-            reservation_id: reservation_id.clone(),
-        },
-    ) {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            error,
-        );
-    }
-
-    let routed: ModelResponse =
-        match context
-            .sdk
-            .routing
-            .invoke_projected(&ModelCommand::ResolveWithRequirements {
-                profile_id,
-                callable_id,
-                requirements: plan.routing.clone(),
-                policy: route_policy,
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    Some(&reservation_id),
-                    format!("model routing failed: {error}"),
-                )
-            }
-        };
-    let ModelResponse::Decision { selection } = routed else {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "model routing returned a non-decision response".into(),
-        );
-    };
-    let decision = selection.decision;
-    if let Err(error) = bind_attempt(
-        context,
-        StepAttemptCommand::BindRoute {
-            attempt_id: attribution.attempt_id.clone(),
-            decision: decision.clone(),
-        },
-    ) {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            error,
-        );
-    }
-
-    let admitted: ContextResponse =
-        match context
-            .sdk
-            .context
-            .invoke_projected(&ContextCommand::Admit {
-                request: ContextAdmissionRequest {
-                    execution_id: attribution.execution_id.clone(),
-                    step_plan: plan.clone(),
-                    candidates: context_candidates,
-                    cache_epoch,
-                },
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    Some(&reservation_id),
-                    format!("context admission failed: {error}"),
-                )
-            }
-        };
-    let ContextResponse::Admission { projection, .. } = admitted else {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "context service returned a non-admission response".into(),
-        );
-    };
-    if let Err(error) = bind_attempt(
-        context,
-        StepAttemptCommand::BindProjection {
-            attempt_id: attribution.attempt_id.clone(),
-            projection,
-        },
-    ) {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            error,
-        );
-    }
-
-    let prepared: ModelDispatchResponse =
-        match context
-            .sdk
-            .dispatch
-            .invoke_projected(&ModelDispatchCommand::PrepareResolved {
-                decision: decision.clone(),
-                input,
-                tools,
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                return fail_before_dispatch(
-                    context,
-                    &attribution.root_execution_id,
-                    &attribution.attempt_id,
-                    Some(&reservation_id),
-                    format!("resolved model preflight failed: {error}"),
-                )
-            }
-        };
-    let ModelDispatchResponse::Ready { prepared } = prepared else {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "model dispatch returned inference during preflight".into(),
-        );
-    };
-    if prepared.decision() != &decision {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            "model dispatch preflight changed the resolved decision".into(),
-        );
-    }
-
-    let dispatch_id = format!("dispatch/{}", attribution.attempt_id);
-    if let Err(error) = bind_attempt(
-        context,
-        StepAttemptCommand::MarkDispatched {
-            attempt_id: attribution.attempt_id.clone(),
-            dispatch_id,
-        },
-    ) {
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            error,
-        );
-    }
-
-    let dispatched: ModelDispatchResponse = match context
-        .sdk
-        .dispatch
-        .invoke_projected(&ModelDispatchCommand::InvokePrepared { prepared })
-    {
-        Ok(response) => response,
-        Err(error) => {
-            settle_after_dispatch(
-                context,
-                &attribution.root_execution_id,
-                &attribution.attempt_id,
-                &plan,
-                &reservation_id,
-                AttemptOutcome::Failed,
+                .map_err(|error| error.to_string())?;
+            let HelperInvocationCommand::Invoke { request } = command;
+            let resolved: InvocationDefaultsResponse = context
+                .sdk
+                .defaults
+                .invoke_projected(&InvocationDefaultsCommand::ResolveHelper {
+                    request: request.clone(),
+                })
+                .map_err(|error| format!("helper invocation parameters unavailable: {error}"))?;
+            let InvocationDefaultsResponse::Params { params } = resolved;
+            let kind = request.kind.usage_kind();
+            let encoded = self.invoke_with_kind(
+                &context,
+                host,
+                request.as_invocation_request(),
+                params,
+                kind,
             )?;
-            return Err(format!("prepared model dispatch failed: {error}"));
+            let value: PhenixValue =
+                serde_json::from_slice(&encoded).map_err(|error| error.to_string())?;
+            let response: StepRunnerResponse =
+                value.project().map_err(|error| error.to_string())?;
+            let StepRunnerResponse::Completed {
+                output, tool_calls, ..
+            } = response;
+            return context
+                .kernel
+                .encode_value(&HelperInvocationResponse { output, tool_calls })
+                .map_err(|error| error.to_string());
         }
-    };
-    let ModelDispatchResponse::Inference { response, .. } = dispatched else {
-        settle_after_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            &plan,
-            &reservation_id,
-            AttemptOutcome::Failed,
-        )?;
-        return Err("model dispatch returned preflight readiness after dispatch".into());
-    };
 
-    let settled = conservative_actual(&plan);
-    let attempt = settle_step(
-        context,
-        &attribution.root_execution_id,
-        &reservation_id,
-        settled.clone(),
-        &attribution.attempt_id,
-        AttemptOutcome::Succeeded,
-    )?;
-
-    Ok(StepRunnerResponse::Completed {
-        attempt,
-        output: response.output,
-        tool_calls: response.tool_calls,
-        settled,
-        settlement_basis: StepSettlementBasis::ReservedMaximum,
-    })
-}
-
-fn validate_tools(tools: &[ModelToolDescriptor], plan: &StepPlan) -> Result<(), String> {
-    let provided = tools
-        .iter()
-        .map(|tool| tool.id.clone())
-        .collect::<BTreeSet<_>>();
-    if !plan.tools.initial.is_subset(&provided) {
-        return Err("planned step is missing a required tool descriptor".into());
-    }
-    let allowed = plan
-        .tools
-        .initial
-        .union(&plan.tools.expandable)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    if !provided.is_subset(&allowed) {
-        return Err("planned step provided a tool outside the planned tool set".into());
-    }
-    if provided.len() > plan.tools.max_schemas as usize {
-        return Err("planned step tool descriptor count exceeds the plan".into());
-    }
-    Ok(())
-}
-
-fn validate_retry_lineage(
-    context: &StepRunnerContext<'_, '_>,
-    attribution: &UsageAttribution,
-    plan: &StepPlan,
-) -> Result<(), String> {
-    if attribution.kind != UsageAttemptKind::Retry {
-        return Ok(());
-    }
-    let parent = attribution
-        .parent_attempt_id
-        .clone()
-        .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::ListRoot {
-            root_execution_id: attribution.root_execution_id.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-    let StepAttemptResponse::Attempts { attempts } = response else {
-        return Err("step attempt service returned a non-list response".into());
-    };
-    let attempts = attempts
-        .into_iter()
-        .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
-        .collect::<BTreeMap<_, _>>();
-    let mut seen = BTreeSet::new();
-    let mut current = Some(parent);
-    let mut ancestor_count = 0_u32;
-    while let Some(attempt_id) = current {
-        if !seen.insert(attempt_id.clone()) {
-            return Err("planned retry lineage contains a cycle".into());
+        let context = invocation_context(host, step_runner_component_id());
+        if service == &invocation_service() {
+            let command = context
+                .kernel
+                .decode_projected::<InvocationCommand>(&InvocationInterface::interface_id(), input)
+                .map_err(|error| error.to_string())?;
+            let InvocationCommand::Invoke { request, params } = command;
+            return self.invoke_explicit(&context, host, request, params);
         }
-        let attempt = attempts
-            .get(&attempt_id)
-            .ok_or_else(|| format!("unknown planned retry parent: {attempt_id}"))?;
-        if !matches!(
-            attempt.attribution.kind,
-            UsageAttemptKind::Root | UsageAttemptKind::Retry
-        ) {
-            return Err("planned retry parent is outside the root/retry lifecycle".into());
+        if service == &default_invocation_service() {
+            let command = context
+                .kernel
+                .decode_projected::<DefaultInvocationCommand>(
+                    &DefaultInvocationInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let DefaultInvocationCommand::Invoke { request } = command;
+            let resolved: InvocationDefaultsResponse = context
+                .sdk
+                .defaults
+                .invoke_projected(&InvocationDefaultsCommand::Resolve {
+                    request: request.clone(),
+                })
+                .map_err(|error| format!("default invocation parameters unavailable: {error}"))?;
+            let InvocationDefaultsResponse::Params { params } = resolved;
+            return self.invoke_explicit(&context, host, request, params);
         }
-        ancestor_count = ancestor_count.saturating_add(1);
-        current = attempt.attribution.parent_attempt_id.clone();
+        self.runner.invoke(service, input, host)
     }
-    let requested_attempt = ancestor_count.saturating_add(1);
-    if requested_attempt > plan.retry.max_attempts {
-        return Err(format!(
-            "planned retry exceeds attempt limit: requested {requested_attempt}, allowed {}",
-            plan.retry.max_attempts
-        ));
-    }
-    Ok(())
-}
 
-fn bind_attempt(
-    context: &StepRunnerContext<'_, '_>,
-    command: StepAttemptCommand,
-) -> Result<(), String> {
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&command)
-        .map_err(|error| error.to_string())?;
-    if matches!(response, StepAttemptResponse::Attempt { .. }) {
-        Ok(())
-    } else {
-        Err("step attempt service returned a non-attempt mutation response".into())
+    fn stop(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
+        self.runner.stop(host)
     }
 }
 
-fn fail_before_dispatch<T>(
-    context: &StepRunnerContext<'_, '_>,
-    root_execution_id: &str,
-    attempt_id: &str,
-    reservation_id: Option<&str>,
-    cause: String,
-) -> Result<T, String> {
-    match abort_before_dispatch(
-        context,
-        root_execution_id,
-        attempt_id,
-        reservation_id,
-        AttemptOutcome::Failed,
-    ) {
-        Ok(_) => Err(cause),
-        Err(cleanup) => Err(format!("{cause}; pre-dispatch cleanup failed: {cleanup}")),
-    }
-}
-
-fn abort_before_dispatch(
-    context: &StepRunnerContext<'_, '_>,
-    root_execution_id: &str,
-    attempt_id: &str,
-    reservation_id: Option<&str>,
-    outcome: AttemptOutcome,
-) -> Result<StepAttemptRecord, String> {
-    let response: StepTransactionResponse = context
-        .sdk
-        .transactions
-        .invoke_projected(&StepTransactionCommand::AbortBeforeDispatch {
-            root_execution_id: root_execution_id.to_owned(),
-            reservation_id: reservation_id.map(str::to_owned),
-            attempt_id: attempt_id.to_owned(),
-            outcome,
-        })
-        .map_err(|error| error.to_string())?;
-    match response {
-        StepTransactionResponse::Aborted { attempt, .. } => Ok(attempt),
-        StepTransactionResponse::Settled { .. } => {
-            Err("step transaction service returned settlement to pre-dispatch abort".into())
-        }
-    }
-}
-
-fn settle_step(
-    context: &StepRunnerContext<'_, '_>,
-    root_execution_id: &str,
-    reservation_id: &str,
-    actual: BudgetActual,
-    attempt_id: &str,
-    outcome: AttemptOutcome,
-) -> Result<StepAttemptRecord, String> {
-    let response: StepTransactionResponse = context
-        .sdk
-        .transactions
-        .invoke_projected(&StepTransactionCommand::Settle {
-            root_execution_id: root_execution_id.to_owned(),
-            reservation_id: reservation_id.to_owned(),
-            actual,
-            attempt_id: attempt_id.to_owned(),
-            outcome,
-        })
-        .map_err(|error| error.to_string())?;
-    match response {
-        StepTransactionResponse::Settled { attempt, .. } => Ok(attempt),
-        StepTransactionResponse::Aborted { .. } => {
-            Err("step transaction service returned abort to terminal settlement".into())
-        }
-    }
-}
-
-fn settle_after_dispatch(
-    context: &StepRunnerContext<'_, '_>,
-    root_execution_id: &str,
-    attempt_id: &str,
-    plan: &StepPlan,
-    reservation_id: &str,
-    outcome: AttemptOutcome,
-) -> Result<(), String> {
-    settle_step(
-        context,
-        root_execution_id,
-        reservation_id,
-        conservative_actual(plan),
-        attempt_id,
-        outcome,
+fn is_isolated_helper(kind: UsageAttemptKind) -> bool {
+    matches!(
+        kind,
+        UsageAttemptKind::Helper
+            | UsageAttemptKind::Verification
+            | UsageAttemptKind::RecoveryClassifier
     )
-    .map(|_| ())
 }
 
-fn conservative_actual(plan: &StepPlan) -> BudgetActual {
-    BudgetActual {
-        fresh_input_tokens: plan.reservation.input_tokens,
-        output_tokens: plan.reservation.output_tokens,
-        cost_microunits: plan.reservation.cost_microunits,
-        attempts: 1,
+fn root_execution_id(
+    context: &InvocationContext<'_, '_>,
+    execution_id: &str,
+) -> Result<String, String> {
+    if execution_id.trim().is_empty() {
+        return Err("invocation execution id must not be empty".into());
+    }
+    let mut current = execution_id.to_owned();
+    let mut seen = BTreeSet::new();
+    loop {
+        if !seen.insert(current.clone()) {
+            return Err("execution parent lineage contains a cycle".into());
+        }
+        let response: ExecutionResponse = context
+            .sdk
+            .execution
+            .invoke_projected(&ExecutionCommand::GetExecution {
+                id: current.clone(),
+            })
+            .map_err(|error| format!("execution lookup failed: {error}"))?;
+        let ExecutionResponse::ExecutionLookup {
+            execution: Some(execution),
+        } = response
+        else {
+            return Err(format!("unknown invocation execution: {current}"));
+        };
+        match execution.parent_execution {
+            Some(parent) => current = parent,
+            None => return Ok(execution.id),
+        }
     }
 }
 
@@ -702,21 +599,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_uses_typed_imports_instead_of_plugin_dependencies() {
-        assert!(step_runner_manifest(Authority::default())
-            .dependencies
-            .is_empty());
+    fn public_package_splits_helper_from_central_invocation_component() {
+        let authority = Authority::default();
+        let manifest = step_runner_manifest(authority.clone());
+        assert!(manifest.dependencies.is_empty());
+        for service in [
+            invocation_service(),
+            default_invocation_service(),
+            helper_invocation_service(),
+            step_runner_service(),
+        ] {
+            assert!(manifest
+                .services
+                .iter()
+                .any(|contribution| contribution.service == service));
+        }
+
+        let central = step_runner_component_manifest(authority.clone());
+        for interface in [
+            InvocationInterface::interface_id(),
+            DefaultInvocationInterface::interface_id(),
+            phenix_sdk::StepRunnerInterface::interface_id(),
+        ] {
+            assert!(central
+                .exports
+                .iter()
+                .any(|export| export.interface == interface));
+        }
+        assert!(!central
+            .exports
+            .iter()
+            .any(|export| export.interface == HelperInvocationInterface::interface_id()));
+        assert!(central.imports.iter().any(|import| {
+            import.interface == ContextRecoveryInterface::interface_id() && !import.required
+        }));
+        assert!(central.imports.iter().any(|import| {
+            import.interface == MemoryContextInterface::interface_id() && !import.required
+        }));
+
+        let helper = helper_invocation_component_manifest(authority);
+        assert_eq!(helper.id, helper_invocation_component_id());
+        assert_eq!(helper.exports.len(), 1);
+        assert_eq!(
+            helper.exports[0].interface,
+            HelperInvocationInterface::interface_id()
+        );
+        assert!(!helper
+            .imports
+            .iter()
+            .any(|import| import.interface == ContextInterface::interface_id()));
+        assert!(!helper.imports.iter().any(|import| {
+            import.interface == MemoryContextInterface::interface_id()
+                || import.interface == MemoryInterface::interface_id()
+        }));
     }
 
     #[test]
-    fn component_imports_each_state_owner_once() {
-        let component = step_runner_component_manifest(Authority::default());
-        assert_eq!(component.imports.len(), 7);
-        assert!(component.imports.iter().all(|import| import.required));
-        assert_eq!(component.exports.len(), 1);
-        assert_eq!(
-            component.exports[0].interface,
-            StepRunnerInterface::interface_id()
-        );
+    fn context_service_identity_is_not_redefined_by_invocation_package() {
+        assert_eq!(context_service(), phenix_sdk::context_service());
     }
 }

@@ -1,4 +1,6 @@
-use super::{AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttribution};
+use super::{
+    AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
+};
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 
@@ -170,6 +172,13 @@ fn validate_identity(field: &str, value: &str) -> Result<(), StepAttemptTransiti
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StepAttemptCommand {
+    AllocateIdentity {
+        root_execution_id: String,
+        execution_id: String,
+        parent_attempt_id: Option<String>,
+        policy_revision: String,
+        kind: UsageAttemptKind,
+    },
     Create {
         attribution: UsageAttribution,
         plan: StepPlan,
@@ -209,6 +218,7 @@ pub enum StepAttemptCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StepAttemptResponse {
+    Attribution { attribution: UsageAttribution },
     Attempt { attempt: StepAttemptRecord },
     AttemptLookup { attempt: Option<StepAttemptRecord> },
     Attempts { attempts: Vec<StepAttemptRecord> },

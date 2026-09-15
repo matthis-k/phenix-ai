@@ -60,9 +60,7 @@ mod tests {
     use super::*;
     use phenix_core::{
         ComponentId, ComponentImport, PluginExecution, PluginManifest, ResolvedComponentGraph,
-        ServiceContribution,
     };
-    use phenix_sdk::{model_dispatch_service, model_routing_service};
 
     fn plugin(value: &str) -> PluginId {
         PluginId::parse(value).unwrap()
@@ -105,54 +103,6 @@ mod tests {
             ],
             exports: Vec::new(),
             maximum_authority: authority,
-        }
-    }
-
-    fn replacement_manifest() -> PluginManifest {
-        PluginManifest {
-            id: plugin("fixture.model-replacement"),
-            version: 1,
-            execution: PluginExecution::Embedded,
-            dependencies: Vec::new(),
-            services: [model_routing_service(), model_dispatch_service()]
-                .into_iter()
-                .map(|service| ServiceContribution {
-                    role: phenix_core::ServiceRole::Terminal,
-                    service,
-                    priority: 200,
-                    required_authority: Authority::default(),
-                })
-                .collect(),
-            resource_namespaces: Vec::new(),
-            maximum_authority: Authority::default(),
-        }
-    }
-
-    fn replacement_component() -> ComponentManifest {
-        ComponentManifest {
-            listeners: Vec::new(),
-            id: component("fixture.model-replacement"),
-            owner: plugin("fixture.model-replacement"),
-            imports: Vec::new(),
-            exports: [
-                (
-                    ModelRoutingInterface::interface_id(),
-                    ModelRoutingInterface::schema(),
-                ),
-                (
-                    ModelDispatchInterface::interface_id(),
-                    ModelDispatchInterface::schema(),
-                ),
-            ]
-            .into_iter()
-            .map(|(interface, schema)| ComponentExport {
-                interface,
-                schema,
-                priority: 200,
-                required_authority: Authority::default(),
-            })
-            .collect(),
-            maximum_authority: Authority::default(),
         }
     }
 
@@ -207,38 +157,6 @@ mod tests {
                 .import_handle(&component("fixture.model-consumer"), &interface)
                 .unwrap()
                 .is_some());
-        }
-    }
-
-    #[test]
-    fn alternate_model_component_can_replace_both_sdk_interfaces() {
-        let consumer_authority = persistence_authority();
-        let first_party = model_routing_manifest(consumer_authority.clone());
-        let graph = ResolvedComponentGraph::compile(
-            [
-                consumer_manifest(consumer_authority.clone()),
-                first_party,
-                replacement_manifest(),
-            ],
-            [
-                consumer_component(consumer_authority.clone()),
-                model_routing_component_manifest(consumer_authority.clone()),
-                replacement_component(),
-            ],
-            &consumer_authority,
-        )
-        .unwrap();
-
-        for interface in [
-            ModelRoutingInterface::interface_id(),
-            ModelDispatchInterface::interface_id(),
-        ] {
-            let handle = graph
-                .import_handle(&component("fixture.model-consumer"), &interface)
-                .unwrap()
-                .expect("replacement export resolves");
-            assert_eq!(handle.exporter(), &component("fixture.model-replacement"));
-            assert_eq!(handle.owning_plugin(), &plugin("fixture.model-replacement"));
         }
     }
 }

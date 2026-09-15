@@ -247,7 +247,7 @@ mod admission_restart {
                 invoke(
                     &mut kernel,
                     ContextCommand::Admit {
-                        request: Box::new(admission("exec-1")),
+                        request: admission("exec-1"),
                     },
                 )
                 .unwrap(),
@@ -287,7 +287,7 @@ mod compaction_cas {
         invoke(
             &mut kernel,
             ContextCommand::Admit {
-                request: Box::new(admission("exec-1")),
+                request: admission("exec-1"),
             },
         )
         .unwrap();
@@ -326,7 +326,7 @@ mod injection_invalidation {
         invoke(
             &mut kernel,
             ContextCommand::Admit {
-                request: Box::new(admission("exec-1")),
+                request: admission("exec-1"),
             },
         )
         .unwrap();

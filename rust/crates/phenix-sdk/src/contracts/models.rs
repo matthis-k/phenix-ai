@@ -4,8 +4,8 @@ pub use phenix_core::{
     ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    Bytes, CallableId, CapabilityGenerationId, ComponentInterface, InterfaceId, ModelId,
-    ModelToolDescriptor, PhenixValue, PluginId, RoutingProfileId, ServiceId,
+    CallableId, CapabilityGenerationId, ComponentInterface, InterfaceId, ModelId, PhenixValue,
+    PluginId, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -191,6 +191,7 @@ pub struct RoutingEvidence {
     pub usage: ModelTurnUsage,
 }
 
+#[must_use]
 pub fn select_route(
     candidates: &[RoutingCandidate],
     requirements: &RoutingRequirements,
@@ -306,10 +307,6 @@ pub enum ModelCommand {
         profile_id: RoutingProfileId,
         callable_id: Option<CallableId>,
     },
-    Resolve {
-        profile_id: RoutingProfileId,
-        callable_id: Option<CallableId>,
-    },
     ResolveWithRequirements {
         profile_id: RoutingProfileId,
         callable_id: Option<CallableId>,
@@ -319,13 +316,6 @@ pub enum ModelCommand {
     RecordEvidence {
         decision: RouteDecision,
         evidence: RoutingEvidence,
-    },
-    Invoke {
-        profile_id: RoutingProfileId,
-        callable_id: Option<CallableId>,
-        input: Bytes,
-        #[serde(default)]
-        tools: Vec<ModelToolDescriptor>,
     },
 }
 
@@ -348,17 +338,10 @@ pub enum ModelResponse {
     Candidates {
         candidates: Vec<RoutingCandidate>,
     },
-    Target {
-        target: ModelTarget,
-    },
     Decision {
         selection: RouteSelection,
     },
     EvidenceRecorded,
-    Inference {
-        target: ModelTarget,
-        response: ModelInferenceResponse,
-    },
 }
 
 pub struct ModelRoutingInterface;

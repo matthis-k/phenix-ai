@@ -120,6 +120,16 @@ impl ExecutionResourceState {
             .map(RootBudgetLedger::remaining)
     }
 
+    pub(crate) fn remaining_within(
+        &self,
+        root_execution_id: &str,
+        reservation_id: &str,
+    ) -> Result<RemainingBudget, ExecutionResourceError> {
+        self.ledger(root_execution_id)?
+            .remaining_within(reservation_id)
+            .map_err(ExecutionResourceError::Budget)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn admit_delegated(
         &mut self,

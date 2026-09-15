@@ -162,12 +162,6 @@ fn handle(
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
         }),
-        ContextCommand::Admit { .. }
-        | ContextCommand::PrepareCompaction { .. }
-        | ContextCommand::CommitCompaction { .. }
-        | ContextCommand::InvalidateProjection { .. } => {
-            Err("context projection state commands are not active at this stack layer".into())
-        }
     }
 }
 

@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, ComponentManifest, ModelId, PhenixValue, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, RoutingProfileId, ServiceContribution, ServiceId,
-    ValueError,
+    Authority, CapabilityGenerationId, ComponentManifest, ModelId, PhenixValue, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
+    ServiceContribution, ServiceId, ValueError,
 };
 use phenix_harness::{default_suite_authority, HarnessBuilder, PhenixHarness};
 use phenix_plugin_catalog::{
@@ -13,6 +13,12 @@ use phenix_plugin_catalog::{
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
     RoutingProfile, SessionCommand, SessionResponse, SessionTreeCommand, SessionTreeResponse,
     WorkspaceCommand, WorkspaceResponse,
+};
+use phenix_sdk::{
+    CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelCapabilities,
+    ExecutionResourceCommand, ExecutionResourceResponse, InvocationCommand, InvocationIntent,
+    InvocationParams, InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits,
+    RouteSelectionPolicy, RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -438,7 +444,27 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
     let _: ModelResponse = invoke_structural(
         &mut harness,
         "phenix.models.routing@1",
-        &ModelCommand::RegisterProfile { profile },
+        &ModelCommand::RegisterProfile {
+            profile: profile.clone(),
+        },
+    );
+    let _: ModelResponse = invoke_structural(
+        &mut harness,
+        "phenix.models.routing@1",
+        &ModelCommand::PublishCapabilities {
+            capabilities: EffectiveModelCapabilities {
+                target: profile.default_target.clone(),
+                generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+                context: ContextControl::ReplaceableTurns,
+                capacity: CapacityKnowledge::Known {
+                    limits: ModelLimits {
+                        context_window_tokens: 16_000,
+                        max_output_tokens: Some(2_000),
+                    },
+                },
+                optional: BTreeSet::new(),
+            },
+        },
     );
     let _: ModelResponse = invoke_structural(
         &mut harness,
@@ -448,28 +474,6 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             authenticated: true,
         },
     );
-    let output: ModelResponse = invoke_structural(
-        &mut harness,
-        "phenix.models.routing@1",
-        &ModelCommand::Invoke {
-            profile_id: RoutingProfileId::parse("parity").unwrap(),
-            callable_id: None,
-            input: b"hello".to_vec().into(),
-            tools: Vec::new(),
-        },
-    );
-    match output {
-        ModelResponse::Inference { target, response } => {
-            assert_eq!(target.provider_plugin.as_str(), provider);
-            assert_eq!(target.model.as_str(), "fixture-model");
-            assert_eq!(response.output.as_ref(), b"answer:hello");
-            assert_eq!(
-                response.provider_metadata["model"],
-                PhenixValue::String("fixture-model".into())
-            );
-        }
-        other => panic!("unexpected model response: {other:?}"),
-    }
 
     let _: ExecutionResponse = invoke_structural(
         &mut harness,
@@ -479,6 +483,92 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
         },
     );
+    let _: ExecutionResourceResponse = invoke_structural(
+        &mut harness,
+        "phenix.execution.resources@1",
+        &ExecutionResourceCommand::RegisterRootBudget {
+            ledger: RootBudgetLedger {
+                root_execution_id: "root".into(),
+                limits: RootBudgetLimits {
+                    fresh_input_tokens: 8_000,
+                    output_tokens: 2_000,
+                    cost_microunits: None,
+                    attempts: 4,
+                },
+                reservations: BTreeMap::new(),
+            },
+        },
+    );
+
+    let response: StepRunnerResponse = invoke_structural(
+        &mut harness,
+        "phenix.invocation@1",
+        &InvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "root".into(),
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"hello".to_vec().into(),
+                tools: Vec::new(),
+            },
+            params: InvocationParams {
+                profile_id: RoutingProfileId::parse("parity").unwrap(),
+                policy: UsagePolicy {
+                    revision: "fixture-policy".into(),
+                    max_fresh_input_tokens: 4_000,
+                    max_output_tokens: 512,
+                    max_cost_microunits: None,
+                    max_retries: 0,
+                    max_tool_result_bytes: 64 * 1024,
+                    max_tool_schemas: 4,
+                    max_skills: 4,
+                    require_known_capacity: true,
+                    delegation: DelegationResourcePolicy::default(),
+                },
+                intent: InvocationIntent {
+                    output_reserve_tokens: 256,
+                    required_context_capabilities: BTreeSet::new(),
+                    required_capabilities: BTreeSet::new(),
+                    required_tools: BTreeSet::new(),
+                    optional_tools: BTreeSet::new(),
+                    required_skills: BTreeSet::new(),
+                    optional_skills: BTreeSet::new(),
+                    requested_reasoning: None,
+                    deadline_at_ms: None,
+                },
+                route_policy: RouteSelectionPolicy {
+                    revision: "fixture-route-policy".into(),
+                    estimates: RoutingEstimateMode::Ignore,
+                    max_candidate_attempts: 2,
+                },
+            },
+        },
+    );
+    let StepRunnerResponse::Completed {
+        attempt, output, ..
+    } = response;
+    let route = attempt
+        .route
+        .as_ref()
+        .expect("central invocation bound a route");
+    assert_eq!(route.target.provider_plugin.as_str(), provider);
+    assert_eq!(route.target.model.as_str(), "fixture-model");
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.starts_with("answer:"));
+    assert!(text.contains("hello"));
+    assert_eq!(
+        attempt.plan.routing.context.mandatory_input_tokens,
+        attempt
+            .plan
+            .context
+            .mandatory_input_tokens
+            .saturating_add(5)
+    );
+    assert_eq!(
+        attempt.plan.reservation.input_tokens,
+        attempt.plan.context.total_input_tokens().saturating_add(5)
+    );
+
     let _: ExecutionResponse = invoke_structural(
         &mut harness,
         "phenix.execution@1",

@@ -99,9 +99,7 @@ impl RoutingServiceState {
             ModelCommand::RegisterProfile { .. }
             | ModelCommand::GetProfile { .. }
             | ModelCommand::ListProfiles
-            | ModelCommand::SetProviderAuthenticated { .. }
-            | ModelCommand::Resolve { .. }
-            | ModelCommand::Invoke { .. } => return None,
+            | ModelCommand::SetProviderAuthenticated { .. } => return None,
         };
         Some(response)
     }

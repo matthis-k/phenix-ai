@@ -1,5 +1,5 @@
 use super::{
-    context_admission::{ContextAdmissionRequest, ContextAdmissionResult},
+    context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
     CompactionCommit, CompactionProposal, ProjectionRevision,
 };
 use phenix_core::{
@@ -77,6 +77,21 @@ pub struct ExecutionContextProjection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInvocationPreparation {
+    pub request_input_tokens: u64,
+    pub candidates: Vec<ContextCandidate>,
+    pub projection: ProjectionRevision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInvocationMaterialization {
+    pub input: Bytes,
+    pub projection: ProjectionRevision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct RepositoryContextSource {
     pub path: String,
     pub content: Bytes,
@@ -112,8 +127,20 @@ pub enum ContextCommand {
     Project {
         execution_id: String,
     },
+    PrepareInvocation {
+        execution_id: String,
+        input: Bytes,
+    },
+    MaterializeInvocation {
+        execution_id: String,
+        input: Bytes,
+        expected_projection: ProjectionRevision,
+    },
+    GetProjectionState {
+        execution_id: String,
+    },
     Admit {
-        request: Box<ContextAdmissionRequest>,
+        request: ContextAdmissionRequest,
     },
     PrepareCompaction {
         proposal: CompactionProposal,
@@ -148,6 +175,15 @@ pub enum ContextResponse {
     },
     Projection {
         projection: ExecutionContextProjection,
+    },
+    InvocationPrepared {
+        preparation: ContextInvocationPreparation,
+    },
+    InvocationMaterialized {
+        materialization: ContextInvocationMaterialization,
+    },
+    ProjectionState {
+        projection: ProjectionRevision,
     },
     Admission {
         result: ContextAdmissionResult,

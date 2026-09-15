@@ -23,6 +23,8 @@ pub struct UsagePolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequirements {
+    /// Fresh input that is part of the active request rather than a context candidate.
+    pub request_input_tokens: u64,
     pub context: ContextDemand,
     #[serde(default)]
     pub required_capabilities: BTreeSet<String>,
@@ -148,9 +150,13 @@ impl UsagePolicy {
             (None, remaining) => remaining,
         };
 
-        if input.task.context.mandatory_input_tokens > fresh_input_budget {
+        let mandatory_input_tokens = input
+            .task
+            .request_input_tokens
+            .saturating_add(input.task.context.mandatory_input_tokens);
+        if mandatory_input_tokens > fresh_input_budget {
             return Err(UsagePlanError::MandatoryInputExceedsBudget {
-                requested: input.task.context.mandatory_input_tokens,
+                requested: mandatory_input_tokens,
                 allowed: fresh_input_budget,
             });
         }
@@ -176,8 +182,7 @@ impl UsagePolicy {
             });
         }
 
-        let reducible_budget =
-            fresh_input_budget.saturating_sub(input.task.context.mandatory_input_tokens);
+        let reducible_budget = fresh_input_budget.saturating_sub(mandatory_input_tokens);
         let planned_reducible = input
             .task
             .context
@@ -189,6 +194,12 @@ impl UsagePolicy {
             output_reserve_tokens: input.task.context.output_reserve_tokens,
             required_capabilities: input.task.context.required_capabilities.clone(),
         };
+        let routing_context = ContextDemand {
+            mandatory_input_tokens,
+            reducible_input_tokens: planned_reducible,
+            output_reserve_tokens: planned_context.output_reserve_tokens,
+            required_capabilities: planned_context.required_capabilities.clone(),
+        };
 
         let max_attempts = self.max_retries.saturating_add(1);
         let reserved_attempts = max_attempts.min(input.remaining.attempts);
@@ -196,7 +207,7 @@ impl UsagePolicy {
         Ok(StepPlan {
             policy_revision: self.revision.clone(),
             routing: RoutingRequirements {
-                context: planned_context.clone(),
+                context: routing_context,
                 required_capabilities: input.task.required_capabilities.clone(),
                 require_known_capacity: self.require_known_capacity,
             },
@@ -224,7 +235,10 @@ impl UsagePolicy {
                 reserved_attempts,
             },
             reservation: BudgetReservation {
-                input_tokens: planned_context.total_input_tokens(),
+                input_tokens: input
+                    .task
+                    .request_input_tokens
+                    .saturating_add(planned_context.total_input_tokens()),
                 output_tokens: planned_context.output_reserve_tokens,
                 cost_microunits: cost_budget,
             },
@@ -260,6 +274,7 @@ mod tests {
     fn input(context: ContextDemand) -> UsagePlanningInput {
         UsagePlanningInput {
             task: TaskRequirements {
+                request_input_tokens: 0,
                 context,
                 required_capabilities: BTreeSet::new(),
                 required_tools: BTreeSet::new(),
@@ -306,6 +321,46 @@ mod tests {
             output_reserve_tokens: 100,
             required_capabilities: BTreeSet::new(),
         });
+
+        assert_eq!(
+            policy().plan(&request),
+            Err(UsagePlanError::MandatoryInputExceedsBudget {
+                requested: 1_001,
+                allowed: 1_000,
+            })
+        );
+    }
+
+    #[test]
+    fn request_input_consumes_budget_without_expanding_context_admission_budget() {
+        let mut request = input(ContextDemand {
+            mandatory_input_tokens: 200,
+            reducible_input_tokens: 600,
+            output_reserve_tokens: 100,
+            required_capabilities: BTreeSet::new(),
+        });
+        request.task.request_input_tokens = 300;
+
+        let plan = policy().plan(&request).unwrap();
+
+        assert_eq!(plan.context.mandatory_input_tokens, 200);
+        assert_eq!(plan.context.reducible_input_tokens, 500);
+        assert_eq!(plan.context.total_input_tokens(), 700);
+        assert_eq!(plan.routing.context.mandatory_input_tokens, 500);
+        assert_eq!(plan.routing.context.total_input_tokens(), 1_000);
+        assert_eq!(plan.reservation.input_tokens, 1_000);
+        assert_eq!(plan.reducible_input_dropped_tokens, 100);
+    }
+
+    #[test]
+    fn request_input_and_mandatory_context_share_the_same_hard_floor() {
+        let mut request = input(ContextDemand {
+            mandatory_input_tokens: 701,
+            reducible_input_tokens: 0,
+            output_reserve_tokens: 100,
+            required_capabilities: BTreeSet::new(),
+        });
+        request.task.request_input_tokens = 300;
 
         assert_eq!(
             policy().plan(&request),

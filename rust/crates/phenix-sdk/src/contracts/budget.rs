@@ -204,7 +204,10 @@ impl RootBudgetLedger {
         Ok(())
     }
 
-    fn remaining_within(&self, reservation_id: &str) -> Result<RemainingBudget, BudgetLedgerError> {
+    pub fn remaining_within(
+        &self,
+        reservation_id: &str,
+    ) -> Result<RemainingBudget, BudgetLedgerError> {
         let parent = self.reservations.get(reservation_id).ok_or_else(|| {
             BudgetLedgerError::UnknownParentReservation {
                 reservation_id: reservation_id.to_owned(),

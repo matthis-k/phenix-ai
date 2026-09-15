@@ -1,9 +1,11 @@
-use crate::{execution_component_id, AgentLoopInterface};
+use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, PluginContext,
-    PluginHost, PluginInstance, RoutingProfileId, SdkClient, ServiceId,
+    PluginHost, PluginInstance, SdkClient, ServiceId,
 };
-use phenix_sdk::{ModelCommand, ModelResponse, ModelRoutingInterface};
+use phenix_sdk::{
+    DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
+};
 use serde::{Deserialize, Serialize};
 
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
@@ -33,7 +35,8 @@ impl Default for AgentLoopPolicy {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentLoopCommand {
     Run {
-        profile_id: RoutingProfileId,
+        execution_id: String,
+        parent_attempt_id: Option<String>,
         callable_id: Option<CallableId>,
         input: Bytes,
         #[serde(default)]
@@ -67,7 +70,7 @@ pub(crate) fn agent_loop_factory() -> Box<dyn PluginInstance> {
 }
 
 struct AgentLoopSdk<'host, 'runtime> {
-    models: SdkClient<'host, 'runtime, ModelRoutingInterface>,
+    invocation: SdkClient<'host, 'runtime, DefaultInvocationInterface>,
 }
 
 type AgentLoopContext<'host, 'runtime> =
@@ -79,7 +82,7 @@ fn context<'host, 'runtime>(
     PluginContext::new(
         host,
         AgentLoopSdk {
-            models: SdkClient::new(host, execution_component_id()),
+            invocation: SdkClient::new(host, agent_loop_component_id()),
         },
         (),
         (),
@@ -122,31 +125,36 @@ fn handle(
 ) -> Result<AgentLoopResponse, String> {
     match command {
         AgentLoopCommand::Run {
-            profile_id,
+            execution_id,
+            parent_attempt_id,
             callable_id,
             input,
             tools,
         } => {
             let response = context
                 .sdk
-                .models
-                .invoke_projected(&ModelCommand::Invoke {
-                    profile_id,
-                    callable_id,
-                    input,
-                    tools,
+                .invocation
+                .invoke_projected(&DefaultInvocationCommand::Invoke {
+                    request: InvocationRequest {
+                        execution_id,
+                        parent_attempt_id,
+                        callable_id,
+                        input,
+                        tools,
+                    },
                 })
                 .map_err(|error| error.to_string())?;
-            let ModelResponse::Inference { response, .. } = response else {
-                return Err("model routing returned a non-inference response to invoke".into());
-            };
+            let StepRunnerResponse::Completed {
+                output, tool_calls, ..
+            } = response;
+            let tool_call_count = u32::try_from(tool_calls.len())
+                .map_err(|_| "model returned too many tool calls".to_owned())?;
             Ok(AgentLoopResponse::Completed {
-                output: response.output,
-                tool_calls: response.tool_calls.clone(),
+                output,
+                tool_calls,
                 usage: AgentLoopUsage {
                     model_calls: 1,
-                    tool_calls: u32::try_from(response.tool_calls.len())
-                        .map_err(|_| "model returned too many tool calls".to_owned())?,
+                    tool_calls: tool_call_count,
                 },
             })
         }

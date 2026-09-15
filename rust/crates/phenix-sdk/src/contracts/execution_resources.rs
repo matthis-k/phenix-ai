@@ -30,6 +30,10 @@ pub enum ExecutionResourceCommand {
     Remaining {
         root_execution_id: String,
     },
+    RemainingWithin {
+        root_execution_id: String,
+        reservation_id: String,
+    },
     AdmitDelegated {
         root_execution_id: String,
         reservation: BudgetReservationRequest,
