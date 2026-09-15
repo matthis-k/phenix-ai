@@ -1,7 +1,6 @@
 use crate::{attempt_service, resource_service};
 use phenix_core::{
-    ComponentInterface, PluginContext, PluginHost, PluginInstance, PreparedMutationHandle,
-    ServiceId, TransactionOp,
+    ComponentInterface, PluginContext, PluginHost, PluginInstance, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     step_transaction_service, StepTransactionCommand, StepTransactionInterface,
@@ -45,7 +44,7 @@ impl PluginInstance for StepTransactionPlugin {
                 input,
             )
             .map_err(|error| error.to_string())?;
-        let response = handle(&context, command)?;
+        let response = handle(&context, host, command)?;
         context
             .kernel
             .encode_value(&response)
@@ -55,6 +54,7 @@ impl PluginInstance for StepTransactionPlugin {
 
 fn handle(
     context: &StepTransactionContext<'_, '_>,
+    host: &PluginHost<'_>,
     command: StepTransactionCommand,
 ) -> Result<StepTransactionResponse, String> {
     match command {
@@ -70,17 +70,20 @@ fn handle(
             let ledger = resources
                 .settle_reservation(&root_execution_id, &reservation_id, actual)
                 .map_err(|error| format!("root budget settlement failed: {error:?}"))?;
-            let resource_mutation = prepare_resource_state(context, resource_old, &resources)?;
+            let resource_operations = resource_operations(resource_old, &resources)?;
 
             let attempt_old = read_attempt_state(context)?;
             let mut attempts = attempt_service::restore(attempt_old.as_deref())?;
             let attempt = attempts.settle(&attempt_id, outcome)?;
-            let attempt_mutation = prepare_attempt_state(context, attempt_old, &attempts)?;
+            let attempt_operations = attempt_operations(attempt_old, &attempts)?;
 
-            context
-                .kernel
-                .transact_prepared(&[resource_mutation, attempt_mutation])
-                .map_err(|error| error.to_string())?;
+            let resource_namespace = resource_service::execution_resource_namespace();
+            let attempt_namespace = attempt_service::attempt_namespace();
+            host.transact_owned_durable_many(&[
+                (&resource_namespace, resource_operations.as_slice()),
+                (&attempt_namespace, attempt_operations.as_slice()),
+            ])
+            .map_err(|error| error.to_string())?;
 
             Ok(StepTransactionResponse::Settled { ledger, attempt })
         }
@@ -93,7 +96,8 @@ fn handle(
             let attempt_old = read_attempt_state(context)?;
             let mut attempts = attempt_service::restore(attempt_old.as_deref())?;
             let attempt = attempts.abort(&attempt_id, outcome)?;
-            let attempt_mutation = prepare_attempt_state(context, attempt_old, &attempts)?;
+            let attempt_operations = attempt_operations(attempt_old, &attempts)?;
+            let attempt_namespace = attempt_service::attempt_namespace();
 
             let ledger = if let Some(reservation_id) = reservation_id {
                 let resource_old = read_resource_state(context)?;
@@ -101,16 +105,18 @@ fn handle(
                 let ledger = resources
                     .release_reservation(&root_execution_id, &reservation_id)
                     .map_err(|error| format!("root budget release failed: {error:?}"))?;
-                let resource_mutation = prepare_resource_state(context, resource_old, &resources)?;
-                context
-                    .kernel
-                    .transact_prepared(&[resource_mutation, attempt_mutation])
-                    .map_err(|error| error.to_string())?;
+                let resource_operations = resource_operations(resource_old, &resources)?;
+                let resource_namespace = resource_service::execution_resource_namespace();
+                host.transact_owned_durable_many(&[
+                    (&resource_namespace, resource_operations.as_slice()),
+                    (&attempt_namespace, attempt_operations.as_slice()),
+                ])
+                .map_err(|error| error.to_string())?;
                 Some(ledger)
             } else {
                 context
                     .kernel
-                    .transact_prepared(&[attempt_mutation])
+                    .transact_durable(&attempt_namespace, &attempt_operations)
                     .map_err(|error| error.to_string())?;
                 None
             };
@@ -142,50 +148,34 @@ fn read_attempt_state(context: &StepTransactionContext<'_, '_>) -> Result<Option
         .map_err(|error| error.to_string())
 }
 
-fn prepare_resource_state(
-    context: &StepTransactionContext<'_, '_>,
+fn resource_operations(
     old: Option<Vec<u8>>,
     state: &crate::resource_transaction::ExecutionResourceState,
-) -> Result<PreparedMutationHandle, String> {
-    let encoded = resource_service::encode_state(state)?;
-    context
-        .kernel
-        .prepare_durable_transaction(
-            &resource_service::execution_resource_namespace(),
-            &[
-                TransactionOp::AssertValue {
-                    key: resource_service::RESOURCE_STATE_KEY.into(),
-                    expected: old,
-                },
-                TransactionOp::Put {
-                    key: resource_service::RESOURCE_STATE_KEY.into(),
-                    value: encoded,
-                },
-            ],
-        )
-        .map_err(|error| error.to_string())
+) -> Result<Vec<TransactionOp>, String> {
+    Ok(vec![
+        TransactionOp::AssertValue {
+            key: resource_service::RESOURCE_STATE_KEY.into(),
+            expected: old,
+        },
+        TransactionOp::Put {
+            key: resource_service::RESOURCE_STATE_KEY.into(),
+            value: resource_service::encode_state(state)?,
+        },
+    ])
 }
 
-fn prepare_attempt_state(
-    context: &StepTransactionContext<'_, '_>,
+fn attempt_operations(
     old: Option<Vec<u8>>,
     ledger: &attempt_service::AttemptLedger,
-) -> Result<PreparedMutationHandle, String> {
-    let encoded = attempt_service::encode_ledger(ledger)?;
-    context
-        .kernel
-        .prepare_durable_transaction(
-            &attempt_service::attempt_namespace(),
-            &[
-                TransactionOp::AssertValue {
-                    key: attempt_service::ATTEMPT_STATE_KEY.into(),
-                    expected: old,
-                },
-                TransactionOp::Put {
-                    key: attempt_service::ATTEMPT_STATE_KEY.into(),
-                    value: encoded,
-                },
-            ],
-        )
-        .map_err(|error| error.to_string())
+) -> Result<Vec<TransactionOp>, String> {
+    Ok(vec![
+        TransactionOp::AssertValue {
+            key: attempt_service::ATTEMPT_STATE_KEY.into(),
+            expected: old,
+        },
+        TransactionOp::Put {
+            key: attempt_service::ATTEMPT_STATE_KEY.into(),
+            value: attempt_service::encode_ledger(ledger)?,
+        },
+    ])
 }
