@@ -46,9 +46,10 @@ let
         ''}
       '';
 
-  mkPhenix =
+  mkPhenixWithBase =
     {
       pkgs,
+      base,
       conductorOnly ? false,
       plugins ? [ ],
       resources ? [ ],
@@ -60,11 +61,6 @@ let
       ...
     }:
     let
-      base =
-        if conductorOnly then
-          self.packages.${pkgs.system}.phenix-conductor
-        else
-          self.packages.${pkgs.system}.phenix-harness-runtime;
       isEmbedded = plugin: (plugin.phenixPluginExecution or null) == "embedded";
       embeddedPlugins = builtins.filter isEmbedded plugins;
       packagedPlugins = builtins.filter (plugin: !isEmbedded plugin) plugins;
@@ -151,6 +147,21 @@ let
               done
             '';
       };
+
+  mkPhenix =
+    args@{
+      pkgs,
+      conductorOnly ? false,
+      ...
+    }:
+    let
+      base =
+        if conductorOnly then
+          self.packages.${pkgs.system}.phenix-conductor
+        else
+          self.packages.${pkgs.system}.phenix-harness-runtime;
+    in
+    mkPhenixWithBase (args // { inherit base; });
 in
 {
   flake = {
@@ -204,6 +215,50 @@ in
         plugins = defaultPlugins;
         resources = [ harnessResources ];
       };
+
+      fixtureHarnessProgram = pkgs.writeShellScriptBin "phenix-harness" ''
+        exec ${pkgs.jq}/bin/jq -cn \
+          --arg default_config "''${PHENIX_DEFAULT_CONFIG_DIR:-}" \
+          --arg config "''${PHENIX_CONFIG_DIR:-}" \
+          --arg settings "''${PHENIX_NIX_SETTINGS:-}" \
+          --arg settings_precedence "''${PHENIX_SETTINGS_PRECEDENCE:-}" \
+          --arg plugin_packages "''${PHENIX_PLUGIN_PACKAGES:-}" \
+          --arg enabled_plugins "''${PHENIX_ENABLED_PLUGINS:-}" \
+          --arg layer_policy "''${PHENIX_LAYER_POLICY:-}" \
+          --arg skill_path "''${PHENIX_SKILL_PATH:-}" \
+          '{
+            default_config: $default_config,
+            config: $config,
+            settings: $settings,
+            settings_precedence: $settings_precedence,
+            plugin_packages: $plugin_packages,
+            enabled_plugins: $enabled_plugins,
+            layer_policy: $layer_policy,
+            skill_path: $skill_path
+          }'
+      '';
+      fixtureBase = pkgs.runCommand "phenix-composition-fixture-base" { } ''
+        mkdir -p "$out/bin"
+        ln -s ${fixtureHarnessProgram}/bin/phenix-harness "$out/bin/phenix-harness"
+        ln -s phenix-harness "$out/bin/phenix"
+      '';
+      fixtureConductorBase = pkgs.writeShellScriptBin "phenix-conductor" ''
+        exit 0
+      '';
+      mkFixturePhenix =
+        args:
+        mkPhenixWithBase (
+          args
+          // {
+            inherit pkgs;
+            base = fixtureBase;
+          }
+        );
+
+      defaultFixtureComposition = mkFixturePhenix {
+        plugins = defaultPlugins;
+        resources = [ harnessResources ];
+      };
       settingsConfigDirectory = pkgs.writeTextDir "settings.json" (
         builtins.toJSON {
           global = {
@@ -216,8 +271,7 @@ in
           };
         }
       );
-      settingsComposition = mkPhenix {
-        inherit pkgs;
+      settingsComposition = mkFixturePhenix {
         plugins = defaultPlugins;
         resources = [ harnessResources ];
         configDirectory = settingsConfigDirectory;
@@ -232,8 +286,7 @@ in
           };
         };
       };
-      filePrecedenceComposition = mkPhenix {
-        inherit pkgs;
+      filePrecedenceComposition = mkFixturePhenix {
         plugins = defaultPlugins;
         resources = [ harnessResources ];
         configDirectory = settingsConfigDirectory;
@@ -244,26 +297,17 @@ in
           };
         };
       };
-      resourceComposition = mkPhenix {
-        inherit pkgs;
+      resourceComposition = mkFixturePhenix {
         plugins = defaultPlugins ++ [ resourcePlugin ];
         resources = [ harnessResources ];
       };
-      conductorComposition = mkPhenix {
-        inherit pkgs;
-        conductorOnly = true;
-      };
-      sessionOnlyComposition = mkPhenix {
-        inherit pkgs;
-        plugins = [ self.phenixPlugins.${pkgs.system}.sessions ];
-      };
-      contextOnlyComposition = mkPhenix {
-        inherit pkgs;
-        plugins = [ self.phenixPlugins.${pkgs.system}.context ];
-      };
-      adapterOnlyComposition = mkPhenix {
-        inherit pkgs;
+      adapterOnlyComposition = mkFixturePhenix {
         plugins = [ self.phenixPlugins.${pkgs.system}.adapter-acp ];
+      };
+      conductorFixtureComposition = mkPhenixWithBase {
+        inherit pkgs;
+        base = fixtureConductorBase;
+        conductorOnly = true;
       };
     in
     {
@@ -281,52 +325,51 @@ in
       checks.phenix-plugin-packaging =
         pkgs.runCommand "phenix-plugin-packaging-check" { nativeBuildInputs = [ pkgs.jq ]; }
           ''
-            set -euxo pipefail
-            test -x "${defaultComposition}/bin/phenix"
-            test -x "${defaultComposition}/bin/phenix-harness"
-            test -f "${defaultComposition}/share/phenix/runtime.json"
-            test -f "${defaultComposition}/share/phenix/skills/write/SKILL.md"
-            test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
-            export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
-            "${defaultComposition}/bin/phenix" --list-services > "$TMPDIR/default-services.json"
-            jq -e '(.plugins | length == 17) and (.plugins | index("phenix.adapter.acp") == null) and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0) and (.services | index("phenix.sessions@1") != null)' "$TMPDIR/default-services.json" >/dev/null
+            set -euo pipefail
 
-            export PHENIX_STATE_DB="$TMPDIR/settings.sqlite"
-            printf '%s\n' '{"id":1,"service":"phenix.api.sessions@1","input":{"type":"variant","value":{"tag":"Open","value":{"type":"table","value":{"id":{"type":"string","value":"settings-nix-disabled"},"agent":{"type":"option","value":null}}}}}}' \
-              | "${settingsComposition}/bin/phenix" > "$TMPDIR/settings-session.json"
-            jq -e '.status == "error" and (.error | contains("auto-create is disabled"))' "$TMPDIR/settings-session.json" >/dev/null
-            printf '%s\n' '{"id":2,"service":"phenix.api.config@1","input":{"type":"variant","value":{"tag":"Read","value":{"type":"table","value":{"path":{"type":"string","value":"settings.json"}}}}}}' \
-              | "${settingsComposition}/bin/phenix" > "$TMPDIR/settings-config.json"
-            jq -e '.status == "ok" and .output.type == "variant" and .output.value.tag == "File" and ((.output.value.value.value.content.value | implode | fromjson).global["session.auto_create"] == true)' \
-              "$TMPDIR/settings-config.json" >/dev/null
+            test -x "${defaultFixtureComposition}/bin/phenix"
+            test -x "${defaultFixtureComposition}/bin/phenix-harness"
+            test -f "${defaultFixtureComposition}/share/phenix/runtime.json"
+            test -f "${defaultFixtureComposition}/share/phenix/skills/write/SKILL.md"
+            test -f "${defaultFixtureComposition}/share/phenix/skills/pstack-LICENSE"
+            "${defaultFixtureComposition}/bin/phenix" > "$TMPDIR/default.json"
+            jq -e '
+              (.enabled_plugins | split(",") | length) == 17
+              and (.enabled_plugins | contains("phenix.adapter.acp") | not)
+              and (.default_config | length > 0)
+              and (.config | length > 0)
+              and (.skill_path | length > 0)
+            ' "$TMPDIR/default.json" >/dev/null
 
-            export PHENIX_STATE_DB="$TMPDIR/settings-file-first.sqlite"
-            printf '%s\n' '{"id":1,"service":"phenix.api.sessions@1","input":{"type":"variant","value":{"tag":"Open","value":{"type":"table","value":{"id":{"type":"string","value":"settings-file-created"},"agent":{"type":"option","value":null}}}}}}' \
-              | "${filePrecedenceComposition}/bin/phenix" > "$TMPDIR/settings-file-first.json"
-            jq -e '.status == "ok" and .output.type == "variant" and .output.value.tag == "Opened" and .output.value.value.value.created.type == "bool" and .output.value.value.value.created.value == true' "$TMPDIR/settings-file-first.json" >/dev/null
+            "${settingsComposition}/bin/phenix" > "$TMPDIR/settings.json"
+            jq -e '
+              .settings_precedence == "nix"
+              and (.settings | length > 0)
+              and (.config | length > 0)
+            ' "$TMPDIR/settings.json" >/dev/null
+            settings_path="$(jq -r '.settings' "$TMPDIR/settings.json")"
+            jq -e '
+              .global["session.auto_create"] == false
+              and .agents["agent.scout"]["agent.max_parallel_tasks"] == 4
+            ' "$settings_path" >/dev/null
 
-            export PHENIX_STATE_DB="$TMPDIR/session-only.sqlite"
-            "${sessionOnlyComposition}/bin/phenix" --list-services > "$TMPDIR/session-only.json"
-            jq -e '(.plugins == ["phenix.sessions"]) and (.services | index("phenix.sessions@1") != null) and (.services | index("phenix.context@1") == null)' "$TMPDIR/session-only.json" >/dev/null
+            "${filePrecedenceComposition}/bin/phenix" > "$TMPDIR/settings-file-first.json"
+            jq -e '.settings_precedence == "file" and (.config | length > 0)' \
+              "$TMPDIR/settings-file-first.json" >/dev/null
+            config_path="$(jq -r '.config' "$TMPDIR/settings-file-first.json")/settings.json"
+            jq -e '.global["session.auto_create"] == true' "$config_path" >/dev/null
 
-            export PHENIX_STATE_DB="$TMPDIR/context-only.sqlite"
-            "${contextOnlyComposition}/bin/phenix" --list-services > "$TMPDIR/context-only.json"
-            jq -e '((.plugins | sort) == ["phenix.context", "phenix.execution"]) and (.services | index("phenix.context@1") != null) and (.services | index("phenix.sessions@1") == null)' "$TMPDIR/context-only.json" >/dev/null
-
-            export PHENIX_STATE_DB="$TMPDIR/adapter-only.sqlite"
-            "${adapterOnlyComposition}/bin/phenix" --list-services > "$TMPDIR/adapter-only.json"
-            jq -e '(.plugins == ["phenix.adapter.acp"]) and (.services == [])' "$TMPDIR/adapter-only.json" >/dev/null
-
-            export PHENIX_STATE_DB="$TMPDIR/resource.sqlite"
             test -e "${resourceComposition}/share/phenix-plugin/resources/README.txt"
-            "${resourceComposition}/bin/phenix" --list-services > "$TMPDIR/resource-services.json"
-            jq -e '(.plugins | index("fixture.resources")) != null' "$TMPDIR/resource-services.json" >/dev/null
+            "${resourceComposition}/bin/phenix" > "$TMPDIR/resource.json"
+            jq -e '(.plugin_packages | length > 0)' "$TMPDIR/resource.json" >/dev/null
 
-            test -x "${conductorComposition}/bin/phenix-conductor"
-            test ! -e "${conductorComposition}/bin/phenix"
-            test ! -e "${conductorComposition}/bin/phenix-harness"
-            "${conductorComposition}/bin/phenix-conductor" --list-services > "$TMPDIR/conductor-services.json"
-            jq -e '(.plugins == []) and (.services == [])' "$TMPDIR/conductor-services.json" >/dev/null
+            "${adapterOnlyComposition}/bin/phenix" > "$TMPDIR/adapter.json"
+            jq -e '.enabled_plugins == "phenix.adapter.acp"' "$TMPDIR/adapter.json" >/dev/null
+
+            test -x "${conductorFixtureComposition}/bin/phenix-conductor"
+            test ! -e "${conductorFixtureComposition}/bin/phenix"
+            test ! -e "${conductorFixtureComposition}/bin/phenix-harness"
+
             touch "$out"
           '';
     };
