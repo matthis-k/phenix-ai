@@ -18,6 +18,7 @@ pub mod models;
 pub mod options;
 pub mod planning;
 pub mod sessions;
+#[allow(clippy::large_enum_variant)]
 pub mod step_attempt;
 pub mod usage;
 pub mod usage_policy;

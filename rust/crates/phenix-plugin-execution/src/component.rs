@@ -4,7 +4,9 @@ use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, PluginId,
 };
-use phenix_sdk::{ExecutionInterface, ExecutionResourceInterface, ModelRoutingInterface};
+use phenix_sdk::{
+    ExecutionInterface, ExecutionResourceInterface, ModelRoutingInterface, StepAttemptInterface,
+};
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
 const EXECUTION_PLUGIN: &str = "phenix.execution";
@@ -53,6 +55,12 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
             ComponentExport {
                 interface: ExecutionResourceInterface::interface_id(),
                 schema: ExecutionResourceInterface::schema(),
+                priority: 100,
+                required_authority: persistence_authority(),
+            },
+            ComponentExport {
+                interface: StepAttemptInterface::interface_id(),
+                schema: StepAttemptInterface::schema(),
                 priority: 100,
                 required_authority: persistence_authority(),
             },
@@ -110,27 +118,26 @@ mod tests {
             ExecutionResourceInterface::interface_id()
         );
         assert_eq!(
-            component.exports[0].required_authority,
-            persistence_authority()
-        );
-        assert_eq!(
-            component.exports[1].required_authority,
-            persistence_authority()
-        );
-        assert_eq!(
             component.exports[2].interface,
+            StepAttemptInterface::interface_id()
+        );
+        for export in &component.exports[..3] {
+            assert_eq!(export.required_authority, persistence_authority());
+        }
+        assert_eq!(
+            component.exports[3].interface,
             ExecutionConfigurationInterface::interface_id()
         );
         assert_eq!(
-            component.exports[2].required_authority,
+            component.exports[3].required_authority,
             Authority::default()
         );
         assert_eq!(
-            component.exports[3].interface,
+            component.exports[4].interface,
             AgentLoopInterface::interface_id()
         );
         assert_eq!(
-            component.exports[3].required_authority,
+            component.exports[4].required_authority,
             Authority::default()
         );
         assert_eq!(component.imports.len(), 1);
