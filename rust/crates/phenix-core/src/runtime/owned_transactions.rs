@@ -1,5 +1,8 @@
 use super::{PluginHost, PERSISTENCE_WRITE};
-use crate::{KernelError, NamespaceTransaction, ResourceNamespace, TransactionOp};
+use crate::{
+    CallCancellationToken, CapabilityId, KernelError, NamespaceTransaction, ResourceNamespace,
+    TransactionOp,
+};
 
 impl PluginHost<'_> {
     /// Atomically commit multiple durable namespace transactions owned by the current plugin.
@@ -11,8 +14,25 @@ impl PluginHost<'_> {
         &self,
         participants: &[(&ResourceNamespace, &[TransactionOp])],
     ) -> Result<(), KernelError> {
-        self.require_capability(PERSISTENCE_WRITE)?;
-        self.require_not_cancelled("durable multi-namespace transaction")?;
+        let write = CapabilityId::parse(PERSISTENCE_WRITE)
+            .expect("kernel persistence write capability is valid");
+        if !self.authority.permits(&write) {
+            return Err(KernelError::HostOperationDenied {
+                plugin: self.plugin.clone(),
+                operation: PERSISTENCE_WRITE.into(),
+            });
+        }
+        if self
+            .call_cancellation
+            .as_ref()
+            .is_some_and(CallCancellationToken::is_cancelled)
+        {
+            self.prepared_mutations.clear();
+            return Err(KernelError::HostOperationDenied {
+                plugin: self.plugin.clone(),
+                operation: "durable multi-namespace transaction after call cancellation".into(),
+            });
+        }
         if participants.is_empty() {
             return Err(KernelError::HostOperationDenied {
                 plugin: self.plugin.clone(),
@@ -22,7 +42,12 @@ impl PluginHost<'_> {
 
         let mut transactions = Vec::with_capacity(participants.len());
         for (namespace, operations) in participants {
-            self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
+            if self.config.resource_owner(namespace) != Some(self.plugin) {
+                return Err(KernelError::HostOperationDenied {
+                    plugin: self.plugin.clone(),
+                    operation: format!("{PERSISTENCE_WRITE}:{}", namespace.as_str()),
+                });
+            }
             transactions.push(NamespaceTransaction {
                 owner: self.plugin.clone(),
                 namespace: (*namespace).clone(),
@@ -34,6 +59,9 @@ impl PluginHost<'_> {
             .lock()
             .expect("kernel persistence mutex poisoned")
             .transact_many(&transactions)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| KernelError::Persistence {
+                plugin: self.plugin.clone(),
+                message: error.to_string(),
+            })
     }
 }
