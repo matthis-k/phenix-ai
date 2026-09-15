@@ -32,6 +32,23 @@ pub struct ModelTurnUsage {
 }
 
 #[derive(
+    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(deny_unknown_fields)]
+pub struct BudgetReservation {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_microunits: Option<u64>,
+}
+
+impl BudgetReservation {
+    #[must_use]
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+}
+
+#[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]
@@ -106,5 +123,17 @@ mod tests {
         };
         assert_eq!(demand.total_input_tokens(), 350);
         assert_eq!(demand.mandatory_input_tokens, 100);
+    }
+
+    #[test]
+    fn budget_reservation_keeps_input_and_output_accounting_distinct() {
+        let reservation = BudgetReservation {
+            input_tokens: 300,
+            output_tokens: 100,
+            cost_microunits: None,
+        };
+        assert_eq!(reservation.total_tokens(), 400);
+        assert_eq!(reservation.input_tokens, 300);
+        assert_eq!(reservation.output_tokens, 100);
     }
 }

@@ -15,9 +15,9 @@ help: the trait `phenix_core::ValueCodec` is not implemented for `MissingCodec`
             BTreeMap<std::string::String, T>
             BTreeSet<T>
             Box<T>
+            BudgetReservation
             CallableId
             CallableRecord
-            CandidateCompleteness
           and $N others
 
 error[E0277]: the trait bound `MissingCodec: phenix_core::ValueCodec` is not satisfied
@@ -37,8 +37,8 @@ help: the trait `phenix_core::ValueCodec` is not implemented for `MissingCodec`
             BTreeMap<std::string::String, T>
             BTreeSet<T>
             Box<T>
+            BudgetReservation
             CallableId
             CallableRecord
-            CandidateCompleteness
           and $N others
   = note: this error originates in the derive macro `phenix::PhenixValue` (in Nightly builds, run with -Z macro-backtrace for more info)
