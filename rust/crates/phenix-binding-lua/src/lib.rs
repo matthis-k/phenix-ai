@@ -47,6 +47,7 @@ use std::{
 };
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+const DEFERRED_REPLY_CAPACITY: usize = 64;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ErrorKind {
@@ -263,6 +264,27 @@ struct LocalCallable {
     function: RegistryKey,
 }
 
+/// A host-local marker returned by `phenix.defer(start)` from a lifted Lua
+/// callback. It never crosses the generic capability boundary.
+struct DeferredResult {
+    start: Option<RegistryKey>,
+}
+
+impl DeferredResult {
+    fn take_start(&mut self) -> Result<RegistryKey, BindingError> {
+        self.start.take().ok_or_else(|| {
+            BindingError::conversion("a deferred callback result may only be consumed once")
+        })
+    }
+}
+
+impl UserData for DeferredResult {}
+
+struct PendingDeferred {
+    callback: phenix_client_acp::ExtensionCallbackRequest,
+    output: Type,
+}
+
 /// A language-owned handle for a remote object capability.
 ///
 /// Objects have no generic method protocol yet. Keeping the reference in
@@ -330,6 +352,8 @@ impl UserData for ObservableDeliveryCapability {
 struct LocalCallables {
     next: u64,
     entries: BTreeMap<ReferenceId, LocalCallable>,
+    next_deferred: u64,
+    pending_deferred: BTreeMap<u64, PendingDeferred>,
 }
 
 impl LocalCallables {
@@ -364,6 +388,65 @@ impl LocalCallables {
             state.generation.clone(),
             id,
         ))
+    }
+
+    fn reserve_deferred(
+        &mut self,
+        callback: phenix_client_acp::ExtensionCallbackRequest,
+        output: Type,
+    ) -> Result<u64, BindingError> {
+        if self.pending_deferred.len() >= DEFERRED_REPLY_CAPACITY {
+            return Err(BindingError::local(
+                ErrorKind::QueueFull,
+                "too many pending deferred Lua callback replies",
+            ));
+        }
+        self.next_deferred = self.next_deferred.checked_add(1).ok_or_else(|| {
+            BindingError::local(ErrorKind::Rejected, "deferred callback id space exhausted")
+        })?;
+        let id = self.next_deferred;
+        self.pending_deferred
+            .insert(id, PendingDeferred { callback, output });
+        Ok(id)
+    }
+
+    fn deferred_output(&self, id: u64) -> Option<Type> {
+        self.pending_deferred
+            .get(&id)
+            .map(|pending| pending.output.clone())
+    }
+
+    fn settle_deferred(&mut self, id: u64, result: Result<PhenixValue, BindingError>) -> bool {
+        let Some(pending) = self.pending_deferred.remove(&id) else {
+            return false;
+        };
+        match result {
+            Ok(output) => pending
+                .callback
+                .respond(Ok(CapabilityInvokeResult { output }.to_value())),
+            Err(error) => pending.callback.respond(Err(
+                phenix_application_interface::types::ApplicationError::Failed {
+                    message: error.message,
+                },
+            )),
+        }
+        true
+    }
+
+    fn reject_deferred(&mut self, message: &str) {
+        for (_, pending) in std::mem::take(&mut self.pending_deferred) {
+            pending.callback.respond(Err(
+                phenix_application_interface::types::ApplicationError::Failed {
+                    message: message.to_owned(),
+                },
+            ));
+        }
+    }
+}
+
+impl Drop for LocalCallables {
+    fn drop(&mut self) {
+        self.reject_deferred("ACP connection closed before deferred callback completion");
     }
 }
 
@@ -584,6 +667,9 @@ impl UserData for Client {
                             Ok(Value::Nil)
                         }
                         Err(std_mpsc::TryRecvError::Disconnected) => {
+                            this.local_callables
+                                .borrow_mut()
+                                .reject_deferred("ACP callback channel disconnected");
                             Err(lua_error(this.state.failure()))
                         }
                     }
@@ -969,14 +1055,12 @@ fn run_client(
                     );
                 }
                 if let Ok(mut capabilities) = worker_state.capabilities.lock() {
-                    capabilities.extend([
-                        "phenix.application.capability.discovery@1".to_owned(),
-                        "phenix.application.capability.sessions@1".to_owned(),
-                        "phenix.application.capability.prompt@1".to_owned(),
-                    ]);
-                    for extension in &negotiated_extensions {
-                        capabilities.insert(extension.capability.to_string());
-                    }
+                    capabilities.extend(
+                        connection
+                            .extensions()
+                            .advertised_capabilities()
+                            .map(ToString::to_string),
+                    );
                 }
 
                 while let Some(command) = commands.next().await {
@@ -1150,12 +1234,16 @@ fn application_event_to_lua(lua: &Lua, event: ApplicationEvent) -> LuaResult<Val
 
 fn dispatch_local_callback(
     lua: &Lua,
-    state: &ClientState,
+    state: &Arc<ClientState>,
     local_callables: &Rc<RefCell<LocalCallables>>,
     callback: phenix_client_acp::ExtensionCallbackRequest,
 ) -> LuaResult<()> {
-    let result = (|| -> Result<PhenixValue, BindingError> {
-        let invocation = CapabilityInvokeInput::from_value(&callback.input)
+    let mut callback = Some(callback);
+    let result = (|| -> Result<CallbackResult, BindingError> {
+        let reply = callback
+            .as_ref()
+            .expect("callback remains available before deferred reservation");
+        let invocation = CapabilityInvokeInput::from_value(&reply.input)
             .map_err(|error| BindingError::conversion(error.to_string()))?;
         let callable = invocation
             .callable
@@ -1213,21 +1301,139 @@ fn dispatch_local_callback(
         let output_value: Value = function.call(argument).map_err(|error| {
             BindingError::local(ErrorKind::Rejected, format!("Lua callable failed: {error}"))
         })?;
-        lua_to_phenix_with_host(lua, &output, output_value, state, local_callables)
+        let Some(start) = take_deferred_start(&output_value)? else {
+            return lua_to_phenix_with_host(lua, &output, output_value, state, local_callables)
+                .map(CallbackResult::Immediate);
+        };
+        let callback = callback
+            .take()
+            .expect("callback is present when reserving a deferred reply");
+        let deferred_id = local_callables
+            .borrow_mut()
+            .reserve_deferred(callback, output)?;
+        start_deferred_callback(lua, state, local_callables, deferred_id, start);
+        Ok(CallbackResult::Deferred)
     })();
     match result {
-        Ok(output) => {
-            callback.respond(Ok(CapabilityInvokeResult { output }.to_value()));
+        Ok(CallbackResult::Immediate(output)) => {
+            callback
+                .take()
+                .expect("immediate callback retains its reply handle")
+                .respond(Ok(CapabilityInvokeResult { output }.to_value()));
             Ok(())
         }
+        Ok(CallbackResult::Deferred) => Ok(()),
         Err(error) => {
-            callback.respond(Err(
-                phenix_application_interface::types::ApplicationError::Failed {
-                    message: error.message.clone(),
-                },
-            ));
+            if let Some(callback) = callback {
+                callback.respond(Err(
+                    phenix_application_interface::types::ApplicationError::Failed {
+                        message: error.message.clone(),
+                    },
+                ));
+            }
             Err(lua_error(error))
         }
+    }
+}
+
+enum CallbackResult {
+    Immediate(PhenixValue),
+    Deferred,
+}
+
+fn take_deferred_start(value: &Value) -> Result<Option<RegistryKey>, BindingError> {
+    let Value::UserData(value) = value else {
+        return Ok(None);
+    };
+    if !value.is::<DeferredResult>() {
+        return Ok(None);
+    }
+    value
+        .borrow_mut::<DeferredResult>()
+        .map_err(|error| BindingError::conversion(error.to_string()))?
+        .take_start()
+        .map(Some)
+}
+
+fn start_deferred_callback(
+    lua: &Lua,
+    state: &Arc<ClientState>,
+    local_callables: &Rc<RefCell<LocalCallables>>,
+    deferred_id: u64,
+    start: RegistryKey,
+) {
+    let resolve_state = Arc::clone(state);
+    let resolve_callables = Rc::clone(local_callables);
+    let resolve = lua.create_function(move |lua, value: Value| {
+        settle_deferred_callback(
+            lua,
+            &resolve_state,
+            &resolve_callables,
+            deferred_id,
+            Ok(value),
+        );
+        Ok(())
+    });
+    let reject_state = Arc::clone(state);
+    let reject_callables = Rc::clone(local_callables);
+    let reject = lua.create_function(move |lua, message: String| {
+        settle_deferred_callback(
+            lua,
+            &reject_state,
+            &reject_callables,
+            deferred_id,
+            Err(BindingError::local(ErrorKind::Rejected, message)),
+        );
+        Ok(())
+    });
+    let result = (|| -> LuaResult<()> {
+        let start: mlua::Function = lua.registry_value(&start)?;
+        start.call((resolve?, reject?))
+    })();
+    if let Err(error) = result {
+        let pending = local_callables
+            .borrow()
+            .deferred_output(deferred_id)
+            .is_some();
+        if pending {
+            settle_deferred_callback(
+                lua,
+                state,
+                local_callables,
+                deferred_id,
+                Err(BindingError::local(
+                    ErrorKind::Rejected,
+                    format!("Lua deferred callback start failed: {error}"),
+                )),
+            );
+        } else {
+            eprintln!("Lua deferred callback start failed after settlement: {error}");
+        }
+    }
+}
+
+fn settle_deferred_callback(
+    lua: &Lua,
+    state: &ClientState,
+    local_callables: &Rc<RefCell<LocalCallables>>,
+    deferred_id: u64,
+    result: Result<Value, BindingError>,
+) {
+    let result = match result {
+        Ok(value) => {
+            let Some(output) = local_callables.borrow().deferred_output(deferred_id) else {
+                eprintln!("late Lua deferred callback completion ignored");
+                return;
+            };
+            lua_to_phenix_with_host(lua, &output, value, state, local_callables)
+        }
+        Err(error) => Err(error),
+    };
+    if !local_callables
+        .borrow_mut()
+        .settle_deferred(deferred_id, result)
+    {
+        eprintln!("late Lua deferred callback completion ignored");
     }
 }
 
@@ -1956,6 +2162,13 @@ fn phenix(lua: &Lua) -> LuaResult<Table> {
         "connect",
         lua.create_function(|_lua, options: Table| connect(options))?,
     )?;
+    exports.set(
+        "defer",
+        lua.create_function(|lua, start: mlua::Function| {
+            let start = lua.create_registry_value(start)?;
+            lua.create_userdata(DeferredResult { start: Some(start) })
+        })?,
+    )?;
     Ok(exports)
 }
 
@@ -1976,6 +2189,20 @@ mod tests {
         assert!(first.contains("phenix.application@1"));
         assert!(first.contains("phenix.application.error@1"));
         assert!(first.contains("client:_invoke_application"));
+    }
+
+    #[test]
+    fn deferred_marker_is_host_local_and_single_use() {
+        let lua = Lua::new();
+        let module = phenix(&lua).expect("native module exports");
+        lua.globals().set("phenix", module).unwrap();
+        let marker: Value = lua
+            .load("return phenix.defer(function(resolve, reject) end)")
+            .eval()
+            .expect("deferred marker is created");
+
+        assert!(take_deferred_start(&marker).unwrap().is_some());
+        assert!(take_deferred_start(&marker).is_err());
     }
 
     #[test]

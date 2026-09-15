@@ -29,6 +29,37 @@
         '';
       };
 
+      phenixAcp = pkgs.rustPlatform.buildRustPackage {
+        pname = "phenix-acp";
+        version = "0";
+        src = rustSource;
+
+        cargoLock.lockFile = ../rust/Cargo.lock;
+        cargoBuildFlags = [
+          "--package"
+          "phenix-harness"
+          "--bin"
+          "phenix-acp"
+        ];
+        doCheck = false;
+
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+
+        installPhase = ''
+          runHook preInstall
+          mkdir -p "$out/bin"
+          acp_binary="$(find target -path '*/release/phenix-acp' -type f -print -quit)"
+          test -n "$acp_binary"
+          cp "$acp_binary" "$out/bin/phenix-acp"
+          runHook postInstall
+        '';
+
+        postFixup = ''
+          wrapProgram "$out/bin/phenix-acp" \
+            --set PHENIX_DEFAULT_CONFIG_DIR ${pkgs.lib.escapeShellArg "${phenixHarnessResources}/share/phenix"}
+        '';
+      };
+
       runtimeConfig = pkgs.writeText "phenix-runtime.json" (
         builtins.toJSON (import ../config/phenix/runtime.nix)
       );
@@ -81,13 +112,13 @@
           '';
 
       phenixProductLuaSmoke = pkgs.runCommand "phenix-product-lua-smoke" { } ''
-        # Exercise the host-linked module through its packaged ACP fixture.
         test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
         touch "$out"
       '';
     in
     {
       packages = {
+        phenix-acp = phenixAcp;
         phenix-harness-runtime = phenixHarnessRuntime;
         phenix-harness-resources = phenixHarnessResources;
       };

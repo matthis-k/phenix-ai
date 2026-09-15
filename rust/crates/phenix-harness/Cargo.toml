@@ -8,6 +8,8 @@ publish = false
 role = "application"
 
 [dependencies]
+phenix-acp-stdio = { path = "../phenix-acp-stdio" }
+phenix-application-interface = { path = "../phenix-application-interface" }
 phenix-conductor = { path = "../phenix-conductor" }
 phenix-core = { path = "../phenix-core" }
 phenix-plugin-catalog = { path = "../phenix-plugin-catalog" }
@@ -15,3 +17,5 @@ phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

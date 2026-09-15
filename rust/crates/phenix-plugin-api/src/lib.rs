@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
+use phenix_application_interface::types::SessionProjectionState;
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContextResourceId, InterfaceId, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, SdkClient, SdkContribution, SdkNamespace,
-    SdkResourceId, ServiceContribution, ServiceId, ServiceRole,
+    ComponentManifest, ContextResourceId, HasPhenixSchema, InterfaceId, PluginContext,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
+    SdkContribution, SdkNamespace, SdkObservableResource, SdkResourceId, ServiceContribution,
+    ServiceId, ServiceRole, ValueId, ValuePath,
 };
 use phenix_sdk::{
     ContextCommand, ContextDescriptor, ContextInterface, ContextResourceKind,
@@ -190,6 +192,15 @@ pub fn sdk_contribution() -> SdkContribution {
         SdkResourceId::parse("sdk/phenix/options").expect("static SDK resource id is valid"),
         SdkResourceId::parse("sdk/phenix/config").expect("static SDK resource id is valid"),
     ]);
+    contribution.insert_observable(SdkObservableResource::new(
+        SdkResourceId::parse("sdk/phenix/session-state")
+            .expect("static session state SDK resource id is valid"),
+        ["sessions", "state"],
+        ValueId::parse("phenix.application.sessions@1")
+            .expect("static session projection value id is valid"),
+        ValuePath::root(),
+        SessionProjectionState::phenix_schema(),
+    ));
     contribution
 }
 
@@ -330,7 +341,7 @@ fn open_session(
     if let Some(session) = existing {
         if resolve_bool(context, "session.reuse_existing", &option_context)? {
             return Ok(SdkSessionResponse::Opened {
-                session: phenix_sdk::SessionRecord { id: session.id },
+                session,
                 created: false,
             });
         }
@@ -348,11 +359,13 @@ fn open_session(
     match context
         .sdk
         .sessions
-        .invoke(&SessionCommand::Create { id })
+        .invoke(&SessionCommand::Create {
+            session: phenix_sdk::SessionRecord::new(id),
+        })
         .map_err(|error| error.to_string())?
     {
         SessionResponse::Created { session } => Ok(SdkSessionResponse::Opened {
-            session: phenix_sdk::SessionRecord { id: session.id },
+            session,
             created: true,
         }),
         response => Err(format!("unexpected session create response: {response:?}")),

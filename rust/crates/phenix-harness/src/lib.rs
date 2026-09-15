@@ -34,9 +34,11 @@ use std::{
     sync::Arc,
 };
 
+pub mod application;
 mod basic_suite;
 mod invocation_defaults;
 mod persistence;
+pub mod runtime_config;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
@@ -486,7 +488,7 @@ impl PhenixHarness {
     }
 
     pub fn invoke(
-        &mut self,
+        &self,
         service: &phenix_core::ServiceId,
         input: &[u8],
         authority: &Authority,

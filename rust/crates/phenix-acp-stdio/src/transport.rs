@@ -9,7 +9,8 @@ use agent_client_protocol::{schema::v1::*, Agent, Error, ErrorCode, Stdio};
 use phenix_adapter_acp::ApplicationAdapter;
 use phenix_application_interface::{
     types::{
-        ApplicationError, CallableInfo as ApplicationCallableInfo,
+        normalize_elicitation_response, ApplicationError,
+        CallableInfo as ApplicationCallableInfo,
         CallableInvokeInput as ApplicationCallableInvokeInput,
         CallableResult as ApplicationCallableResult, Callables as ApplicationCallables,
         CapabilityInvokeInput as ApplicationCapabilityInvokeInput,
@@ -17,8 +18,9 @@ use phenix_application_interface::{
         ClientToolAddInput as ApplicationClientToolAddInput,
         ClientToolAdmission as ApplicationClientToolAdmission,
         ClientToolDefinition as ApplicationClientToolDefinition,
-        ClientToolRemoveInput as ApplicationClientToolRemoveInput, Empty,
-        SdkValue as ApplicationSdkValue, SessionInput,
+        ClientToolRemoveInput as ApplicationClientToolRemoveInput, ElicitationHandlerRef,
+        ElicitationRequest, ElicitationResponse, Empty, SdkValue as ApplicationSdkValue,
+        SessionInput,
     },
     AddClientTool, ApplicationTransport, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
     Operation, RemoveClientTool,
@@ -405,7 +407,7 @@ impl SdkApplicationService {
         }
         // Keep admission and capability registration atomic with explicit removal.
         // Registry registration never calls provider code.
-        self.admit_client_callable(&tool.invoke, callable_schema)?;
+        self.admit_current_client_callable(&tool.invoke, callable_schema)?;
         let admission =
             admissions
                 .admit(session_id, tool)
@@ -510,7 +512,7 @@ impl SdkApplicationService {
         match (schema, value) {
             (Type::Callable { .. }, PhenixValue::Callable(callable)) => {
                 if matches!(callable.owner(), CapabilityOwnerId::Client(_)) {
-                    self.admit_client_callable(callable, schema.clone())?;
+                    self.admit_current_client_callable(callable, schema.clone())?;
                 }
             }
             (Type::Option(schema), PhenixValue::Option(Some(value))) => {
@@ -550,7 +552,11 @@ impl SdkApplicationService {
         Ok(())
     }
 
-    fn admit_client_callable(
+    /// Admit one callable owned by this ACP connection's current client generation.
+    ///
+    /// Application semantics stay outside the transport. Callers provide the exact
+    /// callable schema required by the application contract.
+    pub fn admit_current_client_callable(
         &self,
         callable: &CallableRef,
         schema: Type,
@@ -570,7 +576,33 @@ impl SdkApplicationService {
         match self
             .capabilities
             .register(reference.clone(), schema.clone(), move |input| {
+                let elicitation = if reference.contract().as_str()
+                    == "phenix.application.elicitation@1"
+                {
+                    Some(ElicitationRequest::from_value(&input).map_err(|error| {
+                        CapabilityError::SchemaMismatch {
+                            message: error.to_string(),
+                        }
+                    })?)
+                } else {
+                    None
+                };
                 let result = callbacks.invoke(reference.clone(), input);
+                let result = match (elicitation, result) {
+                    (Some(request), Ok(output)) => {
+                        let response = ElicitationResponse::from_value(&output).map_err(|error| {
+                            CapabilityError::SchemaMismatch {
+                                message: error.to_string(),
+                            }
+                        })?;
+                        normalize_elicitation_response(&request, response)
+                            .map(|response| response.to_value())
+                            .map_err(|error| CapabilityError::SchemaMismatch {
+                                message: error.to_string(),
+                            })
+                    }
+                    (_, result) => result,
+                };
                 if matches!(result, Err(CapabilityError::Disconnected)) {
                     registry.retire(owner.clone(), generation.clone());
                     if let Ok(mut admissions) = admissions.lock() {
@@ -963,6 +995,15 @@ mod tests {
         )
     }
 
+    fn elicitation_callable() -> CallableRef {
+        CallableRef::new(
+            ContractId::parse("phenix.application.elicitation@1").unwrap(),
+            CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
+            CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            ReferenceId::parse("elicitation-callback").unwrap(),
+        )
+    }
+
     #[tokio::test]
     async fn channel_transport_preserves_typed_operation_and_response() {
         let (transport, mut receiver) = ChannelTransport::new(1);
@@ -1026,6 +1067,80 @@ mod tests {
                 .respond(Err(expected.clone()));
             assert_eq!(worker.await.unwrap().unwrap_err(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn elicitation_callback_is_normalized_against_its_request_schema() {
+        let capabilities = SharedCapabilityRegistry::default();
+        let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(2);
+        let service = SdkApplicationService {
+            sdk: ApplicationSdkValue {
+                schema: Type::Table(Default::default()),
+                value: PhenixValue::Table(Default::default()),
+            },
+            capabilities: capabilities.clone(),
+            client_callbacks: callbacks,
+            client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
+            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
+        };
+        let callable = elicitation_callable();
+        service
+            .admit_current_client_callable(&callable, ElicitationHandlerRef::phenix_type())
+            .unwrap();
+        let request = ElicitationRequest {
+            session_id: phenix_core::SessionId::parse("session-a").unwrap(),
+            message: "count".into(),
+            schema: Type::U64,
+        };
+
+        let invoke = capabilities.clone();
+        let callable_for_call = callable.clone();
+        let request_for_call = request.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            invoke.invoke(CoreCapabilityInvokeInput {
+                callable: callable_for_call,
+                input: request_for_call.to_value(),
+            })
+        });
+        receiver
+            .recv()
+            .await
+            .unwrap()
+            .respond(Ok(ApplicationCapabilityInvokeResult {
+                output: ElicitationResponse::Accepted {
+                    value: PhenixValue::I64(7),
+                }
+                .to_value(),
+            }));
+        let output = worker.await.unwrap().unwrap().output;
+        assert_eq!(
+            ElicitationResponse::from_value(&output).unwrap(),
+            ElicitationResponse::Accepted {
+                value: PhenixValue::U64(7)
+            }
+        );
+
+        let worker = tokio::task::spawn_blocking(move || {
+            capabilities.invoke(CoreCapabilityInvokeInput {
+                callable,
+                input: request.to_value(),
+            })
+        });
+        receiver
+            .recv()
+            .await
+            .unwrap()
+            .respond(Ok(ApplicationCapabilityInvokeResult {
+                output: ElicitationResponse::Accepted {
+                    value: PhenixValue::String("wrong".into()),
+                }
+                .to_value(),
+            }));
+        assert!(matches!(
+            worker.await.unwrap(),
+            Err(CapabilityError::SchemaMismatch { .. })
+        ));
     }
 
     #[tokio::test]
