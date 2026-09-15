@@ -40,7 +40,7 @@ impl Default for StoreState {
 
 #[derive(Clone, Default)]
 pub struct ObservableStore {
-    state: Arc<Mutex<StoreState>>,
+    state: Arc<parking_lot::Mutex<StoreState>>,
 }
 
 impl ObservableStore {
@@ -53,7 +53,7 @@ impl ObservableStore {
                 path: Box::new(ValuePath::root()),
                 message: error.to_string().into(),
             })?;
-        let mut state = self.state.lock().expect("observable store lock poisoned");
+        let mut state = self.state.lock();
         ensure_open(&state)?;
         if state.values.contains_key(&registration.id) {
             return Err(ObservableError::DuplicateValue(registration.id));
@@ -72,7 +72,7 @@ impl ObservableStore {
     }
 
     pub fn unregister(&self, value: &ValueId) -> Result<(), ObservableError> {
-        let mut state = self.state.lock().expect("observable store lock poisoned");
+        let mut state = self.state.lock();
         ensure_open(&state)?;
         state
             .values
@@ -89,7 +89,7 @@ impl ObservableStore {
     }
 
     pub fn metadata(&self, value: &ValueId) -> Result<ObservableMetadata, ObservableError> {
-        let state = self.state.lock().expect("observable store lock poisoned");
+        let state = self.state.lock();
         ensure_open(&state)?;
         let registered = state
             .values
@@ -105,7 +105,7 @@ impl ObservableStore {
     }
 
     pub fn metadata_all(&self) -> Result<Vec<ObservableMetadata>, ObservableError> {
-        let state = self.state.lock().expect("observable store lock poisoned");
+        let state = self.state.lock();
         ensure_open(&state)?;
         Ok(state
             .values
@@ -121,7 +121,7 @@ impl ObservableStore {
     }
 
     pub fn schema(&self, address: &ValueAddress) -> Result<PhenixSchema, ObservableError> {
-        let state = self.state.lock().expect("observable store lock poisoned");
+        let state = self.state.lock();
         ensure_open(&state)?;
         let registered = state
             .values
@@ -134,7 +134,7 @@ impl ObservableStore {
         &self,
         address: &ValueAddress,
     ) -> Result<(ValueVersion, PhenixValue), ObservableError> {
-        let state = self.state.lock().expect("observable store lock poisoned");
+        let state = self.state.lock();
         ensure_open(&state)?;
         let registered = state
             .values
@@ -157,7 +157,7 @@ impl ObservableStore {
     ) -> Result<ObservationSubscription, ObservableError> {
         let mut initial = None;
         let subscription = {
-            let mut state = self.state.lock().expect("observable store lock poisoned");
+            let mut state = self.state.lock();
             ensure_open(&state)?;
             let registered = state
                 .values
@@ -232,7 +232,7 @@ impl ObservableStore {
     }
 
     pub fn unsubscribe(&self, subscription: &ObservationSubscription) -> Result<bool, ObservableError> {
-        let mut state = self.state.lock().expect("observable store lock poisoned");
+        let mut state = self.state.lock();
         ensure_open(&state)?;
         let Some(entry) = state.subscriptions.get(&subscription.id) else {
             return Ok(false);
@@ -258,7 +258,7 @@ impl ObservableStore {
     }
 
     pub fn close(&self) {
-        let mut state = self.state.lock().expect("observable store lock poisoned");
+        let mut state = self.state.lock();
         state.closed = true;
         state.subscriptions.clear();
         state.indexes.clear();
@@ -281,7 +281,7 @@ impl ObservableStore {
         declared.sort_unstable();
 
         let (result, prepared) = {
-            let mut state = self.state.lock().expect("observable store lock poisoned");
+            let mut state = self.state.lock();
             ensure_open(&state)?;
             for value in &declared {
                 if !state.values.contains_key(*value) {

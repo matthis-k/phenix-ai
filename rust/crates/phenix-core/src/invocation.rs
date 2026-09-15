@@ -77,7 +77,8 @@ pub enum InvocationFailureClass {
 ///
 /// `message` is diagnostic detail only. Callers branch on `class`, never on the
 /// rendered text.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, thiserror::Error)]
+#[error("{class:?}: {message}")]
 pub struct InvocationFailure {
     class: InvocationFailureClass,
     message: String,
@@ -102,14 +103,6 @@ impl InvocationFailure {
         &self.message
     }
 }
-
-impl Display for InvocationFailure {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}: {}", self.class, self.message)
-    }
-}
-
-impl Error for InvocationFailure {}
 
 impl From<ComponentInvocationError> for InvocationFailure {
     fn from(error: ComponentInvocationError) -> Self {

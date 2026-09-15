@@ -1,10 +1,11 @@
 use crate::{Authority, EventBus, GraphGenerationId, KernelEvent, PluginId};
+use parking_lot::Mutex;
 use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
-        Arc, Mutex, Weak,
+        Arc, Weak,
     },
     thread::{self, JoinHandle},
 };
@@ -211,7 +212,6 @@ impl TaskRuntime {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.calls
             .lock()
-            .expect("live call mutex poisoned")
             .entry(plugin.clone())
             .or_default()
             .push(OwnedCall {
@@ -228,7 +228,7 @@ impl TaskRuntime {
     }
 
     fn finish_call(&self, plugin: &PluginId, id: u64) {
-        let mut calls = self.calls.lock().expect("live call mutex poisoned");
+        let mut calls = self.calls.lock();
         let Some(plugin_calls) = calls.get_mut(plugin) else {
             return;
         };
@@ -245,7 +245,6 @@ impl TaskRuntime {
     ) -> usize {
         self.calls
             .lock()
-            .expect("live call mutex poisoned")
             .get(plugin)
             .into_iter()
             .flatten()
@@ -256,11 +255,7 @@ impl TaskRuntime {
 
     #[cfg(test)]
     pub(crate) fn active_call_count(&self, plugin: &PluginId) -> usize {
-        self.calls
-            .lock()
-            .expect("live call mutex poisoned")
-            .get(plugin)
-            .map_or(0, Vec::len)
+        self.calls.lock().get(plugin).map_or(0, Vec::len)
     }
 
     pub fn spawn<T, F>(
@@ -298,7 +293,7 @@ impl TaskRuntime {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let cancelled = Arc::new(AtomicBool::new(false));
         if let Some(owner) = owner {
-            let mut owned = self.owned.lock().expect("task ownership mutex poisoned");
+            let mut owned = self.owned.lock();
             let tasks = owned.entry(owner.clone()).or_default();
             tasks.retain(|task| task.cancelled.strong_count() != 0);
             tasks.push(OwnedTask {
@@ -329,12 +324,7 @@ impl TaskRuntime {
     }
 
     pub fn cancel_plugin(&self, plugin: &PluginId) -> usize {
-        let tasks = self
-            .owned
-            .lock()
-            .expect("task ownership mutex poisoned")
-            .remove(plugin)
-            .unwrap_or_default();
+        let tasks = self.owned.lock().remove(plugin).unwrap_or_default();
         self.cancel_tasks(tasks)
     }
 
@@ -347,7 +337,7 @@ impl TaskRuntime {
             return 0;
         };
         let tasks = {
-            let mut owned = self.owned.lock().expect("task ownership mutex poisoned");
+            let mut owned = self.owned.lock();
             let Some(plugin_tasks) = owned.get_mut(plugin) else {
                 return 0;
             };
