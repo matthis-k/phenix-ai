@@ -20,11 +20,10 @@ use std::{
 pub mod __phenix_plugin {
     pub use phenix_core::{
         Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-        ComponentInvocationError, ComponentManifest, ContractId, EventBus, EventHandler,
-        EventSubscription, Exact, GraphGenerationId, InterfaceId, InterfaceSchema, Key,
-        PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-        PluginId, PluginInstance, PluginListener, PluginManifest, Project, ServiceContribution,
-        ServiceId, ServiceRole, TypeKind, ValueCodec, ValueError,
+        ComponentInvocationError, ComponentManifest, EventBus, EventHandler, EventSubscription,
+        GraphGenerationId, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
+        PluginExecution, PluginHost, PluginId, PluginInstance, PluginListener, PluginManifest,
+        ServiceContribution, ServiceId, ServiceRole,
     };
 }
 
@@ -262,12 +261,28 @@ impl Display for HookName {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum EventEmitError {
-    #[error("event payload encoding failed: {0}")]
     Encode(String),
-    #[error("{0}")]
-    Dispatch(#[from] EventError),
+    Dispatch(EventError),
+}
+
+impl Display for EventEmitError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Encode(message) => write!(f, "event payload encoding failed: {message}"),
+            Self::Dispatch(error) => Display::fmt(error, f),
+        }
+    }
+}
+
+impl Error for EventEmitError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Encode(_) => None,
+            Self::Dispatch(error) => Some(error),
+        }
+    }
 }
 
 #[derive(Clone)]

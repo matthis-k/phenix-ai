@@ -9,6 +9,10 @@ pub use phenix_core::{
     CallContext, CurrentPlugin, KernelAccess, PluginContext, SdkClient, SdkContract, SdkObject,
 };
 use phenix_core::{ComponentId, ComponentInterface, PluginHost};
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
 pub type PhenixPluginContext<'host, 'runtime, Settings = (), State = ()> =
     PluginContext<'host, 'runtime, PhenixSdk<'host, 'runtime>, Settings, State>;
@@ -76,17 +80,45 @@ impl<'host, 'runtime> PhenixSdk<'host, 'runtime> {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum SdkError {
-    #[error("{0}")]
-    Invocation(#[from] phenix_core::ComponentInvocationError),
-    #[error("invalid {kind} identifier: {message}")]
+    Invocation(phenix_core::ComponentInvocationError),
     InvalidIdentifier {
         kind: &'static str,
         message: &'static str,
     },
-    #[error("unexpected SDK response while {operation}")]
-    UnexpectedResponse { operation: &'static str },
+    UnexpectedResponse {
+        operation: &'static str,
+    },
+}
+
+impl Display for SdkError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invocation(error) => Display::fmt(error, f),
+            Self::InvalidIdentifier { kind, message } => {
+                write!(f, "invalid {kind} identifier: {message}")
+            }
+            Self::UnexpectedResponse { operation } => {
+                write!(f, "unexpected SDK response while {operation}")
+            }
+        }
+    }
+}
+
+impl Error for SdkError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Invocation(error) => Some(error),
+            Self::InvalidIdentifier { .. } | Self::UnexpectedResponse { .. } => None,
+        }
+    }
+}
+
+impl From<phenix_core::ComponentInvocationError> for SdkError {
+    fn from(error: phenix_core::ComponentInvocationError) -> Self {
+        Self::Invocation(error)
+    }
 }
 
 #[derive(Clone)]

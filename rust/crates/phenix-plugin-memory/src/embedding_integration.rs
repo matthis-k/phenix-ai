@@ -9,9 +9,10 @@ use phenix_plugin_models::{
     model_routing_component_manifest, model_routing_factory, model_routing_manifest,
 };
 use phenix_sdk::{
-    memory_embedding_service, memory_service, MemoryCommand, MemoryEmbeddingInterface,
-    MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryKind, MemoryRecallQuery, MemoryRecord,
-    MemoryResponse, MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_embedding_service, memory_service, HelperInvocationInterface,
+    MemoryCommand, MemoryEmbeddingInterface, MemoryEmbeddingRequest, MemoryEmbeddingResponse,
+    MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope,
+    MemorySourceReference,
 };
 use std::{
     fs,
@@ -38,12 +39,20 @@ fn embed_manifest() -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: ServiceRole::Terminal,
-            service: memory_embedding_service(),
-            priority: 200,
-            required_authority: Authority::default(),
-        }],
+        services: vec![
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: memory_embedding_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: helper_invocation_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
     }
@@ -55,12 +64,20 @@ fn embed_component_manifest() -> ComponentManifest {
         id: ComponentId::parse(EMBED_PLUGIN).unwrap(),
         owner: PluginId::parse(EMBED_PLUGIN).unwrap(),
         imports: Vec::new(),
-        exports: vec![ComponentExport {
-            interface: MemoryEmbeddingInterface::interface_id(),
-            schema: MemoryEmbeddingInterface::schema(),
-            priority: 200,
-            required_authority: Authority::default(),
-        }],
+        exports: vec![
+            ComponentExport {
+                interface: MemoryEmbeddingInterface::interface_id(),
+                schema: MemoryEmbeddingInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: HelperInvocationInterface::interface_id(),
+                schema: HelperInvocationInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
         maximum_authority: Authority::default(),
     }
 }

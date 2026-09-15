@@ -1,0 +1,19 @@
+[package]
+name = "phenix-plugin-step-runner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.phenix]
+role = "runtime-plugin"
+
+[dependencies]
+phenix-core = { path = "../phenix-core" }
+phenix-sdk = { path = "../phenix-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+phenix-plugin-context = { path = "../phenix-plugin-context" }
+phenix-plugin-execution = { path = "../phenix-plugin-execution" }
+phenix-plugin-models = { path = "../phenix-plugin-models" }

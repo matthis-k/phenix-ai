@@ -29,7 +29,6 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
 }
 
 fn expand_struct(item: ItemStruct) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if !item.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &item.generics,
@@ -44,13 +43,13 @@ fn expand_struct(item: ItemStruct) -> syn::Result<TokenStream> {
         let ty = &import.ty;
         match import.authority.as_ref() {
             Some(authority) => quote! {
-                #sdk::StaticComponentImport::with_authority::<#ty>(
+                ::phenix_sdk::StaticComponentImport::with_authority::<#ty>(
                     stringify!(#field),
                     #authority,
                 )
             },
             None => quote! {
-                #sdk::StaticComponentImport::of::<#ty>(stringify!(#field))
+                ::phenix_sdk::StaticComponentImport::of::<#ty>(stringify!(#field))
             },
         }
     });
@@ -59,13 +58,13 @@ fn expand_struct(item: ItemStruct) -> syn::Result<TokenStream> {
         let ty = &host.ty;
         match host.authority.as_ref() {
             Some(authority) => quote! {
-                #sdk::StaticComponentHost::with_authority::<#ty>(
+                ::phenix_sdk::StaticComponentHost::with_authority::<#ty>(
                     stringify!(#field),
                     #authority,
                 )
             },
             None => quote! {
-                #sdk::StaticComponentHost::of::<#ty>(stringify!(#field))
+                ::phenix_sdk::StaticComponentHost::of::<#ty>(stringify!(#field))
             },
         }
     });
@@ -74,25 +73,25 @@ fn expand_struct(item: ItemStruct) -> syn::Result<TokenStream> {
         let ty = &event.ty;
         let id = &event.event;
         quote! {
-            #sdk::StaticComponentEvent::of::<#ty>(#id, stringify!(#field))
+            ::phenix_sdk::StaticComponentEvent::of::<#ty>(#id, stringify!(#field))
         }
     });
 
     Ok(quote! {
         #item
 
-        impl #sdk::StaticComponentDefinition for #name {}
+        impl ::phenix_sdk::StaticComponentDefinition for #name {}
 
-        impl #sdk::StaticComponentImports for #name {
-            fn imports() -> Vec<#sdk::StaticComponentImport> {
+        impl ::phenix_sdk::StaticComponentImports for #name {
+            fn imports() -> Vec<::phenix_sdk::StaticComponentImport> {
                 vec![#(#imports),*]
             }
 
-            fn hosts() -> Vec<#sdk::StaticComponentHost> {
+            fn hosts() -> Vec<::phenix_sdk::StaticComponentHost> {
                 vec![#(#hosts),*]
             }
 
-            fn events() -> Vec<#sdk::StaticComponentEvent> {
+            fn events() -> Vec<::phenix_sdk::StaticComponentEvent> {
                 vec![#(#events),*]
             }
         }
@@ -227,7 +226,6 @@ fn parse_field_authority(
 }
 
 fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if item.trait_.is_some() || !item.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &item,
@@ -315,47 +313,45 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
             .authority
             .as_ref()
             .map(|authority| quote!(#authority))
-            .unwrap_or_else(|| quote!(#sdk::Authority::default()));
+            .unwrap_or_else(|| quote!(::phenix_sdk::Authority::default()));
         quote! {
-            #sdk::StaticComponentLayer::with_authority::<#interface>(
+            ::phenix_sdk::StaticComponentLayer::with_authority::<#interface>(
                 stringify!(#method),
                 #priority,
                 #authority,
             )
         }
     });
-    let listener_descriptors = listeners
-        .iter()
-        .map(|(method, listener, (payload, projection))| {
-            let event = &listener.event;
-            match (projection, listener.authority.as_ref()) {
-                (ListenerProjection::Projected, Some(authority)) => quote! {
-                    #sdk::StaticComponentListener::with_authority::<#payload>(
-                        #event,
-                        stringify!(#method),
-                        #authority,
-                    )
-                },
-                (ListenerProjection::Projected, None) => quote! {
-                    #sdk::StaticComponentListener::of::<#payload>(#event, stringify!(#method))
-                },
-                (ListenerProjection::Exact, Some(authority)) => quote! {
-                    #sdk::StaticComponentListener::exact_with_authority::<#payload>(
-                        #event,
-                        stringify!(#method),
-                        #authority,
-                    )
-                },
-                (ListenerProjection::Exact, None) => quote! {
-                    #sdk::StaticComponentListener::exact::<#payload>(#event, stringify!(#method))
-                },
-            }
-        });
+    let listener_descriptors = listeners.iter().map(|(method, listener, (payload, projection))| {
+        let event = &listener.event;
+        match (projection, listener.authority.as_ref()) {
+            (ListenerProjection::Projected, Some(authority)) => quote! {
+                ::phenix_sdk::StaticComponentListener::with_authority::<#payload>(
+                    #event,
+                    stringify!(#method),
+                    #authority,
+                )
+            },
+            (ListenerProjection::Projected, None) => quote! {
+                ::phenix_sdk::StaticComponentListener::of::<#payload>(#event, stringify!(#method))
+            },
+            (ListenerProjection::Exact, Some(authority)) => quote! {
+                ::phenix_sdk::StaticComponentListener::exact_with_authority::<#payload>(
+                    #event,
+                    stringify!(#method),
+                    #authority,
+                )
+            },
+            (ListenerProjection::Exact, None) => quote! {
+                ::phenix_sdk::StaticComponentListener::exact::<#payload>(#event, stringify!(#method))
+            },
+        }
+    });
     let value_descriptors = values.iter().map(|(method, value, value_type)| {
         let id = &value.id;
         let public = value.public;
         quote! {
-            #sdk::StaticComponentValue::of::<#value_type>(
+            ::phenix_sdk::StaticComponentValue::of::<#value_type>(
                 #id, stringify!(#method), #public,
             )
         }
@@ -390,9 +386,9 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
             let request = match projection {
                 ComponentRequestProjection::Projected => quote!(request),
                 ComponentRequestProjection::ExplicitProject => {
-                    quote!(#sdk::Project(request))
+                    quote!(::phenix_sdk::Project(request))
                 }
-                ComponentRequestProjection::Exact => quote!(#sdk::Exact(request)),
+                ComponentRequestProjection::Exact => quote!(::phenix_sdk::Exact(request)),
             };
             let call = match (*context, *has_request) {
                 (Some(ExportContext::Call), true) => {
@@ -417,10 +413,10 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
                 quote!(|#request_binding: #decoded_request| Ok::<_, String>(#call))
             };
             let dispatch = match projection {
-                ComponentRequestProjection::Exact => quote!(#sdk::dispatch_exact_provider),
+                ComponentRequestProjection::Exact => quote!(::phenix_sdk::dispatch_exact_provider),
                 ComponentRequestProjection::Projected
                 | ComponentRequestProjection::ExplicitProject => {
-                    quote!(#sdk::dispatch_projected_provider)
+                    quote!(::phenix_sdk::dispatch_projected_provider)
                 }
             };
 
@@ -428,7 +424,7 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
                 {
                     let interface = #interface;
                     if service.as_str() == interface.as_str() {
-                        let plugin_context = #sdk::PluginContext::new(host, (), (), ());
+                        let plugin_context = ::phenix_sdk::PluginContext::new(host, (), (), ());
                         return #dispatch(host, &interface, input, #handler);
                     }
                 }
@@ -439,30 +435,30 @@ fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
     Ok(quote! {
         #item
 
-        impl #sdk::StaticComponentBehavior for #self_ty {
-            fn exports() -> Vec<#sdk::StaticComponentExport> {
+        impl ::phenix_sdk::StaticComponentBehavior for #self_ty {
+            fn exports() -> Vec<::phenix_sdk::StaticComponentExport> {
                 vec![#(#export_descriptors),*]
             }
 
-            fn layers() -> Vec<#sdk::StaticComponentLayer> {
+            fn layers() -> Vec<::phenix_sdk::StaticComponentLayer> {
                 vec![#(#layer_descriptors),*]
             }
 
-            fn listeners() -> Vec<#sdk::StaticComponentListener> {
+            fn listeners() -> Vec<::phenix_sdk::StaticComponentListener> {
                 vec![#(#listener_descriptors),*]
             }
 
-            fn values() -> Vec<#sdk::StaticComponentValue> {
+            fn values() -> Vec<::phenix_sdk::StaticComponentValue> {
                 vec![#(#value_descriptors),*]
             }
         }
 
-        impl #sdk::StaticComponentDispatch for #self_ty {
+        impl ::phenix_sdk::StaticComponentDispatch for #self_ty {
             fn dispatch(
                 &self,
-                service: &#sdk::__phenix_plugin::ServiceId,
+                service: &::phenix_sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &#sdk::__phenix_plugin::PluginHost<'_>,
+                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<Vec<u8>, String> {
                 #(#dispatch_arms)*
                 Err(format!("unsupported component service: {service}"))
@@ -721,14 +717,13 @@ enum ExportInterface {
 
 impl ExportInterface {
     fn expression(&self) -> TokenStream {
-        let sdk = crate::sdk_crate();
         match self {
             Self::Literal(id) => quote! {
-                #sdk::__phenix_plugin::InterfaceId::parse(#id)
+                ::phenix_sdk::__phenix_plugin::InterfaceId::parse(#id)
                     .expect("component export contains a valid static interface id")
             },
             Self::Marker(marker) => quote! {
-                <#marker as #sdk::InterfaceMarker>::interface_id()
+                <#marker as ::phenix_sdk::InterfaceMarker>::interface_id()
             },
         }
     }
@@ -741,7 +736,6 @@ pub(crate) fn export_descriptor(
     response: &Type,
     domain_error: Option<&Type>,
 ) -> TokenStream {
-    let sdk = crate::sdk_crate();
     let interface = export.interface.expression();
     let public = export.public;
     let terminal = export.terminal;
@@ -754,21 +748,21 @@ pub(crate) fn export_descriptor(
         .authority
         .as_ref()
         .map(|authority| quote!(#authority))
-        .unwrap_or_else(|| quote!(#sdk::__phenix_plugin::Authority::default()));
+        .unwrap_or_else(|| quote!(::phenix_sdk::__phenix_plugin::Authority::default()));
     let schema = match domain_error {
         Some(domain_error) => quote! {
-            #sdk::__phenix_plugin::InterfaceSchema::fallible_of::<
+            ::phenix_sdk::__phenix_plugin::InterfaceSchema::fallible_of::<
                 #request,
                 #response,
                 #domain_error,
             >()
         },
         None => quote! {
-            #sdk::__phenix_plugin::InterfaceSchema::of::<#request, #response>()
+            ::phenix_sdk::__phenix_plugin::InterfaceSchema::of::<#request, #response>()
         },
     };
     quote! {
-        #sdk::StaticComponentExport {
+        ::phenix_sdk::StaticComponentExport {
             interface: #interface,
             schema: #schema,
             method: stringify!(#method),
@@ -1647,7 +1641,7 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert!(output.contains("Planning as crate :: InterfaceMarker"));
+        assert!(output.contains("Planning as :: phenix_sdk :: InterfaceMarker"));
     }
 
     #[test]

@@ -12,5 +12,3 @@ result-*
 *.log.*
 
 rust/target/
-rust/crates/phenix-sdk/tests/fixtures/*/target/
-rust/crates/phenix-sdk/tests/fixtures/*/*/target/

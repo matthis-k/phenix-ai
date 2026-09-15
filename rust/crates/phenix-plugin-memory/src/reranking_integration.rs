@@ -9,9 +9,9 @@ use phenix_plugin_models::{
     model_routing_component_manifest, model_routing_factory, model_routing_manifest,
 };
 use phenix_sdk::{
-    memory_rank_service, memory_service, MemoryCommand, MemoryKind, MemoryRankInterface,
-    MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord, MemoryResponse,
-    MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_rank_service, memory_service, HelperInvocationInterface,
+    MemoryCommand, MemoryKind, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
 };
 use std::{
     fs,
@@ -38,12 +38,20 @@ fn rank_manifest() -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: ServiceRole::Terminal,
-            service: memory_rank_service(),
-            priority: 200,
-            required_authority: Authority::default(),
-        }],
+        services: vec![
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: memory_rank_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: helper_invocation_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
     }
@@ -55,12 +63,20 @@ fn rank_component_manifest() -> ComponentManifest {
         id: ComponentId::parse(RANK_PLUGIN).unwrap(),
         owner: PluginId::parse(RANK_PLUGIN).unwrap(),
         imports: Vec::new(),
-        exports: vec![ComponentExport {
-            interface: MemoryRankInterface::interface_id(),
-            schema: MemoryRankInterface::schema(),
-            priority: 200,
-            required_authority: Authority::default(),
-        }],
+        exports: vec![
+            ComponentExport {
+                interface: MemoryRankInterface::interface_id(),
+                schema: MemoryRankInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: HelperInvocationInterface::interface_id(),
+                schema: HelperInvocationInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
         maximum_authority: Authority::default(),
     }
 }

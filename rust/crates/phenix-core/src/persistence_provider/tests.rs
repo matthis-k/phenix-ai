@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    DurableKeyRange, DurableRecord, DurableSchema, NamespaceTransaction, ResourceNamespace,
-    ScanDirection,
-};
+use crate::{DurableSchema, NamespaceTransaction, ResourceNamespace};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -78,17 +75,6 @@ impl PersistenceBackend for MockBackend {
         Ok(None)
     }
 
-    fn scan(
-        &self,
-        _caller: &PluginId,
-        _namespace: &ResourceNamespace,
-        _range: &DurableKeyRange,
-        _direction: ScanDirection,
-        _limit: Option<usize>,
-    ) -> Result<Vec<DurableRecord>, PersistenceError> {
-        Ok(Vec::new())
-    }
-
     fn transact_many(
         &mut self,
         _transactions: &[NamespaceTransaction],
@@ -122,7 +108,7 @@ fn unsupported_feature_rejects_candidate_before_provider_opens_store() {
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
-            [],
+            [BackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -134,7 +120,7 @@ fn unsupported_feature_rejects_candidate_before_provider_opens_store() {
             [],
             &BTreeSet::new(),
             binding(),
-            &[schema(BackendFeature::Migrations)],
+            &[schema(BackendFeature::IndexedRange)],
             None,
             None,
         ),
@@ -151,7 +137,7 @@ fn eligible_candidate_opens_store_then_materializes_complete_schema_plan() {
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
-            [BackendFeature::Migrations],
+            [BackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -162,7 +148,7 @@ fn eligible_candidate_opens_store_then_materializes_complete_schema_plan() {
         [],
         &BTreeSet::new(),
         binding(),
-        &[schema(BackendFeature::Migrations)],
+        &[schema(BackendFeature::Transactions)],
         None,
         None,
     )
@@ -183,7 +169,7 @@ fn prepare_transition(
 ) {
     let active_provider = PersistenceProviderDescriptor::new(
         plugin("fixture.active"),
-        [BackendFeature::Migrations],
+        [BackendFeature::Transactions],
         ["old-v1".to_owned()],
     );
     let active = resolve_persistence_bootstrap(
@@ -200,7 +186,7 @@ fn prepare_transition(
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.candidate"),
-            [BackendFeature::Migrations],
+            [BackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -210,7 +196,7 @@ fn prepare_transition(
         [],
         &BTreeSet::new(),
         binding(),
-        &[schema(BackendFeature::Migrations)],
+        &[schema(BackendFeature::Transactions)],
         Some(&active),
         Some(transition),
     );

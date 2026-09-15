@@ -8,7 +8,10 @@ use phenix_core::{
     ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use serde_json::Value;
-use std::io::{self, BufRead, Write};
+use std::{
+    fmt,
+    io::{self, BufRead, Write},
+};
 
 /// Generic configured Phenix server runtime.
 ///
@@ -19,12 +22,29 @@ pub struct Conductor {
     resolved: ResolvedHarness,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ConductorBuildError {
-    #[error(transparent)]
-    Resolution(#[from] ResolvedHarnessError),
-    #[error("resolved conductor activation failed: {0:?}")]
+    Resolution(ResolvedHarnessError),
     Activation(ResolvedHarnessActivationError),
+}
+
+impl fmt::Display for ConductorBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Resolution(error) => fmt::Display::fmt(error, formatter),
+            Self::Activation(error) => {
+                write!(formatter, "resolved conductor activation failed: {error:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConductorBuildError {}
+
+impl From<ResolvedHarnessError> for ConductorBuildError {
+    fn from(error: ResolvedHarnessError) -> Self {
+        Self::Resolution(error)
+    }
 }
 
 impl From<ResolvedHarnessActivationError> for ConductorBuildError {
@@ -88,12 +108,33 @@ impl Default for Conductor {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ServeError {
-    #[error("service transport I/O failed: {0}")]
-    Io(#[from] io::Error),
-    #[error("service response encoding failed: {0}")]
-    Json(#[from] serde_json::Error),
+    Io(io::Error),
+    Json(serde_json::Error),
+}
+
+impl fmt::Display for ServeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "service transport I/O failed: {error}"),
+            Self::Json(error) => write!(formatter, "service response encoding failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ServeError {}
+
+impl From<io::Error> for ServeError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<serde_json::Error> for ServeError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
 }
 
 #[must_use]

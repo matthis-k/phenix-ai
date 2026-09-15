@@ -1,7 +1,6 @@
 use crate::{
-    graph_util::DirectedGraph, ArtifactRevision, Authority, ComponentGraphError, ComponentId,
-    EventError, PluginExecution, PluginId, PluginManifest, ResourceNamespace, RuntimeId, ServiceId,
-    ServiceRole,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, PluginExecution,
+    PluginId, PluginManifest, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -88,11 +87,6 @@ pub enum KernelError {
     Persistence {
         plugin: PluginId,
         message: String,
-    },
-    PersistenceConflict {
-        plugin: PluginId,
-        namespace: ResourceNamespace,
-        key: String,
     },
     EmbeddedFactoryMissing(PluginId),
     WrongExecutionKind(PluginId),
@@ -205,14 +199,6 @@ impl Display for KernelError {
             Self::Persistence { plugin, message } => {
                 write!(f, "plugin {plugin} persistence operation failed: {message}")
             }
-            Self::PersistenceConflict {
-                plugin,
-                namespace,
-                key,
-            } => write!(
-                f,
-                "plugin {plugin} persistence assertion conflicted at {namespace}/{key}"
-            ),
             Self::EmbeddedFactoryMissing(plugin) => {
                 write!(f, "embedded plugin has no registered factory: {plugin}")
             }
@@ -702,7 +688,6 @@ fn dependency_order(
     manifests: &BTreeMap<PluginId, PluginManifest>,
     runtime_bindings: &BTreeMap<PluginId, RuntimeBinding>,
 ) -> Result<Vec<PluginId>, KernelError> {
-    let mut graph = DirectedGraph::from_nodes(manifests.keys().cloned());
     for manifest in manifests.values() {
         for dependency in &manifest.dependencies {
             if !manifests.contains_key(dependency) {
@@ -711,58 +696,49 @@ fn dependency_order(
                     dependency: dependency.clone(),
                 });
             }
-            graph.add_edge(&manifest.id, dependency);
-        }
-        if let Some(binding) = runtime_bindings.get(&manifest.id) {
-            graph.add_edge(&manifest.id, &binding.provider);
         }
     }
 
-    for plugin in manifests.keys() {
-        if let Some(path) = graph.cycle_path_from(plugin) {
-            return Err(KernelError::DependencyCycle(
-                path.first()
-                    .cloned()
-                    .expect("cycle path contains its repeated root"),
-            ));
-        }
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    enum Visit {
+        Visiting,
+        Done,
     }
 
-    fn append_activation_order(
+    fn visit(
         plugin: &PluginId,
         manifests: &BTreeMap<PluginId, PluginManifest>,
         runtime_bindings: &BTreeMap<PluginId, RuntimeBinding>,
-        visited: &mut BTreeSet<PluginId>,
+        visits: &mut BTreeMap<PluginId, Visit>,
         order: &mut Vec<PluginId>,
-    ) {
-        if !visited.insert(plugin.clone()) {
-            return;
+    ) -> Result<(), KernelError> {
+        match visits.get(plugin) {
+            Some(Visit::Done) => return Ok(()),
+            Some(Visit::Visiting) => return Err(KernelError::DependencyCycle(plugin.clone())),
+            None => {}
         }
+        visits.insert(plugin.clone(), Visit::Visiting);
         for dependency in &manifests[plugin].dependencies {
-            append_activation_order(dependency, manifests, runtime_bindings, visited, order);
+            visit(dependency, manifests, runtime_bindings, visits, order)?;
         }
         if let Some(binding) = runtime_bindings.get(plugin) {
-            append_activation_order(
+            visit(
                 &binding.provider,
                 manifests,
                 runtime_bindings,
-                visited,
+                visits,
                 order,
-            );
+            )?;
         }
+        visits.insert(plugin.clone(), Visit::Done);
         order.push(plugin.clone());
+        Ok(())
     }
 
-    let mut visited = BTreeSet::new();
+    let mut visits = BTreeMap::new();
     let mut order = Vec::new();
     for plugin in manifests.keys() {
-        append_activation_order(
-            plugin,
-            manifests,
-            runtime_bindings,
-            &mut visited,
-            &mut order,
-        );
+        visit(plugin, manifests, runtime_bindings, &mut visits, &mut order)?;
     }
     Ok(order)
 }
@@ -1065,23 +1041,15 @@ mod tests {
         let mut a = PluginManifest::resource_only(plugin("a"));
         a.dependencies.push(plugin("b"));
         let b = PluginManifest::resource_only(plugin("b"));
+        let config = KernelConfig::new([a.clone(), b]).unwrap();
+        assert_eq!(config.activation_order(), &[plugin("b"), plugin("a")]);
 
-        for manifests in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
-            let config = KernelConfig::new(manifests).unwrap();
-            assert_eq!(config.activation_order(), &[plugin("b"), plugin("a")]);
-        }
-
-        let mut cyclic_b = b;
-        cyclic_b.dependencies.push(plugin("a"));
-        for manifests in [
-            vec![a.clone(), cyclic_b.clone()],
-            vec![cyclic_b.clone(), a.clone()],
-        ] {
-            assert!(matches!(
-                KernelConfig::new(manifests),
-                Err(KernelError::DependencyCycle(_))
-            ));
-        }
+        let mut b = PluginManifest::resource_only(plugin("b"));
+        b.dependencies.push(plugin("a"));
+        assert!(matches!(
+            KernelConfig::new([a, b]),
+            Err(KernelError::DependencyCycle(_))
+        ));
     }
 
     #[test]

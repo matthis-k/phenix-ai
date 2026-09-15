@@ -2,6 +2,7 @@ use crate::{CallableDescriptor, CallableId, CallableKind, SessionId};
 use phenix_core::{CallableRef, CapabilityGenerationId, CapabilityOwnerId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::{self, Display, Formatter};
 
 domain_id_type!(ClientToolAdmissionId);
 
@@ -11,11 +12,20 @@ pub struct ClientToolDefinition {
     pub invoke: CallableRef,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientToolDefinitionError {
-    #[error("client tool descriptor must have kind Tool")]
     NotATool,
 }
+
+impl Display for ClientToolDefinitionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotATool => f.write_str("client tool descriptor must have kind Tool"),
+        }
+    }
+}
+
+impl std::error::Error for ClientToolDefinitionError {}
 
 impl ClientToolDefinition {
     pub fn new(
@@ -38,16 +48,30 @@ pub struct ClientToolAdmission {
     pub tool: ClientToolDefinition,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientToolAdmissionError {
-    #[error("session {session_id} already admits callable {callable}")]
     DuplicateCallable {
         session_id: SessionId,
         callable: CallableId,
     },
-    #[error("client tool admission {0} is stale")]
     StaleAdmission(ClientToolAdmissionId),
 }
+
+impl Display for ClientToolAdmissionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateCallable {
+                session_id,
+                callable,
+            } => {
+                write!(f, "session {session_id} already admits callable {callable}")
+            }
+            Self::StaleAdmission(id) => write!(f, "client tool admission {id} is stale"),
+        }
+    }
+}
+
+impl std::error::Error for ClientToolAdmissionError {}
 
 #[derive(Clone, Debug, Default)]
 pub struct ClientToolAdmissions {

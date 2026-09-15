@@ -12,7 +12,6 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use mcp_bridge::{BridgeToolRequest, ToolBridge};
-use parking_lot::Mutex;
 use phenix_backend::{
     Backend, BackendCapabilities, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
     BackendSession, BackendSessionRequest, PreparedToolSurface, ToolPresentation,
@@ -27,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
@@ -212,7 +211,9 @@ struct CancellationState {
 fn arm_cancellation(
     cancellation: &Mutex<CancellationState>,
 ) -> Result<Option<ArmedCancellation>, BackendError> {
-    let mut cancellation = cancellation.lock();
+    let mut cancellation = cancellation
+        .lock()
+        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
     if cancellation.signal.is_some() {
         return Err(BackendError::Protocol(
             "ACP backend session is already executing".to_owned(),
@@ -230,14 +231,18 @@ fn arm_cancellation(
 }
 
 fn disarm_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), BackendError> {
-    let mut cancellation = cancellation.lock();
+    let mut cancellation = cancellation
+        .lock()
+        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
     cancellation.signal = None;
     cancellation.requested = false;
     Ok(())
 }
 
 fn request_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), BackendError> {
-    let mut cancellation = cancellation.lock();
+    let mut cancellation = cancellation
+        .lock()
+        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
     cancellation.requested = true;
     if let Some(signal) = cancellation.signal.as_ref() {
         let _ = signal.send(CancellationSignal::Cancel);
@@ -305,36 +310,12 @@ impl BackendSession for AcpBackendSession {
     }
 }
 
-struct PersistentSessionRequest {
-    model: ModelTarget,
-    tools: PreparedToolSurface,
-}
-
 struct AcpPersistentSession {
-    request: Mutex<PersistentSessionRequest>,
+    model: Mutex<ModelTarget>,
+    tools: Mutex<PreparedToolSurface>,
     bridge_available: bool,
     commands: mpsc::Sender<PersistentCommand>,
     cancellation: Mutex<CancellationState>,
-}
-
-fn validate_persistent_tool_surface_update(
-    current: &PreparedToolSurface,
-    next: &PreparedToolSurface,
-    bridge_available: bool,
-) -> Result<(), BackendError> {
-    if !next.is_empty() && !bridge_available {
-        return Err(BackendError::Unsupported(
-            "ACP agent does not advertise native MCP-over-ACP support for this persistent session"
-                .to_owned(),
-        ));
-    }
-    if bridge_available && current != next {
-        return Err(BackendError::Unsupported(
-            "persistent ACP session cannot change conductor tool surface without MCP tools/list_changed support"
-                .to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 impl AcpPersistentSession {
@@ -365,7 +346,8 @@ impl AcpPersistentSession {
             ))
         })??;
         Ok(Self {
-            request: Mutex::new(PersistentSessionRequest { model, tools }),
+            model: Mutex::new(model),
+            tools: Mutex::new(tools),
             bridge_available,
             commands,
             cancellation: Mutex::new(CancellationState::default()),
@@ -377,10 +359,18 @@ impl AcpPersistentSession {
         model: ModelTarget,
         tools: PreparedToolSurface,
     ) -> Result<(), BackendError> {
-        let mut request = self.request.lock();
-        validate_persistent_tool_surface_update(&request.tools, &tools, self.bridge_available)?;
-        request.model = model;
-        request.tools = tools;
+        if !tools.is_empty() && !self.bridge_available {
+            return Err(BackendError::Unsupported(
+                "ACP agent does not advertise native MCP-over-ACP support for this persistent session"
+                    .to_owned(),
+            ));
+        }
+        *self.model.lock().map_err(|_| {
+            BackendError::Protocol("ACP persistent model lock poisoned".to_owned())
+        })? = model;
+        *self.tools.lock().map_err(|_| {
+            BackendError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
+        })? = tools;
         Ok(())
     }
 }
@@ -394,10 +384,18 @@ impl BackendSession for AcpPersistentSession {
         let Some(cancellation) = arm_cancellation(&self.cancellation)? else {
             return Ok(());
         };
-        let session_request = self.request.lock();
-        let model = session_request.model.clone();
-        let tools = session_request.tools.clone();
-        drop(session_request);
+        let model = self
+            .model
+            .lock()
+            .map_err(|_| BackendError::Protocol("ACP persistent model lock poisoned".to_owned()))?
+            .clone();
+        let tools = self
+            .tools
+            .lock()
+            .map_err(|_| {
+                BackendError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
+            })?
+            .clone();
         let (events, event_rx) = mpsc::channel();
         let send_result = self.commands.send(PersistentCommand {
             model,
@@ -455,10 +453,6 @@ fn receive_worker_messages(
                 }
             }
             Ok(WorkerMessage::ToolCall(request)) => {
-                let cancellation = request.invocation.cancellation.clone();
-                if cancellation.is_cancelled() {
-                    continue;
-                }
                 let result = if let Some(error) = host_error.as_ref() {
                     Err(BackendError::Protocol(format!(
                         "backend host already failed before tool invocation: {error}"
@@ -466,9 +460,7 @@ fn receive_worker_messages(
                 } else {
                     host.invoke_tool(request.invocation)
                 };
-                if !cancellation.is_cancelled() {
-                    let _ = request.response.send(result);
-                }
+                let _ = request.response.send(result);
             }
             Ok(WorkerMessage::Done(result)) => return host_error.map_or(result, Err),
             Err(error) => {
@@ -617,27 +609,7 @@ async fn run_turn(
         )
         .on_receive_request(
             async move |request: MessageMcpRequest, responder, _connection| {
-                if ToolBridge::is_tool_call(&request) {
-                    let request_id = serde_json::to_value(responder.id())
-                        .map_err(agent_client_protocol::Error::into_internal_error)?;
-                    let bridge = message_bridge.clone();
-                    std::thread::Builder::new()
-                        .name("phenix-acp-mcp-tool".to_owned())
-                        .spawn(
-                            move || match bridge.message_with_request_id(request, request_id) {
-                                Ok(response) => {
-                                    let _ = responder.respond(response);
-                                }
-                                Err(error) => {
-                                    let _ = responder.respond_with_error(error);
-                                }
-                            },
-                        )
-                        .map_err(agent_client_protocol::Error::into_internal_error)?;
-                    Ok(())
-                } else {
-                    responder.respond(message_bridge.message(request)?)
-                }
+                responder.respond(message_bridge.message(request)?)
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -726,8 +698,10 @@ async fn run_persistent_session(
         .on_receive_notification(
             async move |notification: SessionNotification, _connection| {
                 if let Some(event) = normalize_update(notification.update) {
-                    if let Some(events) = notification_events.lock().as_ref() {
-                        let _ = events.send(WorkerMessage::Event(event));
+                    if let Ok(events) = notification_events.lock() {
+                        if let Some(events) = events.as_ref() {
+                            let _ = events.send(WorkerMessage::Event(event));
+                        }
                     }
                 }
                 Ok(())
@@ -756,27 +730,7 @@ async fn run_persistent_session(
         )
         .on_receive_request(
             async move |request: MessageMcpRequest, responder, _connection| {
-                if ToolBridge::is_tool_call(&request) {
-                    let request_id = serde_json::to_value(responder.id())
-                        .map_err(agent_client_protocol::Error::into_internal_error)?;
-                    let bridge = message_bridge.clone();
-                    std::thread::Builder::new()
-                        .name("phenix-acp-mcp-tool".to_owned())
-                        .spawn(
-                            move || match bridge.message_with_request_id(request, request_id) {
-                                Ok(response) => {
-                                    let _ = responder.respond(response);
-                                }
-                                Err(error) => {
-                                    let _ = responder.respond_with_error(error);
-                                }
-                            },
-                        )
-                        .map_err(agent_client_protocol::Error::into_internal_error)?;
-                    Ok(())
-                } else {
-                    responder.respond(message_bridge.message(request)?)
-                }
+                responder.respond(message_bridge.message(request)?)
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -872,12 +826,20 @@ async fn run_persistent_session(
                     current_model = Some(command.model.model.as_str().to_owned());
                 }
 
-                *active_events.lock() = Some(command.events.clone());
+                {
+                    let mut active = active_events.lock().map_err(|_| {
+                        agent_client_protocol::Error::internal_error()
+                            .data("persistent ACP event sink lock poisoned")
+                    })?;
+                    *active = Some(command.events.clone());
+                }
                 if bridge_available {
                     if let Err(error) =
                         bridge.bind_execution(&command.tools, command.events.clone())
                     {
-                        *active_events.lock() = None;
+                        if let Ok(mut active) = active_events.lock() {
+                            *active = None;
+                        }
                         let message = error.to_string();
                         let _ = command.events.send(WorkerMessage::Done(Err(error)));
                         return Err(agent_client_protocol::Error::internal_error().data(message));
@@ -897,7 +859,9 @@ async fn run_persistent_session(
                     .await;
                 bridge.unbind_execution();
                 drop(cancel_forwarder);
-                *active_events.lock() = None;
+                if let Ok(mut active) = active_events.lock() {
+                    *active = None;
+                }
                 match prompt_result {
                     Ok(_) => {
                         let _ = command.events.send(WorkerMessage::Done(Ok(())));
@@ -1153,10 +1117,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 mod tests {
     use super::*;
     use phenix_backend::ToolProvision;
-    use phenix_domain::{
-        CallableDescriptor, CallableId, CallableKind, CallablePolicy, CapabilitySet,
-        InferenceEffort, PhenixSchema,
-    };
+    use phenix_domain::InferenceEffort;
     use serde_json::json;
 
     fn config() -> AcpBackendConfig {
@@ -1181,22 +1142,6 @@ mod tests {
         ToolProvision::default()
             .prepare(&AcpBackend::new(config()).capabilities())
             .unwrap()
-    }
-
-    fn hosted_tools(id: &str) -> PreparedToolSurface {
-        ToolProvision {
-            callables: vec![CallableDescriptor {
-                id: CallableId::parse(id).unwrap(),
-                kind: CallableKind::Agent,
-                description: "fixture".to_owned(),
-                input_schema: PhenixSchema::Unit,
-                output_schema: PhenixSchema::Unit,
-                capabilities: CapabilitySet::default(),
-                policy: CallablePolicy::default(),
-            }],
-        }
-        .prepare(&AcpBackend::new(config()).capabilities())
-        .unwrap()
     }
 
     fn backend_session() -> AcpBackendSession {
@@ -1228,15 +1173,6 @@ mod tests {
         session.disarm_cancellation().unwrap();
         assert!(session.arm_cancellation().unwrap().is_some());
         session.disarm_cancellation().unwrap();
-    }
-
-    #[test]
-    fn persistent_tool_surface_change_requires_list_changed_support() {
-        let first = hosted_tools("phenix.first");
-        let second = hosted_tools("phenix.second");
-        assert!(validate_persistent_tool_surface_update(&first, &first, true).is_ok());
-        let error = validate_persistent_tool_surface_update(&first, &second, true).unwrap_err();
-        assert!(error.to_string().contains("tools/list_changed"));
     }
 
     #[test]

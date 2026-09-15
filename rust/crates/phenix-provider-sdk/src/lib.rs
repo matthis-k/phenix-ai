@@ -61,6 +61,7 @@ pub(crate) struct ProviderSpec {
     id: PluginId,
     endpoint: Endpoint,
     auth: auth::Definition,
+    default_auth: Option<Auth>,
     protocol: Arc<dyn ProtocolAdapter>,
 }
 
@@ -91,7 +92,25 @@ impl ProviderDefinition {
                 id,
                 endpoint,
                 auth: auth.into(),
+                default_auth: None,
                 protocol: Arc::new(protocol),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn with_default_auth(self, default_auth: Auth) -> Self {
+        assert!(
+            self.spec.auth.kinds().contains(&default_auth.kind()),
+            "provider default auth must use a supported authentication method"
+        );
+        Self {
+            spec: Arc::new(ProviderSpec {
+                id: self.spec.id.clone(),
+                endpoint: self.spec.endpoint.clone(),
+                auth: self.spec.auth.clone(),
+                default_auth: Some(default_auth),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -249,6 +268,25 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == ProviderAuthInterface::interface_id()));
+    }
+
+    #[test]
+    fn provider_definition_accepts_supported_default_auth() {
+        let definition = ProviderDefinition::new(
+            PluginId::parse("provider.environment").unwrap(),
+            Endpoint::parse("https://api.example.com/v1").unwrap(),
+            Protocol::OpenAiResponses,
+            auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
+        )
+        .with_default_auth(Auth::api_token(
+            ApiTokenSource::env("EXAMPLE_API_KEY").unwrap(),
+        ));
+
+        assert_eq!(definition.auth_kinds(), vec![AuthKind::ApiToken]);
+        assert!(matches!(
+            definition.spec.default_auth,
+            Some(Auth::ApiToken { .. })
+        ));
     }
 
     #[test]

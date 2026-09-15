@@ -12,11 +12,9 @@ use genai::chat::{
 };
 use genai::resolver::AuthResolver;
 use genai::Client as ProviderClient;
-use parking_lot::Mutex;
 use phenix_backend::{
     Backend, BackendCapabilities, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
-    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolCancellation, ToolInvocation,
-    ToolPresentation,
+    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolInvocation, ToolPresentation,
 };
 use phenix_domain::{
     AuthenticationInput, AuthenticationMethodDescriptor, AuthenticationMethodId,
@@ -28,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const BACKEND_ID: &str = "phenix";
 
@@ -133,7 +131,6 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
     match host.invoke_tool(ToolInvocation {
         callable: descriptor.id.clone(),
         arguments_json,
-        cancellation: ToolCancellation::new(),
     }) {
         Ok(result) if result.success => Ok(result.output),
         Ok(result) => Ok(json!({ "error": result.output }).to_string()),
@@ -401,8 +398,14 @@ impl PhenixSession {
         model: ModelTarget,
         tools: PreparedToolSurface,
     ) -> Result<(), BackendError> {
-        *self.model.lock() = model;
-        *self.tools.lock() = tools;
+        *self
+            .model
+            .lock()
+            .map_err(|_| BackendError::Protocol("Phenix model lock poisoned".to_owned()))? = model;
+        *self
+            .tools
+            .lock()
+            .map_err(|_| BackendError::Protocol("Phenix tool lock poisoned".to_owned()))? = tools;
         Ok(())
     }
 
@@ -411,9 +414,21 @@ impl PhenixSession {
         prompt: String,
         host: &mut dyn BackendHost,
     ) -> Result<Vec<ChatMessage>, BackendError> {
-        let model = self.model.lock().clone();
-        let tools = self.tools.lock().clone();
-        let mut history = self.history.lock().clone();
+        let model = self
+            .model
+            .lock()
+            .map_err(|_| BackendError::Protocol("Phenix model lock poisoned".to_owned()))?
+            .clone();
+        let tools = self
+            .tools
+            .lock()
+            .map_err(|_| BackendError::Protocol("Phenix tool lock poisoned".to_owned()))?
+            .clone();
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| BackendError::Protocol("Phenix history lock poisoned".to_owned()))?
+            .clone();
         history.push(ChatMessage::user(prompt));
 
         let provider = if model.provider.as_str() == oauth::PROVIDER {
@@ -524,7 +539,10 @@ impl BackendSession for PhenixSession {
         host: &mut dyn BackendHost,
     ) -> Result<(), BackendError> {
         {
-            let mut active = self.active.lock();
+            let mut active = self
+                .active
+                .lock()
+                .map_err(|_| BackendError::Protocol("Phenix active lock poisoned".to_owned()))?;
             if *active {
                 return Err(BackendError::Protocol(
                     "Phenix backend session is already executing".to_owned(),
@@ -536,9 +554,15 @@ impl BackendSession for PhenixSession {
         let result = self
             .runtime
             .block_on(self.execute_turn(request.prompt, host));
-        *self.active.lock() = false;
+        if let Ok(mut active) = self.active.lock() {
+            *active = false;
+        }
         if let Ok(history) = &result {
-            *self.history.lock() = history.clone();
+            *self
+                .history
+                .lock()
+                .map_err(|_| BackendError::Protocol("Phenix history lock poisoned".to_owned()))? =
+                history.clone();
         }
         result.map(|_| ())
     }
@@ -567,8 +591,7 @@ fn provider_has_valid_auth(
     if providers::is_api_key_auth_provider(provider) {
         let stored_key = matches!(
             stored,
-            Some(StoredCredential::ApiKey { ref secret })
-                if !secrecy::ExposeSecret::expose_secret(secret).trim().is_empty()
+            Some(StoredCredential::ApiKey { ref secret }) if !secret.trim().is_empty()
         );
         return Ok(stored_key || providers::environment_authenticated(provider));
     }
@@ -682,9 +705,9 @@ mod tests {
             .save_oauth(
                 oauth::PROVIDER,
                 StoredCredential::OAuth {
-                    access_token: secrecy::SecretString::from("access".to_owned()),
-                    refresh_token: secrecy::SecretString::from("refresh".to_owned()),
-                    id_token: secrecy::SecretString::from("id".to_owned()),
+                    access_token: "access".to_owned(),
+                    refresh_token: "refresh".to_owned(),
+                    id_token: "id".to_owned(),
                     account_id: "account".to_owned(),
                     expires_at: u64::MAX,
                 },

@@ -1,13 +1,11 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::num::NonZeroU32;
 use syn::{
     parse::Parser, punctuated::Punctuated, Attribute, Expr, ExprLit, FnArg, ImplItem, ItemImpl,
     Lit, Meta, ReturnType, Token, Type,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     let schema = parse_schema(args)?;
     let mut item = syn::parse2::<ItemImpl>(input)?;
     if item.trait_.is_some() || !item.generics.params.is_empty() {
@@ -62,13 +60,11 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
     }
 
     let self_ty = &item.self_ty;
-    let schema_version = schema.get();
     let migration_descriptors = migrations.iter().map(|(from, method)| {
-        let from_version = from.get();
         quote! {
-            #sdk::StaticResourceMigration {
-                from_version: #from_version,
-                to_version: #schema_version,
+            ::phenix_sdk::StaticResourceMigration {
+                from_version: #from,
+                to_version: #schema,
                 method: stringify!(#method),
             }
         }
@@ -77,19 +73,19 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
     Ok(quote! {
         #item
 
-        impl #sdk::StaticResourceDefinition for #self_ty {
+        impl ::phenix_sdk::StaticResourceDefinition for #self_ty {
             fn schema_version() -> u32 {
-                #schema_version
+                #schema
             }
 
-            fn migrations() -> Vec<#sdk::StaticResourceMigration> {
+            fn migrations() -> Vec<::phenix_sdk::StaticResourceMigration> {
                 vec![#(#migration_descriptors),*]
             }
         }
     })
 }
 
-fn parse_schema(args: TokenStream) -> syn::Result<NonZeroU32> {
+fn parse_schema(args: TokenStream) -> syn::Result<u32> {
     let arguments = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(args)?;
     let mut schema = None;
     for argument in arguments {
@@ -122,15 +118,16 @@ fn parse_schema(args: TokenStream) -> syn::Result<NonZeroU32> {
             "resource requires schema = <version>",
         )
     })?;
-    NonZeroU32::new(schema).ok_or_else(|| {
-        syn::Error::new(
+    if schema == 0 {
+        return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
             "resource schema version must be positive",
-        )
-    })
+        ));
+    }
+    Ok(schema)
 }
 
-fn parse_migration(attribute: &Attribute) -> syn::Result<NonZeroU32> {
+fn parse_migration(attribute: &Attribute) -> syn::Result<u32> {
     let Meta::List(meta) = &attribute.meta else {
         return Err(syn::Error::new_spanned(
             attribute,
@@ -166,9 +163,13 @@ fn parse_migration(attribute: &Attribute) -> syn::Result<NonZeroU32> {
         ));
     }
     let from = integer_literal(from.value, "migration source must be an integer")?;
-    NonZeroU32::new(from).ok_or_else(|| {
-        syn::Error::new_spanned(attribute, "migration source version must be positive")
-    })
+    if from == 0 {
+        return Err(syn::Error::new_spanned(
+            attribute,
+            "migration source version must be positive",
+        ));
+    }
+    Ok(from)
 }
 
 fn validate_migration_signature(method: &syn::ImplItemFn) -> syn::Result<()> {

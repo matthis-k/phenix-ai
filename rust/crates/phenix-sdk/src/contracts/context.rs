@@ -1,3 +1,7 @@
+use super::{
+    context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
+    CompactionCommit, CompactionProposal, ProjectionRevision,
+};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
     RoutingProfileId, ServiceId, SessionId,
@@ -73,6 +77,21 @@ pub struct ExecutionContextProjection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInvocationPreparation {
+    pub request_input_tokens: u64,
+    pub candidates: Vec<ContextCandidate>,
+    pub projection: ProjectionRevision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInvocationMaterialization {
+    pub input: Bytes,
+    pub projection: ProjectionRevision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct RepositoryContextSource {
     pub path: String,
     pub content: Bytes,
@@ -108,10 +127,35 @@ pub enum ContextCommand {
     Project {
         execution_id: String,
     },
+    PrepareInvocation {
+        execution_id: String,
+        input: Bytes,
+    },
+    MaterializeInvocation {
+        execution_id: String,
+        input: Bytes,
+        expected_projection: ProjectionRevision,
+    },
+    GetProjectionState {
+        execution_id: String,
+    },
+    Admit {
+        request: ContextAdmissionRequest,
+    },
+    PrepareCompaction {
+        proposal: CompactionProposal,
+    },
+    CommitCompaction {
+        execution_id: String,
+        checkpoint_id: String,
+    },
+    InvalidateProjection {
+        execution_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "result", rename_all = "snake_case")]
+#[serde(tag = "response", rename_all = "snake_case")]
 pub enum ContextResponse {
     Registered {
         resource: ContextResourceRevision,
@@ -131,6 +175,29 @@ pub enum ContextResponse {
     },
     Projection {
         projection: ExecutionContextProjection,
+    },
+    InvocationPrepared {
+        preparation: ContextInvocationPreparation,
+    },
+    InvocationMaterialized {
+        materialization: ContextInvocationMaterialization,
+    },
+    ProjectionState {
+        projection: ProjectionRevision,
+    },
+    Admission {
+        result: ContextAdmissionResult,
+        projection: ProjectionRevision,
+    },
+    CompactionPrepared {
+        checkpoint_id: String,
+        projection: ProjectionRevision,
+    },
+    CompactionCommitted {
+        commit: CompactionCommit,
+    },
+    ProjectionInvalidated {
+        projection: ProjectionRevision,
     },
 }
 

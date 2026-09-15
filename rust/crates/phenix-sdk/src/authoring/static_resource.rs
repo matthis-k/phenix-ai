@@ -133,7 +133,7 @@ mod tests {
             vec![StaticResourceDescriptor::derived::<Durable<Store>>(
                 &PluginId::parse("fixture.resource-owner").unwrap(),
                 "plans",
-                [BackendFeature::Migrations],
+                [BackendFeature::Transactions],
             )]
         }
     }
@@ -144,7 +144,7 @@ mod tests {
         let resource = StaticResourceDescriptor::derived::<Durable<Store>>(
             &owner,
             "plans",
-            [BackendFeature::Migrations],
+            [BackendFeature::Transactions],
         );
 
         assert_eq!(resource.id.as_str(), "fixture.resource-owner.plans");
@@ -156,7 +156,7 @@ mod tests {
         assert!(resource
             .schema
             .required_features
-            .contains(&BackendFeature::Migrations));
+            .contains(&BackendFeature::Transactions));
         assert!(resource.resource_type.ends_with("::Store"));
     }
 
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(schemas[0].version, 3);
         assert!(schemas[0]
             .required_features
-            .contains(&BackendFeature::Migrations));
+            .contains(&BackendFeature::Transactions));
         assert_eq!(registrations[0].owner, owner);
         assert_eq!(registrations[0].schema, schemas[0]);
     }

@@ -75,9 +75,16 @@ impl ServiceResponse {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("frontend service provider identifier must not be empty")]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InvalidFrontendServiceProviderId;
+
+impl Display for InvalidFrontendServiceProviderId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("frontend service provider identifier must not be empty")
+    }
+}
+
+impl std::error::Error for InvalidFrontendServiceProviderId {}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String")]

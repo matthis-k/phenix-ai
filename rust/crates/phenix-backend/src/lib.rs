@@ -5,10 +5,9 @@ use phenix_domain::{
     ExecutionId, ModelTarget, SessionId,
 };
 use std::collections::BTreeSet;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 
 /// Concrete representation used to materialize conductor-owned callables for a
 /// backend session. This is intentionally distinct from callable semantics:
@@ -123,55 +122,11 @@ pub enum BackendEvent {
     ReasoningDelta(String),
 }
 
-/// Cooperative cancellation shared by the backend protocol adapter and the
-/// execution host handling one tool invocation.
-#[derive(Clone, Debug)]
-pub struct ToolCancellation {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl ToolCancellation {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Cancellation is monotonic: once raised it cannot be cleared by a host.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-}
-
-impl Default for ToolCancellation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolInvocation {
     pub callable: CallableId,
     pub arguments_json: String,
-    /// Execution hosts must observe this token for long-running or mutating
-    /// work so backend protocol cancellation can stop the active operation.
-    pub cancellation: ToolCancellation,
 }
-
-impl PartialEq for ToolInvocation {
-    fn eq(&self, other: &Self) -> bool {
-        // Cancellation is execution-local control state, not invocation payload identity.
-        self.callable == other.callable && self.arguments_json == other.arguments_json
-    }
-}
-
-impl Eq for ToolInvocation {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolResult {
@@ -260,17 +215,25 @@ pub trait Backend: Send {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendError {
-    #[error("unsupported backend capability: {0}")]
     Unsupported(String),
-    #[error("backend transport error: {0}")]
     Transport(String),
-    #[error("backend protocol error: {0}")]
     Protocol(String),
-    #[error("backend context overflow: {0}")]
     ContextOverflow(String),
 }
+
+impl Display for BackendError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported(v) => write!(f, "unsupported backend capability: {v}"),
+            Self::Transport(v) => write!(f, "backend transport error: {v}"),
+            Self::Protocol(v) => write!(f, "backend protocol error: {v}"),
+            Self::ContextOverflow(v) => write!(f, "backend context overflow: {v}"),
+        }
+    }
+}
+impl Error for BackendError {}
 
 #[cfg(test)]
 mod tests {
@@ -337,15 +300,6 @@ mod tests {
             Some(ToolPresentation::Native)
         );
         assert_eq!(capabilities([]).preferred_tool_presentation(), None);
-    }
-
-    #[test]
-    fn tool_cancellation_is_shared_across_clones() {
-        let cancellation = ToolCancellation::new();
-        let observer = cancellation.clone();
-        assert!(!observer.is_cancelled());
-        cancellation.cancel();
-        assert!(observer.is_cancelled());
     }
 
     #[test]

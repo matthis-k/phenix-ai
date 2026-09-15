@@ -8,7 +8,6 @@ publish = false
 role = "runtime-plugin"
 
 [dependencies]
-petgraph.workspace = true
 phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 serde.workspace = true

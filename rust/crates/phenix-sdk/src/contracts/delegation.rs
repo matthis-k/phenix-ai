@@ -1,4 +1,6 @@
-use super::{BudgetReservation, ExactContextReference, ExecutionAuthority, RouteDecision};
+use super::{
+    BudgetReservation, ExactContextReference, ExecutionAuthority, ModelTurnUsage, RouteDecision,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -27,6 +29,44 @@ pub struct DelegatedWorkResources {
     pub max_result_bytes: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationTaskBinding {
+    pub contract_fingerprint: String,
+    pub parent_policy_revision: String,
+    pub resources: DelegatedWorkResources,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedFinding {
+    pub kind: String,
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<ExactContextReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationEscalation {
+    pub scope: String,
+    pub reason: String,
+    #[serde(default)]
+    pub evidence: Vec<ExactContextReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedWorkerResult {
+    #[serde(default)]
+    pub findings: Vec<DelegatedFinding>,
+    #[serde(default)]
+    pub evidence: Vec<ExactContextReference>,
+    pub escalation: Option<DelegationEscalation>,
+    pub usage: ModelTurnUsage,
+    pub encoded_result_bytes: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DelegationAdmissionError {
@@ -34,6 +74,7 @@ pub enum DelegationAdmissionError {
     DepthExceeded { requested: u32, allowed: u32 },
     AttemptLimitExceeded { requested: u32, allowed: u32 },
     ResultLimitExceeded { requested: u64, allowed: u64 },
+    DeadlineExceeded { deadline_at_ms: u64, now_ms: u64 },
 }
 
 impl DelegatedWorkResources {
@@ -64,6 +105,33 @@ impl DelegatedWorkResources {
         }
         Ok(())
     }
+
+    pub fn validate_deadline(&self, now_ms: u64) -> Result<(), DelegationAdmissionError> {
+        if now_ms >= self.deadline_at_ms {
+            Err(DelegationAdmissionError::DeadlineExceeded {
+                deadline_at_ms: self.deadline_at_ms,
+                now_ms,
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl DelegatedWorkerResult {
+    pub fn validate_against(
+        &self,
+        binding: &DelegationTaskBinding,
+    ) -> Result<(), DelegationAdmissionError> {
+        if self.encoded_result_bytes > binding.resources.max_result_bytes {
+            Err(DelegationAdmissionError::ResultLimitExceeded {
+                requested: self.encoded_result_bytes,
+                allowed: binding.resources.max_result_bytes,
+            })
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -83,6 +151,7 @@ mod tests {
                 },
                 capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "policy-1".to_owned(),
+                candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
             },
             authority: ExecutionAuthority::new(Vec::<String>::new()),

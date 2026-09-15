@@ -1,13 +1,9 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
-use bytes::Bytes;
-use http::{
-    header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE},
-    Method,
-};
 use phenix_core::{
     CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     PhenixSchema, ValueCodec,
 };
+use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -66,24 +62,23 @@ fn base_request(
     endpoint: &Endpoint,
     path: &str,
     body: Value,
-    headers: HeaderMap,
+    headers: BTreeMap<String, String>,
 ) -> Result<ProviderRequest, ProviderError> {
     Ok(ProviderRequest {
-        method: Method::POST,
+        method: crate::HttpMethod::Post,
         url: endpoint.join(path)?,
         headers,
-        body: Bytes::from(
-            serde_json::to_vec(&body).map_err(|error| ProviderError::Protocol {
-                message: error.to_string(),
-            })?,
-        ),
+        body: serde_json::to_vec(&body).map_err(|error| ProviderError::Protocol {
+            message: error.to_string(),
+        })?,
     })
 }
 
-fn json_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers
+fn json_headers() -> BTreeMap<String, String> {
+    BTreeMap::from([(
+        CONTENT_TYPE.as_str().to_owned(),
+        "application/json".to_owned(),
+    )])
 }
 
 fn request_object(
@@ -269,10 +264,7 @@ fn anthropic_request(
     body.entry("max_tokens".to_owned())
         .or_insert_with(|| Value::from(4096_u64));
     let mut headers = json_headers();
-    headers.insert(
-        HeaderName::from_static("anthropic-version"),
-        HeaderValue::from_static("2023-06-01"),
-    );
+    headers.insert("anthropic-version".to_owned(), "2023-06-01".to_owned());
     base_request(endpoint, "messages", Value::Object(body), headers)
 }
 
@@ -507,8 +499,7 @@ fn anthropic_response(
 pub fn normalize_http_error(response: &ProviderResponse) -> ProviderError {
     let message = error_message(&response.body);
     let normalized = message.to_ascii_lowercase();
-    let status = response.status.as_u16();
-    if status == 413
+    if response.status == 413
         || [
             "context_length_exceeded",
             "maximum context length",
@@ -522,7 +513,7 @@ pub fn normalize_http_error(response: &ProviderResponse) -> ProviderError {
     {
         return ProviderError::ContextLimit { message };
     }
-    match status {
+    match response.status {
         400 | 409 | 422 => ProviderError::InvalidRequest { message },
         401 => ProviderError::Authentication { message },
         403 => ProviderError::Permission { message },
@@ -533,7 +524,7 @@ pub fn normalize_http_error(response: &ProviderResponse) -> ProviderError {
             limits: Box::new(RateLimits::from_headers(&response.headers)),
         },
         _ => ProviderError::Protocol {
-            message: format!("HTTP {status}: {message}"),
+            message: format!("HTTP {}: {message}", response.status),
         },
     }
 }
@@ -592,17 +583,13 @@ mod tests {
     }
 
     fn response(status: u16, headers: &[(&str, &str)], body: Value) -> ProviderResponse {
-        let mut header_map = HeaderMap::new();
-        for (name, value) in headers {
-            header_map.insert(
-                HeaderName::from_bytes(name.as_bytes()).unwrap(),
-                HeaderValue::from_str(value).unwrap(),
-            );
-        }
         ProviderResponse {
-            status: http::StatusCode::from_u16(status).unwrap(),
-            headers: header_map,
-            body: Bytes::from(serde_json::to_vec(&body).unwrap()),
+            status,
+            headers: headers
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            body: serde_json::to_vec(&body).unwrap(),
         }
     }
 
@@ -612,7 +599,7 @@ mod tests {
         let encoded = Protocol::OpenAiResponses
             .encode(&endpoint, &request())
             .unwrap();
-        assert_eq!(encoded.url.as_str(), "https://example.com/v1/responses");
+        assert_eq!(encoded.url, "https://example.com/v1/responses");
         let body: Value = serde_json::from_slice(&encoded.body).unwrap();
         assert_eq!(body["model"], "test-model");
         assert_eq!(body["input"], "hello");
@@ -759,7 +746,7 @@ mod tests {
         let encoded = Protocol::AnthropicMessages
             .encode(&endpoint, &request())
             .unwrap();
-        assert_eq!(encoded.url.as_str(), "https://example.com/v1/messages");
+        assert_eq!(encoded.url, "https://example.com/v1/messages");
         let body: Value = serde_json::from_slice(&encoded.body).unwrap();
         assert_eq!(body["max_tokens"], 4096);
 

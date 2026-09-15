@@ -15,7 +15,6 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client as AcpRole, ConnectTo, ConnectionTo, ErrorCode,
 };
 use futures::channel::oneshot;
-use parking_lot::Mutex;
 use phenix_application_interface::{
     ApplicationClient, ApplicationTransport, Capabilities, Operation,
 };
@@ -25,7 +24,7 @@ use std::{
     future::Future,
     num::NonZeroUsize,
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, Mutex},
 };
 
 pub use phenix_application_interface::{
@@ -107,45 +106,69 @@ pub struct RequestRejection {
     pub details: Option<serde_json::Value>,
 }
 
-impl std::fmt::Display for RequestRejection {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(class) = &self.class {
-            write!(formatter, "({class}, {}): {}", self.code, self.message)
-        } else {
-            write!(formatter, "({}): {}", self.code, self.message)
-        }
-    }
-}
-
-#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientError {
-    #[error("ACP transport failure: {0}")]
     Transport(String),
-    #[error("ACP protocol failure: {0}")]
     Protocol(String),
-    #[error("ACP request cancelled: {message}")]
     Cancelled {
         message: String,
         details: Box<Option<serde_json::Value>>,
     },
-    #[error("ACP peer rejected request {0}")]
     Rejected(Box<RequestRejection>),
-    #[error(
-        "ACP peer does not support operation {operation}; capability {capability} is unavailable"
-    )]
     UnsupportedCapability {
         operation: ContractId,
         capability: ContractId,
     },
-    #[error("ACP session {session_id} update sequence is {received}; expected {expected}")]
     OutOfOrderUpdate {
         session_id: String,
         expected: u64,
         received: u64,
     },
-    #[error("ACP update queue is full")]
     UpdateQueueFull,
 }
+
+impl std::fmt::Display for ClientError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport(message) => write!(formatter, "ACP transport failure: {message}"),
+            Self::Protocol(message) => write!(formatter, "ACP protocol failure: {message}"),
+            Self::Cancelled { message, .. } => write!(formatter, "ACP request cancelled: {message}"),
+            Self::Rejected(rejection) => {
+                if let Some(class) = &rejection.class {
+                    write!(
+                        formatter,
+                        "ACP peer rejected request ({class}, {}): {}",
+                        rejection.code, rejection.message
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "ACP peer rejected request ({}): {}",
+                        rejection.code, rejection.message
+                    )
+                }
+            }
+            Self::UnsupportedCapability {
+                operation,
+                capability,
+            } => write!(
+                formatter,
+                "ACP peer does not support operation {operation}; capability {capability} is unavailable"
+            ),
+            Self::OutOfOrderUpdate {
+                session_id,
+                expected,
+                received,
+            } => write!(
+                formatter,
+                "ACP session {session_id} update sequence is {received}; expected {expected}"
+            ),
+            Self::UpdateQueueFull => write!(formatter, "ACP update queue is full"),
+        }
+    }
+}
+
+impl std::error::Error for ClientError {}
 
 fn request_error(error: agent_client_protocol::Error) -> ClientError {
     let message = error.to_string();
@@ -671,7 +694,10 @@ impl SessionUpdates {
         session_id: impl Into<String>,
         next_sequence: u64,
     ) -> Result<(), ClientError> {
-        self.ordered.lock().resume_at(session_id, next_sequence);
+        self.ordered
+            .lock()
+            .map_err(|_| ClientError::Protocol("ACP update order lock poisoned".to_owned()))?
+            .resume_at(session_id, next_sequence);
         Ok(())
     }
 
@@ -684,6 +710,7 @@ impl SessionUpdates {
         {
             self.ordered
                 .lock()
+                .map_err(|_| ClientError::Protocol("ACP update order lock poisoned".to_owned()))?
                 .accept(notification.session_id.to_string(), sequence)?;
         }
         match &self.sender {
@@ -811,14 +838,18 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         }
                         AgentNotification::ExtNotification(notification) => notifications
                             .lock()
-                            .as_ref()
-                            .ok_or_else(|| {
+                            .map_err(|_| {
                                 ClientError::Protocol(
-                                    "ACP peer sent an extension event before initialize completed"
-                                        .to_owned(),
+                                    "ACP extension metadata lock poisoned".to_owned(),
                                 )
                             })
                             .and_then(|extensions| {
+                                let extensions = extensions.as_ref().ok_or_else(|| {
+                                    ClientError::Protocol(
+                                        "ACP peer sent an extension event before initialize completed"
+                                            .to_owned(),
+                                    )
+                                })?;
                                 extension_updates.receive(notification, extensions)
                             }),
                         _ => Ok(()),
@@ -837,7 +868,10 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         .block_task()
                         .await?;
                     let extensions = descriptor_extensions(&initialized)?;
-                    *negotiated.lock() = Some(extensions.clone());
+                    *negotiated.lock().map_err(|_| {
+                        agent_client_protocol::Error::internal_error()
+                            .data("ACP extension metadata lock poisoned")
+                    })? = Some(extensions.clone());
                     use_connection(AcpConnection {
                         connection,
                         extensions,
@@ -876,14 +910,18 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         }
                         AgentNotification::ExtNotification(notification) => notifications
                             .lock()
-                            .as_ref()
-                            .ok_or_else(|| {
+                            .map_err(|_| {
                                 ClientError::Protocol(
-                                    "ACP peer sent an extension event before initialize completed"
-                                        .to_owned(),
+                                    "ACP extension metadata lock poisoned".to_owned(),
                                 )
                             })
                             .and_then(|extensions| {
+                                let extensions = extensions.as_ref().ok_or_else(|| {
+                                    ClientError::Protocol(
+                                        "ACP peer sent an extension event before initialize completed"
+                                            .to_owned(),
+                                    )
+                                })?;
                                 extension_updates.receive(notification, extensions)
                             }),
                         _ => Ok(()),
@@ -901,10 +939,17 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                             "ACP peer sent a non-extension request to the Phenix callback handler",
                         ));
                     };
-                    let extensions = callback_metadata.lock().clone().ok_or_else(|| {
-                        agent_client_protocol::Error::invalid_params()
-                            .data("ACP peer sent an extension callback before initialize completed")
-                    })?;
+                    let extensions = callback_metadata
+                        .lock()
+                        .map_err(|_| {
+                            agent_client_protocol::Error::internal_error()
+                                .data("ACP extension metadata lock poisoned")
+                        })?
+                        .clone()
+                        .ok_or_else(|| {
+                            agent_client_protocol::Error::invalid_params()
+                                .data("ACP peer sent an extension callback before initialize completed")
+                        })?;
                     let callbacks = callbacks.clone();
                     connection.spawn(async move {
                         let response = callbacks
@@ -934,7 +979,10 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         .block_task()
                         .await?;
                     let extensions = descriptor_extensions(&initialized)?;
-                    *negotiated.lock() = Some(extensions.clone());
+                    *negotiated.lock().map_err(|_| {
+                        agent_client_protocol::Error::internal_error()
+                            .data("ACP extension metadata lock poisoned")
+                    })? = Some(extensions.clone());
                     use_connection(AcpConnection {
                         connection,
                         extensions,
@@ -1547,14 +1595,6 @@ mod tests {
         updates
             .accept("session-1", 7)
             .expect("resumed update is ordered");
-    }
-
-    #[test]
-    fn session_updates_resume_preserves_result_api() {
-        let (updates, _receiver) = SessionUpdates::channel();
-        updates
-            .resume_at("session-1", 7)
-            .expect("resume remains infallible while preserving the public Result API");
     }
 
     #[test]

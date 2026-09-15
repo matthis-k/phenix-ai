@@ -1,6 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    error::Error,
     fmt::{self, Display, Formatter},
     str::FromStr,
 };
@@ -31,9 +32,16 @@ impl Display for ArtifactRevision {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("artifact revision must be sha256 followed by 64 lowercase hexadecimal digits")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArtifactRevisionParseError;
+
+impl Display for ArtifactRevisionParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("artifact revision must be sha256 followed by 64 lowercase hexadecimal digits")
+    }
+}
+
+impl Error for ArtifactRevisionParseError {}
 
 impl FromStr for ArtifactRevision {
     type Err = ArtifactRevisionParseError;

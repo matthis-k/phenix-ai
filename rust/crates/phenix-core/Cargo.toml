@@ -11,7 +11,6 @@ role = "passive-library"
 [dependencies]
 getrandom.workspace = true
 parking_lot.workspace = true
-petgraph.workspace = true
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 rusqlite.workspace = true
 serde.workspace = true
@@ -23,7 +22,3 @@ thiserror.workspace = true
 [[test]]
 name = "observable_allocations"
 path = "tests/observable_allocations.rs"
-
-[[test]]
-name = "persistence_backend_conformance"
-path = "tests/persistence_backend_conformance.rs"

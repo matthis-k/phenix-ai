@@ -35,9 +35,16 @@ impl Display for ContractText {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("contract text must not be empty")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EmptyContractText;
+
+impl Display for EmptyContractText {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("contract text must not be empty")
+    }
+}
+
+impl std::error::Error for EmptyContractText {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DelegationInterface {

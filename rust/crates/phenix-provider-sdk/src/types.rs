@@ -1,28 +1,43 @@
-use bytes::Bytes;
-use http::{
-    header::{HeaderMap, HeaderName as HttpHeaderName, HeaderValue},
-    Method, StatusCode,
-};
+use reqwest::header::{HeaderName as ReqwestHeaderName, HeaderValue};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
-    fmt::{self, Formatter},
+    collections::BTreeMap,
+    fmt::{self, Display, Formatter},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use url::Url;
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EndpointParseError {
-    #[error("invalid provider endpoint: {0}")]
     InvalidUrl(String),
-    #[error("provider endpoint scheme must be http or https, got {0}")]
     UnsupportedScheme(String),
-    #[error("provider endpoint must not contain embedded credentials")]
     CredentialsNotAllowed,
-    #[error("provider endpoint must not contain a query")]
     QueryNotAllowed,
-    #[error("provider endpoint must not contain a fragment")]
     FragmentNotAllowed,
 }
+
+impl Display for EndpointParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUrl(error) => write!(f, "invalid provider endpoint: {error}"),
+            Self::UnsupportedScheme(scheme) => {
+                write!(
+                    f,
+                    "provider endpoint scheme must be http or https, got {scheme}"
+                )
+            }
+            Self::CredentialsNotAllowed => {
+                f.write_str("provider endpoint must not contain embedded credentials")
+            }
+            Self::QueryNotAllowed => f.write_str("provider endpoint must not contain a query"),
+            Self::FragmentNotAllowed => {
+                f.write_str("provider endpoint must not contain a fragment")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EndpointParseError {}
 
 fn parse_http_url(value: &str) -> Result<Url, EndpointParseError> {
     let url =
@@ -62,10 +77,11 @@ impl Endpoint {
         &self.0
     }
 
-    pub(crate) fn join(&self, path: &str) -> Result<Url, ProviderError> {
+    pub(crate) fn join(&self, path: &str) -> Result<String, ProviderError> {
         Url::parse(&self.0)
             .expect("parsed provider endpoint remains valid")
             .join(path)
+            .map(|url| url.to_string())
             .map_err(|error| ProviderError::Protocol {
                 message: format!("cannot join provider endpoint path {path:?}: {error}"),
             })
@@ -103,11 +119,18 @@ impl Secret {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecretParseError {
-    #[error("secret must not be empty")]
     Empty,
 }
+
+impl Display for SecretParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("secret must not be empty")
+    }
+}
+
+impl std::error::Error for SecretParseError {}
 
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -146,13 +169,22 @@ impl Token {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenParseError {
-    #[error("token must not be empty")]
     Empty,
-    #[error("token is not valid in an HTTP header")]
     InvalidHeaderValue,
 }
+
+impl Display for TokenParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("token must not be empty"),
+            Self::InvalidHeaderValue => f.write_str("token is not valid in an HTTP header"),
+        }
+    }
+}
+
+impl std::error::Error for TokenParseError {}
 
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -196,9 +228,16 @@ impl EnvironmentVariable {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("environment variable name must match [A-Za-z_][A-Za-z0-9_]*")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EnvironmentVariableParseError;
+
+impl Display for EnvironmentVariableParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("environment variable name must match [A-Za-z_][A-Za-z0-9_]*")
+    }
+}
+
+impl std::error::Error for EnvironmentVariableParseError {}
 
 impl Serialize for EnvironmentVariable {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -241,7 +280,7 @@ pub struct HeaderName(String);
 impl HeaderName {
     pub fn parse(value: impl Into<String>) -> Result<Self, HeaderNameParseError> {
         let value = value.into();
-        HttpHeaderName::from_bytes(value.as_bytes()).map_err(|_| HeaderNameParseError)?;
+        ReqwestHeaderName::from_bytes(value.as_bytes()).map_err(|_| HeaderNameParseError)?;
         Ok(Self(value.to_ascii_lowercase()))
     }
 
@@ -250,9 +289,16 @@ impl HeaderName {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid HTTP header name")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HeaderNameParseError;
+
+impl Display for HeaderNameParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid HTTP header name")
+    }
+}
+
+impl std::error::Error for HeaderNameParseError {}
 
 impl Serialize for HeaderName {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -357,19 +403,28 @@ pub struct AuthDescriptor {
     pub expires_at: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderRequest {
-    pub method: Method,
-    pub url: Url,
-    pub headers: HeaderMap,
-    pub body: Bytes,
+    pub method: HttpMethod,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderResponse {
-    pub status: StatusCode,
-    pub headers: HeaderMap,
-    pub body: Bytes,
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -411,7 +466,7 @@ pub struct RateLimits {
 }
 
 impl RateLimits {
-    pub fn from_headers(headers: &HeaderMap) -> Self {
+    pub fn from_headers(headers: &BTreeMap<String, String>) -> Self {
         let requests = rate_limit_window(
             headers,
             &["ratelimit-limit", "x-ratelimit-limit-requests"],
@@ -437,7 +492,7 @@ impl RateLimits {
 }
 
 fn rate_limit_window(
-    headers: &HeaderMap,
+    headers: &BTreeMap<String, String>,
     limit: &[&str],
     remaining: &[&str],
     reset: &[&str],
@@ -449,10 +504,10 @@ fn rate_limit_window(
     }
 }
 
-fn header<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'a str> {
+fn header<'a>(headers: &'a BTreeMap<String, String>, names: &[&str]) -> Option<&'a str> {
     names
         .iter()
-        .find_map(|name| headers.get(*name).and_then(|value| value.to_str().ok()))
+        .find_map(|name| headers.get(*name).map(String::as_str))
 }
 
 fn parse_reset(value: &str) -> Option<DurationMs> {
@@ -508,37 +563,80 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderError {
-    #[error("authentication: {message}")]
-    Authentication { message: String },
-    #[error("permission: {message}")]
-    Permission { message: String },
-    #[error("not_found: {message}")]
-    NotFound { message: String },
-    #[error("rate_limited: {message}")]
+    Authentication {
+        message: String,
+    },
+    Permission {
+        message: String,
+    },
+    NotFound {
+        message: String,
+    },
     RateLimited {
         message: String,
         limits: Box<RateLimits>,
     },
-    #[error("context_limit: {message}")]
-    ContextLimit { message: String },
-    #[error("invalid_request: {message}")]
-    InvalidRequest { message: String },
-    #[error("unavailable: {message}")]
-    Unavailable { message: String },
-    #[error("transport: {message}")]
-    Transport { message: String },
-    #[error("protocol: {message}")]
-    Protocol { message: String },
+    ContextLimit {
+        message: String,
+    },
+    InvalidRequest {
+        message: String,
+    },
+    Unavailable {
+        message: String,
+    },
+    Transport {
+        message: String,
+    },
+    Protocol {
+        message: String,
+    },
 }
 
 impl ProviderError {
     pub fn to_wire(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| self.to_string())
     }
+
+    fn message(&self) -> &str {
+        match self {
+            Self::Authentication { message }
+            | Self::Permission { message }
+            | Self::NotFound { message }
+            | Self::ContextLimit { message }
+            | Self::InvalidRequest { message }
+            | Self::Unavailable { message }
+            | Self::Transport { message }
+            | Self::Protocol { message }
+            | Self::RateLimited { message, .. } => message,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Authentication { .. } => "authentication",
+            Self::Permission { .. } => "permission",
+            Self::NotFound { .. } => "not_found",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::ContextLimit { .. } => "context_limit",
+            Self::InvalidRequest { .. } => "invalid_request",
+            Self::Unavailable { .. } => "unavailable",
+            Self::Transport { .. } => "transport",
+            Self::Protocol { .. } => "protocol",
+        }
+    }
 }
+
+impl Display for ProviderError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.kind(), self.message())
+    }
+}
+
+impl std::error::Error for ProviderError {}
 
 #[cfg(test)]
 mod tests {
@@ -581,23 +679,14 @@ mod tests {
 
     #[test]
     fn common_rate_limit_headers_are_normalized() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-ratelimit-limit-requests",
-            HeaderValue::from_static("100"),
-        );
-        headers.insert(
-            "x-ratelimit-remaining-requests",
-            HeaderValue::from_static("0"),
-        );
-        headers.insert("x-ratelimit-reset-requests", HeaderValue::from_static("1s"));
-        headers.insert("x-ratelimit-limit-tokens", HeaderValue::from_static("5000"));
-        headers.insert(
-            "x-ratelimit-reset-tokens",
-            HeaderValue::from_static("500ms"),
-        );
-        headers.insert("retry-after", HeaderValue::from_static("2"));
-        let limits = RateLimits::from_headers(&headers);
+        let limits = RateLimits::from_headers(&BTreeMap::from([
+            ("x-ratelimit-limit-requests".to_owned(), "100".to_owned()),
+            ("x-ratelimit-remaining-requests".to_owned(), "0".to_owned()),
+            ("x-ratelimit-reset-requests".to_owned(), "1s".to_owned()),
+            ("x-ratelimit-limit-tokens".to_owned(), "5000".to_owned()),
+            ("x-ratelimit-reset-tokens".to_owned(), "500ms".to_owned()),
+            ("retry-after".to_owned(), "2".to_owned()),
+        ]));
         assert_eq!(limits.requests.as_ref().unwrap().limit, Some(100));
         assert_eq!(
             limits.requests.as_ref().unwrap().reset_after,

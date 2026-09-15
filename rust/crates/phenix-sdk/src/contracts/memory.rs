@@ -119,6 +119,8 @@ pub struct MemoryExtractionObservation {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryExtractionRequest {
+    pub execution_id: String,
+    pub parent_attempt_id: String,
     pub profile_id: RoutingProfileId,
     pub id: String,
     pub kind: MemoryKind,
@@ -130,6 +132,8 @@ pub struct MemoryExtractionRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConsolidationRequest {
+    pub execution_id: String,
+    pub parent_attempt_id: String,
     pub profile_id: RoutingProfileId,
     pub ids: Vec<String>,
     pub consolidated_id: String,
@@ -189,6 +193,8 @@ pub enum MemoryCommand {
     },
     Revalidate {
         id: String,
+        execution_id: String,
+        parent_attempt_id: String,
         profile_id: RoutingProfileId,
         at: u64,
     },
@@ -312,6 +318,8 @@ pub struct CompactContextItem {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ContextCompactionRequest {
+    pub execution_id: String,
+    pub parent_attempt_id: String,
     pub scope: MemoryScope,
     pub profile_id: RoutingProfileId,
     pub configuration_revision: String,

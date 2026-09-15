@@ -29,7 +29,6 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<Token
 }
 
 fn expand_lifecycle_impl(args: TokenStream, mut item: ItemImpl) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if !args.is_empty() {
         return Err(syn::Error::new_spanned(
             args,
@@ -96,9 +95,9 @@ fn expand_lifecycle_impl(args: TokenStream, mut item: ItemImpl) -> syn::Result<T
     Ok(quote! {
         #item
 
-        impl #sdk::StaticPluginLifecycle for #self_ty {
-            fn lifecycle() -> #sdk::StaticPluginLifecycleDescriptor {
-                #sdk::StaticPluginLifecycleDescriptor {
+        impl ::phenix_sdk::StaticPluginLifecycle for #self_ty {
+            fn lifecycle() -> ::phenix_sdk::StaticPluginLifecycleDescriptor {
+                ::phenix_sdk::StaticPluginLifecycleDescriptor {
                     start: #start,
                     stop: #stop,
                 }
@@ -242,7 +241,6 @@ fn validate_lifecycle_signature(method: &syn::ImplItemFn) -> syn::Result<()> {
 }
 
 fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if !item.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &item.generics,
@@ -324,14 +322,14 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
             let ty = &component.ty;
             if let Some(id) = &component.id {
                 quote! {
-                    #sdk::StaticComponentDescriptor::explicit::<#ty>(
+                    ::phenix_sdk::StaticComponentDescriptor::explicit::<#ty>(
                         #id,
                         stringify!(#field),
                     )
                 }
             } else {
                 quote! {
-                    #sdk::StaticComponentDescriptor::derived::<#ty>(
+                    ::phenix_sdk::StaticComponentDescriptor::derived::<#ty>(
                         &Self::plugin_id(),
                         stringify!(#field),
                     )
@@ -342,7 +340,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
     if has_root_component {
         let root_ty = &item.ident;
         component_descriptors.push(quote! {
-            #sdk::StaticComponentDescriptor::derived::<#root_ty>(
+            ::phenix_sdk::StaticComponentDescriptor::derived::<#root_ty>(
                 &Self::plugin_id(),
                 "root",
             )
@@ -353,13 +351,13 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         let ty = &import.ty;
         match import.authority.as_ref() {
             Some(authority) => quote! {
-                #sdk::StaticComponentImport::with_authority::<#ty>(
+                ::phenix_sdk::StaticComponentImport::with_authority::<#ty>(
                     stringify!(#field),
                     #authority,
                 )
             },
             None => quote! {
-                #sdk::StaticComponentImport::of::<#ty>(stringify!(#field))
+                ::phenix_sdk::StaticComponentImport::of::<#ty>(stringify!(#field))
             },
         }
     });
@@ -368,13 +366,13 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         let ty = &host.ty;
         match host.authority.as_ref() {
             Some(authority) => quote! {
-                #sdk::StaticComponentHost::with_authority::<#ty>(
+                ::phenix_sdk::StaticComponentHost::with_authority::<#ty>(
                     stringify!(#field),
                     #authority,
                 )
             },
             None => quote! {
-                #sdk::StaticComponentHost::of::<#ty>(stringify!(#field))
+                ::phenix_sdk::StaticComponentHost::of::<#ty>(stringify!(#field))
             },
         }
     });
@@ -383,7 +381,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         let ty = &event.ty;
         let id = &event.event;
         quote! {
-            #sdk::StaticComponentEvent::of::<#ty>(#id, stringify!(#field))
+            ::phenix_sdk::StaticComponentEvent::of::<#ty>(#id, stringify!(#field))
         }
     });
     let resource_descriptors = contributions.resources.iter().map(|resource| {
@@ -392,18 +390,18 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         let features = &resource.features;
         if let Some(id) = &resource.id {
             quote! {
-                #sdk::StaticResourceDescriptor::explicit::<#ty>(
+                ::phenix_sdk::StaticResourceDescriptor::explicit::<#ty>(
                     #id,
                     stringify!(#field),
-                    [#(#sdk::BackendFeature::#features),*],
+                    [#(::phenix_sdk::BackendFeature::#features),*],
                 )
             }
         } else {
             quote! {
-                #sdk::StaticResourceDescriptor::derived::<#ty>(
+                ::phenix_sdk::StaticResourceDescriptor::derived::<#ty>(
                     &Self::plugin_id(),
                     stringify!(#field),
-                    [#(#sdk::BackendFeature::#features),*],
+                    [#(::phenix_sdk::BackendFeature::#features),*],
                 )
             }
         }
@@ -412,7 +410,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
         let field = &configuration.field;
         let ty = &configuration.ty;
         quote! {
-            Some(#sdk::StaticPluginConfigDescriptor::of::<#ty>(stringify!(#field)))
+            Some(::phenix_sdk::StaticPluginConfigDescriptor::of::<#ty>(stringify!(#field)))
         }
     });
     let configuration = configuration.unwrap_or_else(|| quote!(None));
@@ -421,23 +419,23 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
     let identity_impl = plugin_identity_impl(name, &id);
     let root_component_impl = has_root_component.then(|| {
         quote! {
-            impl #sdk::StaticComponentDefinition for #name {}
+            impl ::phenix_sdk::StaticComponentDefinition for #name {}
 
-            impl #sdk::StaticComponentImports for #name {
-                fn imports() -> Vec<#sdk::StaticComponentImport> {
+            impl ::phenix_sdk::StaticComponentImports for #name {
+                fn imports() -> Vec<::phenix_sdk::StaticComponentImport> {
                     vec![#(#root_imports),*]
                 }
 
-                fn hosts() -> Vec<#sdk::StaticComponentHost> {
+                fn hosts() -> Vec<::phenix_sdk::StaticComponentHost> {
                     vec![#(#root_hosts),*]
                 }
 
-                fn events() -> Vec<#sdk::StaticComponentEvent> {
+                fn events() -> Vec<::phenix_sdk::StaticComponentEvent> {
                     vec![#(#root_events),*]
                 }
             }
 
-            impl #sdk::StaticComponentBehavior for #name {}
+            impl ::phenix_sdk::StaticComponentBehavior for #name {}
         }
     });
 
@@ -452,36 +450,36 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
 
         #root_component_impl
 
-        impl #sdk::StaticPluginDefinition for #name {
-            fn descriptor() -> #sdk::StaticPluginDescriptor {
-                #sdk::StaticPluginDescriptor {
+        impl ::phenix_sdk::StaticPluginDefinition for #name {
+            fn descriptor() -> ::phenix_sdk::StaticPluginDescriptor {
+                ::phenix_sdk::StaticPluginDescriptor {
                     id: Self::plugin_id(),
                     definition: concat!(module_path!(), "::", stringify!(#name)),
                     version: #version,
                     execution: #execution,
                     maximum_authority: #authority,
                     dependencies: vec![
-                        #(#sdk::StaticPluginDependency::of::<#dependency_types>()),*
+                        #(::phenix_sdk::StaticPluginDependency::of::<#dependency_types>()),*
                     ],
                     embedded_factory: None,
                 }
             }
         }
 
-        impl #sdk::StaticPluginConfiguration for #name {
-            fn configuration() -> Option<#sdk::StaticPluginConfigDescriptor> {
+        impl ::phenix_sdk::StaticPluginConfiguration for #name {
+            fn configuration() -> Option<::phenix_sdk::StaticPluginConfigDescriptor> {
                 #configuration
             }
         }
 
-        impl #sdk::StaticPluginComponents for #name {
-            fn components() -> Vec<#sdk::StaticComponentDescriptor> {
+        impl ::phenix_sdk::StaticPluginComponents for #name {
+            fn components() -> Vec<::phenix_sdk::StaticComponentDescriptor> {
                 vec![#(#component_descriptors),*]
             }
         }
 
-        impl #sdk::StaticPluginResources for #name {
-            fn resources() -> Vec<#sdk::StaticResourceDescriptor> {
+        impl ::phenix_sdk::StaticPluginResources for #name {
+            fn resources() -> Vec<::phenix_sdk::StaticResourceDescriptor> {
                 vec![#(#resource_descriptors),*]
             }
         }
@@ -489,7 +487,6 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
 }
 
 fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     let execution = plugin_execution(args.clone())?;
     let authority = plugin_authority(args.clone())?;
     let version = plugin_version(args.clone())?;
@@ -541,8 +538,8 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
         let decoded_request = &export.decoded_request;
         let request = match export.projection {
             StatelessRequestProjection::Projected => quote!(request),
-            StatelessRequestProjection::ExplicitProject => quote!(#sdk::Project(request)),
-            StatelessRequestProjection::Exact => quote!(#sdk::Exact(request)),
+            StatelessRequestProjection::ExplicitProject => quote!(::phenix_sdk::Project(request)),
+            StatelessRequestProjection::Exact => quote!(::phenix_sdk::Exact(request)),
         };
         let call = match (export.has_context, export.has_request) {
             (true, true) => quote!(#function(&call_context, #request)),
@@ -561,9 +558,9 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
             quote!(|#request_binding: #decoded_request| Ok::<_, String>(#call))
         };
         let dispatch = match export.projection {
-            StatelessRequestProjection::Exact => quote!(#sdk::dispatch_exact_provider),
+            StatelessRequestProjection::Exact => quote!(::phenix_sdk::dispatch_exact_provider),
             StatelessRequestProjection::Projected | StatelessRequestProjection::ExplicitProject => {
-                quote!(#sdk::dispatch_projected_provider)
+                quote!(::phenix_sdk::dispatch_projected_provider)
             }
         };
 
@@ -571,7 +568,7 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
             {
                 let interface = #interface;
                 if service.as_str() == interface.as_str() {
-                    let call_context = #sdk::CallContext {
+                    let call_context = ::phenix_sdk::CallContext {
                         authority: host.authority(),
                         graph_generation: host.graph_generation(),
                     };
@@ -587,7 +584,7 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
             let id = &value.id;
             let public = value.public;
             quote! {
-                #sdk::StaticComponentValue::of::<#value_type>(
+                ::phenix_sdk::StaticComponentValue::of::<#value_type>(
                     #id, stringify!(#function), #public,
                 )
             }
@@ -604,22 +601,22 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
     let identity_impl: Item = parse_quote! {
         impl Plugin {
             #[must_use]
-            pub fn plugin_id() -> #sdk::PluginId {
-                #sdk::PluginId::parse(#id)
+            pub fn plugin_id() -> ::phenix_sdk::PluginId {
+                ::phenix_sdk::PluginId::parse(#id)
                     .expect("plugin attribute validated the static plugin id")
             }
 
             #[must_use]
-            pub fn component_id() -> #sdk::ComponentId {
-                #sdk::ComponentId::parse(#id)
+            pub fn component_id() -> ::phenix_sdk::ComponentId {
+                ::phenix_sdk::ComponentId::parse(#id)
                     .expect("plugin attribute validated the default component id")
             }
         }
     };
     let definition_impl: Item = parse_quote! {
-        impl #sdk::StaticPluginDefinition for Plugin {
-            fn descriptor() -> #sdk::StaticPluginDescriptor {
-                #sdk::StaticPluginDescriptor {
+        impl ::phenix_sdk::StaticPluginDefinition for Plugin {
+            fn descriptor() -> ::phenix_sdk::StaticPluginDescriptor {
+                ::phenix_sdk::StaticPluginDescriptor {
                     id: Self::plugin_id(),
                     definition: concat!(module_path!(), "::Plugin"),
                     version: #version,
@@ -627,55 +624,55 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
                     maximum_authority: #authority,
                     dependencies: Vec::new(),
                     embedded_factory: Some(
-                        <Plugin as #sdk::StaticPluginFactory>::factory,
+                        <Plugin as ::phenix_sdk::StaticPluginFactory>::factory,
                     ),
                 }
             }
         }
     };
     let configuration_impl: Item = parse_quote! {
-        impl #sdk::StaticPluginConfiguration for Plugin {
-            fn configuration() -> Option<#sdk::StaticPluginConfigDescriptor> {
+        impl ::phenix_sdk::StaticPluginConfiguration for Plugin {
+            fn configuration() -> Option<::phenix_sdk::StaticPluginConfigDescriptor> {
                 None
             }
         }
     };
     let resources_impl: Item = parse_quote! {
-        impl #sdk::StaticPluginResources for Plugin {
-            fn resources() -> Vec<#sdk::StaticResourceDescriptor> { Vec::new() }
+        impl ::phenix_sdk::StaticPluginResources for Plugin {
+            fn resources() -> Vec<::phenix_sdk::StaticResourceDescriptor> { Vec::new() }
         }
     };
     let component_definition: Item = parse_quote! {
-        impl #sdk::StaticComponentDefinition for Component {}
+        impl ::phenix_sdk::StaticComponentDefinition for Component {}
     };
     let component_imports: Item = parse_quote! {
-        impl #sdk::StaticComponentImports for Component {}
+        impl ::phenix_sdk::StaticComponentImports for Component {}
     };
     let component_behavior: Item = syn::parse2(quote! {
-        impl #sdk::StaticComponentBehavior for Component {
-            fn exports() -> Vec<#sdk::StaticComponentExport> {
+        impl ::phenix_sdk::StaticComponentBehavior for Component {
+            fn exports() -> Vec<::phenix_sdk::StaticComponentExport> {
                 vec![#(#export_descriptors),*]
             }
 
-            fn values() -> Vec<#sdk::StaticComponentValue> {
+            fn values() -> Vec<::phenix_sdk::StaticComponentValue> {
                 vec![#(#value_descriptors),*]
             }
         }
     })?;
     let instance_impl: Item = parse_quote! {
-        impl #sdk::__phenix_plugin::PluginInstance for Plugin {
+        impl ::phenix_sdk::__phenix_plugin::PluginInstance for Plugin {
             fn start(
                 &mut self,
-                _host: &#sdk::__phenix_plugin::PluginHost<'_>,
+                _host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<(), String> {
                 Ok(())
             }
 
             fn invoke(
                 &mut self,
-                service: &#sdk::__phenix_plugin::ServiceId,
+                service: &::phenix_sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &#sdk::__phenix_plugin::PluginHost<'_>,
+                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<Vec<u8>, String> {
                 #(#dispatch_arms)*
                 Err(format!("unsupported stateless plugin service: {service}"))
@@ -683,16 +680,16 @@ fn expand_module(args: TokenStream, mut item: ItemMod) -> syn::Result<TokenStrea
         }
     };
     let factory_impl: Item = parse_quote! {
-        impl #sdk::StaticPluginFactory for Plugin {
-            fn factory() -> Box<dyn #sdk::__phenix_plugin::PluginInstance> {
+        impl ::phenix_sdk::StaticPluginFactory for Plugin {
+            fn factory() -> Box<dyn ::phenix_sdk::__phenix_plugin::PluginInstance> {
                 Box::new(Self)
             }
         }
     };
     let components_impl: Item = parse_quote! {
-        impl #sdk::StaticPluginComponents for Plugin {
-            fn components() -> Vec<#sdk::StaticComponentDescriptor> {
-                vec![#sdk::StaticComponentDescriptor::explicit::<Component>(
+        impl ::phenix_sdk::StaticPluginComponents for Plugin {
+            fn components() -> Vec<::phenix_sdk::StaticComponentDescriptor> {
+                vec![::phenix_sdk::StaticComponentDescriptor::explicit::<Component>(
                     #id,
                     "default",
                 )]
@@ -938,18 +935,17 @@ fn parse_stateless_contribution(attribute: &Attribute) -> syn::Result<StatelessC
 }
 
 fn plugin_identity_impl(name: &Ident, id: &LitStr) -> TokenStream {
-    let sdk = crate::sdk_crate();
     quote! {
         impl #name {
             #[must_use]
-            pub fn plugin_id() -> #sdk::PluginId {
-                #sdk::PluginId::parse(#id)
+            pub fn plugin_id() -> ::phenix_sdk::PluginId {
+                ::phenix_sdk::PluginId::parse(#id)
                     .expect("plugin attribute validated the static plugin id")
             }
 
             #[must_use]
-            pub fn component_id() -> #sdk::ComponentId {
-                #sdk::ComponentId::parse(#id)
+            pub fn component_id() -> ::phenix_sdk::ComponentId {
+                ::phenix_sdk::ComponentId::parse(#id)
                     .expect("plugin attribute validated the default component id")
             }
         }
@@ -984,9 +980,8 @@ fn resolve_plugin_id(args: TokenStream, item: &Ident) -> syn::Result<LitStr> {
 }
 
 fn plugin_execution(args: TokenStream) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if args.is_empty() || syn::parse2::<LitStr>(args.clone()).is_ok() {
-        return Ok(quote!(#sdk::PluginExecution::Embedded));
+        return Ok(quote!(::phenix_sdk::PluginExecution::Embedded));
     }
 
     let args = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(args)?;
@@ -1021,7 +1016,7 @@ fn plugin_execution(args: TokenStream) -> syn::Result<TokenStream> {
 
     Ok(execution
         .map(|execution| quote!(#execution))
-        .unwrap_or_else(|| quote!(#sdk::PluginExecution::Embedded)))
+        .unwrap_or_else(|| quote!(::phenix_sdk::PluginExecution::Embedded)))
 }
 
 fn plugin_execution_is_resource_only(args: TokenStream) -> syn::Result<bool> {
@@ -1073,9 +1068,8 @@ fn plugin_execution_is_runtime_hosted(args: TokenStream) -> syn::Result<bool> {
 }
 
 fn plugin_authority(args: TokenStream) -> syn::Result<TokenStream> {
-    let sdk = crate::sdk_crate();
     if args.is_empty() || syn::parse2::<LitStr>(args.clone()).is_ok() {
-        return Ok(quote!(#sdk::Authority::default()));
+        return Ok(quote!(::phenix_sdk::Authority::default()));
     }
 
     let args = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(args)?;
@@ -1110,7 +1104,7 @@ fn plugin_authority(args: TokenStream) -> syn::Result<TokenStream> {
 
     Ok(authority
         .map(|authority| quote!(#authority))
-        .unwrap_or_else(|| quote!(#sdk::Authority::default())))
+        .unwrap_or_else(|| quote!(::phenix_sdk::Authority::default())))
 }
 
 fn plugin_version(args: TokenStream) -> syn::Result<u32> {
@@ -1526,7 +1520,15 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
                     let values = Punctuated::<Ident, Token![,]>::parse_terminated
                         .parse2(feature_list.tokens.clone())?;
                     for feature in values {
-                        if feature != "Migrations" {
+                        if !matches!(
+                            feature.to_string().as_str(),
+                            "Transactions"
+                                | "UniqueKeys"
+                                | "ForeignKeys"
+                                | "OrderedAppend"
+                                | "IndexedRange"
+                                | "Migrations"
+                        ) {
                             return Err(syn::Error::new_spanned(
                                 feature,
                                 "unsupported resource backend feature",
@@ -1977,7 +1979,7 @@ mod tests {
     fn resource_field_preserves_required_backend_features() {
         let mut item: ItemStruct = parse_quote! {
             struct Plugin {
-                #[phenix(resource, features(Migrations))]
+                #[phenix(resource, features(Transactions, Migrations))]
                 state: phenix_sdk::Durable<State>,
             }
         };
@@ -1988,14 +1990,14 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(features, ["Migrations"]);
+        assert_eq!(features, ["Transactions", "Migrations"]);
     }
 
     #[test]
     fn resource_field_rejects_unknown_backend_feature() {
         let mut item: ItemStruct = parse_quote! {
             struct Plugin {
-                #[phenix(resource, features(Migrations, Telepathy))]
+                #[phenix(resource, features(Transactions, Telepathy))]
                 state: phenix_sdk::Durable<State>,
             }
         };
@@ -2034,7 +2036,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.resource-only",
-                execution = phenix_sdk::PluginExecution::ResourceOnly
+                execution = ::phenix_sdk::PluginExecution::ResourceOnly
             ),
             quote! {
                 struct Plugin {
@@ -2057,7 +2059,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.resource-only",
-                execution = phenix_sdk::PluginExecution::ResourceOnly
+                execution = ::phenix_sdk::PluginExecution::ResourceOnly
             ),
             quote! {
                 struct Plugin {
@@ -2080,7 +2082,7 @@ mod tests {
         let output = expand(
             quote!(
                 id = "phenix.resource-only",
-                execution = phenix_sdk::PluginExecution::ResourceOnly
+                execution = ::phenix_sdk::PluginExecution::ResourceOnly
             ),
             quote! {
                 struct Plugin {
@@ -2100,7 +2102,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.resource-only",
-                execution = phenix_sdk::PluginExecution::ResourceOnly
+                execution = ::phenix_sdk::PluginExecution::ResourceOnly
             ),
             quote! { mod plugin {} },
         )
@@ -2116,7 +2118,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.runtime-hosted",
-                execution = phenix_sdk::PluginExecution::Runtime {
+                execution = ::phenix_sdk::PluginExecution::Runtime {
                     runtime: runtime_id(),
                     artifact: artifact(),
                 }
@@ -2140,7 +2142,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.runtime-hosted",
-                execution = phenix_sdk::PluginExecution::Runtime {
+                execution = ::phenix_sdk::PluginExecution::Runtime {
                     runtime: runtime_id(),
                     artifact: artifact(),
                 }
@@ -2164,7 +2166,7 @@ mod tests {
         let output = expand(
             quote!(
                 id = "phenix.runtime-hosted",
-                execution = phenix_sdk::PluginExecution::Runtime {
+                execution = ::phenix_sdk::PluginExecution::Runtime {
                     runtime: runtime_id(),
                     artifact: artifact(),
                 }
@@ -2182,7 +2184,7 @@ mod tests {
         let error = expand(
             quote!(
                 id = "phenix.runtime-hosted",
-                execution = phenix_sdk::PluginExecution::Runtime {
+                execution = ::phenix_sdk::PluginExecution::Runtime {
                     runtime: runtime_id(),
                     artifact: artifact(),
                 }

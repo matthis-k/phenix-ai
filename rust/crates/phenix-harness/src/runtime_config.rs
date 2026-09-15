@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, CallableId, ModelId, PhenixValue, PluginId, Project, RoutingProfileId, ServiceId,
-    ValueError,
+    Authority, CallableId, CapabilityGenerationId, ModelId, PhenixValue, PluginId, Project,
+    RoutingProfileId, ServiceId, ValueError,
 };
 use phenix_harness::{default_suite_authority, PhenixHarness};
 use phenix_plugin_catalog::{
@@ -10,9 +10,18 @@ use phenix_plugin_catalog::{
     OptionCommand, OptionKey, OptionResponse, OptionScope, OptionStartupPrecedence,
     OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
 };
+use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
+use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, error::Error, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fs,
+    path::Path,
+};
+
+const RUNTIME_CAPABILITY_GENERATION: &str = "runtime-config-v1";
 
 #[derive(Debug, Deserialize)]
 struct RuntimeConfiguration {
@@ -25,6 +34,8 @@ struct RuntimeConfiguration {
 struct RuntimeRoutingProfile {
     id: RoutingProfileId,
     default_target: RuntimeModelTarget,
+    #[serde(default)]
+    fallback_targets: Vec<RuntimeModelTarget>,
     #[serde(default)]
     callable_targets: BTreeMap<CallableId, RuntimeModelTarget>,
 }
@@ -85,6 +96,11 @@ impl RuntimeRoutingProfile {
         RoutingProfile {
             id: self.id,
             default_target: self.default_target.into_model_target(),
+            fallback_targets: self
+                .fallback_targets
+                .into_iter()
+                .map(RuntimeModelTarget::into_model_target)
+                .collect(),
             callable_targets: self
                 .callable_targets
                 .into_iter()
@@ -281,19 +297,86 @@ fn ensure_routing_profile(
         };
 
     match existing {
-        Some(existing) if existing == profile => Ok(()),
-        Some(_) => Err(format!("routing profile identity is immutable: {}", profile.id).into()),
+        Some(existing) if existing == profile => {}
+        Some(_) => {
+            return Err(format!("routing profile identity is immutable: {}", profile.id).into())
+        }
         None => {
-            let command = ModelCommand::RegisterProfile { profile };
-            if matches!(
+            let command = ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            };
+            if !matches!(
                 invoke_projected::<_, ModelResponse>(harness, &service, &command, &authority)?,
                 ModelResponse::Profile { profile: Some(_) }
             ) {
-                Ok(())
-            } else {
-                Err("model routing service rejected profile registration".into())
+                return Err("model routing service rejected profile registration".into());
             }
         }
+    }
+
+    publish_routing_profile_runtime_state(harness, &profile)
+}
+
+fn publish_routing_profile_runtime_state(
+    harness: &mut PhenixHarness,
+    profile: &RoutingProfile,
+) -> Result<(), Box<dyn Error>> {
+    let mut targets = vec![profile.default_target.clone()];
+    targets.extend(profile.fallback_targets.iter().cloned());
+    targets.extend(profile.callable_targets.values().cloned());
+
+    for target in targets {
+        publish_provider_authentication(harness, &target.provider_plugin)?;
+        let capabilities = EffectiveModelCapabilities {
+            target,
+            generation: CapabilityGenerationId::parse(RUNTIME_CAPABILITY_GENERATION)?,
+            context: ContextControl::ReplaceableTurns,
+            capacity: CapacityKnowledge::Unknown,
+            optional: BTreeSet::new(),
+        };
+        let response: ModelResponse = invoke_projected(
+            harness,
+            &model_routing_service(),
+            &ModelCommand::PublishCapabilities { capabilities },
+            &default_suite_authority(),
+        )?;
+        if !matches!(response, ModelResponse::Capabilities { .. }) {
+            return Err("model routing service rejected capability publication".into());
+        }
+    }
+    Ok(())
+}
+
+fn publish_provider_authentication(
+    harness: &mut PhenixHarness,
+    provider: &PluginId,
+) -> Result<(), Box<dyn Error>> {
+    let input = serde_json::to_vec(&ProviderAuthCommand::List)?;
+    let authenticated = match harness.invoke(
+        &provider_auth_service(),
+        &input,
+        &default_suite_authority(),
+        Some(provider),
+    ) {
+        Ok(output) => match serde_json::from_slice::<ProviderAuthResponse>(&output)? {
+            ProviderAuthResponse::Credentials { credentials } => !credentials.is_empty(),
+            _ => false,
+        },
+        Err(_) => false,
+    };
+    let response: ModelResponse = invoke_projected(
+        harness,
+        &model_routing_service(),
+        &ModelCommand::SetProviderAuthenticated {
+            provider_plugin: provider.clone(),
+            authenticated,
+        },
+        &default_suite_authority(),
+    )?;
+    if matches!(response, ModelResponse::Authentication { .. }) {
+        Ok(())
+    } else {
+        Err("model routing service rejected provider authentication state".into())
     }
 }
 
@@ -483,6 +566,21 @@ mod tests {
         assert!(matches!(
             output,
             ModelResponse::Profile { profile: Some(_) }
+        ));
+
+        let candidates: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ListCandidates {
+                profile_id: RoutingProfileId::parse("router.test").unwrap(),
+                callable_id: Some(CallableId::parse("agent.scout").unwrap()),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(matches!(
+            candidates,
+            ModelResponse::Candidates { candidates } if !candidates.is_empty()
         ));
     }
 }

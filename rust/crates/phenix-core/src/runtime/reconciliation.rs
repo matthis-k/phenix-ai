@@ -43,7 +43,9 @@ impl StopView<'_> {
             active_services: BTreeSet::new(),
             active_component_endpoints: BTreeSet::new(),
         };
-        let mut instance = instance.lock();
+        let mut instance = instance
+            .lock()
+            .expect("plugin instance mutex poisoned during stop");
         let _ = catch_unwind(AssertUnwindSafe(|| instance.stop(&host)));
     }
 }
@@ -154,7 +156,8 @@ impl Kernel {
                                 active_services: BTreeSet::new(),
                                 active_component_endpoints: BTreeSet::new(),
                             };
-                            let mut provider = provider.lock();
+                            let mut provider =
+                                provider.lock().expect("plugin instance mutex poisoned");
                             let contract = provider.runtime_provider().ok_or_else(|| {
                                 KernelError::RuntimeProviderContractUnavailable {
                                     runtime: runtime.clone(),
