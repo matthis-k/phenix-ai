@@ -159,66 +159,31 @@ pub trait ComponentInterface {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ComponentInvocationError {
+    #[error("component import handle is for {handle}, not requested interface {requested}")]
     InterfaceMismatch {
         handle: InterfaceId,
         requested: InterfaceId,
     },
+    #[error("component {component} has no bound provider for optional import {interface}")]
     UnboundImport {
         component: crate::ComponentId,
         interface: InterfaceId,
     },
-    Graph(crate::ComponentGraphError),
+    #[error("{0}")]
+    Graph(#[from] crate::ComponentGraphError),
+    #[error("component interface {interface} is not invokable: {message}")]
     InvalidInterface {
         interface: InterfaceId,
         message: String,
     },
+    #[error("component request encoding failed: {0}")]
     Encode(String),
-    Kernel(KernelError),
+    #[error("{0}")]
+    Kernel(#[from] KernelError),
+    #[error("component response decoding failed: {0}")]
     Decode(String),
-}
-
-impl Display for ComponentInvocationError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InterfaceMismatch { handle, requested } => write!(
-                f,
-                "component import handle is for {handle}, not requested interface {requested}"
-            ),
-            Self::UnboundImport {
-                component,
-                interface,
-            } => write!(
-                f,
-                "component {component} has no bound provider for optional import {interface}"
-            ),
-            Self::Graph(error) => Display::fmt(error, f),
-            Self::InvalidInterface { interface, message } => {
-                write!(
-                    f,
-                    "component interface {interface} is not invokable: {message}"
-                )
-            }
-            Self::Encode(message) => write!(f, "component request encoding failed: {message}"),
-            Self::Kernel(error) => Display::fmt(error, f),
-            Self::Decode(message) => write!(f, "component response decoding failed: {message}"),
-        }
-    }
-}
-
-impl Error for ComponentInvocationError {}
-
-impl From<KernelError> for ComponentInvocationError {
-    fn from(error: KernelError) -> Self {
-        Self::Kernel(error)
-    }
-}
-
-impl From<crate::ComponentGraphError> for ComponentInvocationError {
-    fn from(error: crate::ComponentGraphError) -> Self {
-        Self::Graph(error)
-    }
 }
 
 impl ResolvedImportHandle {

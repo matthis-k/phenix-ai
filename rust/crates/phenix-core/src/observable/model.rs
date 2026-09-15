@@ -6,10 +6,9 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     collections::BTreeMap,
-    error::Error,
     fmt::{self, Display, Formatter},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 pub const OBSERVABLE_CONTRACT: &str = "phenix.observable@1";
@@ -414,32 +413,41 @@ pub struct ObservationSubscription {
     pub generation: ObservationGeneration,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ObservableError {
+    #[error("unknown observable value {0}")]
     UnknownValue(ValueId),
+    #[error("observable value {0} is already registered")]
     DuplicateValue(ValueId),
+    #[error("invalid path for observable value {value}: {message}")]
     InvalidPath {
         value: Box<ValueId>,
         path: Box<ValuePath>,
         message: Box<str>,
     },
+    #[error("observable value {value} schema mismatch: {message}")]
     SchemaMismatch {
         value: Box<ValueId>,
         path: Box<ValuePath>,
         message: Box<str>,
     },
+    #[error("stale observable reference {0}")]
     StaleReference(ValueId),
+    #[error("observable value {value} with {policy:?} cannot satisfy {mode:?}/{initial:?}")]
     UnsupportedSnapshotPolicy {
         value: ValueId,
         policy: SnapshotPolicy,
         mode: ObservationMode,
         initial: InitialObservation,
     },
+    #[error("observable transaction conflict for {value}: {message}")]
     TransactionConflict {
         value: ValueId,
         message: String,
     },
+    #[error("observable subscription capacity reached")]
     SubscriptionCapacity,
+    #[error("observable store is closed")]
     Closed,
 }
 
@@ -459,38 +467,6 @@ impl ObservableError {
         }
     }
 }
-
-impl Display for ObservableError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownValue(value) => write!(f, "unknown observable value {value}"),
-            Self::DuplicateValue(value) => write!(f, "observable value {value} is already registered"),
-            Self::InvalidPath { value, message, .. } => {
-                write!(f, "invalid path for observable value {value}: {message}")
-            }
-            Self::SchemaMismatch { value, message, .. } => {
-                write!(f, "observable value {value} schema mismatch: {message}")
-            }
-            Self::StaleReference(value) => write!(f, "stale observable reference {value}"),
-            Self::UnsupportedSnapshotPolicy {
-                value,
-                policy,
-                mode,
-                initial,
-            } => write!(
-                f,
-                "observable value {value} with {policy:?} cannot satisfy {mode:?}/{initial:?}"
-            ),
-            Self::TransactionConflict { value, message } => {
-                write!(f, "observable transaction conflict for {value}: {message}")
-            }
-            Self::SubscriptionCapacity => f.write_str("observable subscription capacity reached"),
-            Self::Closed => f.write_str("observable store is closed"),
-        }
-    }
-}
-
-impl Error for ObservableError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservableRegistration {
