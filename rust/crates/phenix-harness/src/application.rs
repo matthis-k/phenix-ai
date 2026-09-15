@@ -19,14 +19,19 @@ use phenix_application_interface::{
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
     HasPhenixSchema, LocalPersistence, ObservableError, ObservableRegistration, ObservableStore,
-    PhenixContract, PhenixValue, PluginId, Project, RoutingProfileId, RuntimeId, SessionId,
-    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    PhenixContract, PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, sdk_contribution, session_service,
     AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand, ExecutionReviewResponse,
     OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+};
+use phenix_sdk::{
+    execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,
+    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, RootBudgetLedger,
+    RootBudgetLimits,
 };
 use std::{
     collections::BTreeMap,
@@ -44,7 +49,6 @@ pub const CLIENT_CAPABILITY_CAPACITY: usize = 64;
 pub const APPLICATION_EVENT_CAPACITY: usize = 256;
 const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
-const DEFAULT_ROUTING_PROFILE: &str = "router.mixed";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 
 #[must_use]
@@ -477,6 +481,8 @@ impl ApplicationWorker {
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
+        let execution_id = self.allocate_execution_id()?;
+        self.prepare_root_execution(&execution_id)?;
         self.append_session_change(
             &session,
             SessionChange::Message {
@@ -486,7 +492,6 @@ impl ApplicationWorker {
                 },
             },
         )?;
-        let execution_id = self.allocate_execution_id()?;
         Ok(PromptResult {
             execution_id,
             stop_reason: StopReason::EndTurn,
@@ -607,6 +612,99 @@ impl ApplicationWorker {
                     message: "application execution id space exhausted".to_owned(),
                 })?;
         Ok(format!("execution-{ordinal}"))
+    }
+
+    fn prepare_root_execution(&mut self, execution_id: &str) -> Result<(), ApplicationError> {
+        let response = self.invoke_execution(ExecutionCommand::CreateExecution {
+            id: execution_id.to_owned(),
+            requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+        })?;
+        if !matches!(response, ExecutionResponse::Execution { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected execution creation response: {response:?}"),
+            });
+        }
+
+        let response =
+            self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {
+                ledger: RootBudgetLedger {
+                    root_execution_id: execution_id.to_owned(),
+                    limits: RootBudgetLimits {
+                        fresh_input_tokens: 128 * 1024,
+                        output_tokens: 16 * 1024,
+                        cost_microunits: None,
+                        attempts: 16,
+                    },
+                    reservations: BTreeMap::new(),
+                },
+            })?;
+        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected root-budget registration response: {response:?}"),
+            });
+        }
+        Ok(())
+    }
+
+    fn finish_root_execution(
+        &mut self,
+        execution_id: &str,
+        success: bool,
+    ) -> Result<(), ApplicationError> {
+        let response = self.invoke_execution(ExecutionCommand::FinishExecution {
+            id: execution_id.to_owned(),
+            success,
+        })?;
+        if matches!(response, ExecutionResponse::Execution { .. }) {
+            Ok(())
+        } else {
+            Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected execution completion response: {response:?}"),
+            })
+        }
+    }
+
+    fn invoke_execution(
+        &mut self,
+        command: ExecutionCommand,
+    ) -> Result<ExecutionResponse, ApplicationError> {
+        self.invoke_runtime(execution_service(), command)
+    }
+
+    fn invoke_execution_resource(
+        &mut self,
+        command: ExecutionResourceCommand,
+    ) -> Result<ExecutionResourceResponse, ApplicationError> {
+        self.invoke_runtime(execution_resource_service(), command)
+    }
+
+    fn invoke_runtime<C, R>(
+        &mut self,
+        service: phenix_core::ServiceId,
+        command: C,
+    ) -> Result<R, ApplicationError>
+    where
+        for<'a> PhenixValue: From<&'a C>,
+        R: for<'a> TryFrom<Project<'a>, Error = phenix_core::ValueError>,
+    {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .invoke(&service, &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
     }
 
     fn require_open_application_session(
@@ -1136,11 +1234,18 @@ fn start_prompt(
     let authority = worker.authority.clone();
     let session_id = request.session_id;
     let execution_id = prompt.execution_id;
+    let runtime_execution_id = execution_id.clone();
     let sender = completion_sender.clone();
     tokio::spawn(async move {
         let blocking_cancellation = Arc::clone(&cancellation);
         let result = tokio::task::spawn_blocking(move || {
-            run_agent_execution(harness, authority, model_input, blocking_cancellation)
+            run_agent_execution(
+                harness,
+                authority,
+                runtime_execution_id,
+                model_input,
+                blocking_cancellation,
+            )
         })
         .await
         .map_err(|error| ApplicationError::Failed {
@@ -1173,6 +1278,7 @@ fn cancel_prompt(
     if acknowledgement.is_ok() {
         if let Some(execution) = active.remove(request.session_id.as_str()) {
             execution.cancellation.store(true, Ordering::Release);
+            let _ = worker.finish_root_execution(&execution.execution_id, false);
             let _ = worker.append_execution_change(
                 &request.session_id,
                 &execution.execution_id,
@@ -1215,13 +1321,17 @@ fn finish_prompt(
     }
 
     let result = match completion.result {
-        Ok(text) => complete_prompt_output(
-            worker,
-            &completion.session_id,
-            &completion.execution_id,
-            text,
-        ),
+        Ok(text) => {
+            worker.finish_root_execution(&completion.execution_id, true)?;
+            complete_prompt_output(
+                worker,
+                &completion.session_id,
+                &completion.execution_id,
+                text,
+            )
+        }
         Err(error) => {
+            let _ = worker.finish_root_execution(&completion.execution_id, false);
             let _ = worker.append_execution_change(
                 &completion.session_id,
                 &completion.execution_id,
@@ -1296,24 +1406,20 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
 fn run_agent_execution(
     harness: Arc<PhenixHarness>,
     authority: Authority,
+    execution_id: String,
     input: Bytes,
     cancellation: Arc<AtomicBool>,
 ) -> Result<String, ApplicationError> {
     if cancellation.load(Ordering::Acquire) {
         return Err(ApplicationError::Cancelled);
     }
-    let profile =
-        env::var("PHENIX_ROUTING_PROFILE").unwrap_or_else(|_| DEFAULT_ROUTING_PROFILE.to_owned());
-    let profile_id =
-        RoutingProfileId::parse(profile).map_err(|error| ApplicationError::InvalidInput {
-            message: format!("invalid PHENIX_ROUTING_PROFILE: {error}"),
-        })?;
     let callable_id =
         CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| ApplicationError::Failed {
             message: format!("invalid application agent id: {error}"),
         })?;
     let command = AgentLoopCommand::Run {
-        profile_id,
+        execution_id,
+        parent_attempt_id: None,
         callable_id: Some(callable_id),
         input,
         tools: Vec::new(),
