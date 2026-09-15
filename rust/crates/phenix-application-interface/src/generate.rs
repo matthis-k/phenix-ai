@@ -1,25 +1,19 @@
 //! First Rust emitter. Input is a deserialized descriptor, never Rust source or plugin code.
 use crate::ApplicationDescriptor;
 use phenix_core::{ContractId, PhenixSchema};
-use std::{
-    collections::BTreeSet,
-    fmt::{self, Write as _},
-};
+use std::{collections::BTreeSet, fmt::Write as _};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum GenerationError {
+    #[error("cannot generate application API: InvalidIdentifier({0:?})")]
     InvalidIdentifier(String),
+    #[error("cannot generate application API: DuplicateIdentifier({0:?})")]
     DuplicateIdentifier(String),
+    #[error("cannot generate application API: MissingReference({0:?})")]
     MissingReference(ContractId),
+    #[error("cannot generate application API: UnsupportedSchema({0:?})")]
     UnsupportedSchema(PhenixSchema),
 }
-
-impl fmt::Display for GenerationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cannot generate application API: {self:?}")
-    }
-}
-impl std::error::Error for GenerationError {}
 
 /// Emits typed payloads, operation markers, and async capability-checked wrappers.
 /// Protocol-specific mapping and transport lifecycle belong in the caller's transport.

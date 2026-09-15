@@ -2,6 +2,7 @@ use crate::{PhenixValue, Type, TypeKind, ValueCodec, ValueError};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Display, Formatter},
+    num::NonZeroU64,
     str::FromStr,
 };
 
@@ -176,12 +177,9 @@ impl TryFrom<String> for InterfaceId {
         if identity.contains('@') {
             return Err("interface identifier must contain exactly one @version suffix");
         }
-        let version = version
-            .parse::<u64>()
+        version
+            .parse::<NonZeroU64>()
             .map_err(|_| "interface identifier version must be a positive integer")?;
-        if version == 0 {
-            return Err("interface identifier version must be a positive integer");
-        }
         Ok(Self(value))
     }
 }
