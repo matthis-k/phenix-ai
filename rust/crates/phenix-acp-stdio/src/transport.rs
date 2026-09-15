@@ -9,8 +9,7 @@ use agent_client_protocol::{schema::v1::*, Agent, Error, ErrorCode, Stdio};
 use phenix_adapter_acp::ApplicationAdapter;
 use phenix_application_interface::{
     types::{
-        normalize_elicitation_response, ApplicationError,
-        CallableInfo as ApplicationCallableInfo,
+        normalize_elicitation_response, ApplicationError, CallableInfo as ApplicationCallableInfo,
         CallableInvokeInput as ApplicationCallableInvokeInput,
         CallableResult as ApplicationCallableResult, Callables as ApplicationCallables,
         CapabilityInvokeInput as ApplicationCapabilityInvokeInput,
@@ -576,25 +575,25 @@ impl SdkApplicationService {
         match self
             .capabilities
             .register(reference.clone(), schema.clone(), move |input| {
-                let elicitation = if reference.contract().as_str()
-                    == "phenix.application.elicitation@1"
-                {
-                    Some(ElicitationRequest::from_value(&input).map_err(|error| {
-                        CapabilityError::SchemaMismatch {
-                            message: error.to_string(),
-                        }
-                    })?)
-                } else {
-                    None
-                };
-                let result = callbacks.invoke(reference.clone(), input);
-                let result = match (elicitation, result) {
-                    (Some(request), Ok(output)) => {
-                        let response = ElicitationResponse::from_value(&output).map_err(|error| {
+                let elicitation =
+                    if reference.contract().as_str() == "phenix.application.elicitation@1" {
+                        Some(ElicitationRequest::from_value(&input).map_err(|error| {
                             CapabilityError::SchemaMismatch {
                                 message: error.to_string(),
                             }
-                        })?;
+                        })?)
+                    } else {
+                        None
+                    };
+                let result = callbacks.invoke(reference.clone(), input);
+                let result = match (elicitation, result) {
+                    (Some(request), Ok(output)) => {
+                        let response =
+                            ElicitationResponse::from_value(&output).map_err(|error| {
+                                CapabilityError::SchemaMismatch {
+                                    message: error.to_string(),
+                                }
+                            })?;
                         normalize_elicitation_response(&request, response)
                             .map(|response| response.to_value())
                             .map_err(|error| CapabilityError::SchemaMismatch {
