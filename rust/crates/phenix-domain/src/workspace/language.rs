@@ -2,7 +2,6 @@ use crate::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{btree_map::Entry, BTreeMap};
-use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
 domain_id_type!(LanguageServiceKind);
@@ -282,26 +281,15 @@ impl LanguageServiceManager {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LanguageServiceError {
+    #[error("managed language provider is already registered")]
     DuplicateManagedProvider,
+    #[error("language service is unavailable")]
     Unavailable,
+    #[error("language provider changed during the request")]
     ProviderChanged,
 }
-
-impl Display for LanguageServiceError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateManagedProvider => {
-                f.write_str("managed language provider is already registered")
-            }
-            Self::Unavailable => f.write_str("language service is unavailable"),
-            Self::ProviderChanged => f.write_str("language provider changed during the request"),
-        }
-    }
-}
-
-impl std::error::Error for LanguageServiceError {}
 
 fn source_rank(source: &LanguageProviderSource) -> u8 {
     match source {
