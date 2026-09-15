@@ -308,6 +308,7 @@ fn request(max_input: u64) -> PlannedStepRequest {
         tools: Vec::new(),
         policy: policy(max_input),
         task: TaskRequirements {
+            request_input_tokens: 0,
             context: ContextDemand {
                 mandatory_input_tokens: 600,
                 reducible_input_tokens: 200,
