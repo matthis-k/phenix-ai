@@ -11,7 +11,8 @@ use phenix_plugin_models::{
 use phenix_sdk::{
     helper_invocation_service, memory_embedding_service, memory_service, HelperInvocationInterface,
     MemoryCommand, MemoryEmbeddingInterface, MemoryEmbeddingRequest, MemoryEmbeddingResponse,
-    MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope,
+    MemorySourceReference,
 };
 use std::{
     fs,
