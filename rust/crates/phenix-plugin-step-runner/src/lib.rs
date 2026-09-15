@@ -305,12 +305,12 @@ fn run(
         .sdk
         .context
         .invoke_projected(&ContextCommand::Admit {
-            request: ContextAdmissionRequest {
+            request: Box::new(ContextAdmissionRequest {
                 execution_id: attribution.execution_id.clone(),
                 step_plan: plan.clone(),
                 candidates: context_candidates,
                 cache_epoch,
-            },
+            }),
         })
         .map_err(|error| error.to_string())?;
     let ContextResponse::Admission { projection, .. } = admitted else {
