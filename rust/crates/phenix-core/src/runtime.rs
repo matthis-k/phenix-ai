@@ -1,20 +1,22 @@
 use crate::{
     prepared_mutation::PreparedMutationScope, ArtifactRevision, Authority, CallCancellationToken,
     CapabilityId, ComponentGraphError, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
-    EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
-    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
+    DurableKeyRange, DurableRecord, DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope,
+    EventError, EventHandler, EventSubscription, EventTypeId, GraphGenerationId, InterfaceId,
+    KernelConfig, KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence,
+    PersistenceBackend, PersistenceError, PluginArtifact, PluginExecution, PluginId,
+    PluginManifest, ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
+    ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain,
+    ResourceNamespace, RuntimeId, ScanDirection, SchemaMigration, ServiceId, ServiceRole,
     SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
+use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -284,6 +286,14 @@ pub trait PluginRuntimeProvider: Send {
 /// Implementations keep mutable domain state behind their own narrow synchronization handles.
 /// Core may call this endpoint while another endpoint owned by the same Plugin is active.
 pub trait SharedPluginInvocation: Send + Sync {
+    /// Return whether this immutable endpoint can serve one service.
+    ///
+    /// Composite plugins may expose shared dispatch only for long-running or
+    /// reentrant-safe services while retaining mutable dispatch for the rest.
+    fn supports(&self, _service: &ServiceId) -> bool {
+        true
+    }
+
     fn invoke(
         &self,
         _service: &ServiceId,
@@ -390,9 +400,7 @@ fn stage_listener_subscriptions(
             .instances
             .get(&resolved_listener.owning_plugin)
             .ok_or_else(|| KernelError::PluginNotActive(resolved_listener.owning_plugin.clone()))?;
-        let mut instance = instance
-            .lock()
-            .expect("plugin instance mutex poisoned during listener binding");
+        let mut instance = instance.lock();
         let handler = catch_unwind(AssertUnwindSafe(|| {
             match instance.bind_plugin_listener(resolved_listener, sources.generation) {
                 Some(handler) => handler.map(|handler| {
@@ -449,7 +457,7 @@ pub struct Kernel {
     config: KernelConfig,
     states: BTreeMap<PluginId, PluginState>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
-    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
+    prepared_embedded_instances: Mutex<BTreeMap<PluginId, Box<dyn PluginInstance>>>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,

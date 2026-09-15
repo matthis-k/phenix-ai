@@ -1,25 +1,19 @@
 //! First Rust emitter. Input is a deserialized descriptor, never Rust source or plugin code.
 use crate::ApplicationDescriptor;
 use phenix_core::{ContractId, PhenixSchema};
-use std::{
-    collections::BTreeSet,
-    fmt::{self, Write as _},
-};
+use std::{collections::BTreeSet, fmt::Write as _};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum GenerationError {
+    #[error("cannot generate application API: InvalidIdentifier({0:?})")]
     InvalidIdentifier(String),
+    #[error("cannot generate application API: DuplicateIdentifier({0:?})")]
     DuplicateIdentifier(String),
+    #[error("cannot generate application API: MissingReference({0:?})")]
     MissingReference(ContractId),
+    #[error("cannot generate application API: UnsupportedSchema({0:?})")]
     UnsupportedSchema(PhenixSchema),
 }
-
-impl fmt::Display for GenerationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cannot generate application API: {self:?}")
-    }
-}
-impl std::error::Error for GenerationError {}
 
 /// Emits typed payloads, operation markers, and async capability-checked wrappers.
 /// Protocol-specific mapping and transport lifecycle belong in the caller's transport.
@@ -193,8 +187,13 @@ impl Emitter {
                 self.define(&name, schema)?;
                 name
             }
+            PhenixSchema::Callable {
+                contract,
+                input,
+                output,
+            } => self.callable(contract, input, output)?,
             PhenixSchema::Object { contract } => self.object(contract)?,
-            PhenixSchema::Never | PhenixSchema::Callable { .. } => {
+            PhenixSchema::Never => {
                 return Err(GenerationError::UnsupportedSchema(schema.clone()));
             }
         };
@@ -228,6 +227,35 @@ impl Emitter {
         self.line("#[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]");
         self.line(&declaration);
         Ok(())
+    }
+
+    fn callable(
+        &mut self,
+        contract: &ContractId,
+        input: &PhenixSchema,
+        output: &PhenixSchema,
+    ) -> Result<String, GenerationError> {
+        let input = self.nested(input)?;
+        let output = self.nested(output)?;
+        let name = format!("Callable{}", self.next);
+        self.next += 1;
+        self.reserve(&name)?;
+        self.line("#[derive(Clone, Debug, PartialEq)]");
+        self.line(&format!("pub struct {name}(pub phenix_core::CallableRef);"));
+        self.line(&format!(
+            "impl phenix_core::ValueCodec for {name} {{ fn phenix_type() -> phenix_core::PhenixSchema {{ phenix_core::PhenixSchema::Callable {{ contract: phenix_core::ContractId::parse({:?}).expect(\"generated callable contract is valid\"), input: Box::new(<{input} as phenix_core::HasPhenixSchema>::phenix_schema()), output: Box::new(<{output} as phenix_core::HasPhenixSchema>::phenix_schema()) }} }} fn to_value(&self) -> phenix_core::PhenixValue {{ phenix_core::PhenixValue::Callable(self.0.clone()) }} fn from_value(value: &phenix_core::PhenixValue) -> Result<Self, phenix_core::ValueError> {{ <Self as phenix_core::ValueCodec>::phenix_type().parse(value)?; match value {{ phenix_core::PhenixValue::Callable(reference) => Ok(Self(reference.clone())), _ => unreachable!(\"validated callable value\"), }} }} }}",
+            contract.as_str()
+        ));
+        self.line(&format!(
+            "impl From<&{name}> for phenix_core::PhenixValue {{ fn from(value: &{name}) -> Self {{ <{name} as phenix_core::ValueCodec>::to_value(value) }} }}"
+        ));
+        self.line(&format!(
+            "impl TryFrom<phenix_core::Exact<&phenix_core::PhenixValue>> for {name} {{ type Error = phenix_core::ValueError; fn try_from(value: phenix_core::Exact<&phenix_core::PhenixValue>) -> Result<Self, Self::Error> {{ <Self as phenix_core::ValueCodec>::from_value(value.0) }} }}"
+        ));
+        self.line(&format!(
+            "impl TryFrom<phenix_core::Project<&phenix_core::PhenixValue>> for {name} {{ type Error = phenix_core::ValueError; fn try_from(value: phenix_core::Project<&phenix_core::PhenixValue>) -> Result<Self, Self::Error> {{ <Self as phenix_core::ValueCodec>::project_from_value(value.0) }} }}"
+        ));
+        Ok(name)
     }
 
     fn object(&mut self, contract: &ContractId) -> Result<String, GenerationError> {

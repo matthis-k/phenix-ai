@@ -405,7 +405,7 @@ impl SdkApplicationService {
         }
         // Keep admission and capability registration atomic with explicit removal.
         // Registry registration never calls provider code.
-        self.admit_client_callable(&tool.invoke, callable_schema)?;
+        self.admit_current_client_callable(&tool.invoke, callable_schema)?;
         let admission =
             admissions
                 .admit(session_id, tool)
@@ -510,7 +510,7 @@ impl SdkApplicationService {
         match (schema, value) {
             (Type::Callable { .. }, PhenixValue::Callable(callable)) => {
                 if matches!(callable.owner(), CapabilityOwnerId::Client(_)) {
-                    self.admit_client_callable(callable, schema.clone())?;
+                    self.admit_current_client_callable(callable, schema.clone())?;
                 }
             }
             (Type::Option(schema), PhenixValue::Option(Some(value))) => {
@@ -550,7 +550,11 @@ impl SdkApplicationService {
         Ok(())
     }
 
-    fn admit_client_callable(
+    /// Admit one callable owned by this ACP connection's current client generation.
+    ///
+    /// Application semantics stay outside the transport. Callers provide the exact
+    /// callable schema required by the application contract.
+    pub fn admit_current_client_callable(
         &self,
         callable: &CallableRef,
         schema: Type,

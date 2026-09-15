@@ -1,9 +1,8 @@
-mod runtime_config;
-
 use phenix_conductor::serve_jsonl;
 use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
+use phenix_harness::runtime_config;
 use phenix_harness::{default_suite_authority, HarnessBuilder};
 use phenix_plugin_catalog::{
     adapter_acp_manifest, artifact_manifest, basic_context_manifest, basic_model_manifest,

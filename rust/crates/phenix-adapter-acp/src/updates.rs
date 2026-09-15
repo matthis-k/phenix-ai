@@ -132,7 +132,8 @@ fn translate_session_with_descriptor(
         ),
         SessionChange::Renamed { .. }
         | SessionChange::Closed
-        | SessionChange::Diagnostic { .. } => {
+        | SessionChange::Diagnostic { .. }
+        | SessionChange::Review { .. } => {
             extension_fallback(descriptor, SESSION_UPDATE_EVENT, update).map(|item| vec![item])
         }
     }

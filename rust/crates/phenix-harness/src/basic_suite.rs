@@ -53,7 +53,8 @@ mod tests {
         SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
     };
     use phenix_plugin_catalog::{
-        context_component_id, memory_component_id, session_service, SessionCommand, SessionResponse,
+        adapter_acp_manifest, context_component_id, context_manifest, memory_component_id,
+        session_service, SessionCommand, SessionResponse,
     };
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -137,6 +138,54 @@ mod tests {
     }
 
     #[test]
+    fn selected_suite_preserves_exact_dependency_closure() {
+        let context = context_manifest().id.as_str().to_owned();
+        let harness = HarnessBuilder::with_selected_suite(&BTreeSet::from([context]))
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(
+            harness
+                .kernel()
+                .config()
+                .manifests()
+                .map(|manifest| manifest.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["phenix.context", "phenix.execution"]
+        );
+
+        let session = session_manifest().id.as_str().to_owned();
+        let harness = HarnessBuilder::with_selected_suite(&BTreeSet::from([session]))
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(
+            harness
+                .kernel()
+                .config()
+                .manifests()
+                .map(|manifest| manifest.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["phenix.sessions"]
+        );
+
+        let adapter = adapter_acp_manifest().id.as_str().to_owned();
+        let harness = HarnessBuilder::with_selected_suite(&BTreeSet::from([adapter]))
+            .unwrap()
+            .build()
+            .unwrap();
+        let manifests = harness.kernel().config().manifests().collect::<Vec<_>>();
+        assert_eq!(
+            manifests
+                .iter()
+                .map(|manifest| manifest.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["phenix.adapter.acp"]
+        );
+        assert!(manifests[0].services.is_empty());
+    }
+
+    #[test]
     fn default_suite_includes_memory_while_basic_suite_remains_memory_free() {
         let default = HarnessBuilder::with_default_suite()
             .unwrap()
@@ -179,7 +228,9 @@ mod tests {
                 &mut harness,
                 &session_service(),
                 &SessionCommand::Create {
-                    id: SessionId::parse("root").unwrap(),
+                    session: phenix_plugin_catalog::SessionRecord::new(
+                        SessionId::parse("root").unwrap(),
+                    ),
                 },
             );
             let _: SkillResponse = invoke_component(

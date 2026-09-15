@@ -24,6 +24,26 @@ pub enum WorkspaceFileVersion {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceWrite {
+    pub path: String,
+    pub content: String,
+    pub expected_version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceWrittenFile {
+    pub path: String,
+    pub version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceVersionConflict {
+    pub path: String,
+    pub expected_version: WorkspaceFileVersion,
+    pub observed_version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 pub struct WorkspaceSearchMatch {
     pub path: String,
     pub line: u64,
@@ -40,6 +60,9 @@ pub enum WorkspaceCommand {
         path: String,
         content: String,
         expected_version: WorkspaceFileVersion,
+    },
+    WriteBatch {
+        writes: Vec<WorkspaceWrite>,
     },
     Search {
         needle: String,
@@ -65,6 +88,12 @@ pub enum WorkspaceResponse {
     Written {
         path: String,
         version: WorkspaceFileVersion,
+    },
+    WrittenBatch {
+        files: Vec<WorkspaceWrittenFile>,
+    },
+    VersionConflict {
+        conflicts: Vec<WorkspaceVersionConflict>,
     },
     Search {
         matches: Vec<WorkspaceSearchMatch>,

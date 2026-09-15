@@ -1,5 +1,8 @@
 [workspace]
 resolver = "2"
+exclude = [
+  "crates/phenix-sdk/tests/fixtures/external-consumer",
+]
 members = [
   "crates/phenix-application-interface",
   "crates/phenix-adapter-acp",
@@ -48,15 +51,22 @@ members = [
 [workspace.dependencies]
 agent-client-protocol = { version = "2.0.0", features = ["unstable_auth_methods", "unstable_elicitation", "unstable_end_turn_token_usage", "unstable_session_fork", "unstable_mcp_over_acp"] }
 base64 = "0.22"
+bytes = "1"
 clap = { version = "4.5.47", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
 futures = "0.3"
 genai = "0.6.0"
 getrandom = "0.4"
+http = "1"
 jsonschema = "0.33"
+jsonwebtoken = "9"
 mlua = "0.12.1"
+oauth2 = { version = "5", default-features = false }
 parking_lot = "0.12"
+petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls"] }
+rmcp = { version = "3.3", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled"] }
+secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"

@@ -17,6 +17,7 @@ mod contract;
 mod contract_wire;
 mod events;
 mod frontend_metadata;
+mod graph_util;
 mod identity;
 mod infallible_value;
 mod inspection;

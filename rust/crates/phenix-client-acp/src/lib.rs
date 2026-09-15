@@ -15,6 +15,7 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client as AcpRole, ConnectTo, ConnectionTo, ErrorCode,
 };
 use futures::channel::oneshot;
+use parking_lot::Mutex;
 use phenix_application_interface::{
     ApplicationClient, ApplicationTransport, Capabilities, Operation,
 };
@@ -24,7 +25,7 @@ use std::{
     future::Future,
     num::NonZeroUsize,
     path::PathBuf,
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Arc},
 };
 
 pub use phenix_application_interface::{
@@ -106,69 +107,45 @@ pub struct RequestRejection {
     pub details: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl std::fmt::Display for RequestRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(class) = &self.class {
+            write!(formatter, "({class}, {}): {}", self.code, self.message)
+        } else {
+            write!(formatter, "({}): {}", self.code, self.message)
+        }
+    }
+}
+
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 pub enum ClientError {
+    #[error("ACP transport failure: {0}")]
     Transport(String),
+    #[error("ACP protocol failure: {0}")]
     Protocol(String),
+    #[error("ACP request cancelled: {message}")]
     Cancelled {
         message: String,
         details: Box<Option<serde_json::Value>>,
     },
+    #[error("ACP peer rejected request {0}")]
     Rejected(Box<RequestRejection>),
+    #[error(
+        "ACP peer does not support operation {operation}; capability {capability} is unavailable"
+    )]
     UnsupportedCapability {
         operation: ContractId,
         capability: ContractId,
     },
+    #[error("ACP session {session_id} update sequence is {received}; expected {expected}")]
     OutOfOrderUpdate {
         session_id: String,
         expected: u64,
         received: u64,
     },
+    #[error("ACP update queue is full")]
     UpdateQueueFull,
 }
-
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Transport(message) => write!(formatter, "ACP transport failure: {message}"),
-            Self::Protocol(message) => write!(formatter, "ACP protocol failure: {message}"),
-            Self::Cancelled { message, .. } => write!(formatter, "ACP request cancelled: {message}"),
-            Self::Rejected(rejection) => {
-                if let Some(class) = &rejection.class {
-                    write!(
-                        formatter,
-                        "ACP peer rejected request ({class}, {}): {}",
-                        rejection.code, rejection.message
-                    )
-                } else {
-                    write!(
-                        formatter,
-                        "ACP peer rejected request ({}): {}",
-                        rejection.code, rejection.message
-                    )
-                }
-            }
-            Self::UnsupportedCapability {
-                operation,
-                capability,
-            } => write!(
-                formatter,
-                "ACP peer does not support operation {operation}; capability {capability} is unavailable"
-            ),
-            Self::OutOfOrderUpdate {
-                session_id,
-                expected,
-                received,
-            } => write!(
-                formatter,
-                "ACP session {session_id} update sequence is {received}; expected {expected}"
-            ),
-            Self::UpdateQueueFull => write!(formatter, "ACP update queue is full"),
-        }
-    }
-}
-
-impl std::error::Error for ClientError {}
 
 fn request_error(error: agent_client_protocol::Error) -> ClientError {
     let message = error.to_string();
@@ -353,6 +330,11 @@ impl DescriptorExtensions {
     #[must_use]
     pub fn supports(&self, capability: &ContractId) -> bool {
         self.advertised_capabilities.contains(capability)
+    }
+
+    /// Returns every application capability advertised during ACP initialization.
+    pub fn advertised_capabilities(&self) -> impl Iterator<Item = &ContractId> {
+        self.advertised_capabilities.iter()
     }
 }
 
@@ -694,10 +676,7 @@ impl SessionUpdates {
         session_id: impl Into<String>,
         next_sequence: u64,
     ) -> Result<(), ClientError> {
-        self.ordered
-            .lock()
-            .map_err(|_| ClientError::Protocol("ACP update order lock poisoned".to_owned()))?
-            .resume_at(session_id, next_sequence);
+        self.ordered.lock().resume_at(session_id, next_sequence);
         Ok(())
     }
 
@@ -710,7 +689,6 @@ impl SessionUpdates {
         {
             self.ordered
                 .lock()
-                .map_err(|_| ClientError::Protocol("ACP update order lock poisoned".to_owned()))?
                 .accept(notification.session_id.to_string(), sequence)?;
         }
         match &self.sender {
@@ -838,18 +816,14 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         }
                         AgentNotification::ExtNotification(notification) => notifications
                             .lock()
-                            .map_err(|_| {
+                            .as_ref()
+                            .ok_or_else(|| {
                                 ClientError::Protocol(
-                                    "ACP extension metadata lock poisoned".to_owned(),
+                                    "ACP peer sent an extension event before initialize completed"
+                                        .to_owned(),
                                 )
                             })
                             .and_then(|extensions| {
-                                let extensions = extensions.as_ref().ok_or_else(|| {
-                                    ClientError::Protocol(
-                                        "ACP peer sent an extension event before initialize completed"
-                                            .to_owned(),
-                                    )
-                                })?;
                                 extension_updates.receive(notification, extensions)
                             }),
                         _ => Ok(()),
@@ -868,10 +842,7 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         .block_task()
                         .await?;
                     let extensions = descriptor_extensions(&initialized)?;
-                    *negotiated.lock().map_err(|_| {
-                        agent_client_protocol::Error::internal_error()
-                            .data("ACP extension metadata lock poisoned")
-                    })? = Some(extensions.clone());
+                    *negotiated.lock() = Some(extensions.clone());
                     use_connection(AcpConnection {
                         connection,
                         extensions,
@@ -910,18 +881,14 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         }
                         AgentNotification::ExtNotification(notification) => notifications
                             .lock()
-                            .map_err(|_| {
+                            .as_ref()
+                            .ok_or_else(|| {
                                 ClientError::Protocol(
-                                    "ACP extension metadata lock poisoned".to_owned(),
+                                    "ACP peer sent an extension event before initialize completed"
+                                        .to_owned(),
                                 )
                             })
                             .and_then(|extensions| {
-                                let extensions = extensions.as_ref().ok_or_else(|| {
-                                    ClientError::Protocol(
-                                        "ACP peer sent an extension event before initialize completed"
-                                            .to_owned(),
-                                    )
-                                })?;
                                 extension_updates.receive(notification, extensions)
                             }),
                         _ => Ok(()),
@@ -939,17 +906,10 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                             "ACP peer sent a non-extension request to the Phenix callback handler",
                         ));
                     };
-                    let extensions = callback_metadata
-                        .lock()
-                        .map_err(|_| {
-                            agent_client_protocol::Error::internal_error()
-                                .data("ACP extension metadata lock poisoned")
-                        })?
-                        .clone()
-                        .ok_or_else(|| {
-                            agent_client_protocol::Error::invalid_params()
-                                .data("ACP peer sent an extension callback before initialize completed")
-                        })?;
+                    let extensions = callback_metadata.lock().clone().ok_or_else(|| {
+                        agent_client_protocol::Error::invalid_params()
+                            .data("ACP peer sent an extension callback before initialize completed")
+                    })?;
                     let callbacks = callbacks.clone();
                     connection.spawn(async move {
                         let response = callbacks
@@ -979,10 +939,7 @@ impl<T: ConnectTo<AcpRole> + 'static> StreamClient<T> {
                         .block_task()
                         .await?;
                     let extensions = descriptor_extensions(&initialized)?;
-                    *negotiated.lock().map_err(|_| {
-                        agent_client_protocol::Error::internal_error()
-                            .data("ACP extension metadata lock poisoned")
-                    })? = Some(extensions.clone());
+                    *negotiated.lock() = Some(extensions.clone());
                     use_connection(AcpConnection {
                         connection,
                         extensions,
@@ -1107,16 +1064,11 @@ fn descriptor_extensions(
             "ACP peer advertises application interface {interface}; expected {INTERFACE_ID}"
         )));
     }
-    let capabilities = ["methods", "events", "callbacks"]
+    let capabilities = extension
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
         .into_iter()
-        .flat_map(|kind| {
-            extension
-                .get(kind)
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .filter_map(|entry| entry.get("capability"))
+        .flatten()
         .filter_map(serde_json::Value::as_str)
         .map(ContractId::parse)
         .collect::<Result<Vec<_>, _>>()
@@ -1405,6 +1357,30 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_metadata_preserves_capabilities_without_extensions() {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "phenix.extensions".to_owned(),
+            serde_json::json!({
+                "interface": INTERFACE_ID,
+                "capabilities": [
+                    "phenix.application.capability.discovery@1",
+                    "phenix.application.capability.sessions@1",
+                ],
+                "methods": [],
+                "events": [],
+                "callbacks": [],
+            }),
+        );
+        let response = InitializeResponse::new(ProtocolVersion::V1).meta(meta);
+        let extensions = descriptor_extensions(&response).expect("valid descriptor metadata");
+        let discovery = ContractId::parse("phenix.application.capability.discovery@1")
+            .expect("static capability id");
+        assert!(extensions.supports(&discovery));
+        assert_eq!(extensions.advertised_capabilities().count(), 2);
+    }
+
+    #[test]
     fn stream_client_initializes_and_maps_a_session_request() {
         let (client_transport, server_transport) = agent_client_protocol::Channel::duplex();
         let server = Agent
@@ -1499,6 +1475,32 @@ mod tests {
                 connection
                     .new_session(NewSessionRequest::new("/workspace"))
                     .await?;
+                let event = futures::future::poll_fn(|cx| match receiver.try_recv() {
+                    Ok(event) => std::task::Poll::Ready(Ok(event)),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        cx.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        std::task::Poll::Ready(Err(ClientError::Transport(
+                            "ACP extension event channel disconnected".to_owned(),
+                        )))
+                    }
+                })
+                .await?;
+                assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
+                assert_eq!(
+                    event.payload,
+                    SessionUpdate {
+                        session_id: phenix_core::SessionId::parse("session-1")
+                            .expect("static session id is valid"),
+                        sequence: 0,
+                        update: SessionChange::Renamed {
+                            title: "Renamed".to_owned(),
+                        },
+                    }
+                    .to_value()
+                );
                 Ok(())
             },
         );
@@ -1507,22 +1509,6 @@ mod tests {
             futures::executor::block_on(async { futures::join!(server, client) });
         client_result.expect("client completes the ACP session request");
         server_result.expect("server completes after the client disconnects");
-        let event = receiver
-            .try_recv()
-            .expect("negotiated extension event is delivered");
-        assert_eq!(event.event.as_str(), "phenix.application.session-update@1");
-        assert_eq!(
-            event.payload,
-            SessionUpdate {
-                session_id: phenix_core::SessionId::parse("session-1")
-                    .expect("static session id is valid"),
-                sequence: 0,
-                update: SessionChange::Renamed {
-                    title: "Renamed".to_owned(),
-                },
-            }
-            .to_value()
-        );
     }
 
     #[test]
@@ -1595,6 +1581,14 @@ mod tests {
         updates
             .accept("session-1", 7)
             .expect("resumed update is ordered");
+    }
+
+    #[test]
+    fn session_updates_resume_preserves_result_api() {
+        let (updates, _receiver) = SessionUpdates::channel();
+        updates
+            .resume_at("session-1", 7)
+            .expect("resume remains infallible while preserving the public Result API");
     }
 
     #[test]

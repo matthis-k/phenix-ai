@@ -1,4 +1,4 @@
-use crate::{BackendFeature, DurableSchema, PluginId, SchemaMigration};
+use crate::{graph_util::DirectedGraph, BackendFeature, DurableSchema, PluginId, SchemaMigration};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -52,16 +52,9 @@ impl StoreBindingId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("store binding identity must not be empty")]
 pub struct StoreBindingIdParseError;
-
-impl Display for StoreBindingIdParseError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("store binding identity must not be empty")
-    }
-}
-
-impl Error for StoreBindingIdParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreBinding {
@@ -318,25 +311,34 @@ fn validate_bootstrap_dependencies(
     providers: &BTreeMap<PluginId, PersistenceProviderDescriptor>,
     pre_store_plugins: &BTreeSet<PluginId>,
 ) -> Result<(), PersistenceBootstrapError> {
-    fn visit(
-        plugin: &PluginId,
-        providers: &BTreeMap<PluginId, PersistenceProviderDescriptor>,
-        pre_store_plugins: &BTreeSet<PluginId>,
-        visiting: &mut Vec<PluginId>,
-        complete: &mut BTreeSet<PluginId>,
-    ) -> Result<(), PersistenceBootstrapError> {
-        if complete.contains(plugin) {
-            return Ok(());
+    let dependency_plugins = providers.values().flat_map(|provider| {
+        provider
+            .bootstrap_dependencies
+            .iter()
+            .filter_map(|dependency| match dependency {
+                PersistenceBootstrapDependency::Plugin(plugin) => Some(plugin.clone()),
+                PersistenceBootstrapDependency::TargetStore => None,
+            })
+    });
+    let mut graph = DirectedGraph::from_nodes(
+        providers
+            .keys()
+            .cloned()
+            .chain(pre_store_plugins.iter().cloned())
+            .chain(dependency_plugins),
+    );
+    for provider in providers.values() {
+        for dependency in &provider.bootstrap_dependencies {
+            if let PersistenceBootstrapDependency::Plugin(dependency) = dependency {
+                graph.add_edge(&provider.plugin, dependency);
+            }
         }
-        if let Some(position) = visiting.iter().position(|candidate| candidate == plugin) {
-            let mut path = visiting[position..].to_vec();
-            path.push(plugin.clone());
-            return Err(PersistenceBootstrapError::BootstrapCycle(path));
-        }
-        let Some(provider) = providers.get(plugin) else {
-            return Ok(());
+    }
+
+    for plugin in graph.reachable_from(selected) {
+        let Some(provider) = providers.get(&plugin) else {
+            continue;
         };
-        visiting.push(plugin.clone());
         for dependency in &provider.bootstrap_dependencies {
             match dependency {
                 PersistenceBootstrapDependency::TargetStore => {
@@ -344,31 +346,24 @@ fn validate_bootstrap_dependencies(
                         plugin.clone(),
                     ));
                 }
-                PersistenceBootstrapDependency::Plugin(dependency) => {
+                PersistenceBootstrapDependency::Plugin(dependency)
                     if !pre_store_plugins.contains(dependency)
-                        && !providers.contains_key(dependency)
-                    {
-                        return Err(PersistenceBootstrapError::BootstrapDependencyUnavailable {
-                            provider: plugin.clone(),
-                            dependency: dependency.clone(),
-                        });
-                    }
-                    visit(dependency, providers, pre_store_plugins, visiting, complete)?;
+                        && !providers.contains_key(dependency) =>
+                {
+                    return Err(PersistenceBootstrapError::BootstrapDependencyUnavailable {
+                        provider: plugin.clone(),
+                        dependency: dependency.clone(),
+                    });
                 }
+                PersistenceBootstrapDependency::Plugin(_) => {}
             }
         }
-        visiting.pop();
-        complete.insert(plugin.clone());
-        Ok(())
     }
 
-    visit(
-        selected,
-        providers,
-        pre_store_plugins,
-        &mut Vec::new(),
-        &mut BTreeSet::new(),
-    )
+    if let Some(path) = graph.cycle_path_from(selected) {
+        return Err(PersistenceBootstrapError::BootstrapCycle(path));
+    }
+    Ok(())
 }
 
 fn validate_transition(
@@ -541,6 +536,38 @@ mod tests {
                 plugin("fixture.first"),
             ])
         );
+    }
+
+    #[test]
+    fn provider_dependency_cycle_is_independent_of_registration_order() {
+        let first = provider("fixture.first", &[], &["fixture-v1"]).with_dependencies([
+            PersistenceBootstrapDependency::Plugin(plugin("fixture.second")),
+        ]);
+        let second = provider("fixture.second", &[], &["fixture-v1"]).with_dependencies([
+            PersistenceBootstrapDependency::Plugin(plugin("fixture.first")),
+        ]);
+        let expected = PersistenceBootstrapError::BootstrapCycle(vec![
+            plugin("fixture.first"),
+            plugin("fixture.second"),
+            plugin("fixture.first"),
+        ]);
+
+        for providers in [
+            vec![first.clone(), second.clone()],
+            vec![second.clone(), first.clone()],
+        ] {
+            let error = resolve_persistence_bootstrap(
+                &plugin("fixture.first"),
+                providers,
+                &BTreeSet::new(),
+                binding("primary", "fixture-v1"),
+                &[],
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error, expected);
+        }
     }
 
     #[test]

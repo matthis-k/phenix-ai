@@ -29,7 +29,7 @@ fn flat_sessions_remain_available_when_session_tree_is_omitted() {
 
     let session_id = SessionId::parse("standalone").unwrap();
     let command = SessionCommand::Create {
-        id: session_id.clone(),
+        session: phenix_sdk::SessionRecord::new(session_id.clone()),
     };
     let output = kernel
         .invoke(
@@ -43,7 +43,7 @@ fn flat_sessions_remain_available_when_session_tree_is_omitted() {
     assert_eq!(
         SessionResponse::try_from(Project(&output)).unwrap(),
         SessionResponse::Created {
-            session: SessionRecord { id: session_id },
+            session: SessionRecord::new(session_id),
         }
     );
 

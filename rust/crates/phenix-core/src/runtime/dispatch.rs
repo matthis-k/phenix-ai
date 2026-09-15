@@ -97,16 +97,8 @@ pub(super) fn invoke_component_service_with(
         },
         &trace,
     );
-    let completed = trace
-        .lock()
-        .expect("service invocation trace mutex poisoned")
-        .clone()
-        .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed);
+    let completed = trace.lock().clone().finish();
+    runtime.provenance.lock().push(completed);
     result
 }
 
@@ -147,16 +139,8 @@ pub(super) fn invoke_service_with(
         },
         &trace,
     );
-    let completed = trace
-        .lock()
-        .expect("service invocation trace mutex poisoned")
-        .clone()
-        .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed);
+    let completed = trace.lock().clone().finish();
+    runtime.provenance.lock().push(completed);
     result
 }
 
@@ -192,14 +176,11 @@ pub(super) fn invoke_resolved_chain_with(
     let shared_invocation = if guards.call_stack.contains(&provider.plugin) {
         instance
             .try_lock()
-            .ok()
             .and_then(|instance| instance.shared_invocation())
     } else {
-        instance
-            .lock()
-            .expect("plugin instance mutex poisoned")
-            .shared_invocation()
-    };
+        instance.lock().shared_invocation()
+    }
+    .filter(|invocation| invocation.supports(&chain.service));
     if guards.call_stack.contains(&provider.plugin) && shared_invocation.is_none() {
         return Err(KernelError::HostOperationDenied {
             plugin: provider.plugin.clone(),
@@ -211,18 +192,15 @@ pub(super) fn invoke_resolved_chain_with(
         .manifest(&provider.plugin)
         .expect("resolved providers are registered");
     let effective_authority = caller_authority.attenuate(&provider_manifest.maximum_authority);
-    let trace_index = trace
-        .lock()
-        .expect("service invocation trace mutex poisoned")
-        .enter(
-            provider.plugin.clone(),
-            if is_layer {
-                ServiceRole::Layer
-            } else {
-                ServiceRole::Terminal
-            },
-            effective_authority.clone(),
-        );
+    let trace_index = trace.lock().enter(
+        provider.plugin.clone(),
+        if is_layer {
+            ServiceRole::Layer
+        } else {
+            ServiceRole::Terminal
+        },
+        effective_authority.clone(),
+    );
     let mut next_stack = guards.call_stack.clone();
     next_stack.insert(provider.plugin.clone());
     let continuation = is_layer.then(|| ContinuationState {
@@ -262,7 +240,7 @@ pub(super) fn invoke_resolved_chain_with(
                 invocation.invoke_layer(&chain.service, input, &host)
             })),
             None => {
-                let mut instance = instance.lock().expect("plugin instance mutex poisoned");
+                let mut instance = instance.lock();
                 catch_unwind(AssertUnwindSafe(|| {
                     instance.invoke_layer(&chain.service, input, &host)
                 }))
@@ -273,7 +251,6 @@ pub(super) fn invoke_resolved_chain_with(
             Err(_) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
                 return Err(KernelError::ServiceInvoke {
                     plugin: provider.plugin.clone(),
@@ -285,7 +262,6 @@ pub(super) fn invoke_resolved_chain_with(
         if call_cancellation.is_cancelled() {
             trace
                 .lock()
-                .expect("service invocation trace mutex poisoned")
                 .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
             return Err(KernelError::ServiceCancelled {
                 plugin: provider.plugin.clone(),
@@ -297,23 +273,19 @@ pub(super) fn invoke_resolved_chain_with(
                 let delegated = continuation_used
                     .as_ref()
                     .is_some_and(|used| used.load(Ordering::Acquire));
-                trace
-                    .lock()
-                    .expect("service invocation trace mutex poisoned")
-                    .set_outcome(
-                        trace_index,
-                        if delegated {
-                            ServiceParticipantOutcome::Delegated
-                        } else {
-                            ServiceParticipantOutcome::Handled
-                        },
-                    );
+                trace.lock().set_outcome(
+                    trace_index,
+                    if delegated {
+                        ServiceParticipantOutcome::Delegated
+                    } else {
+                        ServiceParticipantOutcome::Handled
+                    },
+                );
                 Ok(output)
             }
             Ok(LayerResult::Denied(message)) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Denied);
                 Err(KernelError::ServiceDenied {
                     plugin: provider.plugin.clone(),
@@ -324,7 +296,6 @@ pub(super) fn invoke_resolved_chain_with(
             Err(message) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
                 Err(KernelError::ServiceInvoke {
                     plugin: provider.plugin.clone(),
@@ -344,7 +315,7 @@ pub(super) fn invoke_resolved_chain_with(
                 }))
             }
             None => {
-                let mut instance = instance.lock().expect("plugin instance mutex poisoned");
+                let mut instance = instance.lock();
                 catch_unwind(AssertUnwindSafe(|| match guards.terminal_component {
                     Some(component) => {
                         instance.invoke_component(component, &chain.service, input, &host)
@@ -358,7 +329,6 @@ pub(super) fn invoke_resolved_chain_with(
             Err(_) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
                 return Err(KernelError::ServiceInvoke {
                     plugin: provider.plugin.clone(),
@@ -370,7 +340,6 @@ pub(super) fn invoke_resolved_chain_with(
         if call_cancellation.is_cancelled() {
             trace
                 .lock()
-                .expect("service invocation trace mutex poisoned")
                 .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
             return Err(KernelError::ServiceCancelled {
                 plugin: provider.plugin.clone(),
@@ -381,14 +350,12 @@ pub(super) fn invoke_resolved_chain_with(
             Ok(output) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Succeeded);
                 Ok(output)
             }
             Err(message) => {
                 trace
                     .lock()
-                    .expect("service invocation trace mutex poisoned")
                     .set_outcome(trace_index, ServiceParticipantOutcome::Failed);
                 Err(KernelError::ServiceInvoke {
                     plugin: provider.plugin.clone(),
