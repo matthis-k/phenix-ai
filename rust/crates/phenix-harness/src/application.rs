@@ -1,7 +1,8 @@
 use crate::{default_suite_authority, PhenixHarness};
 use phenix_acp_stdio::{
-    serve_stdio_with_events_and_callbacks, ApplicationEvent, ApplicationInvocation,
-    ChannelTransport, ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
+    model_tool_surface, serve_stdio_with_events_and_callbacks, ApplicationEvent,
+    ApplicationInvocation, ChannelTransport, ClientCapabilityCallbacks, ClientCapabilityIdentity,
+    SdkApplicationService,
 };
 use phenix_application_interface::{
     types::{
@@ -18,9 +19,9 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
-    HasPhenixSchema, LocalPersistence, ObservableError, ObservableRegistration, ObservableStore,
-    PhenixContract, PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry,
-    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ObservableError,
+    ObservableRegistration, ObservableStore, PhenixContract, PhenixValue, PluginId, Project,
+    RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, sdk_contribution, session_service,
@@ -1173,7 +1174,7 @@ async fn serve_application_worker(
 
 fn start_prompt(
     worker: &mut ApplicationWorker,
-    _service: &SdkApplicationService,
+    service: &SdkApplicationService,
     completion_sender: &mpsc::Sender<ExecutionCompletion>,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
@@ -1197,6 +1198,13 @@ fn start_prompt(
     }
     let model_input = match model_input_from_content(&request.content) {
         Ok(input) => input,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+    let tools = match model_tool_surface(service, &request.session_id, Vec::new()) {
+        Ok(tools) => tools,
         Err(error) => {
             invocation.respond(Err(error));
             return;
@@ -1244,6 +1252,7 @@ fn start_prompt(
                 authority,
                 runtime_execution_id,
                 model_input,
+                tools,
                 blocking_cancellation,
             )
         })
@@ -1321,15 +1330,16 @@ fn finish_prompt(
     }
 
     let result = match completion.result {
-        Ok(text) => {
-            worker.finish_root_execution(&completion.execution_id, true)?;
-            complete_prompt_output(
-                worker,
-                &completion.session_id,
-                &completion.execution_id,
-                text,
-            )
-        }
+        Ok(text) => worker
+            .finish_root_execution(&completion.execution_id, true)
+            .and_then(|()| {
+                complete_prompt_output(
+                    worker,
+                    &completion.session_id,
+                    &completion.execution_id,
+                    text,
+                )
+            }),
         Err(error) => {
             let _ = worker.finish_root_execution(&completion.execution_id, false);
             let _ = worker.append_execution_change(
@@ -1408,6 +1418,7 @@ fn run_agent_execution(
     authority: Authority,
     execution_id: String,
     input: Bytes,
+    tools: Vec<ModelToolDescriptor>,
     cancellation: Arc<AtomicBool>,
 ) -> Result<String, ApplicationError> {
     if cancellation.load(Ordering::Acquire) {
@@ -1422,7 +1433,7 @@ fn run_agent_execution(
         parent_attempt_id: None,
         callable_id: Some(callable_id),
         input,
-        tools: Vec::new(),
+        tools,
     };
     let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
         ApplicationError::InvalidInput {
