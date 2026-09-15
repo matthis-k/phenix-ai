@@ -4,15 +4,16 @@ use phenix_sdk::{
     DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy,
     DelegationTaskBinding, ExecutionAuthority, RemainingBudget, RootBudgetLedger, WorkerTaskRecord,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct TaskReservationBinding {
     pub root_execution_id: String,
     pub reservation_id: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ExecutionResourceState {
     ledgers: BTreeMap<String, RootBudgetLedger>,
     delegated: DelegatedTaskStore,
@@ -21,10 +22,22 @@ pub(crate) struct ExecutionResourceState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ExecutionResourceError {
-    DuplicateRootBudget { root_execution_id: String },
-    UnknownRootBudget { root_execution_id: String },
-    DuplicateTaskReservation { task_id: String },
-    UnknownTaskReservation { task_id: String },
+    DuplicateRootBudget {
+        root_execution_id: String,
+    },
+    UnknownRootBudget {
+        root_execution_id: String,
+    },
+    DuplicateTaskReservation {
+        task_id: String,
+    },
+    UnknownTaskReservation {
+        task_id: String,
+    },
+    ChildLimitExceeded {
+        parent_execution: String,
+        allowed: u32,
+    },
     ReservationPurposeMismatch,
     ReservationPolicyMismatch,
     ReservationBudgetMismatch,
@@ -37,13 +50,66 @@ impl ExecutionResourceState {
     pub(crate) fn register_root_budget(
         &mut self,
         ledger: RootBudgetLedger,
-    ) -> Result<(), ExecutionResourceError> {
+    ) -> Result<RootBudgetLedger, ExecutionResourceError> {
         let root_execution_id = ledger.root_execution_id.clone();
         if self.ledgers.contains_key(&root_execution_id) {
             return Err(ExecutionResourceError::DuplicateRootBudget { root_execution_id });
         }
-        self.ledgers.insert(root_execution_id, ledger);
-        Ok(())
+        self.ledgers.insert(root_execution_id, ledger.clone());
+        Ok(ledger)
+    }
+
+    pub(crate) fn reserve(
+        &mut self,
+        root_execution_id: &str,
+        reservation: BudgetReservationRequest,
+    ) -> Result<RootBudgetLedger, ExecutionResourceError> {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
+                root_execution_id: root_execution_id.to_owned(),
+            }
+        })?;
+        ledger
+            .reserve(reservation)
+            .map_err(ExecutionResourceError::Budget)?;
+        Ok(ledger.clone())
+    }
+
+    pub(crate) fn settle_reservation(
+        &mut self,
+        root_execution_id: &str,
+        reservation_id: &str,
+        actual: BudgetActual,
+    ) -> Result<RootBudgetLedger, ExecutionResourceError> {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
+                root_execution_id: root_execution_id.to_owned(),
+            }
+        })?;
+        ledger
+            .settle(reservation_id, actual)
+            .map_err(ExecutionResourceError::Budget)?;
+        Ok(ledger.clone())
+    }
+
+    pub(crate) fn release_reservation(
+        &mut self,
+        root_execution_id: &str,
+        reservation_id: &str,
+    ) -> Result<RootBudgetLedger, ExecutionResourceError> {
+        let ledger = self.ledgers.get_mut(root_execution_id).ok_or_else(|| {
+            ExecutionResourceError::UnknownRootBudget {
+                root_execution_id: root_execution_id.to_owned(),
+            }
+        })?;
+        ledger
+            .release(reservation_id)
+            .map_err(ExecutionResourceError::Budget)?;
+        Ok(ledger.clone())
+    }
+
+    pub(crate) fn delegated_task(&self, task_id: &str) -> Option<&DelegatedWorkerTaskRecord> {
+        self.delegated.get(task_id)
     }
 
     pub(crate) fn remaining(
@@ -54,9 +120,6 @@ impl ExecutionResourceState {
             .map(RootBudgetLedger::remaining)
     }
 
-    /// Reserves the child share and admits the delegated task as one in-memory
-    /// transaction. The durable implementation must preserve the same all-or-none
-    /// boundary with one persistence transaction.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn admit_delegated(
         &mut self,
@@ -72,12 +135,16 @@ impl ExecutionResourceState {
         if self.task_reservations.contains_key(&task.id) {
             return Err(ExecutionResourceError::DuplicateTaskReservation { task_id: task.id });
         }
-
+        if self.delegated.child_count(&task.parent_execution) >= policy.max_children as usize {
+            return Err(ExecutionResourceError::ChildLimitExceeded {
+                parent_execution: task.parent_execution,
+                allowed: policy.max_children,
+            });
+        }
         let task_id = task.id.clone();
         let reservation_id = reservation.reservation_id.clone();
         let mut ledger = self.ledger(root_execution_id)?.clone();
         let mut delegated = self.delegated.clone();
-
         ledger
             .reserve(reservation)
             .map_err(ExecutionResourceError::Budget)?;
@@ -85,7 +152,6 @@ impl ExecutionResourceState {
             .create(task, binding, parent_authority, policy, now_ms)
             .map_err(ExecutionResourceError::Task)?
             .clone();
-
         self.ledgers.insert(root_execution_id.to_owned(), ledger);
         self.delegated = delegated;
         self.task_reservations.insert(
@@ -110,9 +176,6 @@ impl ExecutionResourceState {
             .map_err(ExecutionResourceError::Task)
     }
 
-    /// Completes the child and settles its root-budget reservation together.
-    /// `actual` is normalized accounting output, not inferred from potentially
-    /// unavailable provider token counters in `DelegatedWorkerResult`.
     pub(crate) fn complete_delegated(
         &mut self,
         task_id: &str,
@@ -123,7 +186,6 @@ impl ExecutionResourceState {
         let reservation = self.task_reservation(task_id)?.clone();
         let mut ledger = self.ledger(&reservation.root_execution_id)?.clone();
         let mut delegated = self.delegated.clone();
-
         let record = delegated
             .complete(task_id, execution_id, result)
             .map_err(ExecutionResourceError::Task)?
@@ -131,15 +193,12 @@ impl ExecutionResourceState {
         ledger
             .settle(&reservation.reservation_id, actual)
             .map_err(ExecutionResourceError::Budget)?;
-
         self.ledgers
             .insert(reservation.root_execution_id.clone(), ledger);
         self.delegated = delegated;
         Ok(record)
     }
 
-    /// A failed dispatched child still consumes realized resources. Callers pass
-    /// normalized actual usage and settle rather than releasing the reservation.
     pub(crate) fn fail_delegated(
         &mut self,
         task_id: &str,
@@ -150,7 +209,6 @@ impl ExecutionResourceState {
         let reservation = self.task_reservation(task_id)?.clone();
         let mut ledger = self.ledger(&reservation.root_execution_id)?.clone();
         let mut delegated = self.delegated.clone();
-
         let record = delegated
             .fail(task_id, execution_id, cause)
             .map_err(ExecutionResourceError::Task)?
@@ -158,7 +216,6 @@ impl ExecutionResourceState {
         ledger
             .settle(&reservation.reservation_id, actual)
             .map_err(ExecutionResourceError::Budget)?;
-
         self.ledgers
             .insert(reservation.root_execution_id.clone(), ledger);
         self.delegated = delegated;

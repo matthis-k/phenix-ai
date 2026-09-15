@@ -3,9 +3,10 @@ use phenix_sdk::{
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, WorkerTaskRecord,
     WorkerTaskState,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DelegatedTaskStore {
     tasks: BTreeMap<String, DelegatedWorkerTaskRecord>,
 }
@@ -52,7 +53,6 @@ impl DelegatedTaskStore {
             .resources
             .validate_deadline(now_ms)
             .map_err(DelegatedTaskStoreError::Admission)?;
-
         let id = task.id.clone();
         self.tasks.insert(
             id.clone(),
@@ -63,6 +63,17 @@ impl DelegatedTaskStore {
             },
         );
         Ok(&self.tasks[&id])
+    }
+
+    pub(crate) fn get(&self, task_id: &str) -> Option<&DelegatedWorkerTaskRecord> {
+        self.tasks.get(task_id)
+    }
+
+    pub(crate) fn child_count(&self, parent_execution: &str) -> usize {
+        self.tasks
+            .values()
+            .filter(|record| record.task.parent_execution == parent_execution)
+            .count()
     }
 
     pub(crate) fn runnable(&self) -> Vec<String> {
@@ -138,7 +149,7 @@ impl DelegatedTaskStore {
             _ => {
                 return Err(DelegatedTaskStoreError::InvalidState {
                     task_id: task_id.to_owned(),
-                });
+                })
             }
         }
         result

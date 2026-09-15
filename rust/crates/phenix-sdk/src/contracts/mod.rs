@@ -6,6 +6,7 @@ pub mod context_compaction;
 pub mod context_recovery_bootstrap;
 pub mod delegation;
 pub mod execution;
+pub mod execution_resources;
 pub mod exploration;
 pub mod frontend;
 pub mod jobs;
@@ -33,6 +34,7 @@ pub use context_compaction::{
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;
 pub use execution::*;
+pub use execution_resources::*;
 pub use exploration::*;
 pub use frontend::*;
 pub use jobs::*;
