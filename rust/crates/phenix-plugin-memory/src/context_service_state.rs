@@ -8,7 +8,6 @@ pub(crate) const MAX_MEMORY_CONTEXT_STATE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) enum MemoryContextServiceError {
     InvalidSnapshot(String),
     SnapshotTooLarge { bytes: usize, allowed: usize },
-    Association(String),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

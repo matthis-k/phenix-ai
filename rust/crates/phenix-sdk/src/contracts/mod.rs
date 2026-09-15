@@ -23,7 +23,11 @@ pub mod workspace;
 pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
-pub use context_compaction::*;
+pub use context_compaction::{
+    CompactionCommit, CompactionProposal, CompactionValidationError,
+    ContextCheckpoint as ProjectionCheckpoint, ProjectionRevision, RetentionTransition,
+    ToolCallGroupReference,
+};
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;
 pub use execution::*;
