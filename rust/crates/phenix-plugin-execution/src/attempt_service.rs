@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const ATTEMPT_NAMESPACE: &str = "phenix.execution.attempts.state";
-const ATTEMPT_STATE_KEY: &str = "state";
+pub(crate) const ATTEMPT_STATE_KEY: &str = "state";
 const MAX_ATTEMPT_STATE_BYTES: usize = 16 * 1024 * 1024;
 
 type AttemptContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
@@ -25,7 +25,7 @@ pub(crate) fn attempt_namespace() -> ResourceNamespace {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct AttemptLedger {
+pub(crate) struct AttemptLedger {
     #[serde(default)]
     next_sequence: u64,
     attempts: BTreeMap<String, StepAttemptRecord>,
@@ -130,6 +130,30 @@ impl AttemptLedger {
         mutation(record)?;
         Ok(record.clone())
     }
+
+    pub(crate) fn abort(
+        &mut self,
+        attempt_id: &str,
+        outcome: AttemptOutcome,
+    ) -> Result<StepAttemptRecord, String> {
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .abort(outcome)
+                .map_err(|error| format!("attempt abort failed: {error:?}"))
+        })
+    }
+
+    pub(crate) fn settle(
+        &mut self,
+        attempt_id: &str,
+        outcome: AttemptOutcome,
+    ) -> Result<StepAttemptRecord, String> {
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .settle(outcome)
+                .map_err(|error| format!("attempt settlement failed: {error:?}"))
+        })
+    }
 }
 
 fn validate_parent_shape(kind: UsageAttemptKind, parent: Option<&str>) -> Result<(), String> {
@@ -172,14 +196,10 @@ fn require_identity(label: &str, value: &str) -> Result<(), String> {
 
 #[must_use]
 pub(crate) fn attempt_factory() -> Box<dyn PluginInstance> {
-    Box::new(AttemptPlugin {
-        ledger: AttemptLedger::default(),
-    })
+    Box::new(AttemptPlugin)
 }
 
-struct AttemptPlugin {
-    ledger: AttemptLedger,
-}
+struct AttemptPlugin;
 
 impl PluginInstance for AttemptPlugin {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
@@ -192,8 +212,7 @@ impl PluginInstance for AttemptPlugin {
             .kernel
             .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
             .map_err(|error| error.to_string())?;
-        self.ledger = restore(snapshot.as_deref())?;
-        Ok(())
+        restore(snapshot.as_deref()).map(|_| ())
     }
 
     fn invoke(
@@ -210,13 +229,18 @@ impl PluginInstance for AttemptPlugin {
             .kernel
             .decode_projected::<StepAttemptCommand>(&StepAttemptInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
+        let old = context
+            .kernel
+            .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
+            .map_err(|error| error.to_string())?;
+        let ledger = restore(old.as_deref())?;
         let response = if matches!(
             &command,
             StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. }
         ) {
-            read(&self.ledger, command)?
+            read(&ledger, command)?
         } else {
-            mutate(&context, &mut self.ledger, command)?
+            mutate(&context, old, ledger, command)?
         };
         context
             .kernel
@@ -242,14 +266,10 @@ fn read(
 
 fn mutate(
     context: &AttemptContext<'_, '_>,
-    ledger: &mut AttemptLedger,
+    old: Option<Vec<u8>>,
+    mut next: AttemptLedger,
     command: StepAttemptCommand,
 ) -> Result<StepAttemptResponse, String> {
-    let old = context
-        .kernel
-        .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
-        .map_err(|error| error.to_string())?;
-    let mut next = ledger.clone();
     let response = match command {
         StepAttemptCommand::AllocateIdentity {
             root_execution_id,
@@ -313,32 +333,19 @@ fn mutate(
             attempt_id,
             outcome,
         } => StepAttemptResponse::Attempt {
-            attempt: next.mutate(&attempt_id, |attempt| {
-                attempt
-                    .abort(outcome)
-                    .map_err(|error| format!("attempt abort failed: {error:?}"))
-            })?,
+            attempt: next.abort(&attempt_id, outcome)?,
         },
         StepAttemptCommand::Settle {
             attempt_id,
             outcome,
         } => StepAttemptResponse::Attempt {
-            attempt: next.mutate(&attempt_id, |attempt| {
-                attempt
-                    .settle(outcome)
-                    .map_err(|error| format!("attempt settlement failed: {error:?}"))
-            })?,
+            attempt: next.settle(&attempt_id, outcome)?,
         },
         StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. } => {
             return Err("read-only step attempt command reached mutation path".into())
         }
     };
-    let encoded = serde_json::to_vec(&next).map_err(|error| error.to_string())?;
-    if encoded.len() > MAX_ATTEMPT_STATE_BYTES {
-        return Err(format!(
-            "step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"
-        ));
-    }
+    let encoded = encode_ledger(&next)?;
     context
         .kernel
         .transact_durable(
@@ -355,11 +362,20 @@ fn mutate(
             ],
         )
         .map_err(|error| error.to_string())?;
-    *ledger = next;
     Ok(response)
 }
 
-fn restore(snapshot: Option<&[u8]>) -> Result<AttemptLedger, String> {
+pub(crate) fn encode_ledger(ledger: &AttemptLedger) -> Result<Vec<u8>, String> {
+    let encoded = serde_json::to_vec(ledger).map_err(|error| error.to_string())?;
+    if encoded.len() > MAX_ATTEMPT_STATE_BYTES {
+        return Err(format!(
+            "step attempt state exceeds {MAX_ATTEMPT_STATE_BYTES} bytes"
+        ));
+    }
+    Ok(encoded)
+}
+
+pub(crate) fn restore(snapshot: Option<&[u8]>) -> Result<AttemptLedger, String> {
     let Some(bytes) = snapshot else {
         return Ok(AttemptLedger::default());
     };
