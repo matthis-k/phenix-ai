@@ -14,6 +14,12 @@ pub enum StepTransactionCommand {
         attempt_id: String,
         outcome: AttemptOutcome,
     },
+    AbortBeforeDispatch {
+        root_execution_id: String,
+        reservation_id: Option<String>,
+        attempt_id: String,
+        outcome: AttemptOutcome,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -21,6 +27,10 @@ pub enum StepTransactionCommand {
 pub enum StepTransactionResponse {
     Settled {
         ledger: RootBudgetLedger,
+        attempt: StepAttemptRecord,
+    },
+    Aborted {
+        ledger: Option<RootBudgetLedger>,
         attempt: StepAttemptRecord,
     },
 }

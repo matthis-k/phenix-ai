@@ -41,6 +41,12 @@ pub enum StepAttemptTransitionError {
         expected: StepAttemptPhase,
         actual: StepAttemptPhase,
     },
+    InvalidAbortPhase {
+        actual: StepAttemptPhase,
+    },
+    InvalidAbortOutcome {
+        outcome: AttemptOutcome,
+    },
     EmptyIdentity {
         field: String,
     },
@@ -117,6 +123,21 @@ impl StepAttemptRecord {
         Ok(())
     }
 
+    pub fn abort(&mut self, outcome: AttemptOutcome) -> Result<(), StepAttemptTransitionError> {
+        if matches!(
+            self.phase,
+            StepAttemptPhase::Dispatched | StepAttemptPhase::Settled
+        ) {
+            return Err(StepAttemptTransitionError::InvalidAbortPhase { actual: self.phase });
+        }
+        if outcome == AttemptOutcome::Succeeded {
+            return Err(StepAttemptTransitionError::InvalidAbortOutcome { outcome });
+        }
+        self.outcome = Some(outcome);
+        self.phase = StepAttemptPhase::Settled;
+        Ok(())
+    }
+
     pub fn settle(&mut self, outcome: AttemptOutcome) -> Result<(), StepAttemptTransitionError> {
         self.require_phase(StepAttemptPhase::Dispatched)?;
         self.outcome = Some(outcome);
@@ -174,6 +195,10 @@ pub enum StepAttemptCommand {
     MarkDispatched {
         attempt_id: String,
         dispatch_id: String,
+    },
+    Abort {
+        attempt_id: String,
+        outcome: AttemptOutcome,
     },
     Settle {
         attempt_id: String,
