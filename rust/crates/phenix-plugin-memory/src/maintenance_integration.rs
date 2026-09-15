@@ -6,11 +6,10 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
-    helper_invocation_service, memory_consolidate_callable, memory_extract_callable,
-    memory_service, HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
-    MemoryCommand, MemoryConsolidationRequest, MemoryExtractionObservation,
-    MemoryExtractionRequest, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
-    MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_service, HelperInvocationCommand, HelperInvocationInterface,
+    HelperInvocationResponse, MemoryCommand, MemoryConsolidationRequest,
+    MemoryExtractionObservation, MemoryExtractionRequest, MemoryKind, MemoryRecallQuery,
+    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
 };
 use std::{
     fs,
@@ -78,7 +77,7 @@ impl PluginInstance for HelperProvider {
         &mut self,
         service: &ServiceId,
         input: &[u8],
-        host: &PluginHost<'_>,
+        _host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         if service != &helper_invocation_service() {
             return Err(format!("unsupported fixture service: {service}"));
@@ -103,10 +102,10 @@ impl PluginInstance for HelperProvider {
                 ))
             }
         };
-        host.encode_value(&HelperInvocationResponse {
+        serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {
             output: Bytes::new(output.as_bytes().to_vec()),
             tool_calls: Vec::new(),
-        })
+        }))
         .map_err(|error| error.to_string())
     }
 }

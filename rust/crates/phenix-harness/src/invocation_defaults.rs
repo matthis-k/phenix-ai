@@ -1,8 +1,8 @@
 use phenix_core::{
     Authority, CallableId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, RoutingProfileId, SdkClient, ServiceContribution, ServiceId,
-    ServiceRole,
+    ComponentManifest, InterfaceSchema, ModelToolDescriptor, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, RoutingProfileId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_plugin_catalog::{
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
@@ -74,7 +74,7 @@ pub fn invocation_defaults_component_manifest(maximum_authority: Authority) -> C
         owner: PluginId::parse(INVOCATION_DEFAULTS_PLUGIN).expect("static plugin id is valid"),
         imports: vec![ComponentImport {
             interface: OptionsInterface::interface_id(),
-            schema: OptionsInterface::schema(),
+            schema: InterfaceSchema::fallible_of::<OptionCommand, OptionResponse, String>(),
             required: true,
             authority: maximum_authority.clone(),
         }],

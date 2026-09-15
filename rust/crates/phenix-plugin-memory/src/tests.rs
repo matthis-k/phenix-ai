@@ -380,6 +380,8 @@ fn compaction_rejects_summary_only_provenance() {
     let mut kernel = kernel_with(&path);
     let command = phenix_sdk::ContextCompactionCommand::Compact {
         request: phenix_sdk::ContextCompactionRequest {
+            execution_id: "execution-1".into(),
+            parent_attempt_id: "attempt-1".into(),
             scope: scope("root"),
             profile_id: phenix_core::RoutingProfileId::parse("memory").unwrap(),
             configuration_revision: "config-1".into(),
@@ -492,6 +494,8 @@ fn recall_and_revalidation_emit_observable_operation_events() {
         &mut kernel,
         MemoryCommand::Revalidate {
             id: "observed-fact".into(),
+            execution_id: "execution-1".into(),
+            parent_attempt_id: "attempt-1".into(),
             profile_id: RoutingProfileId::parse("memory").unwrap(),
             at: 11,
         },

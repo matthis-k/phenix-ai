@@ -612,12 +612,15 @@ fn routed_revalidation(
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
     let output = routed_model_bytes(
         context,
-        execution_id,
-        parent_attempt_id,
-        profile_id,
-        HelperInvocationKind::Verification,
-        callable_id,
-        input,
+        HelperInvocationRequest {
+            execution_id: execution_id.to_owned(),
+            parent_attempt_id: parent_attempt_id.to_owned(),
+            profile_id: profile_id.clone(),
+            kind: HelperInvocationKind::Verification,
+            callable_id,
+            input: Bytes::new(input),
+            tools: Vec::new(),
+        },
         "memory revalidation",
     )?;
     serde_json::from_slice(&output).map_err(|error| {
@@ -636,12 +639,15 @@ fn routed_memory_text(
 ) -> MemoryResult<String> {
     let output = routed_model_bytes(
         context,
-        execution_id,
-        parent_attempt_id,
-        profile_id,
-        HelperInvocationKind::Helper,
-        callable_id,
-        input,
+        HelperInvocationRequest {
+            execution_id: execution_id.to_owned(),
+            parent_attempt_id: parent_attempt_id.to_owned(),
+            profile_id: profile_id.clone(),
+            kind: HelperInvocationKind::Helper,
+            callable_id,
+            input: Bytes::new(input),
+            tools: Vec::new(),
+        },
         label,
     )?;
     let text = String::from_utf8(output)
@@ -654,28 +660,13 @@ fn routed_memory_text(
 
 fn routed_model_bytes(
     context: &MemoryContext<'_, '_>,
-    execution_id: &str,
-    parent_attempt_id: &str,
-    profile_id: &RoutingProfileId,
-    kind: HelperInvocationKind,
-    callable_id: CallableId,
-    input: Vec<u8>,
+    request: HelperInvocationRequest,
     label: &str,
 ) -> MemoryResult<Vec<u8>> {
     let response: HelperInvocationResponse = context
         .sdk
         .invocation
-        .invoke_projected(&HelperInvocationCommand::Invoke {
-            request: HelperInvocationRequest {
-                execution_id: execution_id.to_owned(),
-                parent_attempt_id: parent_attempt_id.to_owned(),
-                profile_id: profile_id.clone(),
-                kind,
-                callable_id,
-                input: Bytes::new(input),
-                tools: Vec::new(),
-            },
-        })
+        .invoke_projected(&HelperInvocationCommand::Invoke { request })
         .map_err(|error| MemoryError::Provider(error.to_string()))?;
     if response.output.as_ref().is_empty() {
         return Err(MemoryError::Provider(format!(
