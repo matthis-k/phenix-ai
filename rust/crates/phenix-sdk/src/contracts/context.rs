@@ -115,7 +115,7 @@ pub enum ContextCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "result", rename_all = "snake_case")]
+#[serde(tag = "response", rename_all = "snake_case")]
 pub enum ContextResponse {
     Registered {
         resource: ContextResourceRevision,
