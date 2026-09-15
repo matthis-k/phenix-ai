@@ -31,3 +31,6 @@ phenix-plugin-api = { path = "../phenix-plugin-api" }
 phenix-plugin-session-tree = { path = "../phenix-plugin-session-tree" }
 phenix-plugin-sessions = { path = "../phenix-plugin-sessions" }
 phenix-plugin-workspace = { path = "../phenix-plugin-workspace" }
+
+[dev-dependencies]
+serde_json.workspace = true
