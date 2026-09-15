@@ -1,0 +1,74 @@
+name: PR 504 runtime migration
+
+on:
+  push:
+    branches:
+      - spec/nvim-client-package
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+      - name: Patch application runtime integration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/crates/phenix-harness/src/application.rs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  'HasPhenixSchema, LocalPersistence, ObservableError, ObservableRegistration, ObservableStore,\n    PhenixContract, PhenixValue, PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry,',
+                  'HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ObservableError, ObservableRegistration,\n    ObservableStore, PhenixContract, PhenixValue, PluginId, Project, RuntimeId, SessionId,\n    SharedCapabilityRegistry,',
+              ),
+              (
+                  '    _service: &SdkApplicationService,\n',
+                  '    service: &SdkApplicationService,\n',
+              ),
+              (
+                  '''    let prompt = match worker.prompt(request.clone()) {\n''',
+                  '''    let tools = service\n        .client_tool_descriptors(&request.session_id)\n        .into_iter()\n        .map(|descriptor| ModelToolDescriptor {\n            id: descriptor.id,\n            description: descriptor.description,\n            input_schema: descriptor.input_schema,\n            output_schema: descriptor.output_schema,\n        })\n        .collect::<Vec<_>>();\n    let prompt = match worker.prompt(request.clone()) {\n''',
+              ),
+              (
+                  '''                runtime_execution_id,\n                model_input,\n                blocking_cancellation,\n''',
+                  '''                runtime_execution_id,\n                model_input,\n                tools,\n                blocking_cancellation,\n''',
+              ),
+              (
+                  '''    execution_id: String,\n    input: Bytes,\n    cancellation: Arc<AtomicBool>,\n''',
+                  '''    execution_id: String,\n    input: Bytes,\n    tools: Vec<ModelToolDescriptor>,\n    cancellation: Arc<AtomicBool>,\n''',
+              ),
+              (
+                  '''        input,\n        tools: Vec::new(),\n''',
+                  '''        input,\n        tools,\n''',
+              ),
+              (
+                  '''        Ok(text) => {\n            worker.finish_root_execution(&completion.execution_id, true)?;\n            complete_prompt_output(\n                worker,\n                &completion.session_id,\n                &completion.execution_id,\n                text,\n            )\n        }\n''',
+                  '''        Ok(text) => worker\n            .finish_root_execution(&completion.execution_id, true)\n            .and_then(|()| {\n                complete_prompt_output(\n                    worker,\n                    &completion.session_id,\n                    &completion.execution_id,\n                    text,\n                )\n            }),\n''',
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'expected patch anchor missing: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+      - name: Format
+        run: cargo fmt --manifest-path rust/Cargo.toml --all
+      - name: Remove temporary workflow and push
+        run: |
+          rm .github/workflows/pr504-runtime-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(nvim): integrate mainline invocation tools'
+          git push origin HEAD:spec/nvim-client-package
