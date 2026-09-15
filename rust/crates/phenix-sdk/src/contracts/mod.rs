@@ -1,5 +1,4 @@
 pub mod context;
-pub mod context_admission;
 pub mod delegation;
 pub mod execution;
 pub mod frontend;
@@ -16,7 +15,6 @@ pub mod usage_policy;
 pub mod workspace;
 
 pub use context::*;
-pub use context_admission::*;
 pub use delegation::*;
 pub use execution::*;
 pub use frontend::*;
