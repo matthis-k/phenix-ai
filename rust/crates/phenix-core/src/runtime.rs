@@ -22,6 +22,7 @@ mod dispatch;
 mod host;
 mod kernel;
 mod listener;
+mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
 #[cfg(test)]
