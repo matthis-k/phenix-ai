@@ -20,21 +20,82 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: spec/nvim-client-package
-      - name: Patch lifecycle and mainline contract drift
+      - name: Patch lifecycle and mutable harness migration
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('rust/crates/phenix-plugin-step-runner/src/runner.rs')
-          text = path.read_text()
-          old = '''                    request: Box::new(ContextAdmissionRequest {\n                        execution_id: attribution.execution_id.clone(),\n                        step_plan: plan.clone(),\n                        candidates: context_candidates,\n                        cache_epoch,\n                    }),\n'''
-          new = '''                    request: ContextAdmissionRequest {\n                        execution_id: attribution.execution_id.clone(),\n                        step_plan: plan.clone(),\n                        candidates: context_candidates,\n                        cache_epoch,\n                    },\n'''
-          if old not in text:
-              raise SystemExit('context admission drift anchor missing')
-          path.write_text(text.replace(old, new, 1))
+          def replace(path, old, new, label, count=1):
+              file = Path(path)
+              text = file.read_text()
+              if text.count(old) < count:
+                  raise SystemExit(f'{label} anchor missing')
+              file.write_text(text.replace(old, new, count))
+
+          replace(
+              'rust/crates/phenix-plugin-step-runner/src/runner.rs',
+              '''                    request: Box::new(ContextAdmissionRequest {\n                        execution_id: attribution.execution_id.clone(),\n                        step_plan: plan.clone(),\n                        candidates: context_candidates,\n                        cache_epoch,\n                    }),\n''',
+              '''                    request: ContextAdmissionRequest {\n                        execution_id: attribution.execution_id.clone(),\n                        step_plan: plan.clone(),\n                        candidates: context_candidates,\n                        cache_epoch,\n                    },\n''',
+              'context admission drift',
+          )
+
+          replace(
+              'rust/crates/phenix-harness/src/runtime_config.rs',
+              'use phenix_harness::{default_suite_authority, PhenixHarness};\n',
+              'use crate::{default_suite_authority, PhenixHarness};\n',
+              'runtime config self import',
+          )
+
+          replace(
+              'rust/crates/phenix-harness/src/lib.rs',
+              '''    pub fn invoke(\n        &self,\n''',
+              '''    pub fn invoke(\n        &mut self,\n''',
+              'mutable harness invoke',
+          )
+
+          cargo = Path('rust/crates/phenix-harness/Cargo.toml')
+          cargo_text = cargo.read_text()
+          if 'parking_lot.workspace = true\n' not in cargo_text:
+              anchor = 'phenix-sdk = { path = "../phenix-sdk" }\n'
+              if anchor not in cargo_text:
+                  raise SystemExit('parking_lot dependency anchor missing')
+              cargo_text = cargo_text.replace(anchor, anchor + 'parking_lot.workspace = true\n', 1)
+              cargo.write_text(cargo_text)
 
           path = Path('rust/crates/phenix-harness/src/application.rs')
           text = path.read_text()
+
+          old = '''use phenix_sdk::{\n    execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,\n    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, RootBudgetLedger,\n    RootBudgetLimits,\n};\n'''
+          new = old + 'use parking_lot::Mutex;\n'
+          if old not in text:
+              raise SystemExit('parking_lot import anchor missing')
+          text = text.replace(old, new, 1)
+
+          replacements = [
+              ('    harness: Arc<PhenixHarness>,\n', '    harness: Arc<Mutex<PhenixHarness>>,\n', 'worker harness type'),
+              ('            harness: Arc::new(harness),\n', '            harness: Arc::new(Mutex::new(harness)),\n', 'worker harness constructor'),
+              ("        R: for<'a> TryFrom<Project<'a>, Error = phenix_core::ValueError>,\n", "        R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,\n", 'runtime projection bound'),
+              ('fn run_agent_execution(\n    harness: Arc<PhenixHarness>,\n', 'fn run_agent_execution(\n    harness: Arc<Mutex<PhenixHarness>>,\n', 'agent harness type'),
+              ('    let output = harness\n        .invoke(&agent_loop_service(), &input, &authority, None)\n', '    let output = harness\n        .lock()\n        .invoke(&agent_loop_service(), &input, &authority, None)\n', 'agent harness lock'),
+          ]
+          for old, new, label in replacements:
+              if old not in text:
+                  raise SystemExit(f'{label} anchor missing')
+              text = text.replace(old, new, 1)
+
+          shared_invoke = '''        let output = self\n            .harness\n            .invoke('''
+          if text.count(shared_invoke) != 3:
+              raise SystemExit(f'expected 3 mutable harness invoke sites, found {text.count(shared_invoke)}')
+          text = text.replace(
+              shared_invoke,
+              '''        let output = self\n            .harness\n            .lock()\n            .invoke(''',
+          )
+
+          generation = '    let generation = CapabilityGenerationId::from(worker.harness.generation());\n'
+          generation_new = '''    let generation = {\n        let harness = worker.harness.lock();\n        CapabilityGenerationId::from(harness.generation())\n    };\n'''
+          if generation not in text:
+              raise SystemExit('generation lock anchor missing')
+          text = text.replace(generation, generation_new, 1)
 
           old = '''        self.prepare_root_execution(&execution_id)?;\n        self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        )?;\n        Ok(PromptResult {\n'''
           new = '''        self.prepare_root_execution(&execution_id)?;\n        if let Err(error) = self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        ) {\n            let _ = self.finish_root_execution(&execution_id, false);\n            return Err(error);\n        }\n        Ok(PromptResult {\n'''
@@ -65,5 +126,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'fix(nvim): close rejected root executions'
+          git commit -m 'fix(nvim): serialize mutable runtime access'
           git push origin HEAD:spec/nvim-client-package
