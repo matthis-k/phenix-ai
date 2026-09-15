@@ -4,10 +4,12 @@ use phenix_core::{
 };
 use phenix_sdk::{
     WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WORKSPACE_SERVICE,
+    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
+    WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -129,6 +131,7 @@ fn handle(
             content,
             expected_version,
         } => write(context, path, content, expected_version),
+        WorkspaceCommand::WriteBatch { writes } => write_batch(context, writes),
         WorkspaceCommand::Search {
             needle,
             path,
@@ -193,24 +196,86 @@ fn write(
 ) -> Result<WorkspaceResponse, String> {
     require(context, WORKSPACE_WRITE)?;
     let resolved = resolve(context, &path)?;
-    let observed = match fs::read(&resolved) {
-        Ok(bytes) => version_for_bytes(&bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => WorkspaceFileVersion::Absent,
-        Err(error) => return Err(format!("inspect {path}: {error}")),
-    };
+    let observed = inspect_version(&resolved, &path)?;
     if observed != expected_version {
         return Err(format!(
             "workspace version conflict for {path}: expected {expected_version:?}, observed {observed:?}"
         ));
     }
-    if let Some(parent) = resolved.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("create parent for {path}: {error}"))?;
-    }
-    fs::write(&resolved, content.as_bytes()).map_err(|error| format!("write {path}: {error}"))?;
+    write_resolved(&resolved, &path, &content)?;
     Ok(WorkspaceResponse::Written {
         path,
         version: version_for_bytes(content.as_bytes()),
     })
+}
+
+fn write_batch(
+    context: &WorkspaceContext<'_, '_, '_>,
+    writes: Vec<WorkspaceWrite>,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_WRITE)?;
+    if writes.is_empty() {
+        return Err("workspace write batch must not be empty".into());
+    }
+
+    let mut paths = BTreeSet::new();
+    let mut prepared = Vec::with_capacity(writes.len());
+    let mut conflicts = Vec::new();
+    for write in writes {
+        if !paths.insert(write.path.clone()) {
+            return Err(format!(
+                "workspace write batch contains duplicate path: {}",
+                write.path
+            ));
+        }
+        let resolved = resolve(context, &write.path)?;
+        let observed = inspect_version(&resolved, &write.path)?;
+        let desired = version_for_bytes(write.content.as_bytes());
+        if observed != write.expected_version && observed != desired {
+            conflicts.push(WorkspaceVersionConflict {
+                path: write.path.clone(),
+                expected_version: write.expected_version.clone(),
+                observed_version: observed.clone(),
+            });
+        }
+        prepared.push((write, resolved, observed, desired));
+    }
+
+    if !conflicts.is_empty() {
+        return Ok(WorkspaceResponse::VersionConflict { conflicts });
+    }
+
+    let mut files = Vec::with_capacity(prepared.len());
+    for (write, resolved, observed, desired) in prepared {
+        // Treat an already-materialized desired version as an idempotent retry. This is
+        // required when a caller crashes after the workspace mutation but before it can
+        // durably record its own terminal state.
+        if observed != desired {
+            write_resolved(&resolved, &write.path, &write.content)?;
+        }
+        files.push(WorkspaceWrittenFile {
+            path: write.path,
+            version: desired,
+        });
+    }
+    Ok(WorkspaceResponse::WrittenBatch { files })
+}
+
+fn inspect_version(resolved: &Path, path: &str) -> Result<WorkspaceFileVersion, String> {
+    match fs::read(resolved) {
+        Ok(bytes) => Ok(version_for_bytes(&bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(WorkspaceFileVersion::Absent)
+        }
+        Err(error) => Err(format!("inspect {path}: {error}")),
+    }
+}
+
+fn write_resolved(resolved: &Path, path: &str, content: &str) -> Result<(), String> {
+    if let Some(parent) = resolved.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("create parent for {path}: {error}"))?;
+    }
+    fs::write(resolved, content.as_bytes()).map_err(|error| format!("write {path}: {error}"))
 }
 
 fn search(
@@ -437,6 +502,95 @@ mod tests {
         )
         .unwrap_err()
         .contains("escapes"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_write_rejects_the_whole_version_set_before_mutation() {
+        let root = temp_workspace("workspace-batch-conflict");
+        fs::write(root.join("a.txt"), "old-a").unwrap();
+        fs::write(root.join("b.txt"), "old-b").unwrap();
+        let mut kernel = kernel(root.clone());
+        let read = authority(&[WORKSPACE_READ]);
+        let write = authority(&[WORKSPACE_WRITE]);
+        let a_version = match invoke(
+            &mut kernel,
+            WorkspaceCommand::Read {
+                path: "a.txt".into(),
+            },
+            &read,
+        )
+        .unwrap()
+        {
+            WorkspaceResponse::Read { version, .. } => version,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let stale_b = WorkspaceFileVersion::Present {
+            content_hash: "stale".into(),
+        };
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::WriteBatch {
+                writes: vec![
+                    WorkspaceWrite {
+                        path: "a.txt".into(),
+                        content: "new-a".into(),
+                        expected_version: a_version,
+                    },
+                    WorkspaceWrite {
+                        path: "b.txt".into(),
+                        content: "new-b".into(),
+                        expected_version: stale_b,
+                    },
+                ],
+            },
+            &write,
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            WorkspaceResponse::VersionConflict { ref conflicts } if conflicts.len() == 1
+        ));
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "old-a");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "old-b");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_write_is_idempotent_after_the_desired_version_exists() {
+        let root = temp_workspace("workspace-batch-idempotent");
+        fs::write(root.join("a.txt"), "old").unwrap();
+        let mut kernel = kernel(root.clone());
+        let read = authority(&[WORKSPACE_READ]);
+        let write = authority(&[WORKSPACE_WRITE]);
+        let version = match invoke(
+            &mut kernel,
+            WorkspaceCommand::Read {
+                path: "a.txt".into(),
+            },
+            &read,
+        )
+        .unwrap()
+        {
+            WorkspaceResponse::Read { version, .. } => version,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let command = WorkspaceCommand::WriteBatch {
+            writes: vec![WorkspaceWrite {
+                path: "a.txt".into(),
+                content: "new".into(),
+                expected_version: version,
+            }],
+        };
+        assert!(matches!(
+            invoke(&mut kernel, command.clone(), &write).unwrap(),
+            WorkspaceResponse::WrittenBatch { .. }
+        ));
+        assert!(matches!(
+            invoke(&mut kernel, command, &write).unwrap(),
+            WorkspaceResponse::WrittenBatch { .. }
+        ));
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "new");
         let _ = fs::remove_dir_all(root);
     }
 

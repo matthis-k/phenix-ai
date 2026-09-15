@@ -1,12 +1,15 @@
 use crate::configuration::ExecutionConfigurationInterface;
-use crate::{execution_manifest, AgentLoopCommand, AgentLoopResponse, AGENT_LOOP_SERVICE};
+use crate::{
+    execution_manifest, AgentLoopCommand, AgentLoopResponse, ExecutionReviewInterface,
+    AGENT_LOOP_SERVICE,
+};
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, PluginId,
 };
 use phenix_sdk::{
     DefaultInvocationInterface, ExecutionInterface, ExecutionResourceInterface,
-    StepAttemptInterface, StepTransactionInterface,
+    StepAttemptInterface, StepTransactionInterface, WorkspaceInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
@@ -15,6 +18,7 @@ const EXECUTION_PLUGIN: &str = "phenix.execution";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+const WORKSPACE_WRITE: &str = "workspace.write";
 
 pub struct AgentLoopInterface;
 
@@ -40,12 +44,18 @@ pub fn agent_loop_component_id() -> ComponentId {
 
 #[must_use]
 pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentManifest {
+    let workspace_authority = maximum_authority.attenuate(&workspace_write_authority());
     let authority = execution_manifest(maximum_authority).maximum_authority;
     ComponentManifest {
         listeners: Vec::new(),
         id: execution_component_id(),
         owner: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),
-        imports: Vec::new(),
+        imports: vec![ComponentImport {
+            interface: WorkspaceInterface::interface_id(),
+            schema: WorkspaceInterface::schema(),
+            required: false,
+            authority: workspace_authority,
+        }],
         exports: vec![
             ComponentExport {
                 interface: ExecutionInterface::interface_id(),
@@ -76,6 +86,12 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
                 schema: ExecutionConfigurationInterface::schema(),
                 priority: 100,
                 required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: ExecutionReviewInterface::interface_id(),
+                schema: ExecutionReviewInterface::schema(),
+                priority: 100,
+                required_authority: persistence_authority(),
             },
         ],
         maximum_authority: authority,
@@ -112,6 +128,10 @@ fn persistence_authority() -> Authority {
     ])
 }
 
+fn workspace_write_authority() -> Authority {
+    Authority::new([CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +152,7 @@ mod tests {
 
         assert_eq!(component.owner, plugin.id);
         assert!(component.maximum_authority.permits(&capability));
-        assert_eq!(component.exports.len(), 5);
+        assert_eq!(component.exports.len(), 6);
         assert_eq!(
             component.exports[0].interface,
             ExecutionInterface::interface_id()
@@ -160,8 +180,28 @@ mod tests {
             component.exports[4].required_authority,
             Authority::default()
         );
-        assert!(component.imports.is_empty());
+        assert_eq!(
+            component.exports[5].interface,
+            ExecutionReviewInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[5].required_authority,
+            persistence_authority()
+        );
+        assert_eq!(component.imports.len(), 1);
+        assert_eq!(
+            component.imports[0].interface,
+            WorkspaceInterface::interface_id()
+        );
+        assert!(!component.imports[0].required);
         assert!(graph.component(&execution_component_id()).is_some());
+    }
+
+    #[test]
+    fn review_workspace_import_is_limited_to_package_ceiling() {
+        let write = CapabilityId::parse(WORKSPACE_WRITE).unwrap();
+        let component = execution_component_manifest(Authority::new([write.clone()]));
+        assert!(component.imports[0].authority.permits(&write));
     }
 
     #[test]
