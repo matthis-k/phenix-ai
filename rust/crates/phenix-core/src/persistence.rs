@@ -1,20 +1,12 @@
 use crate::{PluginId, ResourceNamespace};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    fmt::{self, Display, Formatter},
-    path::Path,
+use rusqlite::{
+    params, params_from_iter, types::Value, Connection, OptionalExtension, Transaction,
 };
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeSet, ops::Bound, path::Path};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BackendFeature {
-    Transactions,
-    UniqueKeys,
-    ForeignKeys,
-    OrderedAppend,
-    IndexedRange,
     Migrations,
 }
 
@@ -47,6 +39,83 @@ impl DurableSchema {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableRecord {
+    pub key: String,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ScanDirection {
+    #[default]
+    Forward,
+    Reverse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableKeyRange {
+    lower: Bound<String>,
+    upper: Bound<String>,
+}
+
+impl DurableKeyRange {
+    #[must_use]
+    pub fn new(lower: Bound<String>, upper: Bound<String>) -> Self {
+        Self { lower, upper }
+    }
+
+    #[must_use]
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn prefix(prefix: impl Into<String>) -> Self {
+        let prefix = prefix.into();
+        let upper = prefix_successor(&prefix)
+            .map(Bound::Excluded)
+            .unwrap_or(Bound::Unbounded);
+        Self {
+            lower: Bound::Included(prefix),
+            upper,
+        }
+    }
+
+    #[must_use]
+    pub fn lower(&self) -> &Bound<String> {
+        &self.lower
+    }
+
+    #[must_use]
+    pub fn upper(&self) -> &Bound<String> {
+        &self.upper
+    }
+}
+
+impl Default for DurableKeyRange {
+    fn default() -> Self {
+        Self {
+            lower: Bound::Unbounded,
+            upper: Bound::Unbounded,
+        }
+    }
+}
+
+fn prefix_successor(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let mut next = u32::from(last).checked_add(1)?;
+        if (0xD800..=0xDFFF).contains(&next) {
+            next = 0xE000;
+        }
+        if let Some(next) = char::from_u32(next) {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum TransactionOp {
     Put {
@@ -76,90 +145,45 @@ pub struct SchemaMigration {
     pub operations: Vec<TransactionOp>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PersistenceError {
-    Sql(rusqlite::Error),
+    #[error("local persistence: {0}")]
+    Sql(#[from] rusqlite::Error),
+    #[error("durable namespace {namespace} is owned by {owner}")]
     NamespaceCollision {
         namespace: ResourceNamespace,
         owner: PluginId,
     },
+    #[error("durable namespace {namespace} has schema {stored}, requested {requested}")]
     IncompatibleSchema {
         namespace: ResourceNamespace,
         stored: u32,
         requested: u32,
     },
+    #[error("durable namespace {namespace} is missing migration {from_version}->{to_version}")]
     MissingMigration {
         namespace: ResourceNamespace,
         from_version: u32,
         to_version: u32,
     },
+    #[error("durable namespace {namespace} requires unsupported backend feature {feature:?}")]
     UnsupportedFeature {
         namespace: ResourceNamespace,
         feature: BackendFeature,
     },
+    #[error("durable namespace is not registered: {0}")]
     UnregisteredNamespace(ResourceNamespace),
+    #[error("plugin {caller} cannot mutate namespace {namespace} owned by {owner}")]
     WrongNamespaceOwner {
         namespace: ResourceNamespace,
         owner: PluginId,
         caller: PluginId,
     },
+    #[error("transaction assertion failed for {namespace}/{key}")]
     AssertionFailed {
         namespace: ResourceNamespace,
         key: String,
     },
-}
-
-impl Display for PersistenceError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Sql(error) => write!(f, "local persistence: {error}"),
-            Self::NamespaceCollision { namespace, owner } => {
-                write!(f, "durable namespace {namespace} is owned by {owner}")
-            }
-            Self::IncompatibleSchema {
-                namespace,
-                stored,
-                requested,
-            } => write!(
-                f,
-                "durable namespace {namespace} has schema {stored}, requested {requested}"
-            ),
-            Self::MissingMigration {
-                namespace,
-                from_version,
-                to_version,
-            } => write!(
-                f,
-                "durable namespace {namespace} is missing migration {from_version}->{to_version}"
-            ),
-            Self::UnsupportedFeature { namespace, feature } => write!(
-                f,
-                "durable namespace {namespace} requires unsupported backend feature {feature:?}"
-            ),
-            Self::UnregisteredNamespace(namespace) => {
-                write!(f, "durable namespace is not registered: {namespace}")
-            }
-            Self::WrongNamespaceOwner {
-                namespace,
-                owner,
-                caller,
-            } => write!(
-                f,
-                "plugin {caller} cannot mutate namespace {namespace} owned by {owner}"
-            ),
-            Self::AssertionFailed { namespace, key } => {
-                write!(f, "transaction assertion failed for {namespace}/{key}")
-            }
-        }
-    }
-}
-
-impl Error for PersistenceError {}
-
-impl From<rusqlite::Error> for PersistenceError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::Sql(value)
-    }
 }
 
 pub trait PersistenceBackend: Send {
@@ -189,6 +213,15 @@ pub trait PersistenceBackend: Send {
         namespace: &ResourceNamespace,
         key: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError>;
+
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError>;
 
     fn transact_many(
         &mut self,
@@ -310,13 +343,7 @@ impl LocalPersistence {
 
 impl PersistenceBackend for LocalPersistence {
     fn supported_features(&self) -> BTreeSet<BackendFeature> {
-        [
-            BackendFeature::Transactions,
-            BackendFeature::UniqueKeys,
-            BackendFeature::Migrations,
-        ]
-        .into_iter()
-        .collect()
+        [BackendFeature::Migrations].into_iter().collect()
     }
 
     fn register_schema(
@@ -428,6 +455,69 @@ impl PersistenceBackend for LocalPersistence {
             .optional()?)
     }
 
+    fn scan(
+        &self,
+        caller: &PluginId,
+        namespace: &ResourceNamespace,
+        range: &DurableKeyRange,
+        direction: ScanDirection,
+        limit: Option<usize>,
+    ) -> Result<Vec<DurableRecord>, PersistenceError> {
+        self.require_owner(caller, namespace)?;
+        if matches!(limit, Some(0)) {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            "SELECT record_key, record_value FROM kernel_plugin_records WHERE namespace = ?1",
+        );
+        let mut values = vec![Value::Text(namespace.as_str().to_owned())];
+        match range.lower() {
+            Bound::Included(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key >= ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Excluded(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key > ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Unbounded => {}
+        }
+        match range.upper() {
+            Bound::Included(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key <= ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Excluded(key) => {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND record_key < ?{index}"));
+                values.push(Value::Text(key.clone()));
+            }
+            Bound::Unbounded => {}
+        }
+        match direction {
+            ScanDirection::Forward => sql.push_str(" ORDER BY record_key ASC"),
+            ScanDirection::Reverse => sql.push_str(" ORDER BY record_key DESC"),
+        }
+        if let Some(limit) = limit {
+            let limit_index = values.len() + 1;
+            sql.push_str(&format!(" LIMIT ?{limit_index}"));
+            values.push(Value::Integer(i64::try_from(limit).unwrap_or(i64::MAX)));
+        }
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values), |row| {
+            Ok(DurableRecord {
+                key: row.get(0)?,
+                value: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     fn transact_many(
         &mut self,
         transactions: &[NamespaceTransaction],
@@ -530,18 +620,13 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_backend_feature_is_rejected_before_schema_registration() {
-        let mut store = LocalPersistence::open_in_memory().unwrap();
-        let schema =
-            DurableSchema::requiring(namespace("owner.state"), 1, [BackendFeature::IndexedRange]);
+    fn local_backend_reports_only_callable_optional_features() {
+        let store = LocalPersistence::open_in_memory().unwrap();
 
-        assert!(matches!(
-            store.register_schema(&plugin("owner"), &schema),
-            Err(PersistenceError::UnsupportedFeature {
-                feature: BackendFeature::IndexedRange,
-                ..
-            })
-        ));
+        assert_eq!(
+            store.supported_features(),
+            BTreeSet::from([BackendFeature::Migrations])
+        );
     }
 
     #[test]
@@ -571,6 +656,20 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, PersistenceError::AssertionFailed { .. }));
         assert_eq!(store.read(&owner, &namespace, "first").unwrap(), None);
+    }
+
+    #[test]
+    fn prefix_range_covers_only_keys_with_the_prefix() {
+        let range = DurableKeyRange::prefix("items/beta");
+        assert_eq!(range.lower(), &Bound::Included("items/beta".into()));
+        assert_eq!(range.upper(), &Bound::Excluded("items/betb".into()));
+
+        let max = DurableKeyRange::prefix(format!("items/{}", char::MAX));
+        assert_eq!(
+            max.lower(),
+            &Bound::Included(format!("items/{}", char::MAX))
+        );
+        assert_eq!(max.upper(), &Bound::Excluded("items0".into()));
     }
 
     #[test]
