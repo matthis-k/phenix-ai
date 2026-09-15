@@ -391,22 +391,53 @@ mod provider_dispatch {
 mod resolved_dispatch {
     use super::*;
 
-    fn authenticate(kernel: &mut Kernel) {
+    fn authenticate(kernel: &mut Kernel, authenticated: bool) {
         invoke_routing(
             kernel,
             ModelCommand::SetProviderAuthenticated {
                 provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                authenticated: true,
+                authenticated,
             },
         )
         .unwrap();
+    }
+
+    fn decision(target: ModelTarget, generation: &str) -> RouteDecision {
+        RouteDecision {
+            target,
+            capability_generation: CapabilityGenerationId::parse(generation).unwrap(),
+            policy_revision: "route-policy-1".into(),
+            candidate_ordinal: 0,
+            estimate: None,
+        }
+    }
+
+    fn prepare(
+        kernel: &mut Kernel,
+        decision: RouteDecision,
+        input: &[u8],
+    ) -> Result<phenix_sdk::PreparedDispatch, String> {
+        let response = invoke_dispatch(
+            kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision,
+                input: input.to_vec().into(),
+                tools: Vec::new(),
+            },
+        )?;
+        match response {
+            ModelDispatchResponse::Ready { prepared } => Ok(prepared),
+            ModelDispatchResponse::Inference { .. } => {
+                Err("dispatch returned inference during preparation".into())
+            }
+        }
     }
 
     #[test]
     fn exact_selected_target_reaches_provider_unchanged() {
         let path = temp_db("resolved-dispatch-exact");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel);
+        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected-fallback");
         invoke_routing(
             &mut kernel,
@@ -415,26 +446,21 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let decision = RouteDecision {
-            target,
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            policy_revision: "route-policy-1".into(),
-            candidate_ordinal: 1,
-            estimate: None,
-        };
+        let decision = decision(target, "generation-1");
+        let prepared = prepare(&mut kernel, decision.clone(), b"exact").unwrap();
+        assert_eq!(prepared.decision(), &decision);
         let response = invoke_dispatch(
             &mut kernel,
-            ModelDispatchCommand::InvokeResolved {
-                decision: decision.clone(),
-                input: b"exact".to_vec().into(),
-                tools: Vec::new(),
-            },
+            ModelDispatchCommand::InvokePrepared { prepared },
         )
         .unwrap();
         let ModelDispatchResponse::Inference {
             decision: returned,
             response,
-        } = response;
+        } = response
+        else {
+            panic!("expected inference response");
+        };
         assert_eq!(returned, decision);
         assert_eq!(response.output.as_ref(), b"exact");
         assert_eq!(
@@ -445,10 +471,10 @@ mod resolved_dispatch {
     }
 
     #[test]
-    fn stale_generation_is_rejected_before_provider_dispatch() {
+    fn stale_generation_is_rejected_during_preparation() {
         let path = temp_db("resolved-dispatch-stale");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel);
+        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -457,13 +483,7 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let decision = RouteDecision {
-            target: target.clone(),
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
-            policy_revision: "route-policy-1".into(),
-            candidate_ordinal: 0,
-            estimate: None,
-        };
+        let decision = decision(target.clone(), "generation-1");
         invoke_routing(
             &mut kernel,
             ModelCommand::PublishCapabilities {
@@ -471,16 +491,72 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let error = invoke_dispatch(
+        let error = prepare(&mut kernel, decision, b"must-not-run").unwrap_err();
+        assert!(error.contains("StaleCapabilityGeneration"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_authentication_is_rejected_during_preparation() {
+        let path = temp_db("resolved-dispatch-auth");
+        let mut kernel = kernel_with_provider(&path);
+        let target = target("fixture.provider", "selected");
+        invoke_routing(
             &mut kernel,
-            ModelDispatchCommand::InvokeResolved {
-                decision,
-                input: b"must-not-run".to_vec().into(),
-                tools: Vec::new(),
+            ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target.clone(), "generation-1", 8_000),
             },
         )
+        .unwrap();
+        let error = prepare(
+            &mut kernel,
+            decision(target, "generation-1"),
+            b"must-not-run",
+        )
         .unwrap_err();
-        assert!(error.contains("StaleCapabilityGeneration"));
+        assert!(error.contains("authentication required"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn prepared_dispatch_is_not_rejected_when_mutable_state_changes() {
+        let path = temp_db("resolved-dispatch-prepared-snapshot");
+        let mut kernel = kernel_with_provider(&path);
+        authenticate(&mut kernel, true);
+        let target = target("fixture.provider", "selected");
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            },
+        )
+        .unwrap();
+        let original = decision(target.clone(), "generation-1");
+        let prepared = prepare(&mut kernel, original.clone(), b"cross-boundary").unwrap();
+
+        authenticate(&mut kernel, false);
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target, "generation-2", 8_000),
+            },
+        )
+        .unwrap();
+
+        let response = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::InvokePrepared { prepared },
+        )
+        .unwrap();
+        let ModelDispatchResponse::Inference {
+            decision: returned,
+            response,
+        } = response
+        else {
+            panic!("expected inference response");
+        };
+        assert_eq!(returned, original);
+        assert_eq!(response.output.as_ref(), b"cross-boundary");
         let _ = fs::remove_file(path);
     }
 }
