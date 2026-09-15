@@ -322,17 +322,20 @@
 mod api;
 mod authoring;
 pub mod contracts;
+mod durable;
 mod providers;
 mod public_projection;
 
 pub use api::*;
 pub use authoring::*;
 pub use contracts::*;
+pub use durable::*;
 pub use phenix_core::{
     ArtifactRevision, Authority, BackendFeature, Bytes, CallableRef, CapabilityId, ComponentId,
-    Contract, ContractId, ContractValue, DurableSchema, Exact, HasPhenixSchema, Key, LayerResult,
-    ObjectRef, PhenixContract, PhenixSchema, PhenixValue, PluginArtifact, PluginExecution,
-    PluginId, Project, ReferenceId, RuntimeId, Type, TypeKind, ValueError,
+    Contract, ContractId, ContractValue, DurableKeyRange, DurableRecord, DurableSchema, Exact,
+    HasPhenixSchema, KernelError, Key, LayerResult, ObjectRef, PhenixContract, PhenixSchema,
+    PhenixValue, PluginArtifact, PluginExecution, PluginId, Project, ReferenceId,
+    ResourceNamespace, RuntimeId, ScanDirection, TransactionOp, Type, TypeKind, ValueError,
 };
 pub use phenix_provider_sdk::{
     ApiTokenSource, Auth, AuthDescriptor, AuthKind, EnvironmentVariable, ProviderAuthCommand,

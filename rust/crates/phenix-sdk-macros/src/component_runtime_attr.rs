@@ -63,6 +63,7 @@ fn layer_arguments(attribute: &Attribute) -> syn::Result<Option<Punctuated<Meta,
 }
 
 fn runtime_impl(item: &ItemImpl) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     if item.trait_.is_some() || !item.generics.params.is_empty() {
         return Ok(TokenStream::new());
     }
@@ -96,12 +97,12 @@ fn runtime_impl(item: &ItemImpl) -> syn::Result<TokenStream> {
     }
 
     Ok(quote! {
-        impl ::phenix_sdk::StaticComponentRuntimeDispatch for #self_ty {
+        impl #sdk::StaticComponentRuntimeDispatch for #self_ty {
             fn dispatch_runtime(
                 &self,
-                service: &::phenix_sdk::__phenix_plugin::ServiceId,
+                service: &#sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
             ) -> Result<Vec<u8>, String> {
                 #(#exports)*
                 Err(format!("unsupported component service: {service}"))
@@ -109,10 +110,10 @@ fn runtime_impl(item: &ItemImpl) -> syn::Result<TokenStream> {
 
             fn dispatch_layer_runtime(
                 &self,
-                service: &::phenix_sdk::__phenix_plugin::ServiceId,
+                service: &#sdk::__phenix_plugin::ServiceId,
                 input: &[u8],
-                host: &::phenix_sdk::__phenix_plugin::PluginHost<'_>,
-            ) -> Option<Result<::phenix_sdk::LayerResult, String>> {
+                host: &#sdk::__phenix_plugin::PluginHost<'_>,
+            ) -> Option<Result<#sdk::LayerResult, String>> {
                 #(#layers)*
                 None
             }
@@ -120,7 +121,7 @@ fn runtime_impl(item: &ItemImpl) -> syn::Result<TokenStream> {
             fn dispatch_listener_runtime(
                 &self,
                 listener: &str,
-                context: &::phenix_sdk::EventContext,
+                context: &#sdk::EventContext,
                 payload: &[u8],
             ) -> Option<Result<(), Box<dyn ::std::error::Error + Send + Sync>>> {
                 #(#listeners)*
@@ -159,13 +160,14 @@ enum Interface {
 
 impl Interface {
     fn expression(&self) -> TokenStream {
+        let sdk = crate::sdk_crate();
         match self {
             Self::Literal(id) => quote! {
-                ::phenix_sdk::__phenix_plugin::InterfaceId::parse(#id)
+                #sdk::__phenix_plugin::InterfaceId::parse(#id)
                     .expect("component attribute validated the static interface id")
             },
             Self::Marker(marker) => quote! {
-                <#marker as ::phenix_sdk::InterfaceMarker>::interface_id()
+                <#marker as #sdk::InterfaceMarker>::interface_id()
             },
         }
     }
@@ -274,6 +276,7 @@ fn unwrap_projection(ty: &Type) -> syn::Result<(Type, Projection)> {
 }
 
 fn export_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let name = &method.sig.ident;
     let mut inputs = method.sig.inputs.iter();
     let _receiver = inputs.next();
@@ -293,15 +296,15 @@ fn export_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Tok
     let interface = interface.expression();
     let decode = match projection {
         Projection::Exact => {
-            quote!(::phenix_sdk::decode_exact_runtime::<#decoded>(host, &interface, input)?)
+            quote!(#sdk::decode_exact_runtime::<#decoded>(host, &interface, input)?)
         }
         Projection::Projected | Projection::Project => {
-            quote!(::phenix_sdk::decode_projected_runtime::<#decoded>(host, &interface, input)?)
+            quote!(#sdk::decode_projected_runtime::<#decoded>(host, &interface, input)?)
         }
     };
     let request_arg = match projection {
-        Projection::Project => quote!(::phenix_sdk::Project(request)),
-        Projection::Exact => quote!(::phenix_sdk::Exact(request)),
+        Projection::Project => quote!(#sdk::Project(request)),
+        Projection::Exact => quote!(#sdk::Exact(request)),
         Projection::Projected => quote!(request),
     };
     let context_arg = match context {
@@ -316,14 +319,14 @@ fn export_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Tok
         (None, false) => quote!(self.#name()),
     };
     let call = if method.sig.asyncness.is_some() {
-        quote!(::phenix_sdk::block_on_static(#call))
+        quote!(#sdk::block_on_static(#call))
     } else {
         call
     };
     let encode = if returns_result(&method.sig.output) {
-        quote!(::phenix_sdk::encode_result_runtime)
+        quote!(#sdk::encode_result_runtime)
     } else {
-        quote!(::phenix_sdk::encode_runtime)
+        quote!(#sdk::encode_runtime)
     };
     let request_binding = request.is_some().then(|| quote!(let request = #decode;));
 
@@ -331,7 +334,7 @@ fn export_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Tok
         {
             let interface = #interface;
             if service.as_str() == interface.as_str() {
-                let plugin_context = ::phenix_sdk::PluginContext::new(host, (), (), ());
+                let plugin_context = #sdk::PluginContext::new(host, (), (), ());
                 #request_binding
                 let response = #call;
                 return #encode(host, &response);
@@ -341,6 +344,7 @@ fn export_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Tok
 }
 
 fn layer_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let name = &method.sig.ident;
     let mut inputs = method.sig.inputs.iter();
     let _receiver = inputs.next();
@@ -369,15 +373,15 @@ fn layer_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Toke
     let interface = interface.expression();
     let decode = match projection {
         Projection::Exact => {
-            quote!(::phenix_sdk::decode_exact_runtime::<#decoded>(host, &interface, input))
+            quote!(#sdk::decode_exact_runtime::<#decoded>(host, &interface, input))
         }
         Projection::Projected | Projection::Project => {
-            quote!(::phenix_sdk::decode_projected_runtime::<#decoded>(host, &interface, input))
+            quote!(#sdk::decode_projected_runtime::<#decoded>(host, &interface, input))
         }
     };
     let request_arg = match projection {
-        Projection::Project => quote!(::phenix_sdk::Project(request)),
-        Projection::Exact => quote!(::phenix_sdk::Exact(request)),
+        Projection::Project => quote!(#sdk::Project(request)),
+        Projection::Exact => quote!(#sdk::Exact(request)),
         Projection::Projected => quote!(request),
     };
     let call = match (has_context, request.is_some()) {
@@ -387,7 +391,7 @@ fn layer_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Toke
         (false, false) => quote!(self.#name()),
     };
     let call = if method.sig.asyncness.is_some() {
-        quote!(::phenix_sdk::block_on_static(#call))
+        quote!(#sdk::block_on_static(#call))
     } else {
         call
     };
@@ -419,7 +423,7 @@ fn layer_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Toke
         {
             let interface = #interface;
             if service.as_str() == interface.as_str() {
-                let layer_context = ::phenix_sdk::LayerContext::from_host(host);
+                let layer_context = #sdk::LayerContext::from_host(host);
                 #request_binding
                 return Some(#result);
             }
@@ -428,6 +432,7 @@ fn layer_arm(method: &syn::ImplItemFn, interface: Interface) -> syn::Result<Toke
 }
 
 fn listener_arm(method: &syn::ImplItemFn) -> syn::Result<TokenStream> {
+    let sdk = crate::sdk_crate();
     let name = &method.sig.ident;
     let listener = LitStr::new(&name.to_string(), name.span());
     let mut inputs = method.sig.inputs.iter();
@@ -457,24 +462,24 @@ fn listener_arm(method: &syn::ImplItemFn) -> syn::Result<TokenStream> {
     let (decoded, projection) = unwrap_projection(&payload)?;
     let decode = match projection {
         Projection::Exact => quote! {
-            <Self as ::phenix_sdk::StaticComponentRuntimeDispatch>::decode_exact_listener_runtime::<#decoded>(
+            <Self as #sdk::StaticComponentRuntimeDispatch>::decode_exact_listener_runtime::<#decoded>(
                 payload,
             )
         },
         Projection::Projected | Projection::Project => quote! {
-            <Self as ::phenix_sdk::StaticComponentRuntimeDispatch>::decode_projected_listener_runtime::<#decoded>(
+            <Self as #sdk::StaticComponentRuntimeDispatch>::decode_projected_listener_runtime::<#decoded>(
                 payload,
             )
         },
     };
     let payload_arg = match projection {
-        Projection::Project => quote!(::phenix_sdk::Project(event)),
-        Projection::Exact => quote!(::phenix_sdk::Exact(event)),
+        Projection::Project => quote!(#sdk::Project(event)),
+        Projection::Exact => quote!(#sdk::Exact(event)),
         Projection::Projected => quote!(event),
     };
     let call = quote!(self.#name(context, #payload_arg));
     let call = if method.sig.asyncness.is_some() {
-        quote!(::phenix_sdk::block_on_static(#call))
+        quote!(#sdk::block_on_static(#call))
     } else {
         call
     };
