@@ -1,0 +1,62 @@
+name: PR 504 lifecycle fix
+
+on:
+  push:
+    branches:
+      - spec/nvim-client-package
+
+concurrency:
+  group: pr504-lifecycle-fix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+      - name: Patch execution lifecycle
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/crates/phenix-harness/src/application.rs')
+          text = path.read_text()
+
+          old = '''        self.prepare_root_execution(&execution_id)?;\n        self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        )?;\n        Ok(PromptResult {\n'''
+          new = '''        self.prepare_root_execution(&execution_id)?;\n        if let Err(error) = self.append_session_change(\n            &session,\n            SessionChange::Message {\n                message: Message {\n                    role: MessageRole::User,\n                    content: request.content,\n                },\n            },\n        ) {\n            let _ = self.finish_root_execution(&execution_id, false);\n            return Err(error);\n        }\n        Ok(PromptResult {\n'''
+          if old not in text:
+              raise SystemExit('prompt lifecycle anchor missing')
+          text = text.replace(old, new, 1)
+
+          old = '''        let response =\n            self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {\n                ledger: RootBudgetLedger {\n                    root_execution_id: execution_id.to_owned(),\n                    limits: RootBudgetLimits {\n                        fresh_input_tokens: 128 * 1024,\n                        output_tokens: 16 * 1024,\n                        cost_microunits: None,\n                        attempts: 16,\n                    },\n                    reservations: BTreeMap::new(),\n                },\n            })?;\n        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {\n            return Err(ApplicationError::InvalidResponse {\n                message: format!("unexpected root-budget registration response: {response:?}"),\n            });\n        }\n        Ok(())\n'''
+          new = '''        let response = match self\n            .invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {\n                ledger: RootBudgetLedger {\n                    root_execution_id: execution_id.to_owned(),\n                    limits: RootBudgetLimits {\n                        fresh_input_tokens: 128 * 1024,\n                        output_tokens: 16 * 1024,\n                        cost_microunits: None,\n                        attempts: 16,\n                    },\n                    reservations: BTreeMap::new(),\n                },\n            }) {\n            Ok(response) => response,\n            Err(error) => {\n                let _ = self.finish_root_execution(execution_id, false);\n                return Err(error);\n            }\n        };\n        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {\n            let error = ApplicationError::InvalidResponse {\n                message: format!("unexpected root-budget registration response: {response:?}"),\n            };\n            let _ = self.finish_root_execution(execution_id, false);\n            return Err(error);\n        }\n        Ok(())\n'''
+          if old not in text:
+              raise SystemExit('root budget lifecycle anchor missing')
+          text = text.replace(old, new, 1)
+
+          test_anchor = '''    #[test]\n    fn full_event_queue_rejects_mutation_before_journaling() {\n'''
+          test = '''    #[test]\n    fn prompt_journal_failure_finishes_prepared_root_execution() {\n        let (sender, _events) = mpsc::channel(1);\n        let mut worker = application_worker().with_event_sender(sender.clone());\n        let created = invoke_operation::<CreateSession>(\n            &mut worker,\n            SessionCreateInput {\n                working_directory: "/workspace".into(),\n                title: None,\n            },\n        )\n        .unwrap();\n        sender\n            .try_send(ApplicationEvent {\n                event: ContractId::parse("phenix.application.session-update@1").unwrap(),\n                payload: Acknowledged {}.to_value(),\n            })\n            .expect("fill event queue");\n\n        let error = invoke_operation::<Prompt>(\n            &mut worker,\n            PromptInput {\n                session_id: created.session_id,\n                content: vec![Content::Text { text: "hello".into() }],\n            },\n        )\n        .unwrap_err();\n        assert!(matches!(error, ApplicationError::Conflict { .. }));\n\n        let response = worker\n            .invoke_execution(ExecutionCommand::GetExecution {\n                id: "execution-1".into(),\n            })\n            .unwrap();\n        let ExecutionResponse::ExecutionLookup { execution: Some(execution) } = response else {\n            panic!("prepared execution must remain queryable");\n        };\n        assert_eq!(execution.state, phenix_sdk::ExecutionState::Failed);\n    }\n\n'''
+          if test_anchor not in text:
+              raise SystemExit('test insertion anchor missing')
+          text = text.replace(test_anchor, test + test_anchor, 1)
+
+          path.write_text(text)
+          PY
+      - name: Format and targeted test
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml -p phenix-harness prompt_journal_failure_finishes_prepared_root_execution
+      - name: Remove temporary workflow and push
+        run: |
+          rm .github/workflows/pr504-lifecycle-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(nvim): close rejected root executions'
+          git push origin HEAD:spec/nvim-client-package
