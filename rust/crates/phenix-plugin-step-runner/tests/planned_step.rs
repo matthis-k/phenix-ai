@@ -1,0 +1,549 @@
+use phenix_core::{
+    Authority, CapabilityGenerationId, ComponentInterface, Kernel, KernelConfig, LocalPersistence,
+    ModelId, ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ValueError,
+};
+use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
+use phenix_plugin_execution::{
+    execution_component_manifest, execution_factory, execution_manifest,
+};
+use phenix_plugin_models::{
+    model_inference_service, model_routing_component_manifest, model_routing_factory,
+    model_routing_manifest,
+};
+use phenix_plugin_step_runner::{
+    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
+};
+use phenix_sdk::{
+    execution_resource_service, execution_service, model_routing_service, step_attempt_service,
+    step_runner_service, AttemptOutcome, CapacityKnowledge, ContextCandidate, ContextControl,
+    ContextDemand, ContextRetention, ContextSource, DelegationResourcePolicy,
+    EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelLimits, ModelResponse,
+    ModelTarget, PlannedStepRequest, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
+    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse,
+    StepRunnerCommand, StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind,
+    UsageAttribution, UsagePolicy,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+struct FixtureProvider;
+
+impl PluginInstance for FixtureProvider {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        if service != &model_inference_service() {
+            return Err(format!("unsupported fixture provider service: {service}"));
+        }
+        let context = PluginContext::new(host, (), (), ());
+        let request = context
+            .kernel
+            .decode_projected::<ModelInferenceRequest>(
+                &phenix_core::ModelInferenceInterface::interface_id(),
+                input,
+            )
+            .map_err(|error| error.to_string())?;
+        context
+            .kernel
+            .encode_value(&ModelInferenceResponse {
+                output: request.input,
+                provider_metadata: BTreeMap::from([(
+                    "model".into(),
+                    serde_json::json!(request.model.as_str()).into(),
+                )]),
+                tool_calls: Vec::new(),
+            })
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn temp_db(name: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "phenix-step-runner-{name}-{}-{nonce}.sqlite",
+        std::process::id()
+    ))
+}
+
+fn authority() -> Authority {
+    Authority::new([
+        phenix_core::CapabilityId::parse("kernel.persistence.schema").unwrap(),
+        phenix_core::CapabilityId::parse("kernel.persistence.read").unwrap(),
+        phenix_core::CapabilityId::parse("kernel.persistence.write").unwrap(),
+    ])
+}
+
+fn provider_manifest() -> PluginManifest {
+    PluginManifest {
+        id: PluginId::parse("fixture.provider").unwrap(),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![ServiceContribution {
+            role: phenix_core::ServiceRole::Terminal,
+            service: model_inference_service(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
+        resource_namespaces: Vec::new(),
+        maximum_authority: Authority::default(),
+    }
+}
+
+fn kernel(path: &PathBuf) -> Kernel {
+    let authority = authority();
+    let execution = execution_manifest(authority.clone());
+    let context = context_manifest();
+    let models = model_routing_manifest(authority.clone());
+    let runner = step_runner_manifest(authority.clone());
+    let provider = provider_manifest();
+    let execution_id = execution.id.clone();
+    let context_id = context.id.clone();
+    let models_id = models.id.clone();
+    let runner_id = runner.id.clone();
+    let provider_id = provider.id.clone();
+    let resolved = ResolvedHarness::resolve(
+        [
+            execution.clone(),
+            context.clone(),
+            models.clone(),
+            runner.clone(),
+            provider.clone(),
+        ],
+        [
+            execution_component_manifest(authority.clone()),
+            context_component_manifest(),
+            model_routing_component_manifest(authority.clone()),
+            step_runner_component_manifest(authority.clone()),
+        ],
+        [],
+        &authority,
+    )
+    .unwrap();
+    let persistence = LocalPersistence::open(path).unwrap();
+    let mut kernel = Kernel::with_persistence(
+        KernelConfig::new([execution, context, models, runner, provider]).unwrap(),
+        persistence,
+    );
+    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel
+        .register_embedded_factory(execution_id, execution_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(context_id, context_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(models_id, model_routing_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(runner_id, step_runner_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(provider_id, || Box::new(FixtureProvider))
+        .unwrap();
+    kernel.activate_all().unwrap();
+    kernel
+}
+
+fn invoke<C, R>(kernel: &mut Kernel, service: ServiceId, command: &C) -> Result<R, String>
+where
+    for<'value> PhenixValue: From<&'value C>,
+    for<'value> R: TryFrom<Project<&'value PhenixValue>, Error = ValueError>,
+{
+    let input = PhenixValue::from(command);
+    let output = kernel
+        .invoke(
+            &service,
+            &serde_json::to_vec(&input).unwrap(),
+            &authority(),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+    let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+    R::try_from(Project(&output)).map_err(|error| error.to_string())
+}
+
+fn target(model: &str) -> ModelTarget {
+    ModelTarget {
+        provider_plugin: PluginId::parse("fixture.provider").unwrap(),
+        model: ModelId::parse(model).unwrap(),
+        options: BTreeMap::new(),
+    }
+}
+
+fn capabilities(target: ModelTarget, window: u64) -> EffectiveModelCapabilities {
+    EffectiveModelCapabilities {
+        target,
+        generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+        context: ContextControl::ReplaceableTurns,
+        capacity: CapacityKnowledge::Known {
+            limits: ModelLimits {
+                context_window_tokens: window,
+                max_output_tokens: Some(512),
+            },
+        },
+        optional: BTreeSet::new(),
+    }
+}
+
+fn setup_root(kernel: &mut Kernel) {
+    let _: ExecutionResponse = invoke(
+        kernel,
+        execution_service(),
+        &ExecutionCommand::CreateExecution {
+            id: "root".into(),
+            requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+        },
+    )
+    .unwrap();
+    let _: ExecutionResourceResponse = invoke(
+        kernel,
+        execution_resource_service(),
+        &ExecutionResourceCommand::RegisterRootBudget {
+            ledger: phenix_sdk::RootBudgetLedger {
+                root_execution_id: "root".into(),
+                limits: phenix_sdk::RootBudgetLimits {
+                    fresh_input_tokens: 4_000,
+                    output_tokens: 1_000,
+                    cost_microunits: Some(10_000),
+                    attempts: 4,
+                },
+                reservations: BTreeMap::new(),
+            },
+        },
+    )
+    .unwrap();
+}
+
+fn setup_routing(kernel: &mut Kernel, publish: bool, authenticate: bool) {
+    let profile = RoutingProfile {
+        id: phenix_core::RoutingProfileId::parse("default").unwrap(),
+        default_target: target("small"),
+        fallback_targets: vec![target("large")],
+        callable_targets: BTreeMap::new(),
+    };
+    let _: ModelResponse = invoke(
+        kernel,
+        model_routing_service(),
+        &ModelCommand::RegisterProfile {
+            profile: profile.clone(),
+        },
+    )
+    .unwrap();
+    if publish {
+        for capabilities in [
+            capabilities(profile.default_target, 500),
+            capabilities(profile.fallback_targets[0].clone(), 8_000),
+        ] {
+            let _: ModelResponse = invoke(
+                kernel,
+                model_routing_service(),
+                &ModelCommand::PublishCapabilities { capabilities },
+            )
+            .unwrap();
+        }
+    }
+    if authenticate {
+        let _: ModelResponse = invoke(
+            kernel,
+            model_routing_service(),
+            &ModelCommand::SetProviderAuthenticated {
+                provider_plugin: PluginId::parse("fixture.provider").unwrap(),
+                authenticated: true,
+            },
+        )
+        .unwrap();
+    }
+}
+
+fn policy(max_input: u64) -> UsagePolicy {
+    UsagePolicy {
+        revision: "policy-1".into(),
+        max_fresh_input_tokens: max_input,
+        max_output_tokens: 128,
+        max_cost_microunits: Some(1_000),
+        max_retries: 1,
+        max_tool_result_bytes: 64 * 1024,
+        max_tool_schemas: 4,
+        max_skills: 4,
+        require_known_capacity: true,
+        delegation: DelegationResourcePolicy::default(),
+    }
+}
+
+fn request(max_input: u64) -> PlannedStepRequest {
+    PlannedStepRequest {
+        attribution: UsageAttribution {
+            root_execution_id: "root".into(),
+            execution_id: "root".into(),
+            attempt_id: "attempt-1".into(),
+            parent_attempt_id: None,
+            policy_revision: "policy-1".into(),
+            kind: UsageAttemptKind::Root,
+            task_id: None,
+        },
+        profile_id: phenix_core::RoutingProfileId::parse("default").unwrap(),
+        callable_id: None,
+        input: b"hello planned world".to_vec().into(),
+        tools: Vec::new(),
+        policy: policy(max_input),
+        task: TaskRequirements {
+            context: ContextDemand {
+                mandatory_input_tokens: 600,
+                reducible_input_tokens: 200,
+                output_reserve_tokens: 128,
+                required_capabilities: BTreeSet::new(),
+            },
+            required_capabilities: BTreeSet::new(),
+            required_tools: BTreeSet::new(),
+            optional_tools: BTreeSet::new(),
+            required_skills: BTreeSet::new(),
+            optional_skills: BTreeSet::new(),
+            requested_reasoning: None,
+            deadline_at_ms: None,
+        },
+        context_candidates: vec![ContextCandidate {
+            id: "required".into(),
+            source: ContextSource::Inline {
+                identity: "required".into(),
+            },
+            content_identity: "sha256:required".into(),
+            content: b"required context".to_vec().into(),
+            estimated_tokens: 600,
+            mandatory: true,
+            retention: ContextRetention::Pinned,
+            cache: phenix_sdk::CachePlacement::Epoch,
+            recovery: None,
+        }],
+        cache_epoch: 1,
+        route_policy: RouteSelectionPolicy {
+            revision: "route-policy-1".into(),
+            estimates: RoutingEstimateMode::Ignore,
+            max_candidate_attempts: 4,
+        },
+        now_ms: 1_000,
+    }
+}
+
+fn retry_request(
+    attempt_id: &str,
+    parent_attempt_id: &str,
+    cache_epoch: u64,
+) -> PlannedStepRequest {
+    let mut request = request(1_000);
+    request.attribution.attempt_id = attempt_id.into();
+    request.attribution.parent_attempt_id = Some(parent_attempt_id.into());
+    request.attribution.kind = UsageAttemptKind::Retry;
+    request.cache_epoch = cache_epoch;
+    request
+}
+
+fn lookup_attempt(kernel: &mut Kernel, attempt_id: &str) -> Option<StepAttemptRecord> {
+    let response: StepAttemptResponse = invoke(
+        kernel,
+        step_attempt_service(),
+        &StepAttemptCommand::Get {
+            attempt_id: attempt_id.into(),
+        },
+    )
+    .unwrap();
+    match response {
+        StepAttemptResponse::AttemptLookup { attempt } => attempt,
+        other => panic!("unexpected attempt lookup: {other:?}"),
+    }
+}
+
+fn remaining(kernel: &mut Kernel) -> phenix_sdk::RemainingBudget {
+    let response: ExecutionResourceResponse = invoke(
+        kernel,
+        execution_resource_service(),
+        &ExecutionResourceCommand::Remaining {
+            root_execution_id: "root".into(),
+        },
+    )
+    .unwrap();
+    let ExecutionResourceResponse::Remaining { budget } = response else {
+        panic!("expected remaining budget");
+    };
+    budget
+}
+
+mod planning_guard {
+    use super::*;
+
+    #[test]
+    fn mandatory_overflow_fails_before_attempt_or_reservation() {
+        let path = temp_db("planning-guard");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, true);
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(500),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("MandatoryInputExceedsBudget"));
+        assert!(lookup_attempt(&mut kernel, "attempt-1").is_none());
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.fresh_input_tokens, 4_000);
+        assert_eq!(remaining.attempts, 4);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod pre_dispatch_state {
+    use super::*;
+
+    #[test]
+    fn routing_failure_leaves_reserved_attempt_for_reconciliation() {
+        let path = temp_db("pre-dispatch");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, false, true);
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(1_000),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("MissingEffectiveCapabilities"));
+        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was created");
+        assert_eq!(attempt.phase, StepAttemptPhase::Reserved);
+        assert_eq!(attempt.reservation_id.as_deref(), Some("attempt/attempt-1"));
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod successful_lifecycle {
+    use super::*;
+
+    #[test]
+    fn smart_fallback_dispatches_and_settles_conservatively() {
+        let path = temp_db("success");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, true);
+        let response: StepRunnerResponse = invoke(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(1_000),
+            },
+        )
+        .unwrap();
+        let StepRunnerResponse::Completed {
+            attempt,
+            output,
+            settled,
+            settlement_basis,
+            ..
+        } = response;
+        assert_eq!(attempt.phase, StepAttemptPhase::Settled);
+        assert_eq!(attempt.outcome, Some(AttemptOutcome::Succeeded));
+        assert_eq!(
+            attempt.route.as_ref().unwrap().target.model.as_str(),
+            "large"
+        );
+        assert_eq!(output.as_ref(), b"hello planned world");
+        assert_eq!(settlement_basis, StepSettlementBasis::ReservedMaximum);
+        assert_eq!(settled.fresh_input_tokens, 800);
+        assert_eq!(settled.output_tokens, 128);
+        assert_eq!(settled.attempts, 1);
+        assert_eq!(remaining(&mut kernel).attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod failed_dispatch {
+    use super::*;
+
+    #[test]
+    fn provider_failure_settles_reserved_maximum_and_marks_attempt_failed() {
+        let path = temp_db("dispatch-failure");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, false);
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(1_000),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("authentication required"));
+        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("failed attempt exists");
+        assert_eq!(attempt.phase, StepAttemptPhase::Settled);
+        assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.fresh_input_tokens, 3_200);
+        assert_eq!(remaining.output_tokens, 872);
+        assert_eq!(remaining.cost_microunits, Some(9_000));
+        assert_eq!(remaining.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod retry_budget {
+    use super::*;
+
+    #[test]
+    fn retry_limit_is_lineage_bound_not_reset_per_retry() {
+        let path = temp_db("retry-budget");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, false);
+
+        assert!(invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: request(1_000),
+            },
+        )
+        .is_err());
+        assert!(invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: retry_request("attempt-2", "attempt-1", 2),
+            },
+        )
+        .is_err());
+
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: retry_request("attempt-3", "attempt-2", 3),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("exceeds attempt limit"));
+        assert!(lookup_attempt(&mut kernel, "attempt-3").is_none());
+        assert_eq!(remaining(&mut kernel).attempts, 2);
+        let _ = fs::remove_file(path);
+    }
+}

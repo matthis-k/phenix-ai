@@ -1847,6 +1847,7 @@ dependencies = [
  "phenix-plugin-repository-workers",
  "phenix-plugin-session-tree",
  "phenix-plugin-sessions",
+ "phenix-plugin-step-runner",
  "phenix-plugin-workspace",
  "phenix-sdk",
  "serde_json",
@@ -2037,6 +2038,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "phenix-plugin-step-runner"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-plugin-context",
+ "phenix-plugin-execution",
+ "phenix-plugin-models",
+ "phenix-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

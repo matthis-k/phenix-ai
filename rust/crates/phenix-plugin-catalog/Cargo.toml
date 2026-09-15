@@ -30,6 +30,7 @@ phenix-plugin-repository-workers = { path = "../phenix-plugin-repository-workers
 phenix-plugin-api = { path = "../phenix-plugin-api" }
 phenix-plugin-session-tree = { path = "../phenix-plugin-session-tree" }
 phenix-plugin-sessions = { path = "../phenix-plugin-sessions" }
+phenix-plugin-step-runner = { path = "../phenix-plugin-step-runner" }
 phenix-plugin-workspace = { path = "../phenix-plugin-workspace" }
 
 [dev-dependencies]

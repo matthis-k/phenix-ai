@@ -46,11 +46,14 @@ pub use phenix_plugin_debug::{
 };
 pub use phenix_plugin_execution::{
     agent_loop_service, execution_component_id, execution_component_manifest,
-    execution_configuration_service, execution_factory, execution_manifest, AgentDefinition,
-    AgentLoopCommand, AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse, AgentLoopUsage,
-    CallablePolicy, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
-    OrchestrationDefinition, OrchestrationNode, AGENT_LOOP_SERVICE,
-    DEFAULT_MAX_PARALLEL_TOOL_CALLS, EXECUTION_CONFIGURATION_SERVICE,
+    execution_configuration_service, execution_factory, execution_manifest,
+    execution_resource_service, step_attempt_service, AgentDefinition, AgentLoopCommand,
+    AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse, AgentLoopUsage, CallablePolicy,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse, ExecutionResourceCommand,
+    ExecutionResourceInterface, ExecutionResourceResponse, OrchestrationDefinition,
+    OrchestrationNode, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
+    StepAttemptRecord, StepAttemptResponse, AGENT_LOOP_SERVICE, DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+    EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE, STEP_ATTEMPT_SERVICE,
 };
 pub use phenix_plugin_frontend::{
     frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
@@ -78,11 +81,12 @@ pub use phenix_plugin_memory::{
     MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference, MEMORY_SERVICE,
 };
 pub use phenix_plugin_models::{
-    model_inference_service, model_routing_component_id, model_routing_component_manifest,
-    model_routing_factory, model_routing_manifest, model_routing_service, ModelCommand,
-    ModelInferenceRequest, ModelInferenceResponse, ModelResponse, ModelRoutingInterface,
-    ModelTarget, RoutingProfile, RoutingProfileDescriptor, MODEL_INFERENCE_SERVICE,
-    MODEL_ROUTING_SERVICE,
+    model_dispatch_service, model_inference_service, model_routing_component_id,
+    model_routing_component_manifest, model_routing_factory, model_routing_manifest,
+    model_routing_service, ModelCommand, ModelDispatchCommand, ModelDispatchInterface,
+    ModelDispatchResponse, ModelInferenceRequest, ModelInferenceResponse, ModelResponse,
+    ModelRoutingInterface, ModelTarget, RoutingProfile, RoutingProfileDescriptor,
+    MODEL_DISPATCH_SERVICE, MODEL_INFERENCE_SERVICE, MODEL_ROUTING_SERVICE,
 };
 pub use phenix_plugin_options::{
     default_option_definitions, options_component_id, options_component_manifest, options_factory,
@@ -119,20 +123,26 @@ pub use phenix_plugin_sessions::{
     SessionInput, SessionInputKind, SessionInterface, SessionRecord, SessionResponse,
     SESSION_SERVICE,
 };
+pub use phenix_plugin_step_runner::{
+    step_runner_component_id, step_runner_component_manifest, step_runner_factory,
+    step_runner_manifest, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
+};
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
     workspace_manifest, workspace_service, WorkspaceCommand, WorkspaceFileVersion,
     WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WORKSPACE_SERVICE,
 };
 pub use phenix_sdk::{
-    context_service, execution_service, CallableRecord, ContextCommand, ContextDescriptor,
-    ContextInterface, ContextResourceRevision, ContextResponse, DecisionRecord, ExecutionAuthority,
-    ExecutionCommand, ExecutionInterface, ExecutionRecord, ExecutionResponse, ExecutionState,
-    HistoryEntry, HistoryKind, JobCommand, JobInterface, JobResponse, ModelInferenceInterface,
-    ObjectiveRecord, PlanRecord, PlanStep, PlanningCommand, PlanningInterface, PlanningResponse,
-    RepositoryContextSource, RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState,
-    WorkerTaskRecord, WorkerTaskState, CONTEXT_SERVICE, EXECUTION_SERVICE, JOB_SERVICE,
-    PLANNING_SERVICE,
+    context_service, execution_service, step_runner_service, CallableRecord, ContextCommand,
+    ContextDescriptor, ContextInterface, ContextResourceRevision, ContextResponse, DecisionRecord,
+    ExecutionAuthority, ExecutionCommand, ExecutionInterface, ExecutionRecord, ExecutionResponse,
+    ExecutionState, HistoryEntry, HistoryKind, JobCommand, JobInterface, JobResponse,
+    ModelInferenceInterface, ObjectiveRecord, PlanRecord, PlanStep, PlannedStepRequest,
+    PlanningCommand, PlanningInterface, PlanningResponse, RepositoryContextSource,
+    RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState, StepRunnerCommand,
+    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, WorkerTaskRecord,
+    WorkerTaskState, CONTEXT_SERVICE, EXECUTION_SERVICE, JOB_SERVICE, PLANNING_SERVICE,
+    STEP_RUNNER_SERVICE,
 };
 
 /// Project generated durable resource metadata for a first-party plugin into the

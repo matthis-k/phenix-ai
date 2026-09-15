@@ -6,6 +6,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     ExecutionInterface, ExecutionResourceInterface, ModelRoutingInterface, StepAttemptInterface,
+    StepTransactionInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
@@ -61,6 +62,12 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
             ComponentExport {
                 interface: StepAttemptInterface::interface_id(),
                 schema: StepAttemptInterface::schema(),
+                priority: 100,
+                required_authority: persistence_authority(),
+            },
+            ComponentExport {
+                interface: StepTransactionInterface::interface_id(),
+                schema: StepTransactionInterface::schema(),
                 priority: 100,
                 required_authority: persistence_authority(),
             },
@@ -121,23 +128,27 @@ mod tests {
             component.exports[2].interface,
             StepAttemptInterface::interface_id()
         );
-        for export in &component.exports[..3] {
+        assert_eq!(
+            component.exports[3].interface,
+            StepTransactionInterface::interface_id()
+        );
+        for export in &component.exports[..4] {
             assert_eq!(export.required_authority, persistence_authority());
         }
         assert_eq!(
-            component.exports[3].interface,
+            component.exports[4].interface,
             ExecutionConfigurationInterface::interface_id()
         );
         assert_eq!(
-            component.exports[3].required_authority,
+            component.exports[4].required_authority,
             Authority::default()
         );
         assert_eq!(
-            component.exports[4].interface,
+            component.exports[5].interface,
             AgentLoopInterface::interface_id()
         );
         assert_eq!(
-            component.exports[4].required_authority,
+            component.exports[5].required_authority,
             Authority::default()
         );
         assert_eq!(component.imports.len(), 1);
