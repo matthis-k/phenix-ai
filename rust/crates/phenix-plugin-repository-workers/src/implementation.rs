@@ -729,6 +729,31 @@ mod tests {
     }
 
     #[test]
+    fn dependency_selection_is_snapshot_order_independent() {
+        let ordinary = pr(20, "ordinary", 20);
+        let blocker = pr(30, "blocker", 30);
+        let mut dependent = pr(31, "dependent", 31);
+        dependent.dependencies.insert(30);
+        let expected = Some(RepositoryWorkSelection {
+            pr_number: 30,
+            reason: RepositorySelectionReason::DependencyBlocking,
+        });
+
+        for pull_requests in [
+            vec![ordinary.clone(), blocker.clone(), dependent.clone()],
+            vec![dependent.clone(), ordinary.clone(), blocker.clone()],
+            vec![blocker.clone(), dependent.clone(), ordinary.clone()],
+        ] {
+            let queue = RepositoryWorkerQueue::reconstruct(&RepositoryWorkSnapshot {
+                pull_requests,
+                issues: vec![],
+            });
+            assert_eq!(queue.select_work(), expected);
+            assert!(!queue.pull_request(31).unwrap().dependencies_satisfied);
+        }
+    }
+
+    #[test]
     fn dependency_blocker_outranks_ordinary_ready_work() {
         let ordinary = pr(20, "ordinary", 20);
         let blocker = pr(30, "blocker", 30);

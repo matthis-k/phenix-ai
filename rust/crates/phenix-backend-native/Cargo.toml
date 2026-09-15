@@ -8,15 +8,16 @@ publish = false
 role = "passive-library"
 
 [dependencies]
-base64.workspace = true
 futures.workspace = true
 genai.workspace = true
-getrandom.workspace = true
+jsonwebtoken.workspace = true
+oauth2.workspace = true
+parking_lot.workspace = true
 phenix-backend = { path = "../phenix-backend" }
 phenix-domain = { path = "../phenix-domain" }
 reqwest.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 tokio.workspace = true
 url.workspace = true

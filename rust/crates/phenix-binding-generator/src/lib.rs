@@ -9,22 +9,11 @@ use phenix_application_interface::{generate, ApplicationDescriptor};
 use phenix_core::Type;
 use std::collections::BTreeSet;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 pub enum GenerationError {
+    #[error("cannot generate binding API: {0}")]
     Descriptor(String),
 }
-
-impl std::fmt::Display for GenerationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Descriptor(message) => {
-                write!(formatter, "cannot generate binding API: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for GenerationError {}
 
 /// Generates a deterministic Lua application module.
 ///
