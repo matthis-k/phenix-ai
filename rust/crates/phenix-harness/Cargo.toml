@@ -7,9 +7,6 @@ publish = false
 [package.metadata.phenix]
 role = "application"
 
-[lib]
-path = "src/lib_entry.rs"
-
 [dependencies]
 phenix-acp-stdio = { path = "../phenix-acp-stdio" }
 phenix-application-interface = { path = "../phenix-application-interface" }
