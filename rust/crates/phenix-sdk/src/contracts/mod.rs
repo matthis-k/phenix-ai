@@ -11,6 +11,7 @@ pub mod options;
 pub mod planning;
 pub mod sessions;
 pub mod usage;
+pub mod usage_policy;
 pub mod workspace;
 
 pub use context::*;
@@ -26,4 +27,5 @@ pub use options::*;
 pub use planning::*;
 pub use sessions::*;
 pub use usage::*;
+pub use usage_policy::*;
 pub use workspace::*;
