@@ -191,7 +191,6 @@ pub struct RoutingEvidence {
     pub usage: ModelTurnUsage,
 }
 
-#[must_use]
 pub fn select_route(
     candidates: &[RoutingCandidate],
     requirements: &RoutingRequirements,

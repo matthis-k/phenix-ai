@@ -81,9 +81,9 @@ impl RecoveryBootstrapRequest {
     }
 
     pub fn validate_input(&self) -> Result<(), RecoveryClassificationError> {
-        if self.prompt.as_bytes().len() > self.policy.max_prompt_bytes as usize {
+        if self.prompt.len() > self.policy.max_prompt_bytes as usize {
             return Err(RecoveryClassificationError::PromptEvidenceTooLarge {
-                requested: self.prompt.as_bytes().len() as u64,
+                requested: self.prompt.len() as u64,
                 allowed: self.policy.max_prompt_bytes as u64,
             });
         }
@@ -136,9 +136,9 @@ pub fn validate_recovery_decision(
         if query.trim().is_empty() {
             return Err(RecoveryClassificationError::EmptyNeedQuery);
         }
-        if query.as_bytes().len() > policy.max_need_query_bytes as usize {
+        if query.len() > policy.max_need_query_bytes as usize {
             return Err(RecoveryClassificationError::NeedQueryTooLarge {
-                requested: query.as_bytes().len() as u64,
+                requested: query.len() as u64,
                 allowed: policy.max_need_query_bytes as u64,
             });
         }

@@ -151,6 +151,7 @@ mod tests {
                 },
                 capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "policy-1".to_owned(),
+                candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
             },
             authority: ExecutionAuthority::new(Vec::<String>::new()),

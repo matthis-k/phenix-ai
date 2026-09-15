@@ -57,6 +57,7 @@ impl ExecutionResourceState {
     /// Reserves the child share and admits the delegated task as one in-memory
     /// transaction. The durable implementation must preserve the same all-or-none
     /// boundary with one persistence transaction.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn admit_delegated(
         &mut self,
         root_execution_id: &str,
@@ -105,7 +106,7 @@ impl ExecutionResourceState {
     ) -> Result<DelegatedWorkerTaskRecord, ExecutionResourceError> {
         self.delegated
             .start(task_id, execution_id, now_ms)
-            .map(Clone::clone)
+            .cloned()
             .map_err(ExecutionResourceError::Task)
     }
 

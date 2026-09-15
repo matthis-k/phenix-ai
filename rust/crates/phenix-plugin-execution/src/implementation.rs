@@ -373,6 +373,11 @@ fn mutate(
             };
             Ok(ExecutionResponse::Task { task: task.clone() })
         }
+        ExecutionCommand::CreateDelegatedTask { .. }
+        | ExecutionCommand::CompleteDelegatedTask { .. }
+        | ExecutionCommand::GetDelegatedTask { .. } => {
+            Err("delegated task runtime is not active at this stack layer".into())
+        }
         ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }
         | ExecutionCommand::InvokeCallable { .. } => {

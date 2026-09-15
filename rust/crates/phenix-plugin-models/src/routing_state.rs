@@ -1,8 +1,8 @@
 use phenix_core::CallableId;
 use phenix_sdk::{
-    select_route, EffectiveModelCapabilities, ModelTarget, RejectedRoutingCandidate, RouteDecision,
-    RouteSelection, RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate,
-    RoutingEvidence, RoutingProfile, RoutingRequirements,
+    select_route, EffectiveModelCapabilities, ModelTarget, RouteDecision, RouteSelection,
+    RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate, RoutingEvidence,
+    RoutingProfile, RoutingRequirements,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,6 +31,7 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn publish_estimate(
         &mut self,
         target: &ModelTarget,
@@ -52,6 +53,7 @@ impl RoutingRuntimeState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn evidence_for(
         &self,
         target: &ModelTarget,

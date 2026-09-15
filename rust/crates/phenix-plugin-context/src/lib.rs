@@ -8,8 +8,10 @@ pub use phenix_sdk::{
 
 mod component;
 mod implementation;
+#[allow(dead_code)]
 mod projection_state;
 mod prompt;
+#[allow(dead_code)]
 mod state_service;
 
 pub use component::*;

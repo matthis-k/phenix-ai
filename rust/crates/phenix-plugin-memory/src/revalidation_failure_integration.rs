@@ -242,6 +242,7 @@ fn revalidation_failure_leaves_authoritative_session_history_unchanged() {
             profile: RoutingProfile {
                 id: profile_id.clone(),
                 default_target: target.clone(),
+                fallback_targets: Vec::new(),
                 callable_targets: BTreeMap::from([(memory_validate_callable(), target)]),
             },
         },
