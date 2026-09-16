@@ -2,11 +2,11 @@ use super::*;
 use phenix_application_interface::{
     types::{
         Acknowledged, Content, ElicitationRequest, ElicitationResponse, ExecutionChange,
-        ExecutionState, InteractionHandlers, ModelSelectInput, Models, PageInput, PermissionRequest,
-        PermissionResponse, PromptInput, PromptResult, Provenance, ReviewDecision,
-        ReviewDecisionInput, ReviewRecord, RoutingProfiles, RoutingSelectInput, SessionCreateInput,
-        SessionInfo, SessionInput, SessionProjection, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput,
+        ExecutionState, InteractionHandlers, ModelSelectInput, Models, PageInput,
+        PermissionRequest, PermissionResponse, PromptInput, PromptResult, Provenance,
+        ReviewDecision, ReviewDecisionInput, ReviewRecord, RoutingProfiles, RoutingSelectInput,
+        SessionCreateInput, SessionInfo, SessionInput, SessionProjection, SessionResumeInput,
+        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
     },
     Cancel as AppCancel, CloseSession as AppCloseSession, CreateSession as AppCreateSession,
     DecideReview as AppDecideReview, GetProvenance as AppGetProvenance,
@@ -118,9 +118,15 @@ enum RequestProjection {
     SessionResume,
     SessionRename,
     Acknowledged,
-    Prompt { session_id: String },
-    Models { session_id: String },
-    Routing { session_id: String },
+    Prompt {
+        session_id: String,
+    },
+    Models {
+        session_id: String,
+    },
+    Routing {
+        session_id: String,
+    },
     Provenance {
         session_id: String,
         execution_id: String,
@@ -287,13 +293,11 @@ impl UserData for FacadeSessions {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("create", |lua, this, options: Table| {
             require_ready(&this.core)?;
-            let working_directory = options
-                .get::<String>("working_directory")
-                .map_err(|_| {
-                    lua_error(BindingError::conversion(
-                        "session create requires working_directory",
-                    ))
-                })?;
+            let working_directory = options.get::<String>("working_directory").map_err(|_| {
+                lua_error(BindingError::conversion(
+                    "session create requires working_directory",
+                ))
+            })?;
             let title = options.get::<Option<String>>("title")?;
             let request = application_request::<AppCreateSession>(
                 &this.core,
@@ -459,24 +463,21 @@ impl UserData for FacadeSession {
             )?;
             lua.create_userdata(request)
         });
-        methods.add_method(
-            "select_routing_profile",
-            |lua, this, profile_id: String| {
-                require_ready(&this.core)?;
-                let profile_id = RoutingProfileId::parse(profile_id)
-                    .map_err(|error| lua_error(BindingError::conversion(error)))?;
-                let session_id = this.id.to_string();
-                let request = application_request::<AppSelectRoutingProfile>(
-                    &this.core,
-                    RoutingSelectInput {
-                        session_id: this.id.clone(),
-                        profile_id,
-                    },
-                    RequestProjection::Routing { session_id },
-                )?;
-                lua.create_userdata(request)
-            },
-        );
+        methods.add_method("select_routing_profile", |lua, this, profile_id: String| {
+            require_ready(&this.core)?;
+            let profile_id = RoutingProfileId::parse(profile_id)
+                .map_err(|error| lua_error(BindingError::conversion(error)))?;
+            let session_id = this.id.to_string();
+            let request = application_request::<AppSelectRoutingProfile>(
+                &this.core,
+                RoutingSelectInput {
+                    session_id: this.id.clone(),
+                    profile_id,
+                },
+                RequestProjection::Routing { session_id },
+            )?;
+            lua.create_userdata(request)
+        });
         methods.add_method("provenance", |lua, this, execution_id: Option<String>| {
             require_ready(&this.core)?;
             let session_id = this.id.to_string();
@@ -750,8 +751,12 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
                 id: info.session_id.clone(),
             })
             .map(Value::UserData),
-        FacadeOutcome::SessionPage(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
-        FacadeOutcome::SessionInfo(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::SessionPage(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::SessionInfo(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Acknowledged(value) => {
             facade_value(lua, &value.to_value()).map_err(lua_error)
         }
@@ -793,10 +798,9 @@ fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'stat
             .session_info
             .insert(key.clone(), projection.session.clone());
         state.sessions.insert(key.clone(), projection.clone());
-        state.events.push_back(FacadeEvent::SessionSnapshot {
-            projection,
-            reason,
-        });
+        state
+            .events
+            .push_back(FacadeEvent::SessionSnapshot { projection, reason });
         state.events.push_back(FacadeEvent::Status);
     }
     replay_backlog(core, &key);
@@ -837,10 +841,8 @@ fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
 }
 
 fn apply_valid_update(state: &mut FacadeState, key: &str, update: SessionUpdate) {
-    if let phenix_application_interface::types::SessionChange::Execution {
-        execution_id,
-        ..
-    } = &update.update
+    if let phenix_application_interface::types::SessionChange::Execution { execution_id, .. } =
+        &update.update
     {
         state
             .latest_execution
@@ -855,7 +857,9 @@ fn apply_valid_update(state: &mut FacadeState, key: &str, update: SessionUpdate)
     }
     current.through_sequence = update.sequence;
     current.updates.push(update.clone());
-    state.session_info.insert(key.to_owned(), current.session.clone());
+    state
+        .session_info
+        .insert(key.to_owned(), current.session.clone());
     state.events.push_back(FacadeEvent::SessionUpdate(update));
     state.events.push_back(FacadeEvent::Status);
 }
@@ -915,10 +919,12 @@ fn drive_repairs(core: &FacadeCore) {
             None => {
                 core.state.borrow_mut().repairs.insert(session_id, request);
             }
-            Some(Ok(Response::Application { value, .. })) => match decode::<SessionSnapshot>(&value) {
-                Ok(snapshot) => install_snapshot(core, snapshot, "repair"),
-                Err(error) => fail_core(core, error),
-            },
+            Some(Ok(Response::Application { value, .. })) => {
+                match decode::<SessionSnapshot>(&value) {
+                    Ok(snapshot) => install_snapshot(core, snapshot, "repair"),
+                    Err(error) => fail_core(core, error),
+                }
+            }
             Some(Ok(_)) => fail_core(
                 core,
                 BindingError::conversion("session repair returned a non-application response"),
@@ -940,7 +946,11 @@ fn drive_bootstrap(core: &FacadeCore) {
                 .into_iter()
                 .filter(|operation| {
                     let operation = ContractId::parse(*operation).expect("static operation id");
-                    !core.raw.state.supports_extension(&operation).unwrap_or(false)
+                    !core
+                        .raw
+                        .state
+                        .supports_extension(&operation)
+                        .unwrap_or(false)
                 })
                 .collect::<Vec<_>>();
             if missing.is_empty() {
@@ -952,7 +962,10 @@ fn drive_bootstrap(core: &FacadeCore) {
                     core,
                     BindingError::local(
                         ErrorKind::UnsupportedCapability,
-                        format!("application facade is missing operations: {}", missing.join(", ")),
+                        format!(
+                            "application facade is missing operations: {}",
+                            missing.join(", ")
+                        ),
                     ),
                 );
             }
@@ -1090,12 +1103,7 @@ fn dispatch_callback(
     if elicitation_ref.as_ref() == Some(callable.id()) {
         return dispatch_elicitation(lua, core, callback, invocation.input);
     }
-    dispatch_local_callback(
-        lua,
-        &core.raw.state,
-        &core.raw.local_callables,
-        callback,
-    )
+    dispatch_local_callback(lua, &core.raw.state, &core.raw.local_callables, callback)
 }
 
 fn dispatch_permission(
@@ -1124,7 +1132,9 @@ fn dispatch_permission(
     })?;
     let result: LuaResult<()> = handler.call((argument, reply.clone()));
     if let Err(error) = result {
-        reply.borrow_mut::<InteractionReply>()?.fail(error.to_string());
+        reply
+            .borrow_mut::<InteractionReply>()?
+            .fail(error.to_string());
         return Err(error);
     }
     Ok(())
@@ -1170,7 +1180,9 @@ fn dispatch_elicitation(
     })?;
     let result: LuaResult<()> = handler.call((argument, reply.clone()));
     if let Err(error) = result {
-        reply.borrow_mut::<InteractionReply>()?.fail(error.to_string());
+        reply
+            .borrow_mut::<InteractionReply>()?
+            .fail(error.to_string());
         return Err(error);
     }
     Ok(())
@@ -1224,9 +1236,7 @@ fn form_schema(lua: &Lua, schema: &Type) -> Result<Table, BindingError> {
                 .set("fields", output)
                 .map_err(|error| BindingError::conversion(error.to_string()))?;
         }
-        Type::Variant(variants)
-            if variants.values().all(|schema| matches!(schema, Type::Unit)) =>
-        {
+        Type::Variant(variants) if variants.values().all(|schema| matches!(schema, Type::Unit)) => {
             set(&result, "kind", "enum")?;
             let options = lua
                 .create_table()
@@ -1342,7 +1352,10 @@ fn session_status_table(lua: &Lua, core: &FacadeCore, id: &SessionId) -> LuaResu
     let provenance = execution_id
         .as_ref()
         .and_then(|execution_id| state.provenance.get(&(key.clone(), execution_id.clone())));
-    let selected_model = state.models.get(&key).and_then(|cache| cache.selected.as_ref());
+    let selected_model = state
+        .models
+        .get(&key)
+        .and_then(|cache| cache.selected.as_ref());
     let effective_model = provenance.and_then(|provenance| provenance.model_id.as_ref());
     let model_id = effective_model
         .map(ToString::to_string)
@@ -1359,7 +1372,10 @@ fn session_status_table(lua: &Lua, core: &FacadeCore, id: &SessionId) -> LuaResu
         result.set("model_effective", effective_model.is_some())?;
     }
 
-    let selected_routing = state.routing.get(&key).and_then(|cache| cache.selected.as_ref());
+    let selected_routing = state
+        .routing
+        .get(&key)
+        .and_then(|cache| cache.selected.as_ref());
     let effective_routing = provenance.and_then(|provenance| provenance.routing_profile.as_ref());
     let routing_id = effective_routing
         .map(ToString::to_string)
@@ -1510,13 +1526,14 @@ fn require_ready(core: &FacadeCore) -> LuaResult<()> {
     let state = core.state.borrow();
     match state.phase {
         FacadePhase::Ready => Ok(()),
-        FacadePhase::Failed => Err(lua_error(
-            state
-                .error
-                .clone()
-                .unwrap_or_else(|| BindingError::transport("Phenix client failed")),
-        )),
-        FacadePhase::Closed => Err(lua_error(BindingError::transport("Phenix client is closed"))),
+        FacadePhase::Failed => {
+            Err(lua_error(state.error.clone().unwrap_or_else(|| {
+                BindingError::transport("Phenix client failed")
+            })))
+        }
+        FacadePhase::Closed => Err(lua_error(BindingError::transport(
+            "Phenix client is closed",
+        ))),
         FacadePhase::Connecting => Err(lua_error(BindingError::local(
             ErrorKind::Rejected,
             "Phenix client is still connecting",
@@ -1529,7 +1546,12 @@ fn error_table(lua: &Lua, error: &BindingError) -> LuaResult<Table> {
     table.set("kind", error.kind.as_str())?;
     table.set("code", error.code.as_str())?;
     table.set("message", error.message.as_str())?;
-    if let Some(details) = error.details.as_ref().as_ref().filter(|value| !value.is_null()) {
+    if let Some(details) = error
+        .details
+        .as_ref()
+        .as_ref()
+        .filter(|value| !value.is_null())
+    {
         table.set("details", lua.to_value(details)?)?;
     }
     Ok(table)
