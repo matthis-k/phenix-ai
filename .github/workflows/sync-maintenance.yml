@@ -24,23 +24,23 @@ jobs:
         if: github.event.pull_request.number == 504
         run: |
           set -euo pipefail
-          if grep -q 'pub struct ModelToolTurn' rust/crates/phenix-core/src/agent.rs; then
-            exit 0
-          fi
-          python3 - <<'PY'
-          from pathlib import Path
+          if ! grep -q 'pub struct ModelToolTurn' rust/crates/phenix-core/src/agent.rs; then
+            python3 - <<'PY'
+            from pathlib import Path
 
-          workflow = Path('.github/workflows/pr504-continuation.yml').read_text()
-          marker = "python3 - <<'PY'\n"
-          if marker not in workflow:
-              raise SystemExit('continuation helper script marker is missing')
-          script = workflow.split(marker, 1)[1].split('\n          PY', 1)[0]
-          script = '\n'.join(
-              line[10:] if line.startswith('          ') else line
-              for line in script.splitlines()
-          )
-          exec(compile(script, '.github/workflows/pr504-continuation.yml', 'exec'))
-          PY
+            workflow = Path('.github/workflows/pr504-continuation.yml').read_text()
+            marker = "python3 - <<'PY'\n"
+            if marker not in workflow:
+                raise SystemExit('continuation helper script marker is missing')
+            script = workflow.split(marker, 1)[1].split('\n          PY', 1)[0]
+            script = '\n'.join(
+                line[10:] if line.startswith('          ') else line
+                for line in script.splitlines()
+            )
+            exec(compile(script, '.github/workflows/pr504-continuation.yml', 'exec'))
+            PY
+          fi
+          python3 .github/pr504-application-loop.py
           cargo fmt --manifest-path rust/Cargo.toml --all
           git diff --check
 
@@ -59,7 +59,7 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "feat(execution): add typed model tool continuation"
+          git commit -m "feat(nvim): complete typed client tool continuation"
           git push origin "HEAD:$HEAD_REF"
 
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
