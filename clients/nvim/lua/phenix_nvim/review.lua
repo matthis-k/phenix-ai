@@ -1,20 +1,21 @@
 local M = {}
 
 local function state_kind(review)
-  return type(review.state) == "table" and review.state.kind or nil
+  local kind = type(review.state) == "table" and review.state.kind or nil
+  return type(kind) == "string" and kind:lower() or nil
 end
 
 local function render(review, buffer)
   if not vim.api.nvim_buf_is_valid(buffer) then
     return
   end
-  local state = state_kind(review) or "Pending"
+  local state = state_kind(review) or "pending"
   local lines = {
     "# Phenix review",
     "",
     "State: " .. state,
   }
-  if state == "Conflicted" and review.state.message ~= nil then
+  if state == "conflicted" and review.state.message ~= nil then
     table.insert(lines, "Conflict: " .. review.state.message)
   end
   table.insert(lines, "")
@@ -37,25 +38,25 @@ local function render(review, buffer)
 end
 
 local function decide(review, decision, buffer, updated_callback)
-  if state_kind(review) ~= "Pending" then
+  if state_kind(review) ~= "pending" then
     return
   end
   local runtime = require("phenix_nvim.runtime")
-  runtime.decide_review(review.id, review.revision, decision, function(updated, error)
+  runtime.decide_review(review, decision, function(updated, error)
     if error ~= nil then
-      vim.notify(vim.inspect(error), vim.log.levels.ERROR)
+      vim.notify(vim.inspect(error), vim.log.levels.ERROR, { title = "Phenix" })
       return
     end
     if updated ~= nil then
       render(updated, buffer)
       updated_callback(updated)
       local state = state_kind(updated)
-      if state == "Conflicted" then
-        vim.notify("Phenix review conflicted", vim.log.levels.WARN)
-      elseif state == "Accepted" then
-        vim.notify("Phenix review accepted")
-      elseif state == "Rejected" then
-        vim.notify("Phenix review rejected")
+      if state == "conflicted" then
+        vim.notify("Phenix review conflicted", vim.log.levels.WARN, { title = "Phenix" })
+      elseif state == "accepted" then
+        vim.notify("Phenix review accepted", nil, { title = "Phenix" })
+      elseif state == "rejected" then
+        vim.notify("Phenix review rejected", nil, { title = "Phenix" })
       end
     end
   end)
@@ -75,19 +76,21 @@ function M.open(review)
   vim.bo[buffer].bufhidden = "wipe"
   vim.bo[buffer].swapfile = false
   vim.bo[buffer].filetype = "diff"
+  vim.api.nvim_buf_set_name(buffer, "phenix://review/" .. current.id)
   render(current, buffer)
   vim.keymap.set("n", "a", function()
-    decide(current, "Accept", buffer, function(updated)
+    decide(current, "accept", buffer, function(updated)
       current = updated
     end)
   end, { buffer = buffer, desc = "Accept Phenix review" })
   vim.keymap.set("n", "r", function()
-    decide(current, "Reject", buffer, function(updated)
+    decide(current, "reject", buffer, function(updated)
       current = updated
     end)
   end, { buffer = buffer, desc = "Reject Phenix review" })
   vim.cmd("tabnew")
   vim.api.nvim_win_set_buf(0, buffer)
+  vim.wo[0].winbar = "%#Title# Review %#WinBar#  ·  " .. tostring(state_kind(current) or "pending")
   return buffer
 end
 
