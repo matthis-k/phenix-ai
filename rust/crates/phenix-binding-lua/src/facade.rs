@@ -2,11 +2,11 @@ use super::*;
 use phenix_application_interface::{
     types::{
         Acknowledged, Content, ElicitationRequest, ElicitationResponse, ExecutionChange,
-        ExecutionState, ExecutionUpdate, InteractionHandlers, ModelSelectInput, Models, PageInput,
-        PermissionRequest, PermissionResponse, PromptInput, PromptResult, Provenance,
-        ReviewDecision, ReviewDecisionInput, ReviewRecord, RoutingProfiles, RoutingSelectInput,
-        SessionCreateInput, SessionInfo, SessionInput, SessionProjection, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
+        ExecutionState, InteractionHandlers, ModelSelectInput, Models, PageInput, PermissionRequest,
+        PermissionResponse, PromptInput, PromptResult, Provenance, ReviewDecision,
+        ReviewDecisionInput, ReviewRecord, RoutingProfiles, RoutingSelectInput, SessionCreateInput,
+        SessionInfo, SessionInput, SessionProjection, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput,
     },
     Cancel as AppCancel, CloseSession as AppCloseSession, CreateSession as AppCreateSession,
     DecideReview as AppDecideReview, GetProvenance as AppGetProvenance,
@@ -26,7 +26,6 @@ use std::{
 };
 
 const SESSION_EVENT: &str = "phenix.application.session-update@1";
-const EXECUTION_EVENT: &str = "phenix.application.execution-update@1";
 const DEFAULT_PUMP_BUDGET: usize = 64;
 const MAX_PUMP_BUDGET: usize = 1024;
 
@@ -103,7 +102,6 @@ enum FacadeEvent {
         reason: &'static str,
     },
     SessionUpdate(SessionUpdate),
-    ExecutionUpdate(ExecutionUpdate),
 }
 
 struct FacadeRequest {
@@ -113,17 +111,20 @@ struct FacadeRequest {
     result: Option<Result<FacadeOutcome, BindingError>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum RequestProjection {
     SessionCreate,
     SessionList,
     SessionResume,
     SessionRename,
     Acknowledged,
-    Prompt,
-    Models,
-    Routing,
-    Provenance,
+    Prompt { session_id: String },
+    Models { session_id: String },
+    Routing { session_id: String },
+    Provenance {
+        session_id: String,
+        execution_id: String,
+    },
     Review,
 }
 
@@ -131,7 +132,6 @@ enum RequestProjection {
 enum FacadeOutcome {
     Session(SessionInfo),
     SessionPage(phenix_application_interface::types::SessionList),
-    SessionSnapshot(SessionSnapshot),
     SessionInfo(SessionInfo),
     Acknowledged(Acknowledged),
     Prompt(PromptResult),
@@ -169,14 +169,12 @@ pub(super) fn connect(lua: &Lua, options: Table) -> LuaResult<FacadeClient> {
     let raw = super::connect_raw(options)?;
     let owner = CapabilityOwnerId::Client(raw.state.owner.clone());
     let generation = raw.state.generation.clone();
-
     let permission_ref = permission_handler.as_ref().map(|_| {
         ReferenceId::parse("facade-permission").expect("static facade permission reference")
     });
     let elicitation_ref = elicitation_handler.as_ref().map(|_| {
         ReferenceId::parse("facade-elicitation").expect("static facade elicitation reference")
     });
-
     let handlers = InteractionHandlers {
         permission: permission_ref.as_ref().map(|id| {
             phenix_application_interface::types::PermissionHandlerRef(CallableRef::new(
@@ -246,6 +244,7 @@ impl UserData for FacadeClient {
         methods.add_method(
             "decide_review",
             |lua, this, (review, decision): (Table, String)| {
+                require_ready(&this.core)?;
                 let review_id = review.get::<String>("id").map_err(|_| {
                     lua_error(BindingError::conversion("review requires string field id"))
                 })?;
@@ -335,8 +334,13 @@ impl UserData for FacadeSessions {
         });
         methods.add_method("cached", |lua, this, session_id: String| {
             let id = parse_session_id(session_id)?;
-            let key = id.to_string();
-            if !this.core.state.borrow().session_info.contains_key(&key) {
+            if !this
+                .core
+                .state
+                .borrow()
+                .session_info
+                .contains_key(&id.to_string())
+            {
                 return Ok(Value::Nil);
             }
             lua.create_userdata(FacadeSession {
@@ -371,13 +375,14 @@ impl UserData for FacadeSession {
         methods.add_method("prompt", |lua, this, content: Table| {
             require_ready(&this.core)?;
             let content = parse_content(content)?;
+            let session_id = this.id.to_string();
             let request = application_request::<AppPrompt>(
                 &this.core,
                 PromptInput {
                     session_id: this.id.clone(),
                     content,
                 },
-                RequestProjection::Prompt,
+                RequestProjection::Prompt { session_id },
             )?;
             lua.create_userdata(request)
         });
@@ -417,12 +422,13 @@ impl UserData for FacadeSession {
         });
         methods.add_method("models", |lua, this, ()| {
             require_ready(&this.core)?;
+            let session_id = this.id.to_string();
             let request = application_request::<AppListModels>(
                 &this.core,
                 SessionInput {
                     session_id: this.id.clone(),
                 },
-                RequestProjection::Models,
+                RequestProjection::Models { session_id },
             )?;
             lua.create_userdata(request)
         });
@@ -430,24 +436,26 @@ impl UserData for FacadeSession {
             require_ready(&this.core)?;
             let model_id = ModelId::parse(model_id)
                 .map_err(|error| lua_error(BindingError::conversion(error)))?;
+            let session_id = this.id.to_string();
             let request = application_request::<AppSelectModel>(
                 &this.core,
                 ModelSelectInput {
                     session_id: this.id.clone(),
                     model_id,
                 },
-                RequestProjection::Models,
+                RequestProjection::Models { session_id },
             )?;
             lua.create_userdata(request)
         });
         methods.add_method("routing_profiles", |lua, this, ()| {
             require_ready(&this.core)?;
+            let session_id = this.id.to_string();
             let request = application_request::<AppListRoutingProfiles>(
                 &this.core,
                 SessionInput {
                     session_id: this.id.clone(),
                 },
-                RequestProjection::Routing,
+                RequestProjection::Routing { session_id },
             )?;
             lua.create_userdata(request)
         });
@@ -457,19 +465,21 @@ impl UserData for FacadeSession {
                 require_ready(&this.core)?;
                 let profile_id = RoutingProfileId::parse(profile_id)
                     .map_err(|error| lua_error(BindingError::conversion(error)))?;
+                let session_id = this.id.to_string();
                 let request = application_request::<AppSelectRoutingProfile>(
                     &this.core,
                     RoutingSelectInput {
                         session_id: this.id.clone(),
                         profile_id,
                     },
-                    RequestProjection::Routing,
+                    RequestProjection::Routing { session_id },
                 )?;
                 lua.create_userdata(request)
             },
         );
         methods.add_method("provenance", |lua, this, execution_id: Option<String>| {
             require_ready(&this.core)?;
+            let session_id = this.id.to_string();
             let execution_id = match execution_id {
                 Some(execution_id) => execution_id,
                 None => this
@@ -477,7 +487,7 @@ impl UserData for FacadeSession {
                     .state
                     .borrow()
                     .latest_execution
-                    .get(&this.id.to_string())
+                    .get(&session_id)
                     .cloned()
                     .ok_or_else(|| {
                         lua_error(BindingError::conversion(
@@ -489,9 +499,12 @@ impl UserData for FacadeSession {
                 &this.core,
                 phenix_application_interface::types::ExecutionInput {
                     session_id: this.id.clone(),
+                    execution_id: execution_id.clone(),
+                },
+                RequestProjection::Provenance {
+                    session_id,
                     execution_id,
                 },
-                RequestProjection::Provenance,
             )?;
             lua.create_userdata(request)
         });
@@ -511,16 +524,15 @@ impl FacadeRequest {
                 return Ok(MultiValue::from_vec(vec![Value::Boolean(false)]));
             };
             self.result = Some(match result {
-                Ok(response) => decode_outcome(&self.core, self.projection, response),
+                Ok(response) => decode_outcome(&self.core, &self.projection, response),
                 Err(error) => Err(error),
             });
         }
-
         match self.result.as_ref().expect("facade result set above") {
-            Ok(outcome) => {
-                let value = outcome_to_lua(lua, &self.core, outcome)?;
-                Ok(MultiValue::from_vec(vec![Value::Boolean(true), value]))
-            }
+            Ok(outcome) => Ok(MultiValue::from_vec(vec![
+                Value::Boolean(true),
+                outcome_to_lua(lua, &self.core, outcome)?,
+            ])),
             Err(error) => Ok(MultiValue::from_vec(vec![
                 Value::Boolean(true),
                 Value::Nil,
@@ -624,24 +636,6 @@ impl Drop for InteractionReply {
     }
 }
 
-fn require_ready(core: &FacadeCore) -> LuaResult<()> {
-    let state = core.state.borrow();
-    match state.phase {
-        FacadePhase::Ready => Ok(()),
-        FacadePhase::Failed => Err(lua_error(
-            state
-                .error
-                .clone()
-                .unwrap_or_else(|| BindingError::transport("Phenix client failed")),
-        )),
-        FacadePhase::Closed => Err(lua_error(BindingError::transport("Phenix client is closed"))),
-        FacadePhase::Connecting => Err(lua_error(BindingError::local(
-            ErrorKind::Rejected,
-            "Phenix client is still connecting",
-        ))),
-    }
-}
-
 fn application_request<O: Operation>(
     core: &Rc<FacadeCore>,
     input: O::Input,
@@ -665,8 +659,8 @@ where
 }
 
 fn decode_outcome(
-    core: &Rc<FacadeCore>,
-    projection: RequestProjection,
+    core: &FacadeCore,
+    projection: &RequestProjection,
     response: Response,
 ) -> Result<FacadeOutcome, BindingError> {
     let Response::Application { value, .. } = response else {
@@ -674,100 +668,78 @@ fn decode_outcome(
             "application facade received a non-application response",
         ));
     };
-    let outcome = match projection {
+    match projection {
         RequestProjection::SessionCreate => {
-            let info = SessionInfo::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
+            let info = decode::<SessionInfo>(&value)?;
             install_created_session(core, info.clone());
-            FacadeOutcome::Session(info)
+            Ok(FacadeOutcome::Session(info))
         }
         RequestProjection::SessionList => {
-            let page = phenix_application_interface::types::SessionList::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            {
-                let mut state = core.state.borrow_mut();
-                for info in &page.sessions {
-                    state.session_info.insert(info.session_id.to_string(), info.clone());
-                }
+            let page = decode::<phenix_application_interface::types::SessionList>(&value)?;
+            let mut state = core.state.borrow_mut();
+            for info in &page.sessions {
+                state
+                    .session_info
+                    .insert(info.session_id.to_string(), info.clone());
             }
-            FacadeOutcome::SessionPage(page)
+            Ok(FacadeOutcome::SessionPage(page))
         }
         RequestProjection::SessionResume => {
-            let snapshot = SessionSnapshot::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            install_snapshot(core, snapshot.clone(), "resume");
-            FacadeOutcome::SessionSnapshot(snapshot)
+            let snapshot = decode::<SessionSnapshot>(&value)?;
+            let info = snapshot.session.clone();
+            install_snapshot(core, snapshot, "resume");
+            Ok(FacadeOutcome::Session(info))
         }
         RequestProjection::SessionRename => {
-            let info = SessionInfo::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
+            let info = decode::<SessionInfo>(&value)?;
             let key = info.session_id.to_string();
             let mut state = core.state.borrow_mut();
             state.session_info.insert(key.clone(), info.clone());
-            if let Some(projection) = state.sessions.get_mut(&key) {
-                projection.session = info.clone();
+            if let Some(session) = state.sessions.get_mut(&key) {
+                session.session = info.clone();
             }
             state.events.push_back(FacadeEvent::Status);
-            FacadeOutcome::SessionInfo(info)
+            Ok(FacadeOutcome::SessionInfo(info))
         }
-        RequestProjection::Acknowledged => FacadeOutcome::Acknowledged(
-            Acknowledged::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?,
-        ),
-        RequestProjection::Prompt => {
-            let result = PromptResult::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            let session = latest_session_for_execution(core, &result.execution_id);
-            if let Some(session) = session {
-                core.state
-                    .borrow_mut()
-                    .latest_execution
-                    .insert(session, result.execution_id.clone());
-            }
-            FacadeOutcome::Prompt(result)
+        RequestProjection::Acknowledged => Ok(FacadeOutcome::Acknowledged(decode(&value)?)),
+        RequestProjection::Prompt { session_id } => {
+            let result = decode::<PromptResult>(&value)?;
+            let mut state = core.state.borrow_mut();
+            state
+                .latest_execution
+                .insert(session_id.clone(), result.execution_id.clone());
+            state.events.push_back(FacadeEvent::Status);
+            Ok(FacadeOutcome::Prompt(result))
         }
-        RequestProjection::Models => {
-            let models = Models::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            cache_models(core, &models);
-            FacadeOutcome::Models(models)
+        RequestProjection::Models { session_id } => {
+            let models = decode::<Models>(&value)?;
+            cache_models(core, session_id, &models);
+            Ok(FacadeOutcome::Models(models))
         }
-        RequestProjection::Routing => {
-            let routing = RoutingProfiles::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            cache_routing(core, &routing);
-            FacadeOutcome::Routing(routing)
+        RequestProjection::Routing { session_id } => {
+            let routing = decode::<RoutingProfiles>(&value)?;
+            cache_routing(core, session_id, &routing);
+            Ok(FacadeOutcome::Routing(routing))
         }
-        RequestProjection::Provenance => {
-            let provenance = Provenance::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?;
-            cache_provenance(core, provenance.clone());
-            FacadeOutcome::Provenance(provenance)
+        RequestProjection::Provenance {
+            session_id,
+            execution_id,
+        } => {
+            let provenance = decode::<Provenance>(&value)?;
+            let mut state = core.state.borrow_mut();
+            state.provenance.insert(
+                (session_id.clone(), execution_id.clone()),
+                provenance.clone(),
+            );
+            state.events.push_back(FacadeEvent::Status);
+            Ok(FacadeOutcome::Provenance(provenance))
         }
-        RequestProjection::Review => FacadeOutcome::Review(
-            ReviewRecord::from_value(&value)
-                .map_err(|error| BindingError::conversion(error.to_string()))?,
-        ),
-    };
-    Ok(outcome)
+        RequestProjection::Review => Ok(FacadeOutcome::Review(decode(&value)?)),
+    }
 }
 
-fn latest_session_for_execution(core: &FacadeCore, execution_id: &str) -> Option<String> {
-    let state = core.state.borrow();
-    for (session_id, projection) in &state.sessions {
-        if projection.updates.iter().any(|update| {
-            matches!(
-                &update.update,
-                phenix_application_interface::types::SessionChange::Execution {
-                    execution_id: candidate,
-                    ..
-                } if candidate == execution_id
-            )
-        }) {
-            return Some(session_id.clone());
-        }
-    }
-    None
+fn decode<T: ValueCodec>(value: &PhenixValue) -> Result<T, BindingError> {
+    T::from_value(value).map_err(|error| BindingError::conversion(error.to_string()))
 }
 
 fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> LuaResult<Value> {
@@ -778,15 +750,11 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
                 id: info.session_id.clone(),
             })
             .map(Value::UserData),
-        FacadeOutcome::SessionSnapshot(snapshot) => lua
-            .create_userdata(FacadeSession {
-                core: Rc::clone(core),
-                id: snapshot.session.session_id.clone(),
-            })
-            .map(Value::UserData),
-        FacadeOutcome::SessionPage(page) => facade_value(lua, &page.to_value()).map_err(lua_error),
-        FacadeOutcome::SessionInfo(info) => facade_value(lua, &info.to_value()).map_err(lua_error),
-        FacadeOutcome::Acknowledged(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::SessionPage(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::SessionInfo(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::Acknowledged(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Prompt(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Models(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Routing(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
@@ -809,6 +777,7 @@ fn install_created_session(core: &FacadeCore, info: SessionInfo) {
         projection,
         reason: "create",
     });
+    state.events.push_back(FacadeEvent::Status);
 }
 
 fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'static str) {
@@ -816,18 +785,79 @@ fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'stat
     let projection = SessionProjection {
         session: snapshot.session.clone(),
         through_sequence: snapshot.through_sequence,
-        updates: snapshot.updates.clone(),
+        updates: snapshot.updates,
     };
     {
         let mut state = core.state.borrow_mut();
-        state.session_info.insert(key.clone(), snapshot.session);
+        state
+            .session_info
+            .insert(key.clone(), projection.session.clone());
         state.sessions.insert(key.clone(), projection.clone());
         state.events.push_back(FacadeEvent::SessionSnapshot {
             projection,
             reason,
         });
+        state.events.push_back(FacadeEvent::Status);
     }
     replay_backlog(core, &key);
+}
+
+fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
+    let key = update.session_id.to_string();
+    let needs_repair;
+    {
+        let mut state = core.state.borrow_mut();
+        let Some(current) = state.sessions.get(&key) else {
+            state
+                .repair_backlog
+                .entry(key.clone())
+                .or_default()
+                .push(update);
+            drop(state);
+            schedule_repair(core, &key);
+            return;
+        };
+        if update.sequence <= current.through_sequence {
+            return;
+        }
+        needs_repair = update.sequence != current.through_sequence.saturating_add(1);
+        if needs_repair {
+            state
+                .repair_backlog
+                .entry(key.clone())
+                .or_default()
+                .push(update);
+        } else {
+            apply_valid_update(&mut state, &key, update);
+        }
+    }
+    if needs_repair {
+        schedule_repair(core, &key);
+    }
+}
+
+fn apply_valid_update(state: &mut FacadeState, key: &str, update: SessionUpdate) {
+    if let phenix_application_interface::types::SessionChange::Execution {
+        execution_id,
+        ..
+    } = &update.update
+    {
+        state
+            .latest_execution
+            .insert(key.to_owned(), execution_id.clone());
+    }
+    let current = state
+        .sessions
+        .get_mut(key)
+        .expect("validated session projection exists");
+    if let phenix_application_interface::types::SessionChange::Renamed { title } = &update.update {
+        current.session.title = Some(title.clone());
+    }
+    current.through_sequence = update.sequence;
+    current.updates.push(update.clone());
+    state.session_info.insert(key.to_owned(), current.session.clone());
+    state.events.push_back(FacadeEvent::SessionUpdate(update));
+    state.events.push_back(FacadeEvent::Status);
 }
 
 fn replay_backlog(core: &FacadeCore, session_id: &str) {
@@ -843,73 +873,16 @@ fn replay_backlog(core: &FacadeCore, session_id: &str) {
     }
 }
 
-fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
-    let key = update.session_id.to_string();
-    let mut repair = false;
-    {
-        let mut state = core.state.borrow_mut();
-        let Some(projection) = state.sessions.get_mut(&key) else {
-            state
-                .repair_backlog
-                .entry(key.clone())
-                .or_default()
-                .push(update);
-            repair = true;
-            drop(state);
-            if repair {
-                schedule_repair(core, &key);
-            }
-            return;
-        };
-        if update.sequence <= projection.through_sequence {
-            return;
-        }
-        let expected = projection.through_sequence.saturating_add(1);
-        if update.sequence != expected {
-            state
-                .repair_backlog
-                .entry(key.clone())
-                .or_default()
-                .push(update);
-            repair = true;
-        } else {
-            if let phenix_application_interface::types::SessionChange::Renamed { title } =
-                &update.update
-            {
-                projection.session.title = Some(title.clone());
-                state
-                    .session_info
-                    .insert(key.clone(), projection.session.clone());
-            }
-            if let phenix_application_interface::types::SessionChange::Execution {
-                execution_id,
-                ..
-            } = &update.update
-            {
-                state
-                    .latest_execution
-                    .insert(key.clone(), execution_id.clone());
-            }
-            projection.through_sequence = update.sequence;
-            projection.updates.push(update.clone());
-            state.events.push_back(FacadeEvent::SessionUpdate(update));
-        }
-    }
-    if repair {
-        schedule_repair(core, &key);
-    }
-}
-
 fn schedule_repair(core: &FacadeCore, session_id: &str) {
     if core.state.borrow().repairs.contains_key(session_id) {
         return;
     }
-    let Ok(id) = SessionId::parse(session_id.to_owned()) else {
-        fail_core(
-            core,
-            BindingError::conversion(format!("invalid session id in repair: {session_id}")),
-        );
-        return;
+    let id = match SessionId::parse(session_id.to_owned()) {
+        Ok(id) => id,
+        Err(error) => {
+            fail_core(core, BindingError::conversion(error));
+            return;
+        }
     };
     let operation = ContractId::parse(AppResumeSession::ID).expect("static resume operation");
     let input = SessionResumeInput {
@@ -942,9 +915,9 @@ fn drive_repairs(core: &FacadeCore) {
             None => {
                 core.state.borrow_mut().repairs.insert(session_id, request);
             }
-            Some(Ok(Response::Application { value, .. })) => match SessionSnapshot::from_value(&value) {
+            Some(Ok(Response::Application { value, .. })) => match decode::<SessionSnapshot>(&value) {
                 Ok(snapshot) => install_snapshot(core, snapshot, "repair"),
-                Err(error) => fail_core(core, BindingError::conversion(error.to_string())),
+                Err(error) => fail_core(core, error),
             },
             Some(Ok(_)) => fail_core(
                 core,
@@ -965,9 +938,9 @@ fn drive_bootstrap(core: &FacadeCore) {
         Some(Ok(_)) => {
             let missing = required_operations()
                 .into_iter()
-                .filter(|id| {
-                    let id = ContractId::parse(*id).expect("static required operation");
-                    !core.raw.state.supports_extension(&id).unwrap_or(false)
+                .filter(|operation| {
+                    let operation = ContractId::parse(*operation).expect("static operation id");
+                    !core.raw.state.supports_extension(&operation).unwrap_or(false)
                 })
                 .collect::<Vec<_>>();
             if missing.is_empty() {
@@ -1006,25 +979,20 @@ fn pump(lua: &Lua, core: &Rc<FacadeCore>, budget: usize) -> LuaResult<Table> {
     drive_bootstrap(core);
     drive_repairs(core);
 
-    if let Some(error) = core.raw.state.terminal_error.lock().ok().and_then(|error| error.clone()) {
+    if let Some(error) = core
+        .raw
+        .state
+        .terminal_error
+        .lock()
+        .ok()
+        .and_then(|error| error.clone())
+    {
         if core.state.borrow().phase != FacadePhase::Failed {
             fail_core(core, error);
         }
     }
 
     for _ in 0..budget {
-        let notification = core
-            .raw
-            .state
-            .updates
-            .lock()
-            .map_err(|_| lua_error(BindingError::transport("ACP update queue lock is poisoned")))?
-            .try_recv();
-        match notification {
-            Ok(_) | Err(std_mpsc::TryRecvError::Empty) => {}
-            Err(std_mpsc::TryRecvError::Disconnected) => break,
-        }
-
         let extension = core
             .raw
             .state
@@ -1054,35 +1022,39 @@ fn pump(lua: &Lua, core: &Rc<FacadeCore>, budget: usize) -> LuaResult<Table> {
             Err(std_mpsc::TryRecvError::Empty) => {}
             Err(std_mpsc::TryRecvError::Disconnected) => break,
         }
+
+        let update = core
+            .raw
+            .state
+            .updates
+            .lock()
+            .map_err(|_| lua_error(BindingError::transport("ACP update queue lock is poisoned")))?
+            .try_recv();
+        if matches!(update, Err(std_mpsc::TryRecvError::Disconnected)) {
+            break;
+        }
     }
 
     drive_repairs(core);
+    let drained = {
+        let mut state = core.state.borrow_mut();
+        let count = budget.min(state.events.len());
+        state.events.drain(..count).collect::<Vec<_>>()
+    };
     let events = lua.create_table()?;
-    let mut state = core.state.borrow_mut();
-    for index in 1..=budget {
-        let Some(event) = state.events.pop_front() else {
-            break;
-        };
-        events.set(index, event_to_lua(lua, core, &event)?)?;
+    for (index, event) in drained.iter().enumerate() {
+        events.set(index + 1, event_to_lua(lua, core, event)?)?;
     }
     Ok(events)
 }
 
 fn ingest_application_event(core: &FacadeCore, event: ApplicationEvent) {
-    match event.event.as_str() {
-        SESSION_EVENT => match SessionUpdate::from_value(&event.payload) {
-            Ok(update) => ingest_session_update(core, update),
-            Err(error) => fail_core(core, BindingError::conversion(error.to_string())),
-        },
-        EXECUTION_EVENT => match ExecutionUpdate::from_value(&event.payload) {
-            Ok(update) => core
-                .state
-                .borrow_mut()
-                .events
-                .push_back(FacadeEvent::ExecutionUpdate(update)),
-            Err(error) => fail_core(core, BindingError::conversion(error.to_string())),
-        },
-        _ => {}
+    if event.event.as_str() != SESSION_EVENT {
+        return;
+    }
+    match decode::<SessionUpdate>(&event.payload) {
+        Ok(update) => ingest_session_update(core, update),
+        Err(error) => fail_core(core, error),
     }
 }
 
@@ -1132,13 +1104,17 @@ fn dispatch_permission(
     callback: phenix_client_acp::ExtensionCallbackRequest,
     value: PhenixValue,
 ) -> LuaResult<()> {
-    let request = PermissionRequest::from_value(&value)
-        .map_err(|error| lua_error(BindingError::conversion(error.to_string())))?;
+    let request = decode::<PermissionRequest>(&value).map_err(lua_error)?;
     let handler = {
         let state = core.state.borrow();
-        let key = state.permission_handler.as_ref().ok_or_else(|| {
-            lua_error(BindingError::conversion("permission handler is not installed"))
-        })?;
+        let Some(key) = state.permission_handler.as_ref() else {
+            callback.respond(Err(
+                phenix_application_interface::types::ApplicationError::Failed {
+                    message: "permission handler is not installed".to_owned(),
+                },
+            ));
+            return Ok(());
+        };
         lua.registry_value::<mlua::Function>(key)?
     };
     let argument = facade_value(lua, &request.to_value()).map_err(lua_error)?;
@@ -1160,19 +1136,34 @@ fn dispatch_elicitation(
     callback: phenix_client_acp::ExtensionCallbackRequest,
     value: PhenixValue,
 ) -> LuaResult<()> {
-    let request = ElicitationRequest::from_value(&value)
-        .map_err(|error| lua_error(BindingError::conversion(error.to_string())))?;
+    let request = decode::<ElicitationRequest>(&value).map_err(lua_error)?;
+    let form = match form_schema(lua, &request.schema) {
+        Ok(form) => form,
+        Err(error) => {
+            callback.respond(Err(
+                phenix_application_interface::types::ApplicationError::Failed {
+                    message: error.message,
+                },
+            ));
+            return Ok(());
+        }
+    };
     let handler = {
         let state = core.state.borrow();
-        let key = state.elicitation_handler.as_ref().ok_or_else(|| {
-            lua_error(BindingError::conversion("elicitation handler is not installed"))
-        })?;
+        let Some(key) = state.elicitation_handler.as_ref() else {
+            callback.respond(Err(
+                phenix_application_interface::types::ApplicationError::Failed {
+                    message: "elicitation handler is not installed".to_owned(),
+                },
+            ));
+            return Ok(());
+        };
         lua.registry_value::<mlua::Function>(key)?
     };
     let argument = lua.create_table()?;
     argument.set("session_id", request.session_id.to_string())?;
     argument.set("message", request.message.as_str())?;
-    argument.set("form", form_schema(lua, &request.schema).map_err(lua_error)?)?;
+    argument.set("form", form)?;
     let reply = lua.create_userdata(InteractionReply {
         callback: Some(callback),
         kind: InteractionReplyKind::Elicitation(request),
@@ -1190,30 +1181,30 @@ fn form_schema(lua: &Lua, schema: &Type) -> Result<Table, BindingError> {
         .create_table()
         .map_err(|error| BindingError::conversion(error.to_string()))?;
     match schema {
-        Type::String => result.set("kind", "string"),
-        Type::Bool => result.set("kind", "boolean"),
+        Type::String => set(&result, "kind", "string")?,
+        Type::Bool => set(&result, "kind", "boolean")?,
         Type::I64 => {
-            result.set("kind", "integer")?;
-            result.set("signed", true)
+            set(&result, "kind", "integer")?;
+            set(&result, "signed", true)?;
         }
         Type::U64 => {
-            result.set("kind", "integer")?;
-            result.set("signed", false)
+            set(&result, "kind", "integer")?;
+            set(&result, "signed", false)?;
         }
-        Type::F64 => result.set("kind", "number"),
+        Type::F64 => set(&result, "kind", "number")?,
         Type::Option(item) if is_form_scalar(item) => {
             let inner = form_schema(lua, item)?;
             for pair in inner.pairs::<Value, Value>() {
-                let (key, value) = pair
-                    .map_err(|error| BindingError::conversion(error.to_string()))?;
+                let (key, value) =
+                    pair.map_err(|error| BindingError::conversion(error.to_string()))?;
                 result
                     .set(key, value)
                     .map_err(|error| BindingError::conversion(error.to_string()))?;
             }
-            result.set("optional", true)
+            set(&result, "optional", true)?;
         }
         Type::Table(fields) => {
-            result.set("kind", "object")?;
+            set(&result, "kind", "object")?;
             let output = lua
                 .create_table()
                 .map_err(|error| BindingError::conversion(error.to_string()))?;
@@ -1221,41 +1212,60 @@ fn form_schema(lua: &Lua, schema: &Type) -> Result<Table, BindingError> {
                 let field = lua
                     .create_table()
                     .map_err(|error| BindingError::conversion(error.to_string()))?;
-                field.set("name", name.as_str())?;
-                field.set("schema", form_schema(lua, schema)?)?;
-                output.set(index + 1, field)?;
+                set(&field, "name", name.as_str())?;
+                field
+                    .set("schema", form_schema(lua, schema)?)
+                    .map_err(|error| BindingError::conversion(error.to_string()))?;
+                output
+                    .set(index + 1, field)
+                    .map_err(|error| BindingError::conversion(error.to_string()))?;
             }
-            result.set("fields", output)
+            result
+                .set("fields", output)
+                .map_err(|error| BindingError::conversion(error.to_string()))?;
         }
         Type::Variant(variants)
             if variants.values().all(|schema| matches!(schema, Type::Unit)) =>
         {
-            result.set("kind", "enum")?;
+            set(&result, "kind", "enum")?;
             let options = lua
                 .create_table()
                 .map_err(|error| BindingError::conversion(error.to_string()))?;
             for (index, name) in variants.keys().enumerate() {
-                options.set(index + 1, name.as_str())?;
+                options
+                    .set(index + 1, name.as_str())
+                    .map_err(|error| BindingError::conversion(error.to_string()))?;
             }
-            result.set("options", options)
+            result
+                .set("options", options)
+                .map_err(|error| BindingError::conversion(error.to_string()))?;
         }
         Type::List(item) if is_form_scalar(item) || is_unit_variant(item) => {
-            result.set("kind", "list")?;
-            result.set("item", form_schema(lua, item)?)
+            set(&result, "kind", "list")?;
+            result
+                .set("item", form_schema(lua, item)?)
+                .map_err(|error| BindingError::conversion(error.to_string()))?;
         }
         _ => {
-            return Err(BindingError::conversion(format!(
-                "unsupported_schema: elicitation schema {} is not supported by the facade",
-                schema.kind()
-            )))
+            return Err(BindingError::conversion(
+                "unsupported_schema: elicitation schema is not supported by the Lua facade",
+            ))
         }
     }
-    .map_err(|error| BindingError::conversion(error.to_string()))?;
     Ok(result)
 }
 
+fn set<V: mlua::IntoLua>(table: &Table, key: &str, value: V) -> Result<(), BindingError> {
+    table
+        .set(key, value)
+        .map_err(|error| BindingError::conversion(error.to_string()))
+}
+
 fn is_form_scalar(schema: &Type) -> bool {
-    matches!(schema, Type::String | Type::Bool | Type::I64 | Type::U64 | Type::F64)
+    matches!(
+        schema,
+        Type::String | Type::Bool | Type::I64 | Type::U64 | Type::F64
+    )
 }
 
 fn is_unit_variant(schema: &Type) -> bool {
@@ -1272,20 +1282,16 @@ fn event_to_lua(lua: &Lua, core: &FacadeCore, event: &FacadeEvent) -> LuaResult<
         FacadeEvent::SessionSnapshot { projection, reason } => {
             result.set("kind", "session_snapshot")?;
             let data = facade_value(lua, &projection.to_value()).map_err(lua_error)?;
-            if let Value::Table(data) = &data {
-                data.set("reason", *reason)?;
-            }
+            let Value::Table(data) = data else {
+                return Err(lua_error(BindingError::conversion(
+                    "session snapshot did not project as a table",
+                )));
+            };
+            data.set("reason", *reason)?;
             result.set("data", data)?;
         }
         FacadeEvent::SessionUpdate(update) => {
             result.set("kind", "session_update")?;
-            result.set(
-                "data",
-                facade_value(lua, &update.to_value()).map_err(lua_error)?,
-            )?;
-        }
-        FacadeEvent::ExecutionUpdate(update) => {
-            result.set("kind", "execution_update")?;
             result.set(
                 "data",
                 facade_value(lua, &update.to_value()).map_err(lua_error)?,
@@ -1317,12 +1323,12 @@ fn session_status_table(lua: &Lua, core: &FacadeCore, id: &SessionId) -> LuaResu
         result.set("working_directory", info.working_directory.as_str())?;
     }
 
-    let (execution_id, execution_state) = state
+    let (projection_execution, execution_state) = state
         .sessions
         .get(&key)
         .map(latest_execution_state)
         .unwrap_or((None, None));
-    let execution_id = execution_id.or_else(|| state.latest_execution.get(&key).cloned());
+    let execution_id = projection_execution.or_else(|| state.latest_execution.get(&key).cloned());
     if let Some(execution_id) = &execution_id {
         result.set("execution_id", execution_id.as_str())?;
     }
@@ -1430,13 +1436,10 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
     Ok(result)
 }
 
-fn cache_models(core: &FacadeCore, models: &Models) {
+fn cache_models(core: &FacadeCore, session_id: &str, models: &Models) {
     let mut state = core.state.borrow_mut();
-    let Some(session_id) = most_recent_session(&state) else {
-        return;
-    };
     state.models.insert(
-        session_id,
+        session_id.to_owned(),
         SelectionCache {
             selected: models.selected.as_ref().map(ToString::to_string),
             names: models
@@ -1449,13 +1452,10 @@ fn cache_models(core: &FacadeCore, models: &Models) {
     state.events.push_back(FacadeEvent::Status);
 }
 
-fn cache_routing(core: &FacadeCore, routing: &RoutingProfiles) {
+fn cache_routing(core: &FacadeCore, session_id: &str, routing: &RoutingProfiles) {
     let mut state = core.state.borrow_mut();
-    let Some(session_id) = most_recent_session(&state) else {
-        return;
-    };
     state.routing.insert(
-        session_id,
+        session_id.to_owned(),
         SelectionCache {
             selected: routing.selected.as_ref().map(ToString::to_string),
             names: routing
@@ -1466,33 +1466,6 @@ fn cache_routing(core: &FacadeCore, routing: &RoutingProfiles) {
         },
     );
     state.events.push_back(FacadeEvent::Status);
-}
-
-fn most_recent_session(state: &FacadeState) -> Option<String> {
-    state
-        .latest_execution
-        .keys()
-        .next_back()
-        .cloned()
-        .or_else(|| state.sessions.keys().next_back().cloned())
-        .or_else(|| state.session_info.keys().next_back().cloned())
-}
-
-fn cache_provenance(core: &FacadeCore, provenance: Provenance) {
-    let mut state = core.state.borrow_mut();
-    let session_id = state
-        .latest_execution
-        .iter()
-        .find_map(|(session_id, execution_id)| {
-            (execution_id == &provenance.execution_id).then(|| session_id.clone())
-        });
-    if let Some(session_id) = session_id {
-        state.provenance.insert(
-            (session_id, provenance.execution_id.clone()),
-            provenance,
-        );
-        state.events.push_back(FacadeEvent::Status);
-    }
 }
 
 fn parse_session_id(value: String) -> LuaResult<SessionId> {
@@ -1522,7 +1495,7 @@ fn parse_content(content: Table) -> LuaResult<Vec<Content>> {
                     let data = item.get::<mlua::String>("data")?;
                     Ok(Content::Image {
                         mime_type: item.get::<String>("mime_type")?,
-                        data: data.as_bytes().to_vec(),
+                        data: data.as_bytes().to_vec().into(),
                     })
                 }
                 _ => Err(lua_error(BindingError::conversion(format!(
@@ -1531,6 +1504,24 @@ fn parse_content(content: Table) -> LuaResult<Vec<Content>> {
             }
         })
         .collect()
+}
+
+fn require_ready(core: &FacadeCore) -> LuaResult<()> {
+    let state = core.state.borrow();
+    match state.phase {
+        FacadePhase::Ready => Ok(()),
+        FacadePhase::Failed => Err(lua_error(
+            state
+                .error
+                .clone()
+                .unwrap_or_else(|| BindingError::transport("Phenix client failed")),
+        )),
+        FacadePhase::Closed => Err(lua_error(BindingError::transport("Phenix client is closed"))),
+        FacadePhase::Connecting => Err(lua_error(BindingError::local(
+            ErrorKind::Rejected,
+            "Phenix client is still connecting",
+        ))),
+    }
 }
 
 fn error_table(lua: &Lua, error: &BindingError) -> LuaResult<Table> {
@@ -1551,7 +1542,7 @@ fn fail_core(core: &FacadeCore, error: BindingError) {
     state.events.push_back(FacadeEvent::Status);
 }
 
-fn facade_value<'lua>(lua: &'lua Lua, value: &PhenixValue) -> Result<Value<'lua>, BindingError> {
+fn facade_value(lua: &Lua, value: &PhenixValue) -> Result<Value, BindingError> {
     match value {
         PhenixValue::Unit => Ok(Value::Nil),
         PhenixValue::Bool(value) => Ok(Value::Boolean(*value)),
