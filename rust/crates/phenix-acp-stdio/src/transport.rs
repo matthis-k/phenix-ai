@@ -978,6 +978,7 @@ fn acp_error_to_capability(error: Error, callable: CallableRef) -> CapabilityErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_application_interface::types::ElicitationHandlerRef;
     use phenix_core::{
         Authority, CapabilityOwnerId, ClientConnectionId, Key, ObservableRegistration, PhenixValue,
         PluginExecution, PluginId, PluginManifest, ReferenceId, SdkContribution, SdkNamespace,

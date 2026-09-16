@@ -445,7 +445,7 @@ mod tests {
     use super::*;
     use phenix_core::{
         Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,
-        PluginManifest, ServiceContribution,
+        PluginManifest, Project, ServiceContribution,
     };
     use sha2::{Digest, Sha256};
     use std::{

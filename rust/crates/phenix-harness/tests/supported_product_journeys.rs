@@ -1,7 +1,7 @@
 use phenix_core::{
     Authority, CapabilityGenerationId, ComponentManifest, ModelId, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
-    ServiceContribution, ServiceId, ValueError,
+    ServiceContribution, ServiceId, SessionId, ValueError,
 };
 use phenix_harness::{default_suite_authority, HarnessBuilder, PhenixHarness};
 use phenix_plugin_catalog::{
@@ -11,8 +11,8 @@ use phenix_plugin_catalog::{
     FrontendCommand, FrontendResponse, HookCommand, HookResponse, JobCommand, JobResponse,
     LanguageCommand, LanguageResponse, ModelCommand, ModelInferenceRequest, ModelInferenceResponse,
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-    RoutingProfile, SessionCommand, SessionResponse, SessionTreeCommand, SessionTreeResponse,
-    WorkspaceCommand, WorkspaceResponse,
+    RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,
+    SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelCapabilities,
@@ -290,15 +290,19 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
     );
     assert_eq!(sessions["result"], "sessions");
 
-    invoke(
+    let _: SessionResponse = invoke_structural(
         &mut harness,
         "phenix.sessions@1",
-        json!({"operation": "create", "id": "root"}),
+        &SessionCommand::Create {
+            session: SessionRecord::new(SessionId::parse("root").unwrap()),
+        },
     );
-    invoke(
+    let _: SessionResponse = invoke_structural(
         &mut harness,
         "phenix.sessions@1",
-        json!({"operation": "create", "id": "child"}),
+        &SessionCommand::Create {
+            session: SessionRecord::new(SessionId::parse("child").unwrap()),
+        },
     );
     let lineage = invoke(
         &mut harness,

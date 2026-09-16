@@ -96,8 +96,15 @@ impl ClientToolAdmissions {
             });
         }
         self.next_id = self.next_id.saturating_add(1);
-        let id = ClientToolAdmissionId::parse(format!("client-tool-{}", self.next_id))
-            .expect("generated client tool admission ids are valid");
+        // Admission handles cross the ACP connection boundary. Include the callable
+        // generation so a stale handle from a retired connection can never alias
+        // the first admission created by a later connection.
+        let id = ClientToolAdmissionId::parse(format!(
+            "client-tool-{}-{}",
+            tool.invoke.generation(),
+            self.next_id
+        ))
+        .expect("generated client tool admission ids are valid");
         let admission = ClientToolAdmission {
             id: id.clone(),
             session_id: session_id.clone(),
