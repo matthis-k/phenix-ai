@@ -1,0 +1,471 @@
+name: PR 504 typed continuation
+
+on:
+  push:
+    branches: [spec/nvim-client-package]
+
+concurrency:
+  group: pr504-typed-continuation
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+          fetch-depth: 0
+      - name: Implement typed model tool continuation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'{path}: expected source shape not found: {old[:120]!r}')
+              p.write_text(text.replace(old, new, count))
+
+          def replace_between(path, start, end, replacement):
+              p = Path(path)
+              text = p.read_text()
+              a = text.find(start)
+              if a < 0:
+                  raise SystemExit(f'{path}: start marker not found: {start!r}')
+              b = text.find(end, a)
+              if b < 0:
+                  raise SystemExit(f'{path}: end marker not found: {end!r}')
+              p.write_text(text[:a] + replacement + text[b:])
+
+          # Core model-turn ABI: provider-neutral tool calls and their structural results.
+          replace(
+              'rust/crates/phenix-core/src/agent.rs',
+              '''    /// Structured tool calls emitted by the provider, in provider order.\n    #[serde(default)]\n    pub tool_calls: Vec<ModelToolCall>,\n}''',
+              '''    /// Structured tool calls emitted by the provider, in provider order.\n    #[serde(default)]\n    pub tool_calls: Vec<ModelToolCall>,\n    /// Completed prior assistant/tool turns for this logical model turn.\n    #[serde(default)]\n    pub continuation: Vec<ModelToolTurn>,\n}'''
+          )
+          replace(
+              'rust/crates/phenix-core/src/agent.rs',
+              '''pub struct ModelToolCall {\n    pub call_id: String,\n    pub callable_id: CallableId,\n    pub input: PhenixValue,\n}\n\npub struct ModelInferenceInterface;''',
+              '''pub struct ModelToolCall {\n    pub call_id: String,\n    pub callable_id: CallableId,\n    pub input: PhenixValue,\n}\n\n/// Structural result for one provider-issued model tool call.\n///\n/// Errors remain typed `PhenixValue` payloads instead of being flattened into\n/// prompt prose. Provider adapters only serialize this value at the wire edge.\n#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]\npub struct ModelToolResult {\n    pub call_id: String,\n    pub callable_id: CallableId,\n    pub output: PhenixValue,\n    pub is_error: bool,\n}\n\n/// One completed assistant/tool exchange used to continue provider inference.\n#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]\npub struct ModelToolTurn {\n    pub assistant_output: Bytes,\n    pub tool_calls: Vec<ModelToolCall>,\n    pub tool_results: Vec<ModelToolResult>,\n}\n\npub struct ModelInferenceInterface;'''
+          )
+          replace(
+              'rust/crates/phenix-core/src/lib.rs',
+              '''    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,\n    ModelToolDescriptor, SkillCommand,''',
+              '''    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,\n    ModelToolDescriptor, ModelToolResult, ModelToolTurn, SkillCommand,'''
+          )
+
+          # Carry the continuation through the existing central invocation path.
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/step_runner.rs',
+              '''    Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,\n    RoutingProfileId, ServiceId, SkillId,''',
+              '''    Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,\n    ModelToolTurn, RoutingProfileId, ServiceId, SkillId,'''
+          )
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/step_runner.rs',
+              '''    #[serde(default)]\n    pub tools: Vec<ModelToolDescriptor>,\n}\n\n#[derive(\n    Clone, Copy,''',
+              '''    #[serde(default)]\n    pub tools: Vec<ModelToolDescriptor>,\n    #[serde(default)]\n    pub continuation: Vec<ModelToolTurn>,\n}\n\n#[derive(\n    Clone, Copy,'''
+          )
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/step_runner.rs',
+              '''            input: self.input.clone(),\n            tools: self.tools.clone(),\n        }''',
+              '''            input: self.input.clone(),\n            tools: self.tools.clone(),\n            continuation: Vec::new(),\n        }'''
+          )
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/step_runner.rs',
+              '''    #[serde(default)]\n    pub tools: Vec<ModelToolDescriptor>,\n    pub policy: UsagePolicy,''',
+              '''    #[serde(default)]\n    pub tools: Vec<ModelToolDescriptor>,\n    #[serde(default)]\n    pub continuation: Vec<ModelToolTurn>,\n    pub policy: UsagePolicy,'''
+          )
+
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/model_dispatch.rs',
+              '''use phenix_core::{Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ServiceId};''',
+              '''use phenix_core::{\n    Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ModelToolTurn, ServiceId,\n};'''
+          )
+          replace(
+              'rust/crates/phenix-sdk/src/contracts/model_dispatch.rs',
+              '''        #[serde(default)]\n        tools: Vec<ModelToolDescriptor>,\n    },''',
+              '''        #[serde(default)]\n        tools: Vec<ModelToolDescriptor>,\n        #[serde(default)]\n        continuation: Vec<ModelToolTurn>,\n    },'''
+          )
+
+          replace(
+              'rust/crates/phenix-plugin-step-runner/src/lib.rs',
+              '''                input: request.input,\n                tools: request.tools,\n                policy: params.policy,''',
+              '''                input: request.input,\n                tools: request.tools,\n                continuation: request.continuation,\n                policy: params.policy,'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-step-runner/src/runner.rs',
+              '''        input,\n        tools,\n        policy,''',
+              '''        input,\n        tools,\n        continuation,\n        policy,'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-step-runner/src/runner.rs',
+              '''                input: model_input,\n                tools,\n            })''',
+              '''                input: model_input,\n                tools,\n                continuation,\n            })'''
+          )
+
+          replace(
+              'rust/crates/phenix-plugin-models/src/implementation_sdk.rs',
+              '''            input,\n            tools,\n        } => {\n            validate_dispatch(context, routing, &decision)?;\n            let request = encode_request(context, &decision.target, input, tools)?;''',
+              '''            input,\n            tools,\n            continuation,\n        } => {\n            validate_dispatch(context, routing, &decision)?;\n            let request = encode_request(context, &decision.target, input, tools, continuation)?;'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-models/src/implementation_sdk.rs',
+              '''    input: phenix_core::Bytes,\n    tools: Vec<phenix_core::ModelToolDescriptor>,\n) -> Result<phenix_core::Bytes, String> {''',
+              '''    input: phenix_core::Bytes,\n    tools: Vec<phenix_core::ModelToolDescriptor>,\n    continuation: Vec<phenix_core::ModelToolTurn>,\n) -> Result<phenix_core::Bytes, String> {'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-models/src/implementation_sdk.rs',
+              '''        options: target.options.clone(),\n        tools,\n    };''',
+              '''        options: target.options.clone(),\n        tools,\n        continuation,\n    };'''
+          )
+
+          replace(
+              'rust/crates/phenix-plugin-execution/src/agent_loop.rs',
+              '''    Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, PluginContext,\n    PluginHost, PluginInstance, SdkClient, ServiceId,''',
+              '''    Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, ModelToolTurn,\n    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId,'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-execution/src/agent_loop.rs',
+              '''        #[serde(default)]\n        tools: Vec<ModelToolDescriptor>,\n    },''',
+              '''        #[serde(default)]\n        tools: Vec<ModelToolDescriptor>,\n        #[serde(default)]\n        continuation: Vec<ModelToolTurn>,\n    },'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-execution/src/agent_loop.rs',
+              '''            input,\n            tools,\n        } => {''',
+              '''            input,\n            tools,\n            continuation,\n        } => {'''
+          )
+          replace(
+              'rust/crates/phenix-plugin-execution/src/agent_loop.rs',
+              '''                        input,\n                        tools,\n                    },''',
+              '''                        input,\n                        tools,\n                        continuation,\n                    },'''
+          )
+
+          # Provider adapters translate the typed history only at the wire boundary.
+          replace(
+              'rust/crates/phenix-provider-sdk/src/protocol.rs',
+              '''    CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,\n    PhenixSchema, ValueCodec,''',
+              '''    CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,\n    ModelToolResult, ModelToolTurn, PhenixSchema, PhenixValue, ValueCodec,'''
+          )
+          helpers = r'''fn phenix_json(value: &PhenixValue) -> Result<Value, ProviderError> {
+    Value::from_value(value).map_err(|error| ProviderError::InvalidRequest {
+        message: format!("model tool value is not JSON-compatible: {error:?}"),
+    })
+}
+
+fn tool_arguments(call: &ModelToolCall) -> Result<String, ProviderError> {
+    serde_json::to_string(&phenix_json(&call.input)?).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode model tool arguments: {error}"),
+    })
+}
+
+fn tool_output(result: &ModelToolResult) -> Result<String, ProviderError> {
+    let value = phenix_json(&result.output)?;
+    let value = if result.is_error {
+        serde_json::json!({"error": value})
+    } else {
+        value
+    };
+    serde_json::to_string(&value).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode model tool result: {error}"),
+    })
+}
+
+fn assistant_text(turn: &ModelToolTurn) -> Result<String, ProviderError> {
+    std::str::from_utf8(turn.assistant_output.as_ref())
+        .map(str::to_owned)
+        .map_err(|_| ProviderError::InvalidRequest {
+            message: "provider protocols require UTF-8 assistant continuation output".to_owned(),
+        })
+}
+
+fn validate_tool_turn(turn: &ModelToolTurn) -> Result<(), ProviderError> {
+    if turn.tool_calls.len() != turn.tool_results.len() {
+        return Err(ProviderError::InvalidRequest {
+            message: "model tool continuation must contain one result per tool call".to_owned(),
+        });
+    }
+    for call in &turn.tool_calls {
+        let matches = turn
+            .tool_results
+            .iter()
+            .filter(|result| result.call_id == call.call_id && result.callable_id == call.callable_id)
+            .count();
+        if matches != 1 {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "model tool continuation must contain exactly one matching result for call {}",
+                    call.call_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+'''
+          replace(
+              'rust/crates/phenix-provider-sdk/src/protocol.rs',
+              'fn openai_responses_request(\n',
+              helpers + 'fn openai_responses_request(\n'
+          )
+
+          openai_responses = r'''fn openai_responses_request(
+    endpoint: &Endpoint,
+    request: &ModelInferenceRequest,
+) -> Result<ProviderRequest, ProviderError> {
+    let (mut body, text) = request_object(request, &["model", "input", "tools"])?;
+    body.insert(
+        "model".to_owned(),
+        Value::String(request.model.as_str().to_owned()),
+    );
+    if request.continuation.is_empty() {
+        body.insert("input".to_owned(), Value::String(text));
+    } else {
+        let mut input = vec![serde_json::json!({"role": "user", "content": text})];
+        for turn in &request.continuation {
+            validate_tool_turn(turn)?;
+            let text = assistant_text(turn)?;
+            if !text.is_empty() {
+                input.push(serde_json::json!({"role": "assistant", "content": text}));
+            }
+            for call in &turn.tool_calls {
+                input.push(serde_json::json!({
+                    "type": "function_call",
+                    "call_id": call.call_id,
+                    "name": call.callable_id.as_str(),
+                    "arguments": tool_arguments(call)?,
+                }));
+            }
+            for result in &turn.tool_results {
+                input.push(serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": result.call_id,
+                    "output": tool_output(result)?,
+                }));
+            }
+        }
+        body.insert("input".to_owned(), Value::Array(input));
+    }
+    if let Some(tools) = encode_tools(&request.tools, openai_tool)? {
+        body.insert("tools".to_owned(), tools);
+    }
+    base_request(endpoint, "responses", Value::Object(body), json_headers())
+}
+
+'''
+          replace_between(
+              'rust/crates/phenix-provider-sdk/src/protocol.rs',
+              'fn openai_responses_request(\n',
+              'fn openai_chat_request(\n',
+              openai_responses
+          )
+
+          openai_chat = r'''fn openai_chat_request(
+    endpoint: &Endpoint,
+    request: &ModelInferenceRequest,
+) -> Result<ProviderRequest, ProviderError> {
+    let (mut body, text) = request_object(request, &["model", "messages", "tools"])?;
+    body.insert(
+        "model".to_owned(),
+        Value::String(request.model.as_str().to_owned()),
+    );
+    let mut messages = vec![serde_json::json!({"role":"user","content":text})];
+    for turn in &request.continuation {
+        validate_tool_turn(turn)?;
+        let calls = turn
+            .tool_calls
+            .iter()
+            .map(|call| {
+                Ok(serde_json::json!({
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.callable_id.as_str(),
+                        "arguments": tool_arguments(call)?,
+                    },
+                }))
+            })
+            .collect::<Result<Vec<Value>, ProviderError>>()?;
+        messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": assistant_text(turn)?,
+            "tool_calls": calls,
+        }));
+        for result in &turn.tool_results {
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": result.call_id,
+                "content": tool_output(result)?,
+            }));
+        }
+    }
+    body.insert("messages".to_owned(), Value::Array(messages));
+    if let Some(tools) = encode_tools(&request.tools, openai_chat_tool)? {
+        body.insert("tools".to_owned(), tools);
+    }
+    base_request(
+        endpoint,
+        "chat/completions",
+        Value::Object(body),
+        json_headers(),
+    )
+}
+
+'''
+          replace_between(
+              'rust/crates/phenix-provider-sdk/src/protocol.rs',
+              'fn openai_chat_request(\n',
+              'fn anthropic_request(\n',
+              openai_chat
+          )
+
+          anthropic = r'''fn anthropic_request(
+    endpoint: &Endpoint,
+    request: &ModelInferenceRequest,
+) -> Result<ProviderRequest, ProviderError> {
+    let (mut body, text) = request_object(request, &["model", "messages", "tools"])?;
+    body.insert(
+        "model".to_owned(),
+        Value::String(request.model.as_str().to_owned()),
+    );
+    let mut messages = vec![serde_json::json!({"role":"user","content":text})];
+    for turn in &request.continuation {
+        validate_tool_turn(turn)?;
+        let mut assistant = Vec::new();
+        let text = assistant_text(turn)?;
+        if !text.is_empty() {
+            assistant.push(serde_json::json!({"type": "text", "text": text}));
+        }
+        for call in &turn.tool_calls {
+            assistant.push(serde_json::json!({
+                "type": "tool_use",
+                "id": call.call_id,
+                "name": call.callable_id.as_str(),
+                "input": phenix_json(&call.input)?,
+            }));
+        }
+        messages.push(serde_json::json!({"role": "assistant", "content": assistant}));
+        let mut results = Vec::new();
+        for result in &turn.tool_results {
+            results.push(serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": result.call_id,
+                "content": tool_output(result)?,
+                "is_error": result.is_error,
+            }));
+        }
+        messages.push(serde_json::json!({"role": "user", "content": results}));
+    }
+    body.insert("messages".to_owned(), Value::Array(messages));
+    if let Some(tools) = encode_tools(&request.tools, anthropic_tool)? {
+        body.insert("tools".to_owned(), tools);
+    }
+    body.entry("max_tokens".to_owned())
+        .or_insert_with(|| Value::from(4096_u64));
+    let mut headers = json_headers();
+    headers.insert("anthropic-version".to_owned(), "2023-06-01".to_owned());
+    base_request(endpoint, "messages", Value::Object(body), headers)
+}
+
+'''
+          replace_between(
+              'rust/crates/phenix-provider-sdk/src/protocol.rs',
+              'fn anthropic_request(\n',
+              'fn parse_json(\n',
+              anthropic
+          )
+
+          # Existing direct request fixtures use an empty continuation.
+          import re
+          for p in Path('rust').rglob('*.rs'):
+              text = p.read_text()
+              if 'ModelInferenceRequest {' not in text or p.as_posix().endswith('phenix-core/src/agent.rs'):
+                  continue
+              # Add the field to literal blocks that already expose a tools field and
+              # do not yet mention continuation. Keep this deliberately narrow.
+              pos = 0
+              changed = False
+              while True:
+                  start = text.find('ModelInferenceRequest {', pos)
+                  if start < 0:
+                      break
+                  i = start + len('ModelInferenceRequest {')
+                  depth = 1
+                  while i < len(text) and depth:
+                      if text[i] == '{':
+                          depth += 1
+                      elif text[i] == '}':
+                          depth -= 1
+                      i += 1
+                  block = text[start:i]
+                  if 'continuation:' not in block and 'tools:' in block:
+                      # Insert before the outer closing brace. Rust field order is irrelevant.
+                      indent_match = re.search(r'\n([ \t]*)[^\n]+\n[ \t]*}$', block)
+                      indent = indent_match.group(1) if indent_match else '    '
+                      block = block[:-1] + f'{indent}continuation: Vec::new(),\n' + block[-1:]
+                      text = text[:start] + block + text[i:]
+                      i = start + len(block)
+                      changed = True
+                  pos = i
+              if changed:
+                  p.write_text(text)
+
+          # Existing invocation and planned-step literals start with no continuation.
+          for type_name in ('InvocationRequest', 'PlannedStepRequest'):
+              for p in Path('rust').rglob('*.rs'):
+                  text = p.read_text()
+                  if f'{type_name} {{' not in text or p.as_posix().endswith('phenix-sdk/src/contracts/step_runner.rs'):
+                      continue
+                  pos = 0
+                  changed = False
+                  while True:
+                      start = text.find(f'{type_name} {{', pos)
+                      if start < 0:
+                          break
+                      i = start + len(type_name) + 2
+                      depth = 1
+                      while i < len(text) and depth:
+                          if text[i] == '{':
+                              depth += 1
+                          elif text[i] == '}':
+                              depth -= 1
+                          i += 1
+                      block = text[start:i]
+                      if 'continuation:' not in block and 'tools:' in block:
+                          last = block.rfind('}')
+                          # Match the indentation of ordinary fields from the first field line.
+                          m = re.search(r'\n([ \t]+)\w', block)
+                          indent = m.group(1) if m else '    '
+                          block = block[:last] + f'{indent}continuation: Vec::new(),\n' + block[last:]
+                          text = text[:start] + block + text[i:]
+                          i = start + len(block)
+                          changed = True
+                      pos = i
+                  if changed:
+                      p.write_text(text)
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+      - name: Commit continuation plumbing
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust
+          git commit -m 'feat(execution): add typed model tool continuation'
+          git push origin HEAD:spec/nvim-client-package
+      - name: Targeted continuation checks
+        run: |
+          cargo test --manifest-path rust/Cargo.toml \
+            -p phenix-core \
+            -p phenix-sdk \
+            -p phenix-provider-sdk \
+            -p phenix-plugin-models \
+            -p phenix-plugin-step-runner \
+            -p phenix-plugin-execution \
+            --all-targets
