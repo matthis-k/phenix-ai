@@ -223,6 +223,7 @@ fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
         callable_id: None,
         input: Bytes::new(b"prompt".to_vec()),
         tools,
+        continuation: Vec::new(),
     }
 }
 
