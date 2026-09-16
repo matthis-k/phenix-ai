@@ -75,6 +75,13 @@ jobs:
           PY
           cargo fmt --manifest-path rust/Cargo.toml --all
           git diff --check
+      - name: Commit fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(nvim): finish exact-head contract migration'
+          git push origin HEAD:spec/nvim-client-package
       - name: Focused Rust regression tests
         run: |
           cargo test --manifest-path rust/Cargo.toml \
@@ -86,10 +93,3 @@ jobs:
             -p phenix-acp-stdio \
             -p phenix-harness \
             --all-targets
-      - name: Commit fixes
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'fix(nvim): finish exact-head contract migration'
-          git push origin HEAD:spec/nvim-client-package
