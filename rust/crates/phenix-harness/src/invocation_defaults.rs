@@ -410,7 +410,6 @@ mod tests {
             callable_id: CallableId::parse("memory.summarize").unwrap(),
             input: Bytes::from(b"input".to_vec()),
             tools: Vec::new(),
-            continuation: Vec::new(),
         };
         let params = resolve_helper_defaults(&request);
         assert_eq!(params.profile_id, request.profile_id);
