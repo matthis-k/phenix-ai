@@ -1,0 +1,53 @@
+# Temporary exact-head repair for PR #504. Remove after the focused repair lands.
+name: PR 504 native facade repair
+
+on:
+  push:
+    branches: [spec/nvim-client-package]
+
+concurrency:
+  group: pr504-native-facade-repair
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Repair stale helper continuation migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('rust/crates/phenix-plugin-memory/src/implementation.rs')
+          text = path.read_text()
+          needle = '            continuation: Vec::new(),\n'
+          count = text.count(needle)
+          if count != 2:
+              raise SystemExit(f'expected two stale helper continuation fields, found {count}')
+          path.write_text(text.replace(needle, ''))
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo check --manifest-path rust/Cargo.toml --locked \
+            -p phenix-plugin-memory \
+            -p phenix-binding-lua
+          git diff --check
+      - name: Commit repair
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/phenix-plugin-memory/src/implementation.rs rust/crates/phenix-binding-lua/src/facade.rs
+          git commit -m 'fix(nvim): repair native facade compile boundary'
+          git push origin HEAD:spec/nvim-client-package
