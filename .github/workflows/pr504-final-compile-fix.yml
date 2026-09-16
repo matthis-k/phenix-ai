@@ -1,3 +1,4 @@
+# Temporary self-removing exact-head repair; this edit intentionally triggers it.
 name: PR 504 final compile fix
 
 on:
