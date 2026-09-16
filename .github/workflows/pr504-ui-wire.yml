@@ -1,0 +1,67 @@
+# Temporary focused validation for PR #504. Remove after the semantic UI wiring lands.
+name: PR 504 semantic UI wiring
+
+on:
+  push:
+    branches: [spec/nvim-client-package]
+
+concurrency:
+  group: pr504-semantic-ui-wiring
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Wire semantic application namespace and session controls
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          lib = Path('rust/crates/phenix-binding-lua/src/lib.rs')
+          text = lib.read_text()
+          old = '    exports.set("tools", tools::exports(lua)?)?;\n'
+          new = old + '    exports.set("application", tools::facade_exports(lua)?)?;\n'
+          if text.count(old) != 1:
+              raise SystemExit('native export shape changed')
+          lib.write_text(text.replace(old, new, 1))
+
+          runtime = Path('clients/nvim/lua/phenix_nvim/runtime.lua')
+          text = runtime.read_text()
+          old = '  local facade = native.tools and native.tools.connect\n'
+          new = '  local facade = native.application and native.application.connect\n'
+          if text.count(old) != 1:
+              raise SystemExit('runtime facade lookup shape changed')
+          text = text.replace(old, new, 1)
+
+          marker = 'function M.cancel_active()\n'
+          if text.count(marker) != 1:
+              raise SystemExit('runtime cancel marker changed')
+          controls = '''local function active_session_request(method, callback, ...)\n  if not require_ready(callback) then\n    return\n  end\n  local session = state.active_session\n  if session == nil then\n    util.safe_call(callback, nil, { message = "no active Phenix session" })\n    return\n  end\n  local callable = session[method]\n  if type(callable) ~= "function" then\n    util.safe_call(callback, nil, { message = "Phenix session does not support " .. method })\n    return\n  end\n  local ok, request = pcall(callable, session, ...)\n  if not ok then\n    util.safe_call(callback, nil, { message = tostring(request) })\n    return\n  end\n  M.track(request, function(result, error)\n    if error == nil then\n      emit("status", M.status())\n    end\n    util.safe_call(callback, result, error)\n  end)\nend\n\nfunction M.list_models(callback)\n  active_session_request("models", callback)\nend\n\nfunction M.select_model(model_id, callback)\n  active_session_request("select_model", callback, model_id)\nend\n\nfunction M.list_routing_profiles(callback)\n  active_session_request("routing_profiles", callback)\nend\n\nfunction M.select_routing_profile(profile_id, callback)\n  active_session_request("select_routing_profile", callback, profile_id)\nend\n\n'''
+          runtime.write_text(text.replace(marker, controls + marker, 1))
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo check --manifest-path rust/Cargo.toml --locked -p phenix-binding-lua
+          nix build --no-link .#checks.x86_64-linux.phenix-nvim-load
+          git diff --check
+      - name: Commit semantic UI wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/phenix-binding-lua/src/lib.rs clients/nvim/lua/phenix_nvim/runtime.lua
+          git commit -m 'feat(nvim): wire semantic facade and session controls'
+          git push origin HEAD:spec/nvim-client-package
