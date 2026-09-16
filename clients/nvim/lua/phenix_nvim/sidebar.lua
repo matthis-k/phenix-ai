@@ -2,6 +2,7 @@ local config = require("phenix_nvim.config")
 local state = require("phenix_nvim.state")
 local compose = require("phenix_nvim.compose.buffer")
 local transcript = require("phenix_nvim.transcript.buffer")
+local winbar = require("phenix_nvim.winbar")
 
 local M = {}
 local transcript_win
@@ -23,6 +24,7 @@ end
 
 function M.open()
   if M.is_open() then
+    winbar.refresh()
     return compose_win
   end
   local options = config.get()
@@ -38,6 +40,7 @@ function M.open()
   vim.api.nvim_win_set_buf(compose_win, compose.ensure(state.compose))
   compose.attach_window(state.compose, compose_win)
   pcall(vim.api.nvim_win_set_cursor, compose_win, state.remembered_compose_cursor)
+  winbar.attach(transcript_win, compose_win)
 
   vim.api.nvim_create_autocmd("WinLeave", {
     callback = function(args)
@@ -52,6 +55,7 @@ end
 
 function M.close()
   M.remember_cursor()
+  winbar.detach(transcript_win, compose_win)
   if valid(compose_win) then
     compose.detach_window(compose_win)
   end
@@ -84,6 +88,10 @@ end
 
 function M.buffers()
   return transcript.ensure(), compose.ensure(state.compose)
+end
+
+function M.windows()
+  return transcript_win, compose_win
 end
 
 return M
