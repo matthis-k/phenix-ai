@@ -32,117 +32,96 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          tools = Path('rust/crates/phenix-binding-lua/src/tools.rs')
-          text = tools.read_text()
-          old = '''pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
-    let tools = lua.create_table()?;
-    tools.set(
-        "connect",
-        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,
-    )?;
-    tools.set(
-        "register",
-'''
-          new = '''pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
-    let tools = lua.create_table()?;
-    tools.set(
-        "register",
-'''
-          if text.count(old) != 1:
-              raise SystemExit('tools facade export shape changed')
-          text = text.replace(old, new, 1)
-          marker = '''    Ok(tools)
-}
+          def replace_once(path, old, new, label):
+              target = Path(path)
+              text = target.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label} shape changed')
+              target.write_text(text.replace(old, new, 1))
 
-pub(super) fn bind'''
-          replacement = '''    Ok(tools)
-}
-
-pub(super) fn facade_exports(lua: &Lua) -> LuaResult<Table> {
-    let application = lua.create_table()?;
-    application.set(
-        "connect",
-        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,
-    )?;
-    Ok(application)
-}
-
-pub(super) fn bind'''
-          if text.count(marker) != 1:
-              raise SystemExit('tools export terminator changed')
-          tools.write_text(text.replace(marker, replacement, 1))
-
-          facade = Path('rust/crates/phenix-binding-lua/src/facade.rs')
-          text = facade.read_text()
-          old = 'let data = item.get::<mlua::String>("data")?;'
-          new = 'let data = item.get::<mlua::LuaString>("data")?;'
-          if text.count(old) != 1:
-              raise SystemExit('Lua image-string conversion shape changed')
-          facade.write_text(text.replace(old, new, 1))
-
-          lib = Path('rust/crates/phenix-binding-lua/src/lib.rs')
-          text = lib.read_text()
-          old = '    exports.set("tools", tools::exports(lua)?)?;\n'
-          new = old + '    exports.set("application", tools::facade_exports(lua)?)?;\n'
-          if text.count(old) != 1:
-              raise SystemExit('native export shape changed')
-          lib.write_text(text.replace(old, new, 1))
+          replace_once(
+              'rust/crates/phenix-binding-lua/src/tools.rs',
+              '    tools.set(\n        "connect",\n        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,\n    )?;\n',
+              '',
+              'tools facade export',
+          )
+          replace_once(
+              'rust/crates/phenix-binding-lua/src/tools.rs',
+              '    Ok(tools)\n}\n\npub(super) fn bind',
+              '    Ok(tools)\n}\n\npub(super) fn facade_exports(lua: &Lua) -> LuaResult<Table> {\n    let application = lua.create_table()?;\n    application.set(\n        "connect",\n        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,\n    )?;\n    Ok(application)\n}\n\npub(super) fn bind',
+              'tools export terminator',
+          )
+          replace_once(
+              'rust/crates/phenix-binding-lua/src/facade.rs',
+              'let data = item.get::<mlua::String>("data")?;',
+              'let data = item.get::<mlua::LuaString>("data")?;',
+              'Lua image-string conversion',
+          )
+          replace_once(
+              'rust/crates/phenix-binding-lua/src/lib.rs',
+              '    exports.set("tools", tools::exports(lua)?)?;\n',
+              '    exports.set("tools", tools::exports(lua)?)?;\n    exports.set("application", tools::facade_exports(lua)?)?;\n',
+              'native export',
+          )
+          replace_once(
+              'clients/nvim/lua/phenix_nvim/runtime.lua',
+              '  local facade = native.tools and native.tools.connect\n',
+              '  local facade = native.application and native.application.connect\n',
+              'runtime facade lookup',
+          )
 
           runtime = Path('clients/nvim/lua/phenix_nvim/runtime.lua')
           text = runtime.read_text()
-          old = '  local facade = native.tools and native.tools.connect\n'
-          new = '  local facade = native.application and native.application.connect\n'
-          if text.count(old) != 1:
-              raise SystemExit('runtime facade lookup shape changed')
-          text = text.replace(old, new, 1)
-
           marker = 'function M.cancel_active()\n'
           if text.count(marker) != 1:
               raise SystemExit('runtime cancel marker changed')
           controls = '''local function active_session_request(method, callback, ...)
-  if not require_ready(callback) then
-    return
-  end
-  local session = state.active_session
-  if session == nil then
-    util.safe_call(callback, nil, { message = "no active Phenix session" })
-    return
-  end
-  local callable = session[method]
-  if type(callable) ~= "function" then
-    util.safe_call(callback, nil, { message = "Phenix session does not support " .. method })
-    return
-  end
-  local ok, request = pcall(callable, session, ...)
-  if not ok then
-    util.safe_call(callback, nil, { message = tostring(request) })
-    return
-  end
-  M.track(request, function(result, error)
-    if error == nil then
-      emit("status", M.status())
-    end
-    util.safe_call(callback, result, error)
-  end)
-end
+            if not require_ready(callback) then
+              return
+            end
+            local session = state.active_session
+            if session == nil then
+              util.safe_call(callback, nil, { message = "no active Phenix session" })
+              return
+            end
+            local callable = session[method]
+            if type(callable) ~= "function" then
+              util.safe_call(callback, nil, { message = "Phenix session does not support " .. method })
+              return
+            end
+            local ok, request = pcall(callable, session, ...)
+            if not ok then
+              util.safe_call(callback, nil, { message = tostring(request) })
+              return
+            end
+            M.track(request, function(result, error)
+              if error == nil then
+                emit("status", M.status())
+              end
+              util.safe_call(callback, result, error)
+            end)
+          end
 
-function M.list_models(callback)
-  active_session_request("models", callback)
-end
+          function M.list_models(callback)
+            active_session_request("models", callback)
+          end
 
-function M.select_model(model_id, callback)
-  active_session_request("select_model", callback, model_id)
-end
+          function M.select_model(model_id, callback)
+            active_session_request("select_model", callback, model_id)
+          end
 
-function M.list_routing_profiles(callback)
-  active_session_request("routing_profiles", callback)
-end
+          function M.list_routing_profiles(callback)
+            active_session_request("routing_profiles", callback)
+          end
 
-function M.select_routing_profile(profile_id, callback)
-  active_session_request("select_routing_profile", callback, profile_id)
-end
+          function M.select_routing_profile(profile_id, callback)
+            active_session_request("select_routing_profile", callback, profile_id)
+          end
 
-'''
+          '''
+          # Remove the indentation used only to keep this Python heredoc readable.
+          import textwrap
+          controls = textwrap.dedent(controls)
           runtime.write_text(text.replace(marker, controls + marker, 1))
           PY
 
