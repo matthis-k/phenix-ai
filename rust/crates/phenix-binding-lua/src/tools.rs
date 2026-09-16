@@ -12,17 +12,12 @@ fn connect_raw(options: Table) -> LuaResult<Client> {
     super::connect(options)
 }
 
-pub(super) fn facade_exports(lua: &Lua) -> LuaResult<Table> {
-    let app = lua.create_table()?;
-    app.set(
+pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
+    let tools = lua.create_table()?;
+    tools.set(
         "connect",
         lua.create_function(|lua, options: Table| facade::connect(lua, options))?,
     )?;
-    Ok(app)
-}
-
-pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
-    let tools = lua.create_table()?;
     tools.set(
         "register",
         lua.create_function(|lua, (definition, handler): (Table, mlua::Function)| {
