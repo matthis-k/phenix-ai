@@ -362,6 +362,7 @@ mod resolved_dispatch {
                 decision,
                 input: input.to_vec().into(),
                 tools: Vec::new(),
+                continuation: Vec::new(),
             },
         )?;
         match response {

@@ -94,8 +94,9 @@ pub use agent::{
     context_service, model_inference_service, skill_service, tool_service, ContextCommand,
     ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextResponse, ContextScope,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
-    ModelToolDescriptor, SkillCommand, SkillDefinition, SkillResponse, ToolCommand, ToolDefinition,
-    ToolResponse, CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
+    ModelToolDescriptor, ModelToolResult, ModelToolTurn, SkillCommand, SkillDefinition,
+    SkillResponse, ToolCommand, ToolDefinition, ToolResponse, CONTEXT_SERVICE,
+    MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;

@@ -1,7 +1,7 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
 use phenix_core::{
     CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
-    PhenixSchema, ValueCodec,
+    ModelToolResult, ModelToolTurn, PhenixSchema, PhenixValue, ValueCodec,
 };
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
@@ -205,6 +205,64 @@ fn encode_tools(
         .map(|tools| Some(Value::Array(tools)))
 }
 
+fn phenix_json(value: &PhenixValue) -> Result<Value, ProviderError> {
+    Value::from_value(value).map_err(|error| ProviderError::InvalidRequest {
+        message: format!("model tool value is not JSON-compatible: {error:?}"),
+    })
+}
+
+fn tool_arguments(call: &ModelToolCall) -> Result<String, ProviderError> {
+    serde_json::to_string(&phenix_json(&call.input)?).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode model tool arguments: {error}"),
+    })
+}
+
+fn tool_output(result: &ModelToolResult) -> Result<String, ProviderError> {
+    let value = phenix_json(&result.output)?;
+    let value = if result.is_error {
+        serde_json::json!({"error": value})
+    } else {
+        value
+    };
+    serde_json::to_string(&value).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode model tool result: {error}"),
+    })
+}
+
+fn assistant_text(turn: &ModelToolTurn) -> Result<String, ProviderError> {
+    std::str::from_utf8(turn.assistant_output.as_ref())
+        .map(str::to_owned)
+        .map_err(|_| ProviderError::InvalidRequest {
+            message: "provider protocols require UTF-8 assistant continuation output".to_owned(),
+        })
+}
+
+fn validate_tool_turn(turn: &ModelToolTurn) -> Result<(), ProviderError> {
+    if turn.tool_calls.len() != turn.tool_results.len() {
+        return Err(ProviderError::InvalidRequest {
+            message: "model tool continuation must contain one result per tool call".to_owned(),
+        });
+    }
+    for call in &turn.tool_calls {
+        let matches = turn
+            .tool_results
+            .iter()
+            .filter(|result| {
+                result.call_id == call.call_id && result.callable_id == call.callable_id
+            })
+            .count();
+        if matches != 1 {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "model tool continuation must contain exactly one matching result for call {}",
+                    call.call_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn openai_responses_request(
     endpoint: &Endpoint,
     request: &ModelInferenceRequest,
@@ -214,7 +272,34 @@ fn openai_responses_request(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
     );
-    body.insert("input".to_owned(), Value::String(text));
+    if request.continuation.is_empty() {
+        body.insert("input".to_owned(), Value::String(text));
+    } else {
+        let mut input = vec![serde_json::json!({"role": "user", "content": text})];
+        for turn in &request.continuation {
+            validate_tool_turn(turn)?;
+            let text = assistant_text(turn)?;
+            if !text.is_empty() {
+                input.push(serde_json::json!({"role": "assistant", "content": text}));
+            }
+            for call in &turn.tool_calls {
+                input.push(serde_json::json!({
+                    "type": "function_call",
+                    "call_id": call.call_id,
+                    "name": call.callable_id.as_str(),
+                    "arguments": tool_arguments(call)?,
+                }));
+            }
+            for result in &turn.tool_results {
+                input.push(serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": result.call_id,
+                    "output": tool_output(result)?,
+                }));
+            }
+        }
+        body.insert("input".to_owned(), Value::Array(input));
+    }
     if let Some(tools) = encode_tools(&request.tools, openai_tool)? {
         body.insert("tools".to_owned(), tools);
     }
@@ -230,10 +315,37 @@ fn openai_chat_request(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
     );
-    body.insert(
-        "messages".to_owned(),
-        serde_json::json!([{"role":"user","content":text}]),
-    );
+    let mut messages = vec![serde_json::json!({"role":"user","content":text})];
+    for turn in &request.continuation {
+        validate_tool_turn(turn)?;
+        let calls = turn
+            .tool_calls
+            .iter()
+            .map(|call| {
+                Ok(serde_json::json!({
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.callable_id.as_str(),
+                        "arguments": tool_arguments(call)?,
+                    },
+                }))
+            })
+            .collect::<Result<Vec<Value>, ProviderError>>()?;
+        messages.push(serde_json::json!({
+        "role": "assistant",
+        "content": assistant_text(turn)?,
+        "tool_calls": calls,
+              }));
+        for result in &turn.tool_results {
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": result.call_id,
+                "content": tool_output(result)?,
+            }));
+        }
+    }
+    body.insert("messages".to_owned(), Value::Array(messages));
     if let Some(tools) = encode_tools(&request.tools, openai_chat_tool)? {
         body.insert("tools".to_owned(), tools);
     }
@@ -254,10 +366,35 @@ fn anthropic_request(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
     );
-    body.insert(
-        "messages".to_owned(),
-        serde_json::json!([{"role":"user","content":text}]),
-    );
+    let mut messages = vec![serde_json::json!({"role":"user","content":text})];
+    for turn in &request.continuation {
+        validate_tool_turn(turn)?;
+        let mut assistant = Vec::new();
+        let text = assistant_text(turn)?;
+        if !text.is_empty() {
+            assistant.push(serde_json::json!({"type": "text", "text": text}));
+        }
+        for call in &turn.tool_calls {
+            assistant.push(serde_json::json!({
+                "type": "tool_use",
+                "id": call.call_id,
+                "name": call.callable_id.as_str(),
+                "input": phenix_json(&call.input)?,
+            }));
+        }
+        messages.push(serde_json::json!({"role": "assistant", "content": assistant}));
+        let mut results = Vec::new();
+        for result in &turn.tool_results {
+            results.push(serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": result.call_id,
+                "content": tool_output(result)?,
+                "is_error": result.is_error,
+            }));
+        }
+        messages.push(serde_json::json!({"role": "user", "content": results}));
+    }
+    body.insert("messages".to_owned(), Value::Array(messages));
     if let Some(tools) = encode_tools(&request.tools, anthropic_tool)? {
         body.insert("tools".to_owned(), tools);
     }

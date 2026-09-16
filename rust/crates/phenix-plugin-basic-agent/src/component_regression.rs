@@ -320,6 +320,7 @@ fn replacement_component_satisfies_the_same_basic_model_import_without_consumer_
         input: b"hello".to_vec().into(),
         options: BTreeMap::new(),
         tools: Vec::new(),
+        continuation: Vec::new(),
     };
     let output = kernel
         .invoke(

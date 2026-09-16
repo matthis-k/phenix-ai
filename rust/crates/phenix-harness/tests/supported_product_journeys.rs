@@ -514,6 +514,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                 callable_id: None,
                 input: b"hello".to_vec().into(),
                 tools: Vec::new(),
+                continuation: Vec::new(),
             },
             params: InvocationParams {
                 profile_id: RoutingProfileId::parse("parity").unwrap(),

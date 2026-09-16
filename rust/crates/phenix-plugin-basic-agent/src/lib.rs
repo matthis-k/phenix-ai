@@ -209,6 +209,7 @@ mod tests {
                 input: b"hello".to_vec().into(),
                 options: BTreeMap::new(),
                 tools: Vec::new(),
+                continuation: Vec::new(),
             },
         );
         assert_eq!(response.output.as_ref(), b"hello");

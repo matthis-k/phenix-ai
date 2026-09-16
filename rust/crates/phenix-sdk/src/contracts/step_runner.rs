@@ -5,7 +5,7 @@ use super::{
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,
-    RoutingProfileId, ServiceId, SkillId,
+    ModelToolTurn, RoutingProfileId, ServiceId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -26,6 +26,8 @@ pub struct InvocationRequest {
     pub input: Bytes,
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,
+    #[serde(default)]
+    pub continuation: Vec<ModelToolTurn>,
 }
 
 #[derive(
@@ -71,6 +73,7 @@ impl HelperInvocationRequest {
             callable_id: Some(self.callable_id.clone()),
             input: self.input.clone(),
             tools: self.tools.clone(),
+            continuation: Vec::new(),
         }
     }
 }
@@ -203,6 +206,8 @@ pub struct PlannedStepRequest {
     pub input: Bytes,
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,
+    #[serde(default)]
+    pub continuation: Vec<ModelToolTurn>,
     pub policy: UsagePolicy,
     pub task: TaskRequirements,
     #[serde(default)]

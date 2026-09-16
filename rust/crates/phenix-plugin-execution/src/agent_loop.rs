@@ -1,7 +1,7 @@
 use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
-    Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, PluginContext,
-    PluginHost, PluginInstance, SdkClient, ServiceId,
+    Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
+    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
@@ -41,6 +41,8 @@ pub enum AgentLoopCommand {
         input: Bytes,
         #[serde(default)]
         tools: Vec<ModelToolDescriptor>,
+        #[serde(default)]
+        continuation: Vec<ModelToolTurn>,
     },
 }
 
@@ -130,6 +132,7 @@ fn handle(
             callable_id,
             input,
             tools,
+            continuation,
         } => {
             let response = context
                 .sdk
@@ -141,6 +144,7 @@ fn handle(
                         callable_id,
                         input,
                         tools,
+                        continuation,
                     },
                 })
                 .map_err(|error| error.to_string())?;

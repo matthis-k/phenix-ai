@@ -620,6 +620,7 @@ fn routed_revalidation(
             callable_id,
             input: Bytes::new(input),
             tools: Vec::new(),
+            continuation: Vec::new(),
         },
         "memory revalidation",
     )?;
@@ -647,6 +648,7 @@ fn routed_memory_text(
             callable_id,
             input: Bytes::new(input),
             tools: Vec::new(),
+            continuation: Vec::new(),
         },
         label,
     )?;

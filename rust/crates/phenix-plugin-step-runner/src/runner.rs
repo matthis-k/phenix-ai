@@ -173,6 +173,7 @@ fn run(
         callable_id,
         input,
         tools,
+        continuation,
         policy,
         task,
         context_candidates,
@@ -474,6 +475,7 @@ fn run(
                 decision: decision.clone(),
                 input: model_input,
                 tools,
+                continuation,
             }) {
             Ok(response) => response,
             Err(error) => {
