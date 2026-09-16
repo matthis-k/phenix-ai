@@ -3,7 +3,7 @@ use phenix_application_interface::types::{
 };
 use phenix_core::{
     ComponentInterface, DurableSchema, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
-    PluginHost, PluginInstance, Project, ResourceNamespace, ServiceId, TransactionOp, ValueCodec,
+    PluginHost, PluginInstance, ResourceNamespace, ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
     WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceWrite,

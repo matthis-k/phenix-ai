@@ -488,7 +488,7 @@ impl PhenixHarness {
     }
 
     pub fn invoke(
-        &self,
+        &mut self,
         service: &phenix_core::ServiceId,
         input: &[u8],
         authority: &Authority,
@@ -775,7 +775,9 @@ mod tests {
         serde_json::from_slice::<PhenixValue>(&output).unwrap();
 
         let create = serde_json::to_vec(&PhenixValue::from(&SessionCommand::Create {
-            id: SessionId::parse("session-1").unwrap(),
+            session: phenix_plugin_catalog::SessionRecord::new(
+                SessionId::parse("session-1").unwrap(),
+            ),
         }))
         .unwrap();
         let response = harness

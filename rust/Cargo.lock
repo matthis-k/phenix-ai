@@ -1742,6 +1742,7 @@ dependencies = [
 name = "phenix-harness"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "phenix-acp-stdio",
  "phenix-application-interface",
  "phenix-conductor",

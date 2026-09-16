@@ -1,4 +1,5 @@
 use crate::{default_suite_authority, PhenixHarness};
+use parking_lot::Mutex;
 use phenix_acp_stdio::{
     model_tool_surface, serve_stdio_with_events_and_callbacks, ApplicationEvent,
     ApplicationInvocation, ChannelTransport, ClientCapabilityCallbacks, ClientCapabilityIdentity,
@@ -272,7 +273,7 @@ impl SessionProjectionStore {
 }
 
 pub struct ApplicationWorker {
-    harness: Arc<PhenixHarness>,
+    harness: Arc<Mutex<PhenixHarness>>,
     authority: Authority,
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
@@ -284,7 +285,7 @@ pub struct ApplicationWorker {
 impl ApplicationWorker {
     pub fn new(harness: PhenixHarness) -> Result<Self, ObservableError> {
         Ok(Self {
-            harness: Arc::new(harness),
+            harness: Arc::new(Mutex::new(harness)),
             authority: default_suite_authority(),
             projection: SessionProjectionStore::new()?,
             interaction_handlers: InteractionHandlers {
@@ -484,7 +485,7 @@ impl ApplicationWorker {
         let session = self.require_open_application_session(&request.session_id)?;
         let execution_id = self.allocate_execution_id()?;
         self.prepare_root_execution(&execution_id)?;
-        self.append_session_change(
+        if let Err(error) = self.append_session_change(
             &session,
             SessionChange::Message {
                 message: Message {
@@ -492,7 +493,10 @@ impl ApplicationWorker {
                     content: request.content,
                 },
             },
-        )?;
+        ) {
+            let _ = self.finish_root_execution(&execution_id, false);
+            return Err(error);
+        }
         Ok(PromptResult {
             execution_id,
             stop_reason: StopReason::EndTurn,
@@ -519,6 +523,7 @@ impl ApplicationWorker {
         })?;
         let output = self
             .harness
+            .lock()
             .invoke(&execution_review_service(), &input, &self.authority, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
@@ -627,7 +632,7 @@ impl ApplicationWorker {
         }
 
         let response =
-            self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {
+            match self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {
                 ledger: RootBudgetLedger {
                     root_execution_id: execution_id.to_owned(),
                     limits: RootBudgetLimits {
@@ -638,11 +643,19 @@ impl ApplicationWorker {
                     },
                     reservations: BTreeMap::new(),
                 },
-            })?;
+            }) {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = self.finish_root_execution(execution_id, false);
+                    return Err(error);
+                }
+            };
         if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
-            return Err(ApplicationError::InvalidResponse {
+            let error = ApplicationError::InvalidResponse {
                 message: format!("unexpected root-budget registration response: {response:?}"),
-            });
+            };
+            let _ = self.finish_root_execution(execution_id, false);
+            return Err(error);
         }
         Ok(())
     }
@@ -686,7 +699,7 @@ impl ApplicationWorker {
     ) -> Result<R, ApplicationError>
     where
         for<'a> PhenixValue: From<&'a C>,
-        R: for<'a> TryFrom<Project<'a>, Error = phenix_core::ValueError>,
+        R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,
     {
         let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
             ApplicationError::InvalidInput {
@@ -695,6 +708,7 @@ impl ApplicationWorker {
         })?;
         let output = self
             .harness
+            .lock()
             .invoke(&service, &input, &self.authority, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
@@ -883,6 +897,7 @@ impl ApplicationWorker {
         })?;
         let output = self
             .harness
+            .lock()
             .invoke(&session_service(), &input, &self.authority, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
@@ -1072,7 +1087,10 @@ pub async fn serve_configured_application(
     let worker = ApplicationWorker::new(harness)?.with_event_sender(event_sender);
     let runtime = RuntimeId::parse("phenix.application-runtime")
         .expect("static application runtime id is valid");
-    let generation = CapabilityGenerationId::from(worker.harness.generation());
+    let generation = {
+        let harness = worker.harness.lock();
+        CapabilityGenerationId::from(harness.generation())
+    };
     let client = ClientCapabilityIdentity::new(
         ClientConnectionId::parse("stdio-client-1").expect("static ACP client id is valid"),
         CapabilityGenerationId::parse("stdio-connection-1")
@@ -1414,7 +1432,7 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
 }
 
 fn run_agent_execution(
-    harness: Arc<PhenixHarness>,
+    harness: Arc<Mutex<PhenixHarness>>,
     authority: Authority,
     execution_id: String,
     input: Bytes,
@@ -1441,6 +1459,7 @@ fn run_agent_execution(
         }
     })?;
     let output = harness
+        .lock()
         .invoke(&agent_loop_service(), &input, &authority, None)
         .map_err(|error| ApplicationError::Failed {
             message: error.to_string(),
@@ -1743,6 +1762,50 @@ mod tests {
             update.update,
             SessionChange::Renamed { title } if title == "renamed"
         ));
+    }
+
+    #[test]
+    fn prompt_journal_failure_finishes_prepared_root_execution() {
+        let (sender, _events) = mpsc::channel(1);
+        let mut worker = application_worker().with_event_sender(sender.clone());
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        sender
+            .try_send(ApplicationEvent {
+                event: ContractId::parse("phenix.application.session-update@1").unwrap(),
+                payload: Acknowledged {}.to_value(),
+            })
+            .expect("fill event queue");
+
+        let error = invoke_operation::<Prompt>(
+            &mut worker,
+            PromptInput {
+                session_id: created.session_id,
+                content: vec![Content::Text {
+                    text: "hello".into(),
+                }],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, ApplicationError::Conflict { .. }));
+        let response = worker
+            .invoke_execution(ExecutionCommand::GetExecution {
+                id: "execution-1".into(),
+            })
+            .unwrap();
+        let ExecutionResponse::ExecutionLookup {
+            execution: Some(execution),
+        } = response
+        else {
+            panic!("prepared execution must remain queryable");
+        };
+        assert_eq!(execution.state, phenix_sdk::ExecutionState::Failed);
     }
 
     #[test]

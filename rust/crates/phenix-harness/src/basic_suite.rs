@@ -179,7 +179,9 @@ mod tests {
                 &mut harness,
                 &session_service(),
                 &SessionCommand::Create {
-                    id: SessionId::parse("root").unwrap(),
+                    session: phenix_plugin_catalog::SessionRecord::new(
+                        SessionId::parse("root").unwrap(),
+                    ),
                 },
             );
             let _: SkillResponse = invoke_component(
