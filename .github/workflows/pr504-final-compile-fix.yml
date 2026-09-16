@@ -1,0 +1,61 @@
+name: PR 504 final compile fix
+
+on:
+  push:
+    branches: [spec/nvim-client-package]
+
+concurrency:
+  group: pr504-final-compile-fix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spec/nvim-client-package
+      - name: Fix test-only imports
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          review = Path('rust/crates/phenix-plugin-execution/src/review.rs')
+          text = review.read_text()
+          old = '''    use phenix_core::{\n        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,\n        PluginManifest, ServiceContribution,\n    };'''
+          new = '''    use phenix_core::{\n        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,\n        PluginManifest, Project, ServiceContribution,\n    };'''
+          if old not in text:
+              raise SystemExit('execution review test import shape changed')
+          review.write_text(text.replace(old, new, 1))
+
+          transport = Path('rust/crates/phenix-acp-stdio/src/transport.rs')
+          text = transport.read_text()
+          old = '''mod tests {\n    use super::*;\n    use phenix_core::{'''
+          new = '''mod tests {\n    use super::*;\n    use phenix_application_interface::types::ElicitationHandlerRef;\n    use phenix_core::{'''
+          if old not in text:
+              raise SystemExit('ACP transport test import shape changed')
+          transport.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+      - name: Focused Rust regression tests
+        run: |
+          cargo test --manifest-path rust/Cargo.toml \
+            -p phenix-plugin-memory \
+            -p phenix-plugin-session-tree \
+            -p phenix-plugin-execution \
+            -p phenix-acp-stdio \
+            -p phenix-harness \
+            --all-targets
+      - name: Commit fixes
+        run: |
+          rm .github/workflows/pr504-final-compile-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(nvim): finish exact-head contract migration'
+          git push origin HEAD:spec/nvim-client-package
