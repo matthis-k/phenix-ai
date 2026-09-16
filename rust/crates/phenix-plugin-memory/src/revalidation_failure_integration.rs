@@ -166,7 +166,7 @@ fn revalidation_failure_leaves_authoritative_session_history_unchanged() {
     invoke_sessions(
         &mut kernel,
         SessionCommand::Create {
-            id: session_id.clone(),
+            session: phenix_sdk::SessionRecord::new(session_id.clone()),
         },
     )
     .unwrap();
