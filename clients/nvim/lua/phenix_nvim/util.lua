@@ -10,6 +10,16 @@ end
 
 function M.request_poll(request)
   local result = M.pack(request:poll())
+
+  -- High-level facade requests are explicit: ready, value?, error?.
+  if result.n > 0 and type(result[1]) == "boolean" then
+    if not result[1] then
+      return false
+    end
+    return true, result[2], result[3]
+  end
+
+  -- Keep the raw ABI request shape usable for low-level consumers.
   if result.n == 0 then
     return false
   end
