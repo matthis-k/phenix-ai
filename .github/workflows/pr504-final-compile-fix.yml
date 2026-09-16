@@ -19,8 +19,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: spec/nvim-client-package
-      - name: Fix test-only imports
+          fetch-depth: 0
+      - name: Fix exact-head contract migration
         run: |
+          git show 7f38d389ea0f680751666fed3dc30a8aad3c0621:rust/crates/phenix-application-interface/fixtures/application.rs > rust/crates/phenix-application-interface/fixtures/application.rs
           python3 - <<'PY'
           from pathlib import Path
 
@@ -39,12 +41,31 @@ jobs:
           if old not in text:
               raise SystemExit('ACP transport test import shape changed')
           transport.write_text(text.replace(old, new, 1))
+
+          harness = Path('rust/crates/phenix-harness/tests/supported_product_journeys.rs')
+          text = harness.read_text()
+          old = '''    Authority, CapabilityGenerationId, ComponentManifest, ModelId, PhenixValue, PluginExecution,\n    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,\n    ServiceContribution, ServiceId, ValueError,'''
+          new = '''    Authority, CapabilityGenerationId, ComponentManifest, ModelId, PhenixValue, PluginExecution,\n    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,\n    ServiceContribution, ServiceId, SessionId, ValueError,'''
+          if old not in text:
+              raise SystemExit('harness core import shape changed')
+          text = text.replace(old, new, 1)
+          old = '''    RoutingProfile, SessionCommand, SessionResponse, SessionTreeCommand, SessionTreeResponse,\n    WorkspaceCommand, WorkspaceResponse,'''
+          new = '''    RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,\n    SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,'''
+          if old not in text:
+              raise SystemExit('harness catalog import shape changed')
+          text = text.replace(old, new, 1)
+          old = '''    invoke(\n        &mut harness,\n        "phenix.sessions@1",\n        json!({"operation": "create", "id": "root"}),\n    );\n    invoke(\n        &mut harness,\n        "phenix.sessions@1",\n        json!({"operation": "create", "id": "child"}),\n    );'''
+          new = '''    let _: SessionResponse = invoke_structural(\n        &mut harness,\n        "phenix.sessions@1",\n        &SessionCommand::Create {\n            session: SessionRecord::new(SessionId::parse("root").unwrap()),\n        },\n    );\n    let _: SessionResponse = invoke_structural(\n        &mut harness,\n        "phenix.sessions@1",\n        &SessionCommand::Create {\n            session: SessionRecord::new(SessionId::parse("child").unwrap()),\n        },\n    );'''
+          if old not in text:
+              raise SystemExit('harness session create fixture shape changed')
+          harness.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --manifest-path rust/Cargo.toml --all
           git diff --check
       - name: Focused Rust regression tests
         run: |
           cargo test --manifest-path rust/Cargo.toml \
+            -p phenix-application-interface \
             -p phenix-plugin-memory \
             -p phenix-plugin-session-tree \
             -p phenix-plugin-execution \
