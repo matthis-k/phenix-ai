@@ -59,12 +59,21 @@ jobs:
           if old not in text:
               raise SystemExit('harness session create fixture shape changed')
           harness.write_text(text.replace(old, new, 1))
+
+          domain = Path('rust/crates/phenix-domain/src/client_tools.rs')
+          text = domain.read_text()
+          old = '''        let id = ClientToolAdmissionId::parse(format!("client-tool-{}", self.next_id))\n            .expect("generated client tool admission ids are valid");'''
+          new = '''        // Admission handles cross the ACP connection boundary. Include the callable\n        // generation so a stale handle from a retired connection can never alias\n        // the first admission created by a later connection.\n        let id = ClientToolAdmissionId::parse(format!(\n            "client-tool-{}-{}",\n            tool.invoke.generation(),\n            self.next_id\n        ))\n        .expect("generated client tool admission ids are valid");'''
+          if old not in text:
+              raise SystemExit('client tool admission allocator shape changed')
+          domain.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --manifest-path rust/Cargo.toml --all
           git diff --check
       - name: Focused Rust regression tests
         run: |
           cargo test --manifest-path rust/Cargo.toml \
+            -p phenix-domain \
             -p phenix-application-interface \
             -p phenix-plugin-memory \
             -p phenix-plugin-session-tree \
