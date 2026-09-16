@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! grep -q 'pub struct ModelToolTurn' rust/crates/phenix-core/src/agent.rs; then
-            python3 -c 'from pathlib import Path; lines=Path(".github/workflows/pr504-continuation.yml").read_text().splitlines(); start=next(i for i,l in enumerate(lines) if "python3 - <<\x27PY\x27" in l)+1; end=next(i for i in range(start,len(lines)) if lines[i].strip()=="PY"); s="\n".join(line[10:] if line.startswith("          ") else line for line in lines[start:end]); exec(compile(s,"pr504-continuation","exec"))'
+            python3 -c 'from pathlib import Path; lines=Path(".github/workflows/pr504-continuation.yml").read_text().splitlines(); start=next(i for i,l in enumerate(lines) if "python3 - <<\x27PY\x27" in l)+1; end=next(i for i in range(start,len(lines)) if lines[i].strip()=="PY"); s="\n".join(line[10:] if line.startswith("          ") else line for line in lines[start:end]); s=s.replace("fn parse_json(\\n","fn parse_json("); exec(compile(s,"pr504-continuation","exec"))'
           fi
           python3 .github/pr504-application-loop.py
           cargo fmt --manifest-path rust/Cargo.toml --all
