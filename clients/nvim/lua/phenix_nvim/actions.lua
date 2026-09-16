@@ -43,7 +43,7 @@ end
 function M.reference_picker()
   context.pick_reference(function(item, error)
     if error ~= nil then
-      util.notify(error, vim.log.levels.ERROR)
+      util.notify(vim.inspect(error), vim.log.levels.ERROR)
       return
     end
     if item ~= nil then
@@ -134,6 +134,74 @@ end
 
 function M.choose_session()
   sessions.choose()
+end
+
+local function choice_label(item, selected)
+  local name = item.name or item.id or "unknown"
+  local id = item.id
+  local marker = id ~= nil and id == selected and "✓ " or "  "
+  if id ~= nil and id ~= name then
+    return marker .. name .. "  ·  " .. id
+  end
+  return marker .. name
+end
+
+function M.choose_model()
+  runtime.list_models(function(result, error)
+    if error ~= nil then
+      util.notify(vim.inspect(error), vim.log.levels.ERROR)
+      return
+    end
+    local available = result and result.available or {}
+    if #available == 0 then
+      util.notify("No models are available for this session", vim.log.levels.WARN)
+      return
+    end
+    vim.ui.select(available, {
+      prompt = "Phenix model",
+      format_item = function(item)
+        return choice_label(item, result.selected)
+      end,
+    }, function(item)
+      if item == nil then
+        return
+      end
+      runtime.select_model(item.id, function(_, select_error)
+        if select_error ~= nil then
+          util.notify(vim.inspect(select_error), vim.log.levels.ERROR)
+        end
+      end)
+    end)
+  end)
+end
+
+function M.choose_routing_profile()
+  runtime.list_routing_profiles(function(result, error)
+    if error ~= nil then
+      util.notify(vim.inspect(error), vim.log.levels.ERROR)
+      return
+    end
+    local available = result and result.available or {}
+    if #available == 0 then
+      util.notify("No routing profiles are available for this session", vim.log.levels.WARN)
+      return
+    end
+    vim.ui.select(available, {
+      prompt = "Phenix routing profile",
+      format_item = function(item)
+        return choice_label(item, result.selected)
+      end,
+    }, function(item)
+      if item == nil then
+        return
+      end
+      runtime.select_routing_profile(item.id, function(_, select_error)
+        if select_error ~= nil then
+          util.notify(vim.inspect(select_error), vim.log.levels.ERROR)
+        end
+      end)
+    end)
+  end)
 end
 
 return M
