@@ -10,8 +10,7 @@ local notices = {}
 
 vim.ui.input = function(_options, callback)
   assert(#inputs > 0, "unexpected elicitation input prompt")
-  local value = table.remove(inputs, 1)
-  callback(value)
+  callback(table.remove(inputs, 1))
 end
 
 vim.ui.select = function(items, _options, callback)
@@ -27,77 +26,66 @@ vim.notify = function(message)
   table.insert(notices, message)
 end
 
-local unit = { type = "unit" }
-local schema = {
-  type = "table",
-  value = {
-    count = { type = "u64" },
-    flags = { type = "list", value = { type = "bool" } },
-    mode = {
-      type = "variant",
-      value = {
-        Fast = unit,
-        Safe = unit,
-      },
-    },
-    note = { type = "option", value = { type = "string" } },
+local form = {
+  kind = "object",
+  fields = {
+    { name = "count", schema = { kind = "integer", signed = false } },
+    { name = "flags", schema = { kind = "list", item = { kind = "boolean" } } },
+    { name = "mode", schema = { kind = "enum", options = { "Fast", "Safe" } } },
+    { name = "note", schema = { kind = "string", optional = true } },
   },
 }
 
 inputs = { "-1", "7", "true, false", "" }
 selections = { "Fast" }
 local accepted
-local accepted_error
-interaction.elicitation({ message = "Configure", schema = schema }, function(response, error)
-  accepted = response
-  accepted_error = error
-end)
-assert(accepted_error == nil)
-assert(accepted.kind == "Accepted")
-assert(accepted.value.count == 7)
-assert(vim.deep_equal(accepted.value.flags, { true, false }))
-assert(accepted.value.mode.kind == "Fast")
-assert(accepted.value.note == nil)
+local cancelled = false
+local reply = {
+  accept = function(_, value)
+    accepted = value
+  end,
+  cancel = function()
+    cancelled = true
+  end,
+}
+interaction.elicitation({ message = "Configure", form = form }, reply)
+assert(not cancelled)
+assert(accepted.count == 7)
+assert(vim.deep_equal(accepted.flags, { true, false }))
+assert(accepted.mode.kind == "Fast")
+assert(accepted.note == nil)
 assert(#notices == 1 and notices[1]:find("unsigned integer", 1, true))
 
-local supported, support_error = interaction.supports({
-  type = "map",
-  value = { type = "string" },
-})
-assert(not supported)
-assert(support_error:find("unsupported_schema", 1, true))
-
-local unsupported_response
-local unsupported_error
-interaction.elicitation({
-  message = "Unsupported",
-  schema = { type = "callable" },
-}, function(response, error)
-  unsupported_response = response
-  unsupported_error = error
-end)
-assert(unsupported_response == nil)
-assert(unsupported_error:find("unsupported_schema", 1, true))
-
-selections = { false }
-local cancelled
 vim.ui.select = function(_items, _options, callback)
   callback(nil)
 end
+local elicitation_cancelled = false
 interaction.elicitation({
   message = "Confirm",
-  schema = { type = "bool" },
-}, function(response, error)
-  assert(error == nil)
-  cancelled = response
-end)
-assert(cancelled.kind == "Cancelled")
+  form = { kind = "boolean" },
+}, {
+  accept = function()
+    error("cancelled form must not be accepted")
+  end,
+  cancel = function()
+    elicitation_cancelled = true
+  end,
+})
+assert(elicitation_cancelled)
 
-local permission_cancelled
-interaction.permission({ description = "write file" }, function(response)
-  permission_cancelled = response
-end)
-assert(permission_cancelled.kind == "Cancelled")
+local permission_cancelled = false
+interaction.permission({ description = "write file" }, {
+  allow_once = function()
+    error("cancelled permission must not be allowed")
+  end,
+  deny = function()
+    error("cancelled permission must not be denied")
+  end,
+  cancel = function()
+    permission_cancelled = true
+  end,
+})
+assert(permission_cancelled)
 
 vim.ui.input = original_input
 vim.ui.select = original_select
