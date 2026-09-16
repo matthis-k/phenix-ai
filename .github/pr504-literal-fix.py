@@ -163,6 +163,9 @@ for path in Path('rust').rglob('*.rs'):
     if text != original:
         path.write_text(text)
 
-for marker in ('ModelInferenceRequest', 'InvocationRequest', 'PlannedStepRequest'):
+# These two have direct literals on this branch and therefore provide a useful
+# guard against a stale migration script. PlannedStepRequest is constructed
+# indirectly in the step runner and legitimately has no direct literal here.
+for marker in ('ModelInferenceRequest', 'InvocationRequest'):
     if counts[marker] == 0:
         raise SystemExit(f'no {marker} literals were migrated; source shape likely changed')
