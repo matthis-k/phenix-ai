@@ -1,15 +1,22 @@
 local M = {}
 
+local function snake(value)
+  if type(value) ~= "string" then
+    return value
+  end
+  return value:gsub("(%l)(%u)", "%1_%2"):lower()
+end
+
 local function variant_kind(value)
-  return type(value) == "table" and value.kind or nil
+  return type(value) == "table" and snake(value.kind) or nil
 end
 
 local function role_name(role)
   local kind = variant_kind(role)
   if type(kind) == "string" then
-    return string.lower(kind)
+    return kind
   end
-  return tostring(role or "unknown")
+  return tostring(role or "unknown"):lower()
 end
 
 local function id(prefix, suffix)
@@ -27,16 +34,17 @@ end
 local function message_text(content)
   local parts = {}
   for _, part in ipairs(content or {}) do
-    if part.kind == "Text" then
+    local kind = snake(part.kind)
+    if kind == "text" then
       table.insert(parts, part.text or "")
-    elseif part.kind == "Resource" then
+    elseif kind == "resource" then
       local label = part.uri or "resource"
       if part.text ~= nil then
         table.insert(parts, part.text)
       else
         table.insert(parts, "[resource: " .. label .. "]")
       end
-    elseif part.kind == "Image" then
+    elseif kind == "image" then
       table.insert(parts, "[image: " .. tostring(part.mime_type or "unknown") .. "]")
     end
   end
@@ -79,25 +87,25 @@ function M.new(session_id)
   }
 end
 
-local function apply_execution(projection, sequence, execution_id, change)
+local function apply_execution(projection, execution_id, change)
   local kind = variant_kind(change)
-  if kind == "State" then
-    local state = variant_kind(change.state) or "Unknown"
+  if kind == "state" then
+    local state = variant_kind(change.state) or "unknown"
     local node_id = execution_state_id(projection, execution_id)
     local changed = upsert(projection, {
       id = node_id,
       kind = "execution",
       execution_id = execution_id,
-      state = string.lower(state),
+      state = state,
     })
-    if state == "Completed" or state == "Cancelled" or state == "Failed" then
+    if state == "completed" or state == "cancelled" or state == "failed" then
       if projection.streaming_execution_id == execution_id then
         projection.streaming_execution_id = nil
       end
     end
     return changed
   end
-  if kind == "ToolCall" then
+  if kind == "tool_call" then
     return upsert(projection, {
       id = tool_id(projection, execution_id, change.call_id),
       kind = "tool",
@@ -108,17 +116,17 @@ local function apply_execution(projection, sequence, execution_id, change)
       input = change.input,
     })
   end
-  if kind == "ToolResult" or kind == "ToolFailed" then
+  if kind == "tool_result" or kind == "tool_failed" then
     local node_id = tool_id(projection, execution_id, change.call_id)
     local node = projection.nodes[node_id]
     if node == nil or node.kind ~= "tool" then
       return nil, "tool result targets unknown call " .. tostring(change.call_id)
     end
-    node.state = kind == "ToolResult" and "completed" or "failed"
-    node.output = kind == "ToolResult" and change.output or change.error
+    node.state = kind == "tool_result" and "completed" or "failed"
+    node.output = kind == "tool_result" and change.output or change.error
     return node_id
   end
-  if kind == "Progress" then
+  if kind == "progress" then
     local node_id = execution_state_id(projection, execution_id)
     local node = projection.nodes[node_id]
     if node == nil then
@@ -157,7 +165,7 @@ function M.apply(projection, update)
 
   local changed
   local err
-  if kind == "Message" then
+  if kind == "message" then
     local role = role_name(change.message and change.message.role)
     local text = message_text(change.message and change.message.content)
     if role == "assistant" and projection.streaming_execution_id ~= nil then
@@ -180,7 +188,7 @@ function M.apply(projection, update)
         final = true,
       })
     end
-  elseif kind == "TextDelta" then
+  elseif kind == "text_delta" then
     local node_id = assistant_id(projection, change.execution_id)
     local node = projection.nodes[node_id]
     if node == nil then
@@ -198,9 +206,9 @@ function M.apply(projection, update)
     node.text = node.text .. (change.text or "")
     projection.streaming_execution_id = change.execution_id
     changed = node_id
-  elseif kind == "Execution" then
-    changed, err = apply_execution(projection, update.sequence, change.execution_id, change.update)
-  elseif kind == "Diagnostic" then
+  elseif kind == "execution" then
+    changed, err = apply_execution(projection, change.execution_id, change.update)
+  elseif kind == "diagnostic" then
     local diagnostic = change.diagnostic or {}
     changed = upsert(projection, {
       id = diagnostic_id(projection, update.sequence),
@@ -210,7 +218,7 @@ function M.apply(projection, update)
       message = diagnostic.message,
       resource = diagnostic.resource,
     })
-  elseif kind == "Review" then
+  elseif kind == "review" then
     local review = change.review or {}
     if type(review.id) ~= "string" or review.id == "" then
       err = "review update is missing review id"
@@ -221,7 +229,7 @@ function M.apply(projection, update)
         review = review,
       })
     end
-  elseif kind == "Renamed" or kind == "Closed" then
+  elseif kind == "renamed" or kind == "closed" then
     changed = false
   else
     err = "unsupported session change " .. tostring(kind)
@@ -284,10 +292,7 @@ function M.sync(projection, session_projection)
     end
   end
   if projection.sequence ~= watermark then
-    return nil, string.format(
-      "session projection suffix did not reach watermark %d",
-      watermark
-    )
+    return nil, string.format("session projection suffix did not reach watermark %d", watermark)
   end
   local ordered = {}
   for _, node_id in ipairs(projection.order) do
