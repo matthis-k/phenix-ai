@@ -2,9 +2,10 @@ use crate::{extension_name, wire, ApplicationAdapter};
 use phenix_application_interface::types::ApplicationError;
 use phenix_application_interface::{
     application_descriptor, ActivateSkill, AddClientTool, ApplicationTransport, Authenticate,
-    DiscoverAuthentication, GetDiagnostics, GetExecutionTree, GetLineage, GetObservable,
-    GetProvenance, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListObservables,
-    ListSkills, Operation, RemoveClientTool, RenameSession, SubscribeObservable,
+    Cancel, CloseSession, CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics,
+    GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
+    InvokeCapability, ListCallables, ListObservables, ListSessions, ListSkills, Operation, Prompt,
+    RemoveClientTool, RenameSession, ResumeSession, SetInteractionHandlers, SubscribeObservable,
     UnsubscribeObservable,
 };
 use phenix_core::{ContractId, PhenixValue, ValueCodec};
@@ -27,6 +28,12 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
         }
 
         dispatch!(
+            CreateSession,
+            ListSessions,
+            ResumeSession,
+            CloseSession,
+            Prompt,
+            Cancel,
             DiscoverAuthentication,
             Authenticate,
             RenameSession,
@@ -46,6 +53,8 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
             GetObservable,
             SubscribeObservable,
             UnsubscribeObservable,
+            SetInteractionHandlers,
+            DecideReview,
         );
 
         Err(ApplicationError::InvalidInput {

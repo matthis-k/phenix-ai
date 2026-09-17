@@ -1,5 +1,7 @@
 use super::{ModelInferenceResponse, RouteDecision};
-use phenix_core::{Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ServiceId};
+use phenix_core::{
+    Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ModelToolTurn, ServiceId,
+};
 use serde::{Deserialize, Serialize};
 
 pub const MODEL_DISPATCH_SERVICE: &str = "phenix.models.dispatch@1";
@@ -38,6 +40,8 @@ pub enum ModelDispatchCommand {
         input: Bytes,
         #[serde(default)]
         tools: Vec<ModelToolDescriptor>,
+        #[serde(default)]
+        continuation: Vec<ModelToolTurn>,
     },
     InvokePrepared {
         prepared: PreparedDispatch,

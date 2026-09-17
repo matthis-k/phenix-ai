@@ -179,7 +179,9 @@ mod tests {
                 &mut harness,
                 &session_service(),
                 &SessionCommand::Create {
-                    id: SessionId::parse("root").unwrap(),
+                    session: phenix_plugin_catalog::SessionRecord::new(
+                        SessionId::parse("root").unwrap(),
+                    ),
                 },
             );
             let _: SkillResponse = invoke_component(
@@ -227,6 +229,7 @@ mod tests {
                     input: b"hello".to_vec().into(),
                     options: BTreeMap::new(),
                     tools: Vec::new(),
+                    continuation: Vec::new(),
                 },
             );
             assert_eq!(model.output.as_ref(), b"hello");

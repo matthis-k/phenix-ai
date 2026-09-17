@@ -515,6 +515,7 @@ fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
                 callable_id: None,
                 input: b"work on prs".to_vec().into(),
                 tools: Vec::new(),
+                continuation: Vec::new(),
             },
         },
     );

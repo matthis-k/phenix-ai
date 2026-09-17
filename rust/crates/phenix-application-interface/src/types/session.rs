@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 record!(SessionCreateInput, "phenix.application.type.session-create-input@1", {
     working_directory: String,
@@ -32,6 +33,14 @@ record!(SessionSnapshot, "phenix.application.type.session-snapshot@1", {
     session: SessionInfo,
     through_sequence: u64,
     updates: Vec<SessionUpdate>,
+});
+record!(SessionProjection, "phenix.application.type.session-projection@1", {
+    session: SessionInfo,
+    through_sequence: u64,
+    updates: Vec<SessionUpdate>,
+});
+record!(SessionProjectionState, "phenix.application.type.session-projection-state@1", {
+    sessions: BTreeMap<String, SessionProjection>,
 });
 variants!(MessageRole, "phenix.application.type.message-role@1", { User, Assistant });
 variants!(Content, "phenix.application.type.content@1", {
@@ -77,3 +86,20 @@ record!(Provenance, "phenix.application.type.provenance@1", {
     inputs: Vec<String>,
     outputs: Vec<String>,
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phenix_core::ValueCodec;
+
+    #[test]
+    fn session_projection_state_round_trips_as_one_structural_value() {
+        let state = SessionProjectionState {
+            sessions: BTreeMap::new(),
+        };
+        assert_eq!(
+            SessionProjectionState::from_value(&state.to_value()).unwrap(),
+            state
+        );
+    }
+}

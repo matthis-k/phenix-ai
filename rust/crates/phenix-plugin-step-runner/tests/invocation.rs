@@ -352,6 +352,7 @@ fn request() -> InvocationRequest {
         callable_id: None,
         input: b"public invocation request".to_vec().into(),
         tools: Vec::new(),
+        continuation: Vec::new(),
     }
 }
 

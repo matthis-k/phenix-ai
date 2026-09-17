@@ -212,9 +212,10 @@ fn handle_dispatch(
             decision,
             input,
             tools,
+            continuation,
         } => {
             validate_dispatch(context, routing, &decision)?;
-            let request = encode_request(context, &decision.target, input, tools)?;
+            let request = encode_request(context, &decision.target, input, tools, continuation)?;
             Ok(ModelDispatchResponse::Ready {
                 prepared: PreparedDispatch::new(decision, request),
             })
@@ -254,12 +255,14 @@ fn encode_request(
     target: &ModelTarget,
     input: phenix_core::Bytes,
     tools: Vec<phenix_core::ModelToolDescriptor>,
+    continuation: Vec<phenix_core::ModelToolTurn>,
 ) -> Result<phenix_core::Bytes, String> {
     let request = ModelInferenceRequest {
         model: target.model.clone(),
         input,
         options: target.options.clone(),
         tools,
+        continuation,
     };
     context
         .kernel

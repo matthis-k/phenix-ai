@@ -8,7 +8,7 @@ use phenix_sdk::{
     ExecutionRecord, ExecutionResponse, ExecutionState, WorkerTaskRecord, WorkerTaskState,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 const EXECUTION_PLUGIN: &str = "phenix.execution";
 const EXECUTION_NAMESPACE: &str = "phenix.execution.state";
@@ -270,9 +270,8 @@ fn mutate(
                     return Err(format!("unknown worker task dependency: {dependency}"));
                 }
             }
-            if creates_cycle(&state.tasks, &id, &depends_on) {
-                return Err("worker task dependencies contain a cycle".into());
-            }
+            // Dependencies must already exist, while task identities and dependency sets are
+            // immutable after insertion. Adding this fresh task therefore cannot create a cycle.
             let requested = parse_execution_authority(&requested_authority)?;
             let caller_limited =
                 execution_authority_from(&context.call.authority.attenuate(&requested));
@@ -376,7 +375,7 @@ fn mutate(
         ExecutionCommand::CreateDelegatedTask { .. }
         | ExecutionCommand::CompleteDelegatedTask { .. }
         | ExecutionCommand::GetDelegatedTask { .. } => {
-            Err("delegated task lifecycle is owned by phenix.execution.resources@1".into())
+            Err("delegated task runtime is not active at this stack layer".into())
         }
         ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }
@@ -517,38 +516,6 @@ fn runnable_tasks(state: &ExecutionProjection) -> Vec<String> {
         .collect()
 }
 
-fn creates_cycle(
-    tasks: &BTreeMap<String, WorkerTaskRecord>,
-    id: &str,
-    dependencies: &BTreeSet<String>,
-) -> bool {
-    dependencies
-        .iter()
-        .any(|dependency| reaches(tasks, dependency, id, &mut BTreeSet::new()))
-}
-
-fn reaches(
-    tasks: &BTreeMap<String, WorkerTaskRecord>,
-    current: &str,
-    target: &str,
-    visited: &mut BTreeSet<String>,
-) -> bool {
-    if current == target {
-        return true;
-    }
-    if !visited.insert(current.to_owned()) {
-        return false;
-    }
-    tasks
-        .get(current)
-        .map(|task| {
-            task.depends_on
-                .iter()
-                .any(|dependency| reaches(tasks, dependency, target, visited))
-        })
-        .unwrap_or(false)
-}
-
 fn validate_identity(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         Err(format!("{label} must not be empty"))
@@ -565,6 +532,7 @@ mod tests {
         ResolvedHarnessActivation,
     };
     use std::{
+        collections::BTreeSet,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -682,6 +650,63 @@ mod tests {
             .unwrap(),
             ExecutionResponse::ExecutionLookup { execution: Some(_) }
         ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn task_creation_rules_make_dependency_cycles_unrepresentable() {
+        let path = temp_db("execution-task-dag");
+        let mut kernel = kernel_with(&path);
+        create(&mut kernel, "root", authority(&["fs.read"]));
+
+        let missing = invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "a".into(),
+                parent_execution: "root".into(),
+                description: "task a".into(),
+                depends_on: BTreeSet::from(["b".to_owned()]),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap_err();
+        assert!(missing.contains("unknown worker task dependency: b"));
+
+        invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "a".into(),
+                parent_execution: "root".into(),
+                description: "task a".into(),
+                depends_on: BTreeSet::new(),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "b".into(),
+                parent_execution: "root".into(),
+                description: "task b".into(),
+                depends_on: BTreeSet::from(["a".to_owned()]),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap();
+
+        let immutable = invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "a".into(),
+                parent_execution: "root".into(),
+                description: "task a".into(),
+                depends_on: BTreeSet::from(["b".to_owned()]),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap_err();
+        assert!(immutable.contains("worker task already exists: a"));
         let _ = fs::remove_file(path);
     }
 

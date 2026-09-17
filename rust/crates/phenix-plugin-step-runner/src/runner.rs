@@ -173,6 +173,7 @@ fn run(
         callable_id,
         input,
         tools,
+        continuation,
         policy,
         task,
         context_candidates,
@@ -382,12 +383,12 @@ fn run(
                 .sdk
                 .context
                 .invoke_projected(&ContextCommand::Admit {
-                    request: Box::new(ContextAdmissionRequest {
+                    request: ContextAdmissionRequest {
                         execution_id: attribution.execution_id.clone(),
                         step_plan: plan.clone(),
                         candidates: context_candidates,
                         cache_epoch,
-                    }),
+                    },
                 }) {
                 Ok(response) => response,
                 Err(error) => {
@@ -474,6 +475,7 @@ fn run(
                 decision: decision.clone(),
                 input: model_input,
                 tools,
+                continuation,
             }) {
             Ok(response) => response,
             Err(error) => {

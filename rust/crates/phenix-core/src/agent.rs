@@ -19,6 +19,9 @@ pub struct ModelInferenceRequest {
     /// The complete model-visible tool surface for this inference turn.
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,
+    /// Completed assistant/tool exchanges for this logical inference turn.
+    #[serde(default)]
+    pub continuation: Vec<ModelToolTurn>,
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,6 +48,26 @@ pub struct ModelToolCall {
     pub call_id: String,
     pub callable_id: CallableId,
     pub input: PhenixValue,
+}
+
+/// Structural result for one provider-issued model tool call.
+///
+/// Errors remain typed `PhenixValue` payloads instead of being flattened into
+/// prompt prose. Provider adapters only serialize this value at the wire edge.
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModelToolResult {
+    pub call_id: String,
+    pub callable_id: CallableId,
+    pub output: PhenixValue,
+    pub is_error: bool,
+}
+
+/// One completed assistant/tool exchange used to continue provider inference.
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModelToolTurn {
+    pub assistant_output: Bytes,
+    pub tool_calls: Vec<ModelToolCall>,
+    pub tool_results: Vec<ModelToolResult>,
 }
 
 pub struct ModelInferenceInterface;

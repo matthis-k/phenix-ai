@@ -8,12 +8,15 @@ use phenix_core::{
     ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
 
 pub(crate) struct ProviderPlugin {
     spec: Arc<ProviderSpec>,
     runtime: Option<tokio::runtime::Runtime>,
-    client: reqwest::Client,
+    client: OnceLock<Result<reqwest::Client, reqwest::Error>>,
     credentials: Option<CredentialStore>,
 }
 
@@ -22,9 +25,18 @@ impl ProviderPlugin {
         Self {
             spec,
             runtime: None,
-            client: reqwest::Client::new(),
+            client: OnceLock::new(),
             credentials: None,
         }
+    }
+
+    fn client(&self) -> Result<&reqwest::Client, ProviderError> {
+        self.client
+            .get_or_init(|| reqwest::Client::builder().build())
+            .as_ref()
+            .map_err(|error| ProviderError::Transport {
+                message: format!("cannot build provider HTTP client: {error}"),
+            })
     }
 
     fn runtime(&self) -> Result<&tokio::runtime::Runtime, ProviderError> {
@@ -110,7 +122,7 @@ impl ProviderPlugin {
         let auth = self.resolve_auth()?;
         apply_auth(&self.spec, &mut outgoing.headers, auth.as_ref())?;
 
-        let client = self.client.clone();
+        let client = self.client()?.clone();
         let protocol = Arc::clone(&self.spec.protocol);
         let endpoint = self.spec.endpoint.clone();
         self.runtime()?.block_on(async move {

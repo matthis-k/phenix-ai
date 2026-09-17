@@ -277,6 +277,7 @@ impl InvocationPackage {
                 callable_id: request.callable_id,
                 input: request.input,
                 tools: request.tools,
+                continuation: request.continuation,
                 policy: params.policy,
                 task,
                 context_candidates: preparation.candidates,

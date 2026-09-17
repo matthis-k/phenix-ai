@@ -1621,6 +1621,7 @@ dependencies = [
  "phenix-sdk-macros",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -1695,11 +1696,13 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "futures",
+ "parking_lot",
  "phenix-application-interface",
  "phenix-core",
  "phenix-sdk-macros",
  "serde_json",
  "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -1739,6 +1742,9 @@ dependencies = [
 name = "phenix-harness"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
+ "phenix-acp-stdio",
+ "phenix-application-interface",
  "phenix-conductor",
  "phenix-core",
  "phenix-plugin-catalog",
@@ -1746,12 +1752,15 @@ dependencies = [
  "phenix-sdk",
  "serde",
  "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "phenix-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "phenix-application-interface",
  "phenix-core",
  "phenix-plugin-context",
  "phenix-plugin-execution",
@@ -1898,7 +1907,9 @@ dependencies = [
 name = "phenix-plugin-execution"
 version = "0.1.0"
 dependencies = [
+ "phenix-application-interface",
  "phenix-core",
+ "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",
  "serde",

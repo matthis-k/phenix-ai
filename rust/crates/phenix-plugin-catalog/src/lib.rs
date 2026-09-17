@@ -47,13 +47,15 @@ pub use phenix_plugin_debug::{
 pub use phenix_plugin_execution::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_service,
     execution_component_id, execution_component_manifest, execution_configuration_service,
-    execution_factory, execution_manifest, execution_resource_service, step_attempt_service,
-    AgentDefinition, AgentLoopCommand, AgentLoopInterface, AgentLoopPolicy, AgentLoopResponse,
-    AgentLoopUsage, CallablePolicy, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
-    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
-    OrchestrationDefinition, OrchestrationNode, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, AGENT_LOOP_SERVICE,
-    DEFAULT_MAX_PARALLEL_TOOL_CALLS, EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE,
+    execution_factory, execution_manifest, execution_resource_service, execution_review_service,
+    step_attempt_service, AgentDefinition, AgentLoopCommand, AgentLoopInterface, AgentLoopPolicy,
+    AgentLoopResponse, AgentLoopUsage, CallablePolicy, ExecutionConfigurationCommand,
+    ExecutionConfigurationResponse, ExecutionResourceCommand, ExecutionResourceInterface,
+    ExecutionResourceResponse, ExecutionReviewCommand, ExecutionReviewInterface,
+    ExecutionReviewResponse, OrchestrationDefinition, OrchestrationNode, PreparedReviewFile,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptPhase, StepAttemptRecord,
+    StepAttemptResponse, AGENT_LOOP_SERVICE, DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+    EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE, EXECUTION_REVIEW_SERVICE,
     STEP_ATTEMPT_SERVICE,
 };
 pub use phenix_plugin_frontend::{
@@ -121,8 +123,8 @@ pub use phenix_plugin_session_tree::{
 };
 pub use phenix_plugin_sessions::{
     session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
-    SessionInput, SessionInputKind, SessionInterface, SessionRecord, SessionResponse,
-    SESSION_SERVICE,
+    SessionInput, SessionInputKind, SessionInterface, SessionJournalDraft, SessionJournalEntry,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SESSION_SERVICE,
 };
 pub use phenix_plugin_step_runner::{
     helper_invocation_component_id, helper_invocation_component_manifest, step_runner_component_id,

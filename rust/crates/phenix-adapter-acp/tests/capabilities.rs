@@ -39,6 +39,14 @@ fn initialize_hides_unavailable_optional_capabilities_and_extensions() {
     let response = adapter.initialize(InitializeRequest::new(ProtocolVersion::V1));
     let value = serde_json::to_value(response).expect("initialize JSON");
 
+    let advertised = value["_meta"]["phenix.extensions"]["capabilities"]
+        .as_array()
+        .expect("advertised capabilities");
+    assert_eq!(advertised.len(), 3);
+    assert!(advertised
+        .iter()
+        .any(|capability| capability == "phenix.application.capability.prompt@1"));
+
     assert_eq!(value["agentCapabilities"]["loadSession"], false);
     let session = &value["agentCapabilities"]["sessionCapabilities"];
     assert!(session["list"].is_null());

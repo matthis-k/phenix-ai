@@ -90,7 +90,7 @@ fn retained_portable_model_and_tool_history_is_exactly_addressable() {
     invoke(
         &mut kernel,
         SessionCommand::Create {
-            id: session_id.clone(),
+            session: phenix_sdk::SessionRecord::new(session_id.clone()),
         },
     );
     let appended = invoke(

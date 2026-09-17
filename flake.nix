@@ -1,5 +1,5 @@
 {
-  description = "Phenix core, conductor, plugins, clients, and supported harness";
+  description = "Phenix AI core, runtime, plugins, clients, and supported harness";
 
   inputs = {
     phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/fa8008e193d3b6d6d52703979bdf63c9eaa1a4da";

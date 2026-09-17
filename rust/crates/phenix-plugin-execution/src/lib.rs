@@ -14,6 +14,7 @@ mod generation_regression;
 mod implementation;
 mod resource_service;
 mod resource_transaction;
+mod review;
 mod step_transaction_service;
 mod tool_schedule;
 
@@ -34,6 +35,10 @@ pub use phenix_sdk::{
     StepAttemptResponse, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
     EXECUTION_RESOURCE_SERVICE, STEP_ATTEMPT_SERVICE, STEP_TRANSACTION_SERVICE,
 };
+pub use review::{
+    execution_review_service, ExecutionReviewCommand, ExecutionReviewInterface,
+    ExecutionReviewResponse, PreparedReviewFile, EXECUTION_REVIEW_SERVICE,
+};
 pub use tool_schedule::{ScheduledToolBatch, ToolCallPlan, ToolConcurrency, ToolScheduler};
 
 use phenix_core::{
@@ -52,6 +57,12 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
     manifest.services.push(ServiceContribution {
         role: phenix_core::ServiceRole::Terminal,
         service: agent_loop::agent_loop_service(),
+        priority: 100,
+        required_authority: Authority::default(),
+    });
+    manifest.services.push(ServiceContribution {
+        role: phenix_core::ServiceRole::Terminal,
+        service: review::execution_review_service(),
         priority: 100,
         required_authority: Authority::default(),
     });
@@ -83,6 +94,9 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
         .resource_namespaces
         .push(attempt_service::attempt_namespace());
     manifest
+        .resource_namespaces
+        .push(review::execution_review_namespace());
+    manifest
 }
 
 #[must_use]
@@ -94,6 +108,7 @@ pub fn execution_factory() -> Box<dyn PluginInstance> {
         resources: resource_service::resource_factory(),
         attempts: attempt_service::attempt_factory(),
         step_transactions: step_transaction_service::step_transaction_factory(),
+        review: review::execution_review_factory(),
     })
 }
 
@@ -104,6 +119,7 @@ struct ExecutionPackagePlugin {
     resources: Box<dyn PluginInstance>,
     attempts: Box<dyn PluginInstance>,
     step_transactions: Box<dyn PluginInstance>,
+    review: Box<dyn PluginInstance>,
 }
 
 impl PluginInstance for ExecutionPackagePlugin {
@@ -113,6 +129,7 @@ impl PluginInstance for ExecutionPackagePlugin {
         self.resources.start(host)?;
         self.attempts.start(host)?;
         self.step_transactions.start(host)?;
+        self.review.start(host)?;
         self.agent_loop.start(host)
     }
 
@@ -128,6 +145,9 @@ impl PluginInstance for ExecutionPackagePlugin {
         if service == &agent_loop::agent_loop_service() {
             return self.agent_loop.invoke(service, input, host);
         }
+        if service == &review::execution_review_service() {
+            return self.review.invoke(service, input, host);
+        }
         if service == &execution_resource_service() {
             return self.resources.invoke(service, input, host);
         }
@@ -142,6 +162,7 @@ impl PluginInstance for ExecutionPackagePlugin {
 
     fn stop(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
         self.agent_loop.stop(host)?;
+        self.review.stop(host)?;
         self.step_transactions.stop(host)?;
         self.attempts.stop(host)?;
         self.resources.stop(host)?;
