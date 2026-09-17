@@ -1,6 +1,6 @@
 use crate::{
-    normalize_http_error, provider_auth_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind,
-    CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError,
+    normalize_http_error, oauth, provider_auth_service, ApiTokenScheme, ApiTokenSource, Auth,
+    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError,
     ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
@@ -60,17 +60,10 @@ impl ProviderPlugin {
             return Ok(None);
         }
         let store = self.credentials()?;
-        if self.spec.auth.oauth.is_some() {
+        if let Some(method) = &self.spec.auth.oauth {
             if let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::OAuth)? {
-                if auth.is_expired() {
-                    return Err(ProviderError::Authentication {
-                        message: format!(
-                            "OAuth credential for {} is expired; add a refreshed credential",
-                            self.spec.id
-                        ),
-                    });
-                }
-                return Ok(Some(auth));
+                return oauth::refresh_if_needed(method, self.spec.id.as_str(), store, auth)
+                    .map(Some);
             }
         }
         if self.spec.auth.api_token.is_some() {
@@ -169,6 +162,18 @@ impl ProviderPlugin {
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
                 credentials: self.available_auth_descriptors()?,
             }),
+            ProviderAuthCommand::BeginOAuth => {
+                let method = self.spec.auth.oauth.as_ref().ok_or_else(|| {
+                    ProviderError::Authentication {
+                        message: format!("provider {} does not support OAuth", self.spec.id),
+                    }
+                })?;
+                let external = oauth::begin(method, self.spec.id.as_str(), store.clone())?;
+                Ok(ProviderAuthResponse::External {
+                    uri: external.uri,
+                    instructions: external.instructions,
+                })
+            }
             ProviderAuthCommand::Remove { kind } => {
                 let auth = store.remove(self.spec.id.as_str(), kind)?;
                 Ok(ProviderAuthResponse::Removed { auth })
@@ -258,12 +263,13 @@ fn apply_auth(
 ) -> Result<(), ProviderError> {
     match auth {
         None => Ok(()),
-        Some(Auth::OAuth { access_token, .. }) if spec.auth.oauth.is_some() => {
-            headers.insert(
-                AUTHORIZATION.as_str().to_owned(),
-                format!("Bearer {}", access_token.expose()),
-            );
-            Ok(())
+        Some(Auth::OAuth { access_token, .. }) => {
+            let method = spec.auth.oauth.as_ref().ok_or_else(|| {
+                ProviderError::Authentication {
+                    message: "OAuth credential is not accepted by this provider".to_owned(),
+                }
+            })?;
+            oauth::apply_headers(method, access_token, headers)
         }
         Some(Auth::ApiToken { source }) => {
             let token = resolve_api_token(source)?;
@@ -287,9 +293,6 @@ fn apply_auth(
             }
             Ok(())
         }
-        Some(_) => Err(ProviderError::Authentication {
-            message: "credential type does not match provider auth configuration".to_owned(),
-        }),
     }
 }
 
