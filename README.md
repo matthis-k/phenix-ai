@@ -1,8 +1,8 @@
 # Phenix AI
 
-This repository owns the generic Phenix runtime, conductor, internal client wire, independently packaged first-party plugins and protocol adapters, and the supported Harness product.
+This repository owns the generic Phenix runtime, conductor, internal client wire, independently packaged first-party plugins and protocol adapters, native client bindings, and the supported Harness product.
 
-The Neovim frontend lives in `matthis-k/phenix-nvim`. This repository owns server-side behavior and frontend-neutral contracts.
+The canonical Neovim AI client lives in `matthis-k/phenix-ai.nvim`. The complete Neovim distribution lives in `matthis-k/phenix-nvim` and consumes that client. This repository owns frontend-neutral runtime behavior and contracts.
 
 ## Architecture
 
@@ -35,9 +35,9 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 `phenix-client` owns the internal conductor client/server wire; it is not a public Client SDK. `phenix-adapter-acp` is the transport-independent ACP runtime plugin. It maps standard ACP and descriptor-backed `_phenix/...` extensions to the fixed application interface.
 
-`phenix-application-interface` owns the fixed, versioned application descriptor. Typed Rust declarations derive its `PhenixSchema` payloads. The descriptor covers editor operations, updates, callbacks, capability dependencies, and errors. It contains no runtime service topology or authority policy. The first Rust emitter consumes the serialized descriptor and produces a compiled regression client.
+`phenix-application-interface` owns the fixed, versioned application descriptor. Typed Rust declarations derive its `PhenixSchema` payloads. The descriptor covers editor operations, updates, callbacks, capability dependencies, and errors. It contains no runtime service topology or authority policy. Generated client bindings consume this descriptor rather than duplicating application schemas.
 
-`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The remaining runtime bridge and `phenix-acp` executable are required before an editor can spawn it.
+`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The packaged `phenix-acp` executable composes that transport with the supported Harness application worker so external clients can spawn a complete runtime through one stable executable boundary.
 
 ### Rust boundaries
 
@@ -45,7 +45,7 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 | --- | --- |
 | `phenix-core` | Generic plugin host, trust boundaries, persistence enforcement, events, tasks |
 | `phenix-client` | Internal conductor client/server wire |
-| `phenix-application-interface` | Passive application contracts, descriptor emission, and Rust generation |
+| `phenix-application-interface` | Passive application contracts, descriptor emission, and client generation |
 | `phenix-conductor` | Generic configured server and transport |
 | `phenix-plugin-*` | Independently owned first-party services |
 | `phenix-adapter-acp` | Stateless ACP adapter runtime plugin |
@@ -76,7 +76,7 @@ Project context and skills are context-plugin resources. Their metadata never ex
 
 ## Packages
 
-The flake exposes:
+The flake exposes, among other public outputs:
 
 - `packages.<system>.phenix-core`;
 - `packages.<system>.phenix-client`;
@@ -84,10 +84,14 @@ The flake exposes:
 - `packages.<system>.phenix-conductor`;
 - `packages.<system>.phenix-harness`;
 - `packages.<system>.phenix`;
+- `packages.<system>.phenix-acp` for external ACP clients;
+- `packages.<system>.phenix-binding-lua` for Lua clients;
 - `phenixPlugins.<system>.*`;
 - `wrappers.phenix.wrap`;
 - `lib.mkPhenixPlugin`;
 - `lib.mkPhenix`.
+
+Neovim-specific packaging is intentionally absent. `phenix-ai.nvim` composes the generic Lua binding and `phenix-acp` runtime with its own Neovim source.
 
 ## Protocol and provider boundaries
 
@@ -117,8 +121,8 @@ Authentication and provider selection are plugin and Harness concerns. They must
 For a fresh clone with repository hooks enabled immediately:
 
 ```sh
-git clone -c core.hooksPath=.githooks https://github.com/matthis-k/phenix-conductor
-cd phenix-conductor
+git clone -c core.hooksPath=.githooks https://github.com/matthis-k/phenix-ai
+cd phenix-ai
 ```
 
 The tracked hook invokes the repository's Nix maintenance app. It does not install hook files or configuration beneath `.git`. A normal clone also works; `nix develop` activates the same hook path for that repository and shell without mutating Git metadata.
