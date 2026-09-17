@@ -2158,6 +2158,7 @@ fn phenix(lua: &Lua) -> LuaResult<Table> {
     exports.set("interface_id", INTERFACE_ID)?;
     exports.set("descriptor", descriptor(lua)?)?;
     exports.set("tools", tools::exports(lua)?)?;
+    exports.set("application", tools::facade_exports(lua)?)?;
     exports.set(
         "connect",
         lua.create_function(|_lua, options: Table| connect(options))?,

@@ -15,10 +15,6 @@ fn connect_raw(options: Table) -> LuaResult<Client> {
 pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
     let tools = lua.create_table()?;
     tools.set(
-        "connect",
-        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,
-    )?;
-    tools.set(
         "register",
         lua.create_function(|lua, (definition, handler): (Table, mlua::Function)| {
             let client: mlua::AnyUserData = definition.get("client")?;
@@ -27,6 +23,15 @@ pub(super) fn exports(lua: &Lua) -> LuaResult<Table> {
         })?,
     )?;
     Ok(tools)
+}
+
+pub(super) fn facade_exports(lua: &Lua) -> LuaResult<Table> {
+    let application = lua.create_table()?;
+    application.set(
+        "connect",
+        lua.create_function(|lua, options: Table| facade::connect(lua, options))?,
+    )?;
+    Ok(application)
 }
 
 pub(super) fn bind(lua: &Lua, client: Client) -> LuaResult<Table> {

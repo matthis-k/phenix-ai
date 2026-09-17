@@ -1508,7 +1508,7 @@ fn parse_content(content: Table) -> LuaResult<Vec<Content>> {
                     text: item.get::<Option<String>>("text")?,
                 }),
                 "image" => {
-                    let data = item.get::<mlua::String>("data")?;
+                    let data = item.get::<mlua::LuaString>("data")?;
                     Ok(Content::Image {
                         mime_type: item.get::<String>("mime_type")?,
                         data: data.as_bytes().to_vec().into(),

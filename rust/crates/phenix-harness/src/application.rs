@@ -1094,8 +1094,8 @@ pub async fn serve_configured_application(
         CapabilityGenerationId::from(harness.generation())
     };
     let client = ClientCapabilityIdentity::new(
-        ClientConnectionId::parse("stdio-client-1").expect("static ACP client id is valid"),
-        CapabilityGenerationId::parse("stdio-connection-1")
+        ClientConnectionId::parse("lua-client-1").expect("static ACP client id is valid"),
+        CapabilityGenerationId::parse("connection-1")
             .expect("static ACP connection generation is valid"),
     );
     let (client_callbacks, callback_receiver) =

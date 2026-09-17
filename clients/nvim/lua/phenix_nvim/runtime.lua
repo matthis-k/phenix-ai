@@ -247,7 +247,7 @@ function M.connect(callback)
   state.connection = "connecting"
   state.error = nil
 
-  local facade = native.tools and native.tools.connect
+  local facade = native.application and native.application.connect
   if type(facade) ~= "function" then
     fail({ message = "native Phenix binding does not expose the application facade" })
     return
@@ -434,6 +434,49 @@ function M.prompt(session_id, segments, callback)
     end
     util.safe_call(callback, result, error)
   end)
+end
+
+local function active_session_request(method, callback, ...)
+  if not require_ready(callback) then
+    return
+  end
+  local session = state.active_session
+  if session == nil then
+    util.safe_call(callback, nil, { message = "no active Phenix session" })
+    return
+  end
+  local callable = session[method]
+  if type(callable) ~= "function" then
+    util.safe_call(callback, nil, { message = "Phenix session does not support " .. method })
+    return
+  end
+  local ok, request = pcall(callable, session, ...)
+  if not ok then
+    util.safe_call(callback, nil, { message = tostring(request) })
+    return
+  end
+  M.track(request, function(result, error)
+    if error == nil then
+      emit("status", M.status())
+    end
+    util.safe_call(callback, result, error)
+  end)
+end
+
+function M.list_models(callback)
+  active_session_request("models", callback)
+end
+
+function M.select_model(model_id, callback)
+  active_session_request("select_model", callback, model_id)
+end
+
+function M.list_routing_profiles(callback)
+  active_session_request("routing_profiles", callback)
+end
+
+function M.select_routing_profile(profile_id, callback)
+  active_session_request("select_routing_profile", callback, profile_id)
 end
 
 function M.cancel_active()
