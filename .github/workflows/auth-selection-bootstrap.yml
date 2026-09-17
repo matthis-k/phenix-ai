@@ -19,11 +19,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: python3 scripts/apply-auth-selection-patch.py
       - run: cargo fmt --manifest-path rust/Cargo.toml --all
+      - name: Update Rust lock and compile changed packages
+        run: cargo check --manifest-path rust/Cargo.toml -p phenix-provider-sdk -p phenix-plugin-providers -p phenix-harness -p phenix-binding-lua
       - name: Regenerate application descriptor
         run: |
           cargo run --manifest-path rust/Cargo.toml --locked -p phenix-application-interface --bin phenix-application-descriptor > share/phenix/interfaces/phenix.application@1.json
           cargo run --manifest-path rust/Cargo.toml --locked -p phenix-application-interface --bin phenix-application-descriptor -- --rust share/phenix/interfaces/phenix.application@1.json > rust/crates/phenix-application-interface/fixtures/application.rs
-      - run: cargo check --manifest-path rust/Cargo.toml --locked -p phenix-provider-sdk -p phenix-plugin-providers -p phenix-harness -p phenix-binding-lua
       - run: cargo test --manifest-path rust/Cargo.toml --locked -p phenix-provider-sdk -p phenix-plugin-providers -p phenix-application-interface --lib
       - run: git diff --check
       - name: Commit checked integration
