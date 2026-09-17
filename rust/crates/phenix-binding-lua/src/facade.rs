@@ -694,9 +694,11 @@ fn decode_outcome(
         ));
     };
     match projection {
-        RequestProjection::AuthenticationMethods => Ok(FacadeOutcome::AuthenticationMethods(
-            decode::<AuthenticationMethods>(&value)?,
-        )),
+        RequestProjection::AuthenticationMethods => {
+            Ok(FacadeOutcome::AuthenticationMethods(decode::<
+                AuthenticationMethods,
+            >(&value)?))
+        }
         RequestProjection::Authentication => Ok(FacadeOutcome::Authentication(decode::<
             AuthenticationResult,
         >(&value)?)),
