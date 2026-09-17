@@ -1034,7 +1034,7 @@ impl ApplicationWorker {
             ModelResponse::Authentication {
                 provider_plugin,
                 authenticated: true,
-            } if provider_plugin == *provider => Ok(()),
+            } if &provider_plugin == provider => Ok(()),
             response => Err(ApplicationError::InvalidResponse {
                 message: format!(
                     "model routing returned an unexpected authentication response: {response:?}"
@@ -1981,6 +1981,22 @@ mod tests {
             phenix_core::CapabilityGenerationId::parse("generation-1").unwrap(),
             phenix_core::ReferenceId::parse(reference).unwrap(),
         )
+    }
+
+    #[test]
+    fn authentication_discovery_projects_provider_owned_interactive_flows() {
+        let mut worker = application_worker();
+        let discovered =
+            invoke_operation::<DiscoverAuthentication>(&mut worker, Empty {}).unwrap();
+        let method = discovered
+            .methods
+            .iter()
+            .find(|method| method.name == "OpenAI Codex (ChatGPT OAuth)")
+            .expect("default suite exposes Codex OAuth");
+        let (provider, local_method) =
+            parse_authentication_method_id(&method.id).expect("application auth id round-trips");
+        assert_eq!(provider.as_str(), "openai-codex");
+        assert_eq!(local_method, "oauth");
     }
 
     #[test]
