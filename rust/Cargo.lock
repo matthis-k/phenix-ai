@@ -1852,6 +1852,7 @@ dependencies = [
  "phenix-plugin-language",
  "phenix-plugin-memory",
  "phenix-plugin-models",
+ "phenix-plugin-openai-codex",
  "phenix-plugin-options",
  "phenix-plugin-planning",
  "phenix-plugin-providers",
@@ -1986,6 +1987,22 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "phenix-plugin-openai-codex"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "getrandom 0.4.3",
+ "phenix-core",
+ "phenix-provider-sdk",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "url",
 ]
 
 [[package]]
