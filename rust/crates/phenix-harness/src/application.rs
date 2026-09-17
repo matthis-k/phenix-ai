@@ -1,3 +1,6 @@
+#[path = "application_selection.rs"]
+mod application_selection;
+
 use crate::{default_suite_authority, PhenixHarness};
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
@@ -8,22 +11,24 @@ use phenix_acp_stdio::{
 use phenix_application_interface::{
     types::{
         Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,
-        ElicitationHandlerRef, ExecutionChange, ExecutionState, InteractionHandlers, Message,
+        ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState, InteractionHandlers, Message,
         MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
         PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
         SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
         SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
         SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SetInteractionHandlers,
+    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
+    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListModels,
+    ListRoutingProfiles, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession,
+    ResumeSession, SelectModel, SelectRoutingProfile, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
     HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ModelToolResult, ModelToolTurn,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
+    PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec,
     ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
@@ -351,6 +356,40 @@ impl ApplicationWorker {
         input: PhenixValue,
     ) -> Result<PhenixValue, ApplicationError> {
         match operation.as_str() {
+            DiscoverAuthentication::ID => {
+                decode::<Empty>(input)?;
+                application_selection::discover_authentication(&mut self.harness.lock())
+                    .map(|value| value.to_value())
+            }
+            Authenticate::ID => application_selection::authenticate(
+                &mut self.harness.lock(),
+                decode(input)?,
+            )
+            .map(|value| value.to_value()),
+            ListModels::ID => {
+                let request = decode(input)?;
+                self.require_open_application_session(&request.session_id)?;
+                application_selection::list_models(&mut self.harness.lock(), request)
+                    .map(|value| value.to_value())
+            }
+            SelectModel::ID => {
+                let request = decode(input)?;
+                self.require_open_application_session(&request.session_id)?;
+                application_selection::select_model(&mut self.harness.lock(), request)
+                    .map(|value| value.to_value())
+            }
+            ListRoutingProfiles::ID => {
+                let request = decode(input)?;
+                self.require_open_application_session(&request.session_id)?;
+                application_selection::list_routing_profiles(&mut self.harness.lock(), request)
+                    .map(|value| value.to_value())
+            }
+            SelectRoutingProfile::ID => {
+                let request = decode(input)?;
+                self.require_open_application_session(&request.session_id)?;
+                application_selection::select_routing_profile(&mut self.harness.lock(), request)
+                    .map(|value| value.to_value())
+            }
             CreateSession::ID => self
                 .create_session(decode(input)?)
                 .map(|value| value.to_value()),
@@ -1234,6 +1273,26 @@ fn start_prompt(
         }));
         return;
     }
+    let profile_id = {
+        let mut harness = worker.harness.lock();
+        if let Err(error) = application_selection::refresh_provider_authentication(&mut harness) {
+            invocation.respond(Err(error));
+            return;
+        }
+        match application_selection::selected_profile(&mut harness, &request.session_id) {
+            Ok(Some(profile_id)) => profile_id,
+            Ok(None) => {
+                invocation.respond(Err(ApplicationError::Failed {
+                    message: "session has no model or routing profile selection".to_owned(),
+                }));
+                return;
+            }
+            Err(error) => {
+                invocation.respond(Err(error));
+                return;
+            }
+        }
+    };
     let model_input = match model_input_from_content(&request.content) {
         Ok(input) => input,
         Err(error) => {
@@ -1296,6 +1355,7 @@ fn start_prompt(
                 AgentExecutionContext {
                     session_id: execution_session,
                     execution_id: runtime_execution_id,
+                    profile_id,
                     input: model_input,
                     tools,
                     permission_handler,
@@ -1490,6 +1550,7 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
 struct AgentExecutionContext {
     session_id: SessionId,
     execution_id: String,
+    profile_id: RoutingProfileId,
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
     permission_handler: Option<PermissionHandlerRef>,
@@ -1506,6 +1567,7 @@ fn run_agent_execution(
     let AgentExecutionContext {
         session_id,
         execution_id,
+        profile_id,
         input,
         tools,
         permission_handler,
@@ -1523,10 +1585,11 @@ fn run_agent_execution(
         if cancellation.load(Ordering::Acquire) {
             return Err(ApplicationError::Cancelled);
         }
-        let command = AgentLoopCommand::Run {
+        let command = AgentLoopCommand::RunWithProfile {
             execution_id: execution_id.clone(),
             parent_attempt_id: None,
             callable_id: Some(callable_id.clone()),
+            profile_id: profile_id.clone(),
             input: input.clone(),
             tools: tools.clone(),
             continuation: continuation.clone(),
@@ -1696,11 +1759,14 @@ fn is_sdk_operation(operation: &ContractId) -> bool {
 fn configured_capabilities() -> Vec<ContractId> {
     [
         "discovery",
+        "authentication",
         "sessions",
         "session-list",
         "session-resume",
         "session-rename",
         "prompt",
+        "models",
+        "routing",
         "sdk",
         "capabilities",
         "callables",

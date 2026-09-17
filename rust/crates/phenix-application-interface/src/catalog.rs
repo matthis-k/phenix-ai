@@ -79,6 +79,7 @@ pub fn application_descriptor() -> ApplicationDescriptor {
     }
     named_types!(
         AuthenticationMethod,
+        AuthenticationMethodKind,
         ModelInfo,
         RoutingInfo,
         SkillInfo,

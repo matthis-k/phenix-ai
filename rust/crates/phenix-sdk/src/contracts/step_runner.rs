@@ -156,6 +156,10 @@ pub enum InvocationCommand {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DefaultInvocationCommand {
     Invoke { request: InvocationRequest },
+    InvokeWithProfile {
+        request: InvocationRequest,
+        profile_id: RoutingProfileId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]

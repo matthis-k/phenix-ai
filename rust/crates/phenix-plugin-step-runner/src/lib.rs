@@ -534,7 +534,12 @@ impl PluginInstance for InvocationPackage {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let DefaultInvocationCommand::Invoke { request } = command;
+            let (request, profile_id) = match command {
+                DefaultInvocationCommand::Invoke { request } => (request, None),
+                DefaultInvocationCommand::InvokeWithProfile { request, profile_id } => {
+                    (request, Some(profile_id))
+                }
+            };
             let resolved: InvocationDefaultsResponse = context
                 .sdk
                 .defaults
@@ -542,7 +547,10 @@ impl PluginInstance for InvocationPackage {
                     request: request.clone(),
                 })
                 .map_err(|error| format!("default invocation parameters unavailable: {error}"))?;
-            let InvocationDefaultsResponse::Params { params } = resolved;
+            let InvocationDefaultsResponse::Params { mut params } = resolved;
+            if let Some(profile_id) = profile_id {
+                params.profile_id = profile_id;
+            }
             return self.invoke_explicit(&context, host, request, params);
         }
         self.runner.invoke(service, input, host)

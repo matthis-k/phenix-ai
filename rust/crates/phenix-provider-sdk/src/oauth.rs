@@ -8,7 +8,6 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::Arc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -325,7 +324,7 @@ fn receive_callback(stream: &mut TcpStream, expected_state: &str) -> Result<Stri
 
 async fn post_token_form(
     token_url: &str,
-    form: &[("static str", String)],
+    form: &[(&str, String)],
 ) -> Result<TokenResponse, ProviderError> {
     let response = Client::new()
         .post(token_url)
