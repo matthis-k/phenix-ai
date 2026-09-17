@@ -13,7 +13,7 @@ use phenix_plugin_catalog::{
 use phenix_provider_sdk::{
     auth, provider_auth_service, Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MODEL_DEFAULT_OPTION: &str = "model.default";
 const DIRECT_PROFILE_PREFIX: &str = "phenix.application.direct.";
@@ -24,6 +24,7 @@ pub(crate) fn discover_authentication(
     let mut methods = Vec::new();
     for provider in common_provider_definitions() {
         let provider_id = provider.plugin_id().clone();
+        let authenticated = provider_credentials(harness, &provider_id)?;
         for kind in provider.auth_kinds() {
             let (suffix, kind, label) = match kind {
                 AuthKind::ApiToken => ("api-key", AuthenticationMethodKind::ApiKey, "API key"),
@@ -34,6 +35,7 @@ pub(crate) fn discover_authentication(
                 name: format!("{} {label}", provider_id),
                 description: Some(format!("Authenticate {} using {label}", provider_id)),
                 kind,
+                authenticated: authenticated.contains(&auth_kind(&kind)),
             });
         }
     }
@@ -67,6 +69,13 @@ pub(crate) fn authenticate(
                     message: error.to_string(),
                 }
             })?;
+            let _ = invoke_provider_auth(
+                harness,
+                &provider,
+                ProviderAuthCommand::Remove {
+                    kind: AuthKind::ApiToken,
+                },
+            )?;
             invoke_provider_auth(
                 harness,
                 &provider,
@@ -77,26 +86,48 @@ pub(crate) fn authenticate(
             set_provider_authenticated(harness, provider, true)?;
             Ok(AuthenticationResult::Authenticated)
         }
-        "oauth" => Err(ApplicationError::Failed {
-            message: format!(
-                "provider {provider} advertises OAuth credentials but does not expose an interactive external authorization flow"
-            ),
-        }),
+        "oauth" => {
+            if input.secret.is_some() {
+                return Err(ApplicationError::InvalidInput {
+                    message: "OAuth authentication does not accept an API-key secret".to_owned(),
+                });
+            }
+            match invoke_provider_auth(harness, &provider, ProviderAuthCommand::BeginOAuth)? {
+                ProviderAuthResponse::External { uri, instructions } => {
+                    Ok(AuthenticationResult::External { uri, instructions })
+                }
+                other => Err(ApplicationError::InvalidResponse {
+                    message: format!("provider returned unexpected OAuth response: {other:?}"),
+                }),
+            }
+        }
         other => Err(ApplicationError::InvalidInput {
             message: format!("unknown authentication method {other:?}"),
         }),
     }
 }
 
+pub(crate) fn refresh_provider_authentication(
+    harness: &mut PhenixHarness,
+) -> Result<(), ApplicationError> {
+    for provider in common_provider_definitions() {
+        let provider_id = provider.plugin_id().clone();
+        let authenticated = !provider_credentials(harness, &provider_id)?.is_empty();
+        set_provider_authenticated(harness, provider_id, authenticated)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn list_models(
     harness: &mut PhenixHarness,
     input: SessionInput,
 ) -> Result<Models, ApplicationError> {
+    refresh_provider_authentication(harness)?;
     let targets = model_targets(harness)?;
     let available = targets
-        .values()
-        .map(|target| ModelInfo {
-            id: target.model.clone(),
+        .iter()
+        .map(|(id, target)| ModelInfo {
+            id: id.clone(),
             name: format!("{}/{}", target.provider_plugin, target.model),
             description: Some(format!("Provider {}", target.provider_plugin)),
         })
@@ -109,7 +140,7 @@ pub(crate) fn list_models(
         selected_profile
             .as_ref()
             .and_then(|profile| profile_by_id(harness, profile).ok().flatten())
-            .map(|profile| profile.default_target.model)
+            .and_then(|profile| application_model_id(&profile.default_target).ok())
     } else {
         None
     };
@@ -120,6 +151,7 @@ pub(crate) fn select_model(
     harness: &mut PhenixHarness,
     input: ModelSelectInput,
 ) -> Result<Models, ApplicationError> {
+    refresh_provider_authentication(harness)?;
     let targets = model_targets(harness)?;
     let target = targets.get(&input.model_id).cloned().ok_or_else(|| {
         ApplicationError::NotFound {
@@ -127,7 +159,7 @@ pub(crate) fn select_model(
         }
     })?;
     let profile_id = RoutingProfileId::parse(format!(
-        "{DIRECT_PROFILE_PREFIX}{}.{}",
+        "{DIRECT_PROFILE_PREFIX}{}/{}",
         target.provider_plugin, target.model
     ))
     .map_err(|error| ApplicationError::InvalidInput {
@@ -172,6 +204,7 @@ pub(crate) fn list_routing_profiles(
     harness: &mut PhenixHarness,
     input: SessionInput,
 ) -> Result<RoutingProfiles, ApplicationError> {
+    refresh_provider_authentication(harness)?;
     let response: ModelResponse = invoke_projected(
         harness,
         &model_routing_service(),
@@ -200,6 +233,7 @@ pub(crate) fn select_routing_profile(
     harness: &mut PhenixHarness,
     input: RoutingSelectInput,
 ) -> Result<RoutingProfiles, ApplicationError> {
+    refresh_provider_authentication(harness)?;
     if input.profile_id.as_str().starts_with(DIRECT_PROFILE_PREFIX) {
         return Err(ApplicationError::InvalidInput {
             message: "direct model profiles are selected through model selection".to_owned(),
@@ -284,23 +318,31 @@ fn model_targets(
         };
         for candidate in candidates {
             let target = candidate.capabilities.target;
-            match targets.get(&target.model) {
+            let id = application_model_id(&target)?;
+            match targets.get(&id) {
                 None => {
-                    targets.insert(target.model.clone(), target);
+                    targets.insert(id, target);
                 }
                 Some(existing) if existing == &target => {}
-                Some(existing) => {
+                Some(_) => {
                     return Err(ApplicationError::Conflict {
-                        message: format!(
-                            "model id {} resolves to both provider {} and provider {}; application model ids must be unambiguous",
-                            target.model, existing.provider_plugin, target.provider_plugin
-                        ),
+                        message: format!("application model id {id} is ambiguous"),
                     })
                 }
             }
         }
     }
     Ok(targets)
+}
+
+fn application_model_id(
+    target: &phenix_plugin_catalog::ModelTarget,
+) -> Result<ModelId, ApplicationError> {
+    ModelId::parse(format!("{}/{}", target.provider_plugin, target.model)).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: format!("cannot project provider-qualified model id: {error}"),
+        }
+    })
 }
 
 fn profile_by_id(
@@ -340,6 +382,27 @@ fn set_selected_profile(
         Err(ApplicationError::InvalidResponse {
             message: "options service rejected session model selection".to_owned(),
         })
+    }
+}
+
+fn provider_credentials(
+    harness: &mut PhenixHarness,
+    provider: &PluginId,
+) -> Result<BTreeSet<AuthKind>, ApplicationError> {
+    match invoke_provider_auth(harness, provider, ProviderAuthCommand::List)? {
+        ProviderAuthResponse::Credentials { credentials } => {
+            Ok(credentials.into_iter().map(|credential| credential.kind).collect())
+        }
+        other => Err(ApplicationError::InvalidResponse {
+            message: format!("provider returned unexpected credential response: {other:?}"),
+        }),
+    }
+}
+
+fn auth_kind(kind: &AuthenticationMethodKind) -> AuthKind {
+    match kind {
+        AuthenticationMethodKind::ApiKey => AuthKind::ApiToken,
+        AuthenticationMethodKind::OAuth => AuthKind::OAuth,
     }
 }
 
