@@ -10,142 +10,439 @@ def replace_once(path: str, old: str, new: str) -> None:
     file.write_text(text.replace(old, new, 1))
 
 
-# Fix the isolated OAuth implementation after the initial structural commit.
+# Persist provider account identity separately from bearer-token shape. This is
+# needed by OAuth providers such as OpenAI Codex where account identity may be
+# carried by the ID token rather than the access token.
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/types.rs",
+    '''    OAuth {
+        access_token: Token,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refresh_token: Option<Secret>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<u64>,
+    },
+''',
+    '''    OAuth {
+        access_token: Token,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refresh_token: Option<Secret>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
+    },
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/store.rs",
+    '''    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
+}
+''',
+    '''    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+}
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/store.rs",
+    '''            Auth::OAuth {
+                access_token,
+                refresh_token,
+                expires_at,
+            } => {
+''',
+    '''            Auth::OAuth {
+                access_token,
+                refresh_token,
+                expires_at,
+                account_id,
+            } => {
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/store.rs",
+    '''                self.oauth = Some(OAuthCredential {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                });
+''',
+    '''                self.oauth = Some(OAuthCredential {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                    account_id,
+                });
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/store.rs",
+    '''            AuthKind::OAuth => self.oauth.as_ref().map(|oauth| Auth::OAuth {
+                access_token: oauth.access_token.clone(),
+                refresh_token: oauth.refresh_token.clone(),
+                expires_at: oauth.expires_at,
+            }),
+''',
+    '''            AuthKind::OAuth => self.oauth.as_ref().map(|oauth| Auth::OAuth {
+                access_token: oauth.access_token.clone(),
+                refresh_token: oauth.refresh_token.clone(),
+                expires_at: oauth.expires_at,
+                account_id: oauth.account_id.clone(),
+            }),
+''',
+)
+
+# Keep old credentials wire-compatible while preserving account identity on
+# refresh and preferring claims from a newly returned ID token.
 replace_once(
     "rust/crates/phenix-provider-sdk/src/oauth.rs",
-    "    sync::Arc,\n",
-    "",
+    '''    let Auth::OAuth {
+        access_token,
+        refresh_token,
+        expires_at,
+    } = auth
+''',
+    '''    let Auth::OAuth {
+        access_token,
+        refresh_token,
+        expires_at,
+        account_id,
+    } = auth
+''',
 )
 replace_once(
     "rust/crates/phenix-provider-sdk/src/oauth.rs",
-    '    form: &[("static str", String)],\n',
-    "    form: &[(&str, String)],\n",
+    '''        return Ok(Auth::OAuth {
+            access_token,
+            refresh_token,
+            expires_at,
+        });
+''',
+    '''        return Ok(Auth::OAuth {
+            access_token,
+            refresh_token,
+            expires_at,
+            account_id,
+        });
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''    let expires_at = token_expiry(access_token.expose())
+        .or_else(|| response.expires_in.map(|seconds| now.saturating_add(seconds)));
+    let refreshed = Auth::OAuth {
+        access_token,
+        refresh_token,
+        expires_at,
+    };
+''',
+    '''    let expires_at = token_expiry(access_token.expose())
+        .or_else(|| response.expires_in.map(|seconds| now.saturating_add(seconds)));
+    let account_id = oauth_account_id(method, response.id_token.as_deref(), access_token.expose())?
+        .or(account_id);
+    let refreshed = Auth::OAuth {
+        access_token,
+        refresh_token,
+        expires_at,
+        account_id,
+    };
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''pub(crate) fn apply_headers(
+    method: &OAuthMethod,
+    access_token: &Token,
+    headers: &mut BTreeMap<String, String>,
+) -> Result<(), ProviderError> {
+''',
+    '''pub(crate) fn apply_headers(
+    method: &OAuthMethod,
+    access_token: &Token,
+    account_id: Option<&str>,
+    headers: &mut BTreeMap<String, String>,
+) -> Result<(), ProviderError> {
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''    if let Some(header) = &method.account_id_header {
+        let account_id = method
+            .account_id_claim_paths
+            .iter()
+            .find_map(|path| jwt_string_claim(access_token.expose(), path))
+            .ok_or_else(|| {
+                oauth_error(format!(
+                    "OAuth access token does not contain an account id required for {header}"
+                ))
+            })?;
+        headers.insert(header.clone(), account_id);
+    }
+''',
+    '''    if let Some(header) = &method.account_id_header {
+        let account_id = account_id
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                method
+                    .account_id_claim_paths
+                    .iter()
+                    .find_map(|path| jwt_string_claim(access_token.expose(), path))
+            })
+            .ok_or_else(|| oauth_error(format!("OAuth credential has no account id required for {header}")))?;
+        headers.insert(header.clone(), account_id);
+    }
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''    let expires_at = token_expiry(access_token.expose())
+        .or_else(|| response.expires_in.map(|seconds| now.saturating_add(seconds)));
+    if method.account_id_header.is_some() {
+        let account_in_access = method
+            .account_id_claim_paths
+            .iter()
+            .any(|path| jwt_string_claim(access_token.expose(), path).is_some());
+        let account_in_id = response.id_token.as_deref().is_some_and(|token| {
+            method
+                .account_id_claim_paths
+                .iter()
+                .any(|path| jwt_string_claim(token, path).is_some())
+        });
+        if !account_in_access && account_in_id {
+            return Err(oauth_error(
+                "OAuth account id is present only in the id token; provider request presentation requires it in the access token"
+                    .to_owned(),
+            ));
+        }
+    }
+''',
+    '''    let expires_at = token_expiry(access_token.expose())
+        .or_else(|| response.expires_in.map(|seconds| now.saturating_add(seconds)));
+    let account_id = oauth_account_id(method, response.id_token.as_deref(), access_token.expose())?;
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''        Auth::OAuth {
+            access_token,
+            refresh_token,
+            expires_at,
+        },
+''',
+    '''        Auth::OAuth {
+            access_token,
+            refresh_token,
+            expires_at,
+            account_id,
+        },
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/oauth.rs",
+    '''fn jwt_string_claim(token: &str, path: &[String]) -> Option<String> {
+''',
+    '''fn oauth_account_id(
+    method: &OAuthMethod,
+    id_token: Option<&str>,
+    access_token: &str,
+) -> Result<Option<String>, ProviderError> {
+    if method.account_id_header.is_none() {
+        return Ok(None);
+    }
+    let value = id_token
+        .and_then(|token| {
+            method
+                .account_id_claim_paths
+                .iter()
+                .find_map(|path| jwt_string_claim(token, path))
+        })
+        .or_else(|| {
+            method
+                .account_id_claim_paths
+                .iter()
+                .find_map(|path| jwt_string_claim(access_token, path))
+        });
+    value.map(Some).ok_or_else(|| {
+        oauth_error("OAuth token response does not contain the required account identity")
+    })
+}
+
+fn jwt_string_claim(token: &str, path: &[String]) -> Option<String> {
+''',
 )
 
-# Preserve the existing default invocation API and add an explicit override path.
+# Provider request application gets persisted identity alongside the bearer.
 replace_once(
-    "rust/crates/phenix-sdk/src/contracts/step_runner.rs",
-    "pub enum DefaultInvocationCommand {\n    Invoke { request: InvocationRequest },\n}\n",
-    "pub enum DefaultInvocationCommand {\n    Invoke { request: InvocationRequest },\n    InvokeWithProfile {\n        request: InvocationRequest,\n        profile_id: RoutingProfileId,\n    },\n}\n",
+    "rust/crates/phenix-provider-sdk/src/runtime.rs",
+    '''        Some(Auth::OAuth { access_token, .. }) => {
+            let method = spec.auth.oauth.as_ref().ok_or_else(|| {
+''',
+    '''        Some(Auth::OAuth {
+            access_token,
+            account_id,
+            ..
+        }) => {
+            let method = spec.auth.oauth.as_ref().ok_or_else(|| {
+''',
+)
+replace_once(
+    "rust/crates/phenix-provider-sdk/src/runtime.rs",
+    '''            oauth::apply_headers(method, access_token, headers)
+''',
+    '''            oauth::apply_headers(method, access_token, account_id.as_deref(), headers)
+''',
 )
 
+# Fix authentication status construction without borrowing a moved enum value.
 replace_once(
-    "rust/crates/phenix-plugin-step-runner/src/lib.rs",
-    "            let DefaultInvocationCommand::Invoke { request } = command;\n            let resolved: InvocationDefaultsResponse = context\n                .sdk\n                .defaults\n                .invoke_projected(&InvocationDefaultsCommand::Resolve {\n                    request: request.clone(),\n                })\n                .map_err(|error| format!(\"default invocation parameters unavailable: {error}\"))?;\n            let InvocationDefaultsResponse::Params { params } = resolved;\n            return self.invoke_explicit(&context, host, request, params);\n",
-    "            let (request, profile_id) = match command {\n                DefaultInvocationCommand::Invoke { request } => (request, None),\n                DefaultInvocationCommand::InvokeWithProfile { request, profile_id } => {\n                    (request, Some(profile_id))\n                }\n            };\n            let resolved: InvocationDefaultsResponse = context\n                .sdk\n                .defaults\n                .invoke_projected(&InvocationDefaultsCommand::Resolve {\n                    request: request.clone(),\n                })\n                .map_err(|error| format!(\"default invocation parameters unavailable: {error}\"))?;\n            let InvocationDefaultsResponse::Params { mut params } = resolved;\n            if let Some(profile_id) = profile_id {\n                params.profile_id = profile_id;\n            }\n            return self.invoke_explicit(&context, host, request, params);\n",
+    "rust/crates/phenix-harness/src/application_selection.rs",
+    '''            methods.push(AuthenticationMethod {
+                id: format!("{}:{suffix}", provider_id),
+                name: format!("{} {label}", provider_id),
+                description: Some(format!("Authenticate {} using {label}", provider_id)),
+                kind,
+                authenticated: authenticated.contains(&auth_kind(&kind)),
+            });
+''',
+    '''            let is_authenticated = authenticated.contains(&auth_kind(&kind));
+            methods.push(AuthenticationMethod {
+                id: format!("{}:{suffix}", provider_id),
+                name: format!("{} {label}", provider_id),
+                description: Some(format!("Authenticate {} using {label}", provider_id)),
+                kind,
+                authenticated: is_authenticated,
+            });
+''',
 )
 
-# Application runtime owns the fixed frontend projection of auth/model/routing.
+# Expose authentication through the host-neutral Lua application facade.
 replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "use crate::{default_suite_authority, PhenixHarness};\n",
-    '#[path = "application_selection.rs"]\nmod application_selection;\n\nuse crate::{default_suite_authority, PhenixHarness};\n',
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''        Acknowledged, Content, ElicitationRequest, ElicitationResponse, ExecutionChange,
+        ExecutionState, InteractionHandlers, ModelSelectInput, Models, PageInput,
+''',
+    '''        Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
+        ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
+        InteractionHandlers, ModelSelectInput, Models, PageInput,
+''',
 )
 replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "        Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,\n        ElicitationHandlerRef, ExecutionChange, ExecutionState, InteractionHandlers, Message,\n",
-    "        Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,\n        ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState, InteractionHandlers, Message,\n",
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''    Cancel as AppCancel, CloseSession as AppCloseSession, CreateSession as AppCreateSession,
+    DecideReview as AppDecideReview, GetProvenance as AppGetProvenance,
+''',
+    '''    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
+    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
+    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
+''',
 )
 replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "    AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,\n    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,\n    RenameSession, ResumeSession, SetInteractionHandlers,\n",
-    "    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,\n    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListModels,\n    ListRoutingProfiles, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession,\n    ResumeSession, SelectModel, SelectRoutingProfile, SetInteractionHandlers,\n",
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''    SessionRename,
+    Acknowledged,
+    Prompt {
+''',
+    '''    SessionRename,
+    AuthenticationMethods,
+    AuthenticationResult,
+    Acknowledged,
+    Prompt {
+''',
 )
 replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,\n",
-    "    PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,\n    SnapshotPolicy, ValueCodec,\n",
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''    SessionInfo(SessionInfo),
+    Acknowledged(Acknowledged),
+    Prompt(PromptResult),
+''',
+    '''    SessionInfo(SessionInfo),
+    AuthenticationMethods(AuthenticationMethods),
+    AuthenticationResult(AuthenticationResult),
+    Acknowledged(Acknowledged),
+    Prompt(PromptResult),
+''',
+)
+replace_once(
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''        methods.add_method("sessions", |lua, this, ()| {
+            lua.create_userdata(FacadeSessions {
+                core: Rc::clone(&this.core),
+            })
+        });
+''',
+    '''        methods.add_method("sessions", |lua, this, ()| {
+            lua.create_userdata(FacadeSessions {
+                core: Rc::clone(&this.core),
+            })
+        });
+        methods.add_method("authentication_methods", |lua, this, ()| {
+            require_ready(&this.core)?;
+            let request = application_request::<AppDiscoverAuthentication>(
+                &this.core,
+                Empty {},
+                RequestProjection::AuthenticationMethods,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method(
+            "authenticate",
+            |lua, this, (method_id, secret): (String, Option<String>)| {
+                require_ready(&this.core)?;
+                let request = application_request::<AppAuthenticate>(
+                    &this.core,
+                    AuthenticateInput { method_id, secret },
+                    RequestProjection::AuthenticationResult,
+                )?;
+                lua.create_userdata(request)
+            },
+        );
+''',
+)
+replace_once(
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''        RequestProjection::Acknowledged => Ok(FacadeOutcome::Acknowledged(decode(&value)?)),
+''',
+    '''        RequestProjection::AuthenticationMethods => {
+            Ok(FacadeOutcome::AuthenticationMethods(decode(&value)?))
+        }
+        RequestProjection::AuthenticationResult => {
+            Ok(FacadeOutcome::AuthenticationResult(decode(&value)?))
+        }
+        RequestProjection::Acknowledged => Ok(FacadeOutcome::Acknowledged(decode(&value)?)),
+''',
+)
+replace_once(
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''        FacadeOutcome::SessionInfo(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::Acknowledged(value) => {
+''',
+    '''        FacadeOutcome::SessionInfo(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::AuthenticationMethods(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::AuthenticationResult(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::Acknowledged(value) => {
+''',
+)
+replace_once(
+    "rust/crates/phenix-binding-lua/src/facade.rs",
+    '''    for (name, operation) in [
+        ("models", AppListModels::ID),
+''',
+    '''    for (name, operation) in [
+        ("authentication", AppDiscoverAuthentication::ID),
+        ("models", AppListModels::ID),
+''',
 )
 
-old_match = '''        match operation.as_str() {
-            CreateSession::ID => self
-                .create_session(decode(input)?)
-                .map(|value| value.to_value()),
-'''
-new_match = '''        match operation.as_str() {
-            DiscoverAuthentication::ID => {
-                decode::<Empty>(input)?;
-                application_selection::discover_authentication(&mut self.harness.lock())
-                    .map(|value| value.to_value())
-            }
-            Authenticate::ID => application_selection::authenticate(
-                &mut self.harness.lock(),
-                decode(input)?,
-            )
-            .map(|value| value.to_value()),
-            ListModels::ID => {
-                let request = decode(input)?;
-                self.require_open_application_session(&request.session_id)?;
-                application_selection::list_models(&mut self.harness.lock(), request)
-                    .map(|value| value.to_value())
-            }
-            SelectModel::ID => {
-                let request = decode(input)?;
-                self.require_open_application_session(&request.session_id)?;
-                application_selection::select_model(&mut self.harness.lock(), request)
-                    .map(|value| value.to_value())
-            }
-            ListRoutingProfiles::ID => {
-                let request = decode(input)?;
-                self.require_open_application_session(&request.session_id)?;
-                application_selection::list_routing_profiles(&mut self.harness.lock(), request)
-                    .map(|value| value.to_value())
-            }
-            SelectRoutingProfile::ID => {
-                let request = decode(input)?;
-                self.require_open_application_session(&request.session_id)?;
-                application_selection::select_routing_profile(&mut self.harness.lock(), request)
-                    .map(|value| value.to_value())
-            }
-            CreateSession::ID => self
-                .create_session(decode(input)?)
-                .map(|value| value.to_value()),
-'''
-replace_once("rust/crates/phenix-harness/src/application.rs", old_match, new_match)
-
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    '        "discovery",\n        "sessions",\n',
-    '        "discovery",\n        "authentication",\n        "sessions",\n',
-)
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    '        "prompt",\n        "sdk",\n',
-    '        "prompt",\n        "models",\n        "routing",\n        "sdk",\n',
-)
-
-# Resolve provider authentication and the session selection immediately before execution.
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "    let model_input = match model_input_from_content(&request.content) {\n",
-    "    let profile_id = {\n        let mut harness = worker.harness.lock();\n        if let Err(error) = application_selection::refresh_provider_authentication(&mut harness) {\n            invocation.respond(Err(error));\n            return;\n        }\n        match application_selection::selected_profile(&mut harness, &request.session_id) {\n            Ok(Some(profile_id)) => profile_id,\n            Ok(None) => {\n                invocation.respond(Err(ApplicationError::Failed {\n                    message: \"session has no model or routing profile selection\".to_owned(),\n                }));\n                return;\n            }\n            Err(error) => {\n                invocation.respond(Err(error));\n                return;\n            }\n        }\n    };\n    let model_input = match model_input_from_content(&request.content) {\n",
-)
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "                    execution_id: runtime_execution_id,\n                    input: model_input,\n",
-    "                    execution_id: runtime_execution_id,\n                    profile_id,\n                    input: model_input,\n",
-)
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "struct AgentExecutionContext {\n    session_id: SessionId,\n    execution_id: String,\n    input: Bytes,\n",
-    "struct AgentExecutionContext {\n    session_id: SessionId,\n    execution_id: String,\n    profile_id: RoutingProfileId,\n    input: Bytes,\n",
-)
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "        session_id,\n        execution_id,\n        input,\n",
-    "        session_id,\n        execution_id,\n        profile_id,\n        input,\n",
-)
-replace_once(
-    "rust/crates/phenix-harness/src/application.rs",
-    "        let command = AgentLoopCommand::Run {\n            execution_id: execution_id.clone(),\n            parent_attempt_id: None,\n            callable_id: Some(callable_id.clone()),\n",
-    "        let command = AgentLoopCommand::RunWithProfile {\n            execution_id: execution_id.clone(),\n            parent_attempt_id: None,\n            callable_id: Some(callable_id.clone()),\n            profile_id: profile_id.clone(),\n",
-)
-
-# Ensure the descriptor explicitly retains the enum used by AuthenticationMethod.
-replace_once(
-    "rust/crates/phenix-application-interface/src/catalog.rs",
-    "        AuthenticationMethod,\n        ModelInfo,\n",
-    "        AuthenticationMethod,\n        AuthenticationMethodKind,\n        ModelInfo,\n",
-)
-
-print("auth/model/routing integration patch applied")
+print("OAuth identity and Lua facade integration applied")
