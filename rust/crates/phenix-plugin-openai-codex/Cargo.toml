@@ -10,6 +10,7 @@ role = "runtime-plugin"
 [dependencies]
 base64.workspace = true
 getrandom.workspace = true
+parking_lot.workspace = true
 phenix-core = { path = "../phenix-core" }
 phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 reqwest.workspace = true
