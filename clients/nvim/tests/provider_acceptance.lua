@@ -19,6 +19,10 @@ local function fail(label, error_value)
   error(label .. ": " .. tostring(error_value))
 end
 
+local function kind_is(value, raw, projected)
+  return value == raw or value == projected
+end
+
 local function assert_realized_projection(projection, tool_id)
   local saw_call = false
   local saw_result = false
@@ -26,14 +30,19 @@ local function assert_realized_projection(projection, tool_id)
 
   for _, entry in ipairs(projection.updates or {}) do
     local change = entry.update
-    if change ~= nil and change.kind == "Execution" then
+    if change ~= nil and kind_is(change.kind, "Execution", "execution") then
       local execution = change.update
-      if execution ~= nil and execution.kind == "ToolCall" and execution.callable_id == tool_id then
+      if execution ~= nil
+          and kind_is(execution.kind, "ToolCall", "tool_call")
+          and execution.callable_id == tool_id then
         saw_call = true
-      elseif execution ~= nil and execution.kind == "ToolResult" then
+      elseif execution ~= nil and kind_is(execution.kind, "ToolResult", "tool_result") then
         saw_result = true
       end
-    elseif change ~= nil and change.kind == "TextDelta" and type(change.text) == "string" and change.text ~= "" then
+    elseif change ~= nil
+        and kind_is(change.kind, "TextDelta", "text_delta")
+        and type(change.text) == "string"
+        and change.text ~= "" then
       saw_assistant = true
     end
   end
