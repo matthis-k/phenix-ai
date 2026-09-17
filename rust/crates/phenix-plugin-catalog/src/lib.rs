@@ -98,6 +98,10 @@ pub use phenix_plugin_options::{
     OptionStartupPrecedence, OptionSubjectId, OptionValue, OptionValueLayer, OptionValueSource,
     OptionsInterface, ResolvedOption, OPTIONS_COMPONENT, OPTIONS_PLUGIN, OPTIONS_SERVICE,
 };
+pub use phenix_plugin_openai_codex::{
+    openai_codex_component_manifest, openai_codex_factory, openai_codex_manifest,
+    OPENAI_CODEX_PROVIDER,
+};
 pub use phenix_plugin_planning::{
     planning_component_id, planning_component_manifest, planning_factory, planning_manifest,
     planning_service,
