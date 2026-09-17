@@ -1,7 +1,7 @@
 use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
-    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId,
+    PluginContext, PluginHost, PluginInstance, RoutingProfileId, SdkClient, ServiceId,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
@@ -38,6 +38,17 @@ pub enum AgentLoopCommand {
         execution_id: String,
         parent_attempt_id: Option<String>,
         callable_id: Option<CallableId>,
+        input: Bytes,
+        #[serde(default)]
+        tools: Vec<ModelToolDescriptor>,
+        #[serde(default)]
+        continuation: Vec<ModelToolTurn>,
+    },
+    RunWithProfile {
+        execution_id: String,
+        parent_attempt_id: Option<String>,
+        callable_id: Option<CallableId>,
+        profile_id: RoutingProfileId,
         input: Bytes,
         #[serde(default)]
         tools: Vec<ModelToolDescriptor>,
@@ -125,7 +136,7 @@ fn handle(
     context: &AgentLoopContext<'_, '_>,
     command: AgentLoopCommand,
 ) -> Result<AgentLoopResponse, String> {
-    match command {
+    let (request, profile_id) = match command {
         AgentLoopCommand::Run {
             execution_id,
             parent_attempt_id,
@@ -133,36 +144,62 @@ fn handle(
             input,
             tools,
             continuation,
-        } => {
-            let response = context
-                .sdk
-                .invocation
-                .invoke_projected(&DefaultInvocationCommand::Invoke {
-                    request: InvocationRequest {
-                        execution_id,
-                        parent_attempt_id,
-                        callable_id,
-                        input,
-                        tools,
-                        continuation,
-                    },
-                })
-                .map_err(|error| error.to_string())?;
-            let StepRunnerResponse::Completed {
-                output, tool_calls, ..
-            } = response;
-            let tool_call_count = u32::try_from(tool_calls.len())
-                .map_err(|_| "model returned too many tool calls".to_owned())?;
-            Ok(AgentLoopResponse::Completed {
-                output,
-                tool_calls,
-                usage: AgentLoopUsage {
-                    model_calls: 1,
-                    tool_calls: tool_call_count,
-                },
-            })
-        }
-    }
+        } => (
+            InvocationRequest {
+                execution_id,
+                parent_attempt_id,
+                callable_id,
+                input,
+                tools,
+                continuation,
+            },
+            None,
+        ),
+        AgentLoopCommand::RunWithProfile {
+            execution_id,
+            parent_attempt_id,
+            callable_id,
+            profile_id,
+            input,
+            tools,
+            continuation,
+        } => (
+            InvocationRequest {
+                execution_id,
+                parent_attempt_id,
+                callable_id,
+                input,
+                tools,
+                continuation,
+            },
+            Some(profile_id),
+        ),
+    };
+    let command = match profile_id {
+        Some(profile_id) => DefaultInvocationCommand::InvokeWithProfile {
+            request,
+            profile_id,
+        },
+        None => DefaultInvocationCommand::Invoke { request },
+    };
+    let response = context
+        .sdk
+        .invocation
+        .invoke_projected(&command)
+        .map_err(|error| error.to_string())?;
+    let StepRunnerResponse::Completed {
+        output, tool_calls, ..
+    } = response;
+    let tool_call_count = u32::try_from(tool_calls.len())
+        .map_err(|_| "model returned too many tool calls".to_owned())?;
+    Ok(AgentLoopResponse::Completed {
+        output,
+        tool_calls,
+        usage: AgentLoopUsage {
+            model_calls: 1,
+            tool_calls: tool_call_count,
+        },
+    })
 }
 
 #[cfg(test)]
