@@ -134,7 +134,8 @@ struct OpenAiCodexPlugin {
 struct PendingAuthentication {
     uri: String,
     instructions: String,
-    task: JoinHandle<Result<(), String>>,
+    result: Arc<parking_lot::Mutex<Option<Result<(), String>>>>,
+    task: JoinHandle<()>,
 }
 
 impl OpenAiCodexPlugin {
@@ -301,18 +302,13 @@ impl OpenAiCodexPlugin {
             });
         }
 
-        if self
+        let completed = self
             .pending
             .as_ref()
-            .is_some_and(|pending| pending.task.is_finished())
-        {
-            let pending = self.pending.take().expect("pending auth checked above");
-            self.runtime()?
-                .block_on(pending.task)
-                .map_err(|error| ProviderError::Transport {
-                    message: format!("OAuth task failed: {error}"),
-                })?
-                .map_err(authentication_error)?;
+            .and_then(|pending| pending.result.lock().take());
+        if let Some(result) = completed {
+            self.pending.take();
+            result.map_err(authentication_error)?;
             return Ok(ProviderAuthenticationResult::Authenticated);
         }
 
@@ -323,45 +319,33 @@ impl OpenAiCodexPlugin {
             });
         }
 
-        if let Some(credential) = self
+        if self
             .store()?
             .resolve()
             .map_err(authentication_error)?
+            .is_some()
         {
-            let needs_refresh = credential.expires_at
-                <= unix_time()
-                    .map_err(authentication_error)?
-                    .saturating_add(REFRESH_MARGIN_SECONDS);
-            if !needs_refresh {
-                return Ok(ProviderAuthenticationResult::Authenticated);
-            }
-            let store = self.store()?.clone();
-            let token_client = self.token_client()?.clone();
-            if self
-                .runtime()?
-                .block_on(refresh(&store, &token_client, credential))
-                .is_ok()
-            {
-                return Ok(ProviderAuthenticationResult::Authenticated);
-            }
-            self.store()?.remove().map_err(authentication_error)?;
+            // Credential freshness is enforced by the model request path, which
+            // can refresh without nesting a runtime inside the ACP application task.
+            return Ok(ProviderAuthenticationResult::Authenticated);
         }
 
-        let start = self
-            .runtime()?
-            .block_on(start_authorization())
-            .map_err(authentication_error)?;
+        let start = start_authorization().map_err(authentication_error)?;
         let uri = start.authorization_uri.clone();
         let instructions =
             "Complete the ChatGPT authorization in your browser, then return to Neovim.".to_owned();
         let store = self.store()?.clone();
         let token_client = self.token_client()?.clone();
+        let result = Arc::new(parking_lot::Mutex::new(None));
+        let task_result = Arc::clone(&result);
         let task = self.runtime()?.spawn(async move {
-            finish_authorization(&store, &token_client, start).await
+            let completed = finish_authorization(&store, &token_client, start).await;
+            *task_result.lock() = Some(completed);
         });
         self.pending = Some(PendingAuthentication {
             uri: uri.clone(),
             instructions: instructions.clone(),
+            result,
             task,
         });
         Ok(ProviderAuthenticationResult::External {
@@ -615,22 +599,23 @@ impl CredentialStore {
 }
 
 struct AuthorizationStart {
-    listener: TcpListener,
+    listener: std::net::TcpListener,
     redirect_uri: String,
     verifier: String,
     state: String,
     authorization_uri: String,
 }
 
-async fn start_authorization() -> Result<AuthorizationStart, String> {
-    let listener = match TcpListener::bind(("127.0.0.1", 1455)).await {
+fn start_authorization() -> Result<AuthorizationStart, String> {
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", 1455)) {
         Ok(listener) => listener,
-        Err(_) => TcpListener::bind(("127.0.0.1", 1457))
-            .await
-            .map_err(|error| {
-                format!("cannot bind OAuth callback on ports 1455 or 1457: {error}")
-            })?,
+        Err(_) => std::net::TcpListener::bind(("127.0.0.1", 1457)).map_err(|error| {
+            format!("cannot bind OAuth callback on ports 1455 or 1457: {error}")
+        })?,
     };
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("cannot configure OAuth callback listener: {error}"))?;
     let port = listener
         .local_addr()
         .map_err(|error| format!("cannot inspect OAuth callback address: {error}"))?
@@ -654,9 +639,11 @@ async fn finish_authorization(
     client: &reqwest::Client,
     start: AuthorizationStart,
 ) -> Result<(), String> {
+    let listener = TcpListener::from_std(start.listener)
+        .map_err(|error| format!("cannot activate OAuth callback listener: {error}"))?;
     let result = tokio::time::timeout(
         LOGIN_TIMEOUT,
-        receive_callback(start.listener, &start.state),
+        receive_callback(listener, &start.state),
     )
     .await;
     let code = match result {
