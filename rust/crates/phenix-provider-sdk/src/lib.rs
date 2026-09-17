@@ -61,12 +61,24 @@ pub enum ProviderAuthenticationResult {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderAuthResponse {
-    Added { auth: AuthDescriptor },
-    Methods { methods: Vec<AuthKind> },
-    InteractiveMethods { methods: Vec<ProviderAuthMethod> },
-    Authentication { authentication: ProviderAuthenticationResult },
-    Credentials { credentials: Vec<AuthDescriptor> },
-    Removed { auth: Option<AuthDescriptor> },
+    Added {
+        auth: AuthDescriptor,
+    },
+    Methods {
+        methods: Vec<AuthKind>,
+    },
+    InteractiveMethods {
+        methods: Vec<ProviderAuthMethod>,
+    },
+    Authentication {
+        authentication: ProviderAuthenticationResult,
+    },
+    Credentials {
+        credentials: Vec<AuthDescriptor>,
+    },
+    Removed {
+        auth: Option<AuthDescriptor>,
+    },
 }
 
 pub struct ProviderAuthInterface;

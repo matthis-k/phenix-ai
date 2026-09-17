@@ -141,9 +141,11 @@ struct PendingAuthentication {
 
 impl OpenAiCodexPlugin {
     fn runtime(&self) -> Result<&tokio::runtime::Runtime, ProviderError> {
-        self.runtime.as_ref().ok_or_else(|| ProviderError::Protocol {
-            message: "Codex provider runtime is not initialized".to_owned(),
-        })
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| ProviderError::Protocol {
+                message: "Codex provider runtime is not initialized".to_owned(),
+            })
     }
 
     fn client(&self) -> Result<&reqwest::Client, ProviderError> {
@@ -177,15 +179,15 @@ impl OpenAiCodexPlugin {
             .block_on(credential_for_request(&store, &token_client))
             .map_err(authentication_error)?
             .ok_or_else(|| ProviderError::Authentication {
-                message: "OpenAI Codex requires ChatGPT OAuth; authenticate the openai-codex provider"
-                    .to_owned(),
+                message:
+                    "OpenAI Codex requires ChatGPT OAuth; authenticate the openai-codex provider"
+                        .to_owned(),
             })?;
 
-        let endpoint = Endpoint::parse(RESPONSES_ENDPOINT).map_err(|error| {
-            ProviderError::Protocol {
+        let endpoint =
+            Endpoint::parse(RESPONSES_ENDPOINT).map_err(|error| ProviderError::Protocol {
                 message: error.to_string(),
-            }
-        })?;
+            })?;
         let protocol = Protocol::OpenAiResponses;
         let mut outgoing = protocol.encode(&endpoint, &request)?;
         outgoing.headers.insert(
@@ -280,14 +282,14 @@ impl OpenAiCodexPlugin {
                 if let Some(pending) = self.pending.take() {
                     pending.task.abort();
                 }
-                let removed = self
-                    .store()?
-                    .remove()
-                    .map_err(authentication_error)?
-                    .map(|credential| AuthDescriptor {
-                        kind: AuthKind::OAuth,
-                        expires_at: Some(credential.expires_at),
-                    });
+                let removed =
+                    self.store()?
+                        .remove()
+                        .map_err(authentication_error)?
+                        .map(|credential| AuthDescriptor {
+                            kind: AuthKind::OAuth,
+                            expires_at: Some(credential.expires_at),
+                        });
                 Ok(ProviderAuthResponse::Removed { auth: removed })
             }
         }
@@ -398,19 +400,17 @@ impl PluginInstance for OpenAiCodexPlugin {
             return self
                 .invoke_model(request)
                 .and_then(|response| {
-                    context
-                        .kernel
-                        .encode_value(&response)
-                        .map_err(|error| ProviderError::Protocol {
+                    context.kernel.encode_value(&response).map_err(|error| {
+                        ProviderError::Protocol {
                             message: error.to_string(),
-                        })
+                        }
+                    })
                 })
                 .map_err(|error| error.to_wire());
         }
 
         if service == &provider_auth_service() {
-            let command =
-                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;
             return self
                 .auth_command(command)
                 .and_then(|response| {
@@ -428,7 +428,9 @@ impl PluginInstance for OpenAiCodexPlugin {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum StoredCredential {
-    ApiKey { secret: String },
+    ApiKey {
+        secret: String,
+    },
     OAuth {
         access_token: String,
         refresh_token: String,
@@ -642,11 +644,8 @@ async fn finish_authorization(
 ) -> Result<(), String> {
     let listener = TcpListener::from_std(start.listener)
         .map_err(|error| format!("cannot activate OAuth callback listener: {error}"))?;
-    let result = tokio::time::timeout(
-        LOGIN_TIMEOUT,
-        receive_callback(listener, &start.state),
-    )
-    .await;
+    let result =
+        tokio::time::timeout(LOGIN_TIMEOUT, receive_callback(listener, &start.state)).await;
     let code = match result {
         Ok(result) => result?,
         Err(_) => return Err("OAuth login timed out after 10 minutes".to_owned()),
@@ -694,9 +693,7 @@ async fn receive_callback(listener: TcpListener, expected_state: &str) -> Result
         .ok_or_else(|| "OAuth callback did not contain a request target".to_owned())?;
     let url = Url::parse(&format!("http://localhost{target}"))
         .map_err(|error| format!("invalid OAuth callback URL: {error}"))?;
-    let query = url
-        .query_pairs()
-        .collect::<BTreeMap<_, _>>();
+    let query = url.query_pairs().collect::<BTreeMap<_, _>>();
     let result = if let Some(error) = query.get("error") {
         Err(format!("OAuth authorization was rejected: {error}"))
     } else if query
@@ -923,13 +920,14 @@ async fn send_http(
         })?;
         outgoing = outgoing.header(header_name, header_value);
     }
-    let response = outgoing
-        .body(request.body)
-        .send()
-        .await
-        .map_err(|error| ProviderError::Transport {
-            message: error.to_string(),
-        })?;
+    let response =
+        outgoing
+            .body(request.body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Transport {
+                message: error.to_string(),
+            })?;
     let status = response.status().as_u16();
     let headers = response
         .headers()
@@ -1009,22 +1007,32 @@ mod tests {
 
     #[test]
     fn authorization_url_keeps_codex_contract() {
-        let url = authorization_url(
-            "http://localhost:1455/auth/callback",
-            "challenge",
-            "state",
-        )
-        .unwrap();
+        let url =
+            authorization_url("http://localhost:1455/auth/callback", "challenge", "state").unwrap();
         let parsed = Url::parse(&url).unwrap();
         let query = parsed.query_pairs().collect::<BTreeMap<_, _>>();
-        assert_eq!(query.get("response_type").map(|value| value.as_ref()), Some("code"));
-        assert_eq!(query.get("client_id").map(|value| value.as_ref()), Some(CLIENT_ID));
         assert_eq!(
-            query.get("code_challenge_method").map(|value| value.as_ref()),
+            query.get("response_type").map(|value| value.as_ref()),
+            Some("code")
+        );
+        assert_eq!(
+            query.get("client_id").map(|value| value.as_ref()),
+            Some(CLIENT_ID)
+        );
+        assert_eq!(
+            query
+                .get("code_challenge_method")
+                .map(|value| value.as_ref()),
             Some("S256")
         );
-        assert_eq!(query.get("state").map(|value| value.as_ref()), Some("state"));
-        assert_eq!(query.get("originator").map(|value| value.as_ref()), Some("phenix"));
+        assert_eq!(
+            query.get("state").map(|value| value.as_ref()),
+            Some("state")
+        );
+        assert_eq!(
+            query.get("originator").map(|value| value.as_ref()),
+            Some("phenix")
+        );
     }
 
     #[test]

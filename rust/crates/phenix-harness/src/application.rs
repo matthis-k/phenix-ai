@@ -10,12 +10,12 @@ use phenix_application_interface::{
         Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
         AuthenticationMethods, AuthenticationResult, CapabilityInvokeInput, CapabilityInvokeResult,
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
-        InteractionHandlers, Message,
-        MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
-        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
-        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
-        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
+        InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
+        PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
+        ReviewRecord, SessionChange, SessionCreateInput, SessionInfo,
+        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListSessions,
@@ -907,7 +907,8 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
-            let response = self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
+            let response =
+                self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
                 methods: provider_methods,
             } = response
@@ -980,9 +981,10 @@ impl ApplicationWorker {
         provider: &PluginId,
         command: ProviderAuthCommand,
     ) -> Result<ProviderAuthResponse, ApplicationError> {
-        let input = serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
-            message: error.to_string(),
-        })?;
+        let input =
+            serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_string(),
+            })?;
         let output = self
             .harness
             .lock()
@@ -1013,12 +1015,7 @@ impl ApplicationWorker {
         let output = self
             .harness
             .lock()
-            .invoke(
-                &model_routing_service(),
-                &input,
-                &self.authority,
-                None,
-            )
+            .invoke(&model_routing_service(), &input, &self.authority, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
@@ -1071,10 +1068,7 @@ impl ApplicationWorker {
     }
 }
 
-fn authentication_method_id(
-    provider: &PluginId,
-    method: &str,
-) -> Result<String, ApplicationError> {
+fn authentication_method_id(provider: &PluginId, method: &str) -> Result<String, ApplicationError> {
     if method.is_empty() {
         return Err(ApplicationError::InvalidResponse {
             message: format!("provider {provider} exposed an empty authentication method id"),
@@ -1087,9 +1081,7 @@ fn authentication_method_id(
     })
 }
 
-fn parse_authentication_method_id(
-    value: &str,
-) -> Result<(PluginId, String), ApplicationError> {
+fn parse_authentication_method_id(value: &str) -> Result<(PluginId, String), ApplicationError> {
     let (provider, method): (String, String) =
         serde_json::from_str(value).map_err(|error| ApplicationError::InvalidInput {
             message: format!("invalid authentication method id: {error}"),
@@ -1986,8 +1978,7 @@ mod tests {
     #[test]
     fn authentication_discovery_projects_provider_owned_interactive_flows() {
         let mut worker = application_worker();
-        let discovered =
-            invoke_operation::<DiscoverAuthentication>(&mut worker, Empty {}).unwrap();
+        let discovered = invoke_operation::<DiscoverAuthentication>(&mut worker, Empty {}).unwrap();
         let method = discovered
             .methods
             .iter()

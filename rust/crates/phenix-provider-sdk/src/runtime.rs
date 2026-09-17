@@ -165,28 +165,22 @@ impl ProviderPlugin {
                     methods: Vec::new(),
                 })
             }
-            ProviderAuthCommand::Authenticate { method } => {
-                Err(ProviderError::Authentication {
-                    message: format!(
-                        "provider {} does not expose interactive authentication method {method:?}",
-                        self.spec.id
-                    ),
-                })
-            }
+            ProviderAuthCommand::Authenticate { method } => Err(ProviderError::Authentication {
+                message: format!(
+                    "provider {} does not expose interactive authentication method {method:?}",
+                    self.spec.id
+                ),
+            }),
             ProviderAuthCommand::Add { auth } => {
                 self.ensure_auth_supported(auth.kind())?;
-                let auth = self
-                    .credentials()?
-                    .add(self.spec.id.as_str(), auth)?;
+                let auth = self.credentials()?.add(self.spec.id.as_str(), auth)?;
                 Ok(ProviderAuthResponse::Added { auth })
             }
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
                 credentials: self.available_auth_descriptors()?,
             }),
             ProviderAuthCommand::Remove { kind } => {
-                let auth = self
-                    .credentials()?
-                    .remove(self.spec.id.as_str(), kind)?;
+                let auth = self.credentials()?.remove(self.spec.id.as_str(), kind)?;
                 Ok(ProviderAuthResponse::Removed { auth })
             }
         }
