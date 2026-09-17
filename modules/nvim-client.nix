@@ -27,11 +27,45 @@
         printf '%s\n' ${pkgs.lib.escapeShellArg revision} > "$out/.phenix-conductor-revision"
         test ! -e "$out/lua/phenix.so"
       '';
+      providerAcceptance = pkgs.writeShellApplication {
+        name = "phenix-nvim-provider-acceptance";
+        runtimeInputs = [ pkgs.neovim ];
+        text = ''
+          set -euo pipefail
+          if test -z "''${OPENAI_API_KEY:-}"; then
+            echo "OPENAI_API_KEY is required for real-provider acceptance" >&2
+            exit 2
+          fi
+
+          state_dir="$(mktemp -d)"
+          trap 'rm -rf "$state_dir"' EXIT
+          export PHENIX_STATE_DB="$state_dir/provider-acceptance.sqlite"
+          export PHENIX_SESSION_ID_FILE="$state_dir/session-id"
+          export PHENIX_ACCEPTANCE_ACP="${phenixAcp}/bin/phenix-acp"
+
+          export PHENIX_ACCEPTANCE_PHASE=run
+          nvim --headless -u NONE \
+            --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \
+            -c ${pkgs.lib.escapeShellArg "lua dofile('${frontendSource}/tests/provider_acceptance.lua')"} \
+            -c qa
+          test -s "$PHENIX_STATE_DB"
+          test -s "$PHENIX_SESSION_ID_FILE"
+
+          export PHENIX_ACCEPTANCE_PHASE=resume
+          nvim --headless -u NONE \
+            --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \
+            -c ${pkgs.lib.escapeShellArg "lua dofile('${frontendSource}/tests/provider_acceptance.lua')"} \
+            -c qa
+
+          echo "phenix-nvim real-provider acceptance passed"
+        '';
+      };
     in
     {
       packages = {
         phenix-nvim = nvimClient;
         phenix-nvim-export = frontendExport;
+        phenix-nvim-provider-acceptance = providerAcceptance;
       };
 
       checks = {
@@ -52,6 +86,10 @@
               fi
               grep -F ${pkgs.lib.escapeShellArg "command = \"${phenixAcp}/bin/phenix-acp\""} \
                 ${nvimClient}/lua/phenix_nvim/config.lua >/dev/null
+
+              nvim --headless -u NONE \
+                -c ${pkgs.lib.escapeShellArg "lua assert(loadfile('${frontendSource}/tests/provider_acceptance.lua'))"} \
+                -c qa
 
               nvim --headless -u NONE \
                 --cmd ${pkgs.lib.escapeShellArg "set rtp^=${nvimClient}"} \

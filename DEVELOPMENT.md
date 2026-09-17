@@ -72,6 +72,19 @@ Use product tests only for behavior introduced by application composition, packa
 
 Frontend product behavior belongs in the frontend repository. Product derivations do not rerun Rust unit, integration, or system suites.
 
+## Real-provider Neovim acceptance
+
+Deterministic validation must stay credential-free. Final Neovim provider acceptance is a separate live check. Run the deterministic graph first, then run the credentialed journey:
+
+```sh
+maintenance all
+OPENAI_API_KEY=... nix run .#phenix-nvim-provider-acceptance
+```
+
+The live command exits before starting Neovim when `OPENAI_API_KEY` is missing or empty. It starts the packaged `phenix-acp`, requires the configured real OpenAI provider to call an admitted client-owned tool, exercises the client permission callback, continues inference with the typed tool result, and then restarts Neovim against the same durable state to verify the transcript can be resumed. Fixture providers cannot satisfy this acceptance command.
+
+Elicitation normalization and runtime review remain deterministic typed boundaries and stay in `maintenance all`; they do not require an external model to choose a synthetic interaction solely for testing.
+
 ## Nix testing rule
 
 Do not duplicate ordinary Nix configuration into assertions. When a package, wrapper, application, or system is misconfigured, the build or run that consumes the configuration is usually the useful failure boundary.
