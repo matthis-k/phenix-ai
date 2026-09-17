@@ -166,6 +166,19 @@ impl ProviderPlugin {
             ProviderAuthCommand::Methods => Ok(ProviderAuthResponse::Methods {
                 methods: self.spec.auth_kinds(),
             }),
+            ProviderAuthCommand::InteractiveMethods => {
+                Ok(ProviderAuthResponse::InteractiveMethods {
+                    methods: Vec::new(),
+                })
+            }
+            ProviderAuthCommand::Authenticate { method } => {
+                Err(ProviderError::Authentication {
+                    message: format!(
+                        "provider {} does not expose interactive authentication method {method:?}",
+                        self.spec.id
+                    ),
+                })
+            }
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
                 credentials: self.available_auth_descriptors()?,
             }),
