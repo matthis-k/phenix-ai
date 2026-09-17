@@ -1293,11 +1293,13 @@ fn start_prompt(
                 harness,
                 authority,
                 application_service,
-                permission_handler,
-                execution_session,
-                runtime_execution_id,
-                model_input,
-                tools,
+                AgentExecutionContext {
+                    session_id: execution_session,
+                    execution_id: runtime_execution_id,
+                    input: model_input,
+                    tools,
+                    permission_handler,
+                },
                 blocking_cancellation,
                 progress_sender,
             )
@@ -1485,18 +1487,29 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
     Ok(Bytes::new(text.into_bytes()))
 }
 
-fn run_agent_execution(
-    harness: Arc<Mutex<PhenixHarness>>,
-    authority: Authority,
-    service: SdkApplicationService,
-    permission_handler: Option<PermissionHandlerRef>,
+struct AgentExecutionContext {
     session_id: SessionId,
     execution_id: String,
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
+    permission_handler: Option<PermissionHandlerRef>,
+}
+
+fn run_agent_execution(
+    harness: Arc<Mutex<PhenixHarness>>,
+    authority: Authority,
+    service: SdkApplicationService,
+    context: AgentExecutionContext,
     cancellation: Arc<AtomicBool>,
     progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
 ) -> Result<String, ApplicationError> {
+    let AgentExecutionContext {
+        session_id,
+        execution_id,
+        input,
+        tools,
+        permission_handler,
+    } = context;
     let callable_id =
         CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| ApplicationError::Failed {
             message: format!("invalid application agent id: {error}"),

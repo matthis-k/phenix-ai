@@ -1432,6 +1432,9 @@ mod tests {
                         "phenix.extensions".to_owned(),
                         serde_json::json!({
                             "interface": INTERFACE_ID,
+                            "capabilities": [
+                                "phenix.application.capability.sessions@1",
+                            ],
                             "methods": [],
                             "events": [{
                                 "event": "phenix.application.session-update@1",

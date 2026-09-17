@@ -450,7 +450,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -495,7 +495,7 @@ mod tests {
         }
     }
 
-    fn kernel(db: &PathBuf, root: &PathBuf) -> Kernel {
+    fn kernel(db: &Path, root: &Path) -> Kernel {
         let review = review_manifest();
         let review_id = review.id.clone();
         let workspace = phenix_plugin_workspace::workspace_manifest();
@@ -506,7 +506,7 @@ mod tests {
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();
-        let root = root.clone();
+        let root = root.to_path_buf();
         kernel
             .register_embedded_factory(workspace_id, move || {
                 phenix_plugin_workspace::workspace_factory_for(root.clone())

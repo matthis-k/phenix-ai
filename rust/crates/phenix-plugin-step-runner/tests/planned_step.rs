@@ -306,6 +306,7 @@ fn request(max_input: u64) -> PlannedStepRequest {
         callable_id: None,
         input: b"hello planned world".to_vec().into(),
         tools: Vec::new(),
+        continuation: Vec::new(),
         policy: policy(max_input),
         task: TaskRequirements {
             request_input_tokens: 0,
