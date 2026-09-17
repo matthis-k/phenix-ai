@@ -4,15 +4,24 @@ record!(CapabilityList, "phenix.application.type.capability-list@1", {
     interface: ContractId,
     capabilities: Vec<ContractId>,
 });
+variants!(AuthenticationMethodKind, "phenix.application.type.authentication-method-kind@1", {
+    ApiKey,
+    OAuth,
+});
 record!(AuthenticationMethod, "phenix.application.type.authentication-method@1", {
     id: String,
     name: String,
     description: Option<String>,
+    kind: AuthenticationMethodKind,
+    authenticated: bool,
 });
 record!(AuthenticationMethods, "phenix.application.type.authentication-methods@1", {
     methods: Vec<AuthenticationMethod>,
 });
-record!(AuthenticateInput, "phenix.application.type.authenticate-input@1", { method_id: String });
+record!(AuthenticateInput, "phenix.application.type.authenticate-input@1", {
+    method_id: String,
+    secret: Option<String>,
+});
 variants!(AuthenticationResult, "phenix.application.type.authentication-result@1", {
     Authenticated,
     External { uri: String, instructions: Option<String> },
