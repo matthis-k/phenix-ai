@@ -126,6 +126,7 @@ fn capability(value: &str) -> CapabilityId {
 struct OpenAiCodexPlugin {
     runtime: Option<tokio::runtime::Runtime>,
     client: Option<reqwest::Client>,
+    token_client: Option<reqwest::Client>,
     store: Option<CredentialStore>,
     pending: Option<PendingAuthentication>,
 }
@@ -149,6 +150,14 @@ impl OpenAiCodexPlugin {
         })
     }
 
+    fn token_client(&self) -> Result<&reqwest::Client, ProviderError> {
+        self.token_client
+            .as_ref()
+            .ok_or_else(|| ProviderError::Protocol {
+                message: "Codex OAuth token client is not initialized".to_owned(),
+            })
+    }
+
     fn store(&self) -> Result<&CredentialStore, ProviderError> {
         self.store.as_ref().ok_or_else(|| ProviderError::Protocol {
             message: "Codex credential store is not initialized".to_owned(),
@@ -160,10 +169,10 @@ impl OpenAiCodexPlugin {
         request: ModelInferenceRequest,
     ) -> Result<ModelInferenceResponse, ProviderError> {
         let store = self.store()?.clone();
-        let client = self.client()?.clone();
+        let token_client = self.token_client()?.clone();
         let credential = self
             .runtime()?
-            .block_on(credential_for_request(&store, &client))
+            .block_on(credential_for_request(&store, &token_client))
             .map_err(authentication_error)?
             .ok_or_else(|| ProviderError::Authentication {
                 message: "OpenAI Codex requires ChatGPT OAuth; authenticate the openai-codex provider"
@@ -327,10 +336,10 @@ impl OpenAiCodexPlugin {
                 return Ok(ProviderAuthenticationResult::Authenticated);
             }
             let store = self.store()?.clone();
-            let client = self.client()?.clone();
+            let token_client = self.token_client()?.clone();
             if self
                 .runtime()?
-                .block_on(refresh(&store, &client, credential))
+                .block_on(refresh(&store, &token_client, credential))
                 .is_ok()
             {
                 return Ok(ProviderAuthenticationResult::Authenticated);
@@ -346,9 +355,9 @@ impl OpenAiCodexPlugin {
         let instructions =
             "Complete the ChatGPT authorization in your browser, then return to Neovim.".to_owned();
         let store = self.store()?.clone();
-        let client = self.client()?.clone();
+        let token_client = self.token_client()?.clone();
         let task = self.runtime()?.spawn(async move {
-            finish_authorization(&store, &client, start).await
+            finish_authorization(&store, &token_client, start).await
         });
         self.pending = Some(PendingAuthentication {
             uri: uri.clone(),
@@ -373,9 +382,14 @@ impl PluginInstance for OpenAiCodexPlugin {
         );
         self.client = Some(
             reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|error| format!("cannot build Codex HTTP client: {error}"))?,
+        );
+        self.token_client = Some(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|error| format!("cannot build Codex OAuth token client: {error}"))?,
         );
         self.store = Some(CredentialStore::discover()?);
         Ok(())
@@ -426,7 +440,7 @@ impl PluginInstance for OpenAiCodexPlugin {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum StoredCredential {
     ApiKey { secret: String },
@@ -439,7 +453,7 @@ enum StoredCredential {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct CodexCredential {
     access_token: String,
     refresh_token: String,
