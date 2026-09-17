@@ -7,17 +7,19 @@ use phenix_acp_stdio::{
 };
 use phenix_application_interface::{
     types::{
-        Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,
-        ElicitationHandlerRef, ExecutionChange, ExecutionState, InteractionHandlers, Message,
+        Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
+        AuthenticationMethods, AuthenticationResult, CapabilityInvokeInput, CapabilityInvokeResult,
+        Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
+        InteractionHandlers, Message,
         MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
         PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
         SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
         SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
         SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SetInteractionHandlers,
+    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
+    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListSessions,
+    Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
@@ -27,10 +29,14 @@ use phenix_core::{
     ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_service, execution_review_service, sdk_contribution, session_service,
-    AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand, ExecutionReviewResponse,
-    OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
-    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+    agent_loop_service, execution_review_service, model_routing_service, sdk_contribution,
+    session_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
+    ExecutionReviewResponse, ModelCommand, ModelResponse, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
+};
+use phenix_provider_sdk::{
+    provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
 };
 use phenix_sdk::{
     execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,
@@ -351,6 +357,12 @@ impl ApplicationWorker {
         input: PhenixValue,
     ) -> Result<PhenixValue, ApplicationError> {
         match operation.as_str() {
+            DiscoverAuthentication::ID => self
+                .discover_authentication(decode(input)?)
+                .map(|value| value.to_value()),
+            Authenticate::ID => self
+                .authenticate(decode(input)?)
+                .map(|value| value.to_value()),
             CreateSession::ID => self
                 .create_session(decode(input)?)
                 .map(|value| value.to_value()),
@@ -888,6 +900,149 @@ impl ApplicationWorker {
             })
     }
 
+    fn discover_authentication(
+        &self,
+        _request: Empty,
+    ) -> Result<AuthenticationMethods, ApplicationError> {
+        let providers = self.provider_auth_plugins();
+        let mut methods = Vec::new();
+        for provider in providers {
+            let response = self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
+            let ProviderAuthResponse::InteractiveMethods {
+                methods: provider_methods,
+            } = response
+            else {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected interactive-auth response"
+                    ),
+                });
+            };
+            for method in provider_methods {
+                methods.push(AuthenticationMethod {
+                    id: authentication_method_id(&provider, &method.id)?,
+                    name: method.name,
+                    description: method.description,
+                });
+            }
+        }
+        methods.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(AuthenticationMethods { methods })
+    }
+
+    fn authenticate(
+        &self,
+        request: AuthenticateInput,
+    ) -> Result<AuthenticationResult, ApplicationError> {
+        let (provider, method) = parse_authentication_method_id(&request.method_id)?;
+        let response =
+            self.invoke_provider_auth(&provider, ProviderAuthCommand::Authenticate { method })?;
+        let ProviderAuthResponse::Authentication { authentication } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "provider {provider} returned an unexpected authentication response"
+                ),
+            });
+        };
+        match authentication {
+            ProviderAuthenticationResult::Authenticated => {
+                self.set_provider_authenticated(&provider)?;
+                Ok(AuthenticationResult::Authenticated)
+            }
+            ProviderAuthenticationResult::External { uri, instructions } => {
+                Ok(AuthenticationResult::External { uri, instructions })
+            }
+        }
+    }
+
+    fn provider_auth_plugins(&self) -> Vec<PluginId> {
+        let service = provider_auth_service();
+        let harness = self.harness.lock();
+        let mut providers = harness
+            .kernel()
+            .config()
+            .manifests()
+            .filter(|manifest| {
+                manifest
+                    .services
+                    .iter()
+                    .any(|contribution| contribution.service == service)
+            })
+            .map(|manifest| manifest.id.clone())
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        providers
+    }
+
+    fn invoke_provider_auth(
+        &self,
+        provider: &PluginId,
+        command: ProviderAuthCommand,
+    ) -> Result<ProviderAuthResponse, ApplicationError> {
+        let input = serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(
+                &provider_auth_service(),
+                &input,
+                &self.authority,
+                Some(provider),
+            )
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn set_provider_authenticated(&self, provider: &PluginId) -> Result<(), ApplicationError> {
+        let command = ModelCommand::SetProviderAuthenticated {
+            provider_plugin: provider.clone(),
+            authenticated: true,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(
+                &model_routing_service(),
+                &input,
+                &self.authority,
+                None,
+            )
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        match ModelResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })? {
+            ModelResponse::Authentication {
+                provider_plugin,
+                authenticated: true,
+            } if provider_plugin == *provider => Ok(()),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected authentication response: {response:?}"
+                ),
+            }),
+        }
+    }
+
     fn invoke_session(
         &mut self,
         command: SessionCommand,
@@ -914,6 +1069,40 @@ impl ApplicationWorker {
             }
         })
     }
+}
+
+fn authentication_method_id(
+    provider: &PluginId,
+    method: &str,
+) -> Result<String, ApplicationError> {
+    if method.is_empty() {
+        return Err(ApplicationError::InvalidResponse {
+            message: format!("provider {provider} exposed an empty authentication method id"),
+        });
+    }
+    serde_json::to_string(&(provider.as_str(), method)).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })
+}
+
+fn parse_authentication_method_id(
+    value: &str,
+) -> Result<(PluginId, String), ApplicationError> {
+    let (provider, method): (String, String) =
+        serde_json::from_str(value).map_err(|error| ApplicationError::InvalidInput {
+            message: format!("invalid authentication method id: {error}"),
+        })?;
+    if method.is_empty() {
+        return Err(ApplicationError::InvalidInput {
+            message: "authentication method id contains an empty provider method".to_owned(),
+        });
+    }
+    let provider = PluginId::parse(provider).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("invalid authentication provider id: {error}"),
+    })?;
+    Ok((provider, method))
 }
 
 fn session_change_stream() -> ContractId {
@@ -1696,6 +1885,7 @@ fn is_sdk_operation(operation: &ContractId) -> bool {
 fn configured_capabilities() -> Vec<ContractId> {
     [
         "discovery",
+        "authentication",
         "sessions",
         "session-list",
         "session-resume",
