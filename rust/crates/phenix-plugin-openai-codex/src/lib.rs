@@ -991,6 +991,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provider_exposes_chatgpt_oauth_as_interactive_auth() {
+        let mut plugin = OpenAiCodexPlugin::default();
+        let response = plugin
+            .auth_command(ProviderAuthCommand::InteractiveMethods)
+            .unwrap();
+        assert!(matches!(
+            response,
+            ProviderAuthResponse::InteractiveMethods { methods }
+                if methods.len() == 1
+                    && methods[0].id == AUTH_METHOD
+                    && methods[0].kind == AuthKind::OAuth
+        ));
+    }
+
+    #[test]
     fn authorization_url_keeps_codex_contract() {
         let url = authorization_url(
             "http://localhost:1455/auth/callback",
