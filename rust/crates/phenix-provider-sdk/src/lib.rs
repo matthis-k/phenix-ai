@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+mod oauth;
 mod protocol;
 mod runtime;
 mod store;
@@ -32,6 +33,7 @@ pub enum ProviderAuthCommand {
     Add { auth: Auth },
     Methods,
     List,
+    BeginOAuth,
     Remove { kind: AuthKind },
 }
 
@@ -41,6 +43,7 @@ pub enum ProviderAuthResponse {
     Added { auth: AuthDescriptor },
     Methods { methods: Vec<AuthKind> },
     Credentials { credentials: Vec<AuthDescriptor> },
+    External { uri: String, instructions: Option<String> },
     Removed { auth: Option<AuthDescriptor> },
 }
 
@@ -233,12 +236,17 @@ mod tests {
 
     #[test]
     fn provider_definition_derives_plugin_contracts_from_description() {
+        let oauth = auth::OAuthMethod::authorization_code(
+            "https://example.com/oauth/authorize",
+            "https://example.com/oauth/token",
+            "client",
+        )
+        .unwrap();
         let definition = ProviderDefinition::new(
             PluginId::parse("provider.example").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::api_token(auth::ApiTokenMethod::bearer())
-                .with_oauth(auth::OAuthMethod::bearer()),
+            auth::Definition::api_token(auth::ApiTokenMethod::bearer()).with_oauth(oauth),
         );
 
         assert_eq!(definition.plugin_id().as_str(), "provider.example");
