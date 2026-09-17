@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [package.metadata.phenix]
-role = "provider-plugin"
+role = "runtime-plugin"
 
 [dependencies]
 base64.workspace = true
