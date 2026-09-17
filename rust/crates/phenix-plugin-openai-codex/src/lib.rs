@@ -266,7 +266,9 @@ impl OpenAiCodexPlugin {
                 if kind != AuthKind::OAuth {
                     return Ok(ProviderAuthResponse::Removed { auth: None });
                 }
-                self.pending = None;
+                if let Some(pending) = self.pending.take() {
+                    pending.task.abort();
+                }
                 let removed = self
                     .store()?
                     .remove()
@@ -317,8 +319,10 @@ impl OpenAiCodexPlugin {
             .resolve()
             .map_err(authentication_error)?
         {
-            let needs_refresh =
-                credential.expires_at <= unix_time()?.saturating_add(REFRESH_MARGIN_SECONDS);
+            let needs_refresh = credential.expires_at
+                <= unix_time()
+                    .map_err(authentication_error)?
+                    .saturating_add(REFRESH_MARGIN_SECONDS);
             if !needs_refresh {
                 return Ok(ProviderAuthenticationResult::Authenticated);
             }
@@ -882,16 +886,7 @@ fn random_urlsafe(bytes: usize) -> Result<String, String> {
     Ok(URL_SAFE_NO_PAD.encode(value))
 }
 
-fn unix_time() -> Result<u64, ProviderError> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|error| ProviderError::Protocol {
-            message: format!("system clock predates Unix epoch: {error}"),
-        })
-}
-
-fn unix_time_string() -> Result<u64, String> {
+fn unix_time() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
