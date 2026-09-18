@@ -149,9 +149,27 @@ fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> 
         fallback_targets: Vec::new(),
         callable_targets: BTreeMap::new(),
     };
-    match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
-        ModelResponse::Profile { profile: Some(_) } => {}
-        other => return Err(format!("fixture profile registration failed: {other:?}").into()),
+    match invoke_model(
+        harness,
+        &ModelCommand::GetProfile {
+            id: profile.id.clone(),
+        },
+    )? {
+        ModelResponse::Profile {
+            profile: Some(existing),
+        } if existing == profile => {}
+        ModelResponse::Profile { profile: Some(_) } => {
+            return Err("fixture routing profile identity changed".into())
+        }
+        ModelResponse::Profile { profile: None } => {
+            match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
+                ModelResponse::Profile { profile: Some(_) } => {}
+                other => {
+                    return Err(format!("fixture profile registration failed: {other:?}").into())
+                }
+            }
+        }
+        other => return Err(format!("fixture profile lookup failed: {other:?}").into()),
     }
     match invoke_model(
         harness,
