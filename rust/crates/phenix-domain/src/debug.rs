@@ -1,8 +1,8 @@
 use crate::{
     ConfigRevisionId, ExecutionAuthority, ExecutionEvent, ExecutionId, ExecutionReadSet,
-    ExecutionSummary, ExecutionTarget, ExecutionTerminationCause, ExecutionWorkspaceValidity,
-    FileVersion, ModelTarget, OrchestrationDefinition, OrchestrationFailureDecisionRecord,
-    OrchestrationNodeId, SessionSummary, WorkspaceDescriptor, WorkspaceId,
+    ExecutionSummary, ExecutionTerminationCause, ExecutionWorkspaceValidity, FileVersion,
+    ModelTarget, OrchestrationDefinition, OrchestrationFailureDecisionRecord, OrchestrationNodeId,
+    RoutingProfileId, SessionSummary, WorkspaceDescriptor, WorkspaceId,
 };
 use phenix_core::PhenixValue;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ pub struct DebugOrchestration {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DebugResolvedRoute {
     pub execution_id: ExecutionId,
-    pub requested_target: ExecutionTarget,
+    pub requested_route: RoutingProfileId,
     pub model: ModelTarget,
     pub config_revision: ConfigRevisionId,
 }
@@ -156,19 +156,13 @@ impl Error for DebugSerializeError {}
 mod tests {
     use super::*;
     use crate::{
-        BackendId, ConfigRevisionId, ExecutionTarget, InferenceOptions, ModelId, ModelTarget,
-        ProviderId, SessionId, SessionState, WorkspaceId,
+        ConfigRevisionId, RoutingProfileId, SessionId, SessionState, WorkspaceId,
     };
     use std::path::PathBuf;
 
     fn fixture() -> SessionDebugBundle {
         let workspace_id = WorkspaceId::parse("workspace-1").unwrap();
-        let target = ExecutionTarget::Fixed(ModelTarget {
-            backend: BackendId::parse("mock").unwrap(),
-            provider: ProviderId::parse("mock").unwrap(),
-            model: ModelId::parse("model").unwrap(),
-            inference: InferenceOptions::default(),
-        });
+        let selection = RoutingProfileId::parse("router.fixture").unwrap();
         SessionDebugBundle::new(
             SessionSummary {
                 id: SessionId::parse("session-1").unwrap(),
@@ -176,7 +170,7 @@ mod tests {
                 name: Some("debug fixture".to_owned()),
                 workspace_id: workspace_id.clone(),
                 config_revision: ConfigRevisionId::parse("config-1").unwrap(),
-                default_target: target,
+                selection,
                 state: SessionState::Active,
             },
             WorkspaceDescriptor {
