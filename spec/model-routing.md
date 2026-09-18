@@ -28,7 +28,7 @@ A named router may contain multiple targets, fallbacks, or callable-specific tar
 
 Frontends may present structurally fixed routes as “models” and variable routes as “routers”. That distinction is presentation metadata only; both select the same `RoutingProfileId` through the same operation.
 
-The current domain `ExecutionTarget::{Fixed, Routed}` duplicates this distinction and should converge on the routing-only model. A concrete `ModelTarget` is a routing result/fact, not an alternative top-level user selection type.
+The domain no longer has a parallel fixed-vs-routed execution target. A concrete `ModelTarget` is a routing result/fact, not an alternative top-level user selection type.
 
 Task kind, estimated difficulty, required capabilities, provider constraints, and later budgets are request context. They do not become variants or fields of selection.
 
@@ -112,7 +112,7 @@ exploration policy
 budget policy
 ```
 
-Adding such policy must not change `ModelSelection`.
+Adding such policy must not change the routing-selection identity.
 
 Profile schema evolution uses the normal Phenix contract/versioning rules. A consumer must not guess the meaning of unknown fields.
 
@@ -297,7 +297,7 @@ projection, including schema overhead, output reserve, and safety margin.
 
 If the projection cannot fit after permitted reduction, routed selection may try
 the next eligible target from the same pinned policy and plan. Default: at most two
-distinct targets per logical turn, each attempted once for admission. Concrete selection
+distinct targets per logical turn, each attempted once for admission. A one-target route
 never changes target. If all attempts fail, return typed context exhaustion with
 the required floor and available capacity. A wider context/tool/retry plan requires
 bounded replanning by `UsagePolicy`, not silent routing expansion.
@@ -369,7 +369,7 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 
 ## Implementation order
 
-1. Reuse or rename the existing `ExecutionTarget::{Fixed, Routed}` representation so there is one canonical `ModelSelection` concept.
+1. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
 2. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
 3. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
 4. Add owned profile contribution registration, replacement, removal, and lifetime cleanup.
