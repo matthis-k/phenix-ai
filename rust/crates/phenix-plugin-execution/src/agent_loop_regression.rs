@@ -8,9 +8,8 @@ use crate::{
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
-    PhenixSchema,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
+    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
