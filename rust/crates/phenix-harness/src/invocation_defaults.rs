@@ -254,18 +254,7 @@ fn resolve_defaults(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
 ) -> Result<InvocationParams, String> {
-    let option_context = OptionContext {
-        session: request
-            .session_id
-            .as_ref()
-            .map(|session| OptionSubjectId::parse(session.as_str().to_owned()))
-            .transpose()?,
-        agent: request
-            .callable_id
-            .as_ref()
-            .map(|callable| OptionSubjectId::parse(callable.as_str().to_owned()))
-            .transpose()?,
-    };
+    let option_context = invocation_option_context(request)?;
     let response: OptionResponse = context
         .sdk
         .options
@@ -292,6 +281,21 @@ fn resolve_defaults(
         DEFAULT_ROUTE_POLICY_REVISION,
         1,
     ))
+}
+
+fn invocation_option_context(request: &InvocationRequest) -> Result<OptionContext, String> {
+    Ok(OptionContext {
+        session: request
+            .session_id
+            .as_ref()
+            .map(|session| OptionSubjectId::parse(session.as_str().to_owned()))
+            .transpose()?,
+        agent: request
+            .callable_id
+            .as_ref()
+            .map(|callable| OptionSubjectId::parse(callable.as_str().to_owned()))
+            .transpose()?,
+    })
 }
 
 fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParams {
@@ -402,6 +406,28 @@ mod tests {
             ContextRecoveryDecision::Missing { needs }
                 if matches!(&needs[..], [ContextNeed::Task { query }] if query == "work on prs")
         ));
+    }
+
+    #[test]
+    fn invocation_options_include_session_and_agent_identity() {
+        let request = InvocationRequest {
+            execution_id: "execution-1".into(),
+            session_id: Some(phenix_core::SessionId::parse("session-1").unwrap()),
+            parent_attempt_id: None,
+            callable_id: Some(CallableId::parse("agent.coordinator").unwrap()),
+            input: Bytes::from(b"prompt".to_vec()),
+            tools: Vec::new(),
+            continuation: Vec::new(),
+        };
+        let context = invocation_option_context(&request).unwrap();
+        assert_eq!(
+            context.session.as_ref().map(OptionSubjectId::as_str),
+            Some("session-1")
+        );
+        assert_eq!(
+            context.agent.as_ref().map(OptionSubjectId::as_str),
+            Some("agent.coordinator")
+        );
     }
 
     #[test]
