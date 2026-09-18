@@ -203,6 +203,15 @@ impl ProviderPlugin {
     }
 }
 
+
+impl Drop for ProviderPlugin {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 impl PluginInstance for ProviderPlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         self.runtime = Some(
