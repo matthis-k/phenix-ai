@@ -733,8 +733,9 @@ async fn read_callback_request(stream: &mut tokio::net::TcpStream) -> Result<Str
             return Err("OAuth callback request exceeded 16 KiB".to_owned());
         }
         let remaining = MAX_CALLBACK_REQUEST_BYTES - request.len();
+        let read_len = remaining.min(chunk.len());
         let length = stream
-            .read(&mut chunk[..remaining.min(chunk.len())])
+            .read(&mut chunk[..read_len])
             .await
             .map_err(|error| format!("cannot read OAuth callback: {error}"))?;
         if length == 0 {
