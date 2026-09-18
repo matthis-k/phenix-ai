@@ -5,8 +5,8 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_plugin_catalog::{
-    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
-    OptionValueSource, OptionsInterface,
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
+    OptionValue, OptionValueSource, OptionsInterface,
 };
 use phenix_sdk::{
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
@@ -381,7 +381,8 @@ fn invocation_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::Bytes;
+    use crate::{default_suite_authority, PhenixHarness};
+    use phenix_core::{Bytes, PhenixValue, Project};
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
 
     #[test]
@@ -430,6 +431,65 @@ mod tests {
             ContextRecoveryDecision::Missing { needs }
                 if matches!(&needs[..], [ContextNeed::Task { query }] if query == "work on prs")
         ));
+    }
+
+    #[test]
+    fn explicit_session_route_overrides_agent_model_default() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+        let key = OptionKey::parse(ROUTING_PROFILE_OPTION).unwrap();
+        for (scope, value) in [
+            (
+                OptionScope::Agent(OptionSubjectId::parse("agent.coordinator").unwrap()),
+                "router.agent",
+            ),
+            (
+                OptionScope::Session(OptionSubjectId::parse("session-1").unwrap()),
+                "router.session",
+            ),
+        ] {
+            let command = OptionCommand::Set {
+                key: key.clone(),
+                scope,
+                value: OptionValue::String(value.into()),
+            };
+            let output = harness
+                .invoke(
+                    &phenix_plugin_catalog::options_service(),
+                    &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
+                    &default_suite_authority(),
+                    None,
+                )
+                .unwrap();
+            let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+            assert!(matches!(
+                OptionResponse::try_from(Project(&output)).unwrap(),
+                OptionResponse::Updated { .. }
+            ));
+        }
+
+        let request = InvocationRequest {
+            execution_id: "execution-1".into(),
+            session_id: Some(phenix_core::SessionId::parse("session-1").unwrap()),
+            parent_attempt_id: None,
+            callable_id: Some(CallableId::parse("agent.coordinator").unwrap()),
+            input: Bytes::from(b"prompt".to_vec()),
+            tools: Vec::new(),
+            continuation: Vec::new(),
+        };
+        let command = InvocationDefaultsCommand::Resolve { request };
+        let output = harness
+            .invoke(
+                &invocation_defaults_service(),
+                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
+                &default_suite_authority(),
+                None,
+            )
+            .unwrap();
+        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let InvocationDefaultsResponse::Params { params } =
+            InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
+        assert_eq!(params.profile_id.as_str(), "router.session");
     }
 
     #[test]
