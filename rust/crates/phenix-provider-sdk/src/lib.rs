@@ -35,15 +35,24 @@ pub fn provider_http_client_builder() -> Result<reqwest::ClientBuilder, Provider
         return Ok(builder);
     };
     let pem = std::fs::read(&path).map_err(|error| ProviderError::Transport {
-        message: format!("cannot read CA bundle from {source} ({}): {error}", path.display()),
+        message: format!(
+            "cannot read CA bundle from {source} ({}): {error}",
+            path.display()
+        ),
     })?;
     let certificates =
         reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| ProviderError::Transport {
-            message: format!("cannot parse CA bundle from {source} ({}): {error}", path.display()),
+            message: format!(
+                "cannot parse CA bundle from {source} ({}): {error}",
+                path.display()
+            ),
         })?;
     if certificates.is_empty() {
         return Err(ProviderError::Transport {
-            message: format!("CA bundle from {source} ({}) contains no certificates", path.display()),
+            message: format!(
+                "CA bundle from {source} ({}) contains no certificates",
+                path.display()
+            ),
         });
     }
     builder = builder.tls_certs_only(certificates);
