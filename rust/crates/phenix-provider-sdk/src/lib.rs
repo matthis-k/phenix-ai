@@ -31,17 +31,54 @@ pub mod provider {
 pub enum ProviderAuthCommand {
     Add { auth: Auth },
     Methods,
+    InteractiveMethods,
+    Authenticate { method: String },
     List,
     Remove { kind: AuthKind },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAuthMethod {
+    pub id: String,
+    pub kind: AuthKind,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderAuthenticationResult {
+    Authenticated,
+    External {
+        uri: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instructions: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderAuthResponse {
-    Added { auth: AuthDescriptor },
-    Methods { methods: Vec<AuthKind> },
-    Credentials { credentials: Vec<AuthDescriptor> },
-    Removed { auth: Option<AuthDescriptor> },
+    Added {
+        auth: AuthDescriptor,
+    },
+    Methods {
+        methods: Vec<AuthKind>,
+    },
+    InteractiveMethods {
+        methods: Vec<ProviderAuthMethod>,
+    },
+    Authentication {
+        authentication: ProviderAuthenticationResult,
+    },
+    Credentials {
+        credentials: Vec<AuthDescriptor>,
+    },
+    Removed {
+        auth: Option<AuthDescriptor>,
+    },
 }
 
 pub struct ProviderAuthInterface;
