@@ -5,8 +5,8 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_plugin_catalog::{
-    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
-    OptionValue, OptionValueSource, OptionsInterface,
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
+    OptionValueSource, OptionsInterface,
 };
 use phenix_sdk::{
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
@@ -440,11 +440,11 @@ mod tests {
         let key = OptionKey::parse(ROUTING_PROFILE_OPTION).unwrap();
         for (scope, value) in [
             (
-                OptionScope::Agent(OptionSubjectId::parse("agent.coordinator").unwrap()),
+                phenix_plugin_catalog::OptionScope::Agent(OptionSubjectId::parse("agent.coordinator").unwrap()),
                 "router.agent",
             ),
             (
-                OptionScope::Session(OptionSubjectId::parse("session-1").unwrap()),
+                phenix_plugin_catalog::OptionScope::Session(OptionSubjectId::parse("session-1").unwrap()),
                 "router.session",
             ),
         ] {
