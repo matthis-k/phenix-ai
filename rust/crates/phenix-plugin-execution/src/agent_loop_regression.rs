@@ -6,8 +6,9 @@ use crate::{
     ExecutionConfigurationCommand, ExecutionConfigurationResponse,
 };
 use phenix_core::{
-    Authority, Bytes, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor, PhenixSchema,
+    Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
+    PhenixSchema,
     PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
     PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
@@ -22,6 +23,17 @@ use std::collections::BTreeSet;
 
 const INVOCATION_PROVIDER: &str = "fixture.agent-loop-invocation";
 const INVOCATION_PROVIDER_COMPONENT: &str = "fixture.agent-loop-invocation";
+const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
+const PERSISTENCE_READ: &str = "kernel.persistence.read";
+const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+
+fn regression_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse(PERSISTENCE_SCHEMA).unwrap(),
+        CapabilityId::parse(PERSISTENCE_READ).unwrap(),
+        CapabilityId::parse(PERSISTENCE_WRITE).unwrap(),
+    ])
+}
 
 struct InvocationProviderSdk<'host, 'runtime> {
     execution_configuration: SdkClient<'host, 'runtime, ExecutionConfigurationInterface>,
@@ -135,7 +147,7 @@ fn provider_manifest() -> PluginManifest {
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
-        maximum_authority: Authority::default(),
+        maximum_authority: regression_authority(),
     }
 }
 
@@ -148,7 +160,7 @@ fn provider_component() -> ComponentManifest {
             interface: ExecutionConfigurationInterface::interface_id(),
             schema: ExecutionConfigurationInterface::schema(),
             required: true,
-            authority: Authority::default(),
+            authority: regression_authority(),
         }],
         exports: vec![ComponentExport {
             interface: DefaultInvocationInterface::interface_id(),
@@ -156,7 +168,7 @@ fn provider_component() -> ComponentManifest {
             priority: 200,
             required_authority: Authority::default(),
         }],
-        maximum_authority: Authority::default(),
+        maximum_authority: regression_authority(),
     }
 }
 
@@ -226,13 +238,14 @@ fn fixture_attempt() -> StepAttemptRecord {
 }
 
 fn resolved_harness(with_provider: bool) -> ResolvedHarness {
-    let execution = execution_manifest(Authority::default());
-    let agent_loop = agent_loop_manifest(Authority::default());
+    let authority = regression_authority();
+    let execution = execution_manifest(authority.clone());
+    let agent_loop = agent_loop_manifest(authority.clone());
     let ceiling = execution.maximum_authority.clone();
     let mut plugins = vec![execution, agent_loop];
     let mut components = vec![
-        execution_component_manifest(Authority::default()),
-        agent_loop_component_manifest(Authority::default()),
+        execution_component_manifest(authority.clone()),
+        agent_loop_component_manifest(authority),
     ];
     if with_provider {
         plugins.push(provider_manifest());
@@ -279,7 +292,7 @@ fn invoke_agent_loop(kernel: &mut Kernel, agent_loop: &PluginId) -> Result<Vec<u
         &agent_loop_component_id(),
         &agent_loop_service(),
         &serde_json::to_vec(&PhenixValue::from(&command(Vec::new()))).unwrap(),
-        &Authority::default(),
+        &regression_authority(),
         agent_loop,
     )
 }
@@ -326,7 +339,7 @@ fn agent_loop_preserves_typed_invocation_tool_calls() {
             &agent_loop_component_id(),
             &agent_loop_service(),
             &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-            &Authority::default(),
+            &regression_authority(),
             &agent_loop,
         )
         .unwrap();
