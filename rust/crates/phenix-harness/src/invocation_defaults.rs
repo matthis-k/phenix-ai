@@ -6,7 +6,7 @@ use phenix_core::{
 };
 use phenix_plugin_catalog::{
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
-    OptionsInterface,
+    OptionValueSource, OptionsInterface,
 };
 use phenix_sdk::{
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
@@ -254,20 +254,7 @@ fn resolve_defaults(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
 ) -> Result<InvocationParams, String> {
-    let option_context = invocation_option_context(request)?;
-    let response: OptionResponse = context
-        .sdk
-        .options
-        .invoke_projected(&OptionCommand::Resolve {
-            key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
-            context: option_context,
-        })
-        .map_err(|error| format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}"))?;
-    let OptionResponse::Value { option } = response else {
-        return Err(format!(
-            "options service returned a non-value response for {ROUTING_PROFILE_OPTION}"
-        ));
-    };
+    let option = resolve_routing_option(context, request)?;
     let OptionValue::String(profile) = option.value else {
         return Err(format!("{ROUTING_PROFILE_OPTION} must be a string"));
     };
@@ -281,6 +268,43 @@ fn resolve_defaults(
         DEFAULT_ROUTE_POLICY_REVISION,
         1,
     ))
+}
+
+fn resolve_routing_option(
+    context: &InvocationDefaultsContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<phenix_plugin_catalog::ResolvedOption, String> {
+    if let Some(session) = &request.session_id {
+        let session_context = OptionContext {
+            session: Some(OptionSubjectId::parse(session.as_str().to_owned())?),
+            agent: None,
+        };
+        let option = resolve_option(context, session_context)?;
+        if option.source == OptionValueSource::Session {
+            return Ok(option);
+        }
+    }
+    resolve_option(context, invocation_option_context(request)?)
+}
+
+fn resolve_option(
+    context: &InvocationDefaultsContext<'_, '_>,
+    option_context: OptionContext,
+) -> Result<phenix_plugin_catalog::ResolvedOption, String> {
+    let response: OptionResponse = context
+        .sdk
+        .options
+        .invoke_projected(&OptionCommand::Resolve {
+            key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
+            context: option_context,
+        })
+        .map_err(|error| format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}"))?;
+    let OptionResponse::Value { option } = response else {
+        return Err(format!(
+            "options service returned a non-value response for {ROUTING_PROFILE_OPTION}"
+        ));
+    };
+    Ok(option)
 }
 
 fn invocation_option_context(request: &InvocationRequest) -> Result<OptionContext, String> {
