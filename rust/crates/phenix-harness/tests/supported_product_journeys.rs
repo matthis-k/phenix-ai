@@ -510,6 +510,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
         &InvocationCommand::Invoke {
             request: InvocationRequest {
                 execution_id: "root".into(),
+                session_id: None,
                 parent_attempt_id: None,
                 callable_id: None,
                 input: b"hello".to_vec().into(),
