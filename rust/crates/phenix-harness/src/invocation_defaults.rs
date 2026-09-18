@@ -438,6 +438,7 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         let key = OptionKey::parse(ROUTING_PROFILE_OPTION).unwrap();
+        let options_component = phenix_plugin_catalog::options_component_manifest();
         for (scope, value) in [
             (
                 phenix_plugin_catalog::OptionScope::Agent(
@@ -458,11 +459,13 @@ mod tests {
                 value: OptionValue::String(value.into()),
             };
             let output = harness
-                .invoke(
+                .kernel_mut()
+                .invoke_component(
+                    &options_component.id,
                     &phenix_plugin_catalog::options_service(),
                     &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
                     &default_suite_authority(),
-                    None,
+                    &options_component.owner,
                 )
                 .unwrap();
             let output: PhenixValue = serde_json::from_slice(&output).unwrap();
