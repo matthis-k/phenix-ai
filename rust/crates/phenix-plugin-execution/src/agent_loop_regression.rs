@@ -2,8 +2,7 @@ use crate::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
     agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
     execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
-    ExecutionConfigurationCommand, ExecutionConfigurationInterface,
-    ExecutionConfigurationResponse,
+    ExecutionConfigurationCommand, ExecutionConfigurationInterface, ExecutionConfigurationResponse,
 };
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
@@ -24,8 +23,7 @@ const INVOCATION_PROVIDER: &str = "fixture.agent-loop-invocation";
 const INVOCATION_PROVIDER_COMPONENT: &str = "fixture.agent-loop-invocation";
 
 struct InvocationProviderSdk<'host, 'runtime> {
-    execution_configuration:
-        SdkClient<'host, 'runtime, ExecutionConfigurationInterface>,
+    execution_configuration: SdkClient<'host, 'runtime, ExecutionConfigurationInterface>,
 }
 
 type InvocationProviderContext<'host, 'runtime> =
@@ -93,10 +91,7 @@ impl PluginInstance for InvocationProvider {
             .execution_configuration
             .invoke_projected(&ExecutionConfigurationCommand::ListAgents)
             .map_err(|error| format!("execution back-edge failed: {error}"))?;
-        if !matches!(
-            configuration,
-            ExecutionConfigurationResponse::Agents { .. }
-        ) {
+        if !matches!(configuration, ExecutionConfigurationResponse::Agents { .. }) {
             return Err("execution back-edge returned a non-agent-list response".into());
         }
 
