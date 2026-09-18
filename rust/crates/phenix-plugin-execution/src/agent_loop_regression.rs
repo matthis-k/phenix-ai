@@ -1,8 +1,9 @@
+use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
     agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
     execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
-    ExecutionConfigurationCommand, ExecutionConfigurationInterface, ExecutionConfigurationResponse,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse,
 };
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
