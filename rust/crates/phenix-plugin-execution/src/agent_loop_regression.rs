@@ -1,14 +1,16 @@
+use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
-    agent_loop_component_id, agent_loop_component_manifest, agent_loop_service,
-    execution_component_manifest, execution_factory, execution_manifest, AgentLoopCommand,
-    AgentLoopResponse, AgentLoopUsage,
+    agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
+    execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse,
 };
 use phenix_core::{
-    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
-    KernelError, ModelToolCall, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole,
-    SessionId,
+    Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
+    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -20,6 +22,37 @@ use std::collections::BTreeSet;
 
 const INVOCATION_PROVIDER: &str = "fixture.agent-loop-invocation";
 const INVOCATION_PROVIDER_COMPONENT: &str = "fixture.agent-loop-invocation";
+const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
+const PERSISTENCE_READ: &str = "kernel.persistence.read";
+const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+
+fn regression_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse(PERSISTENCE_SCHEMA).unwrap(),
+        CapabilityId::parse(PERSISTENCE_READ).unwrap(),
+        CapabilityId::parse(PERSISTENCE_WRITE).unwrap(),
+    ])
+}
+
+struct InvocationProviderSdk<'host, 'runtime> {
+    execution_configuration: SdkClient<'host, 'runtime, ExecutionConfigurationInterface>,
+}
+
+type InvocationProviderContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, InvocationProviderSdk<'host, 'runtime>>;
+
+fn invocation_provider_context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> InvocationProviderContext<'host, 'runtime> {
+    PluginContext::new(
+        host,
+        InvocationProviderSdk {
+            execution_configuration: SdkClient::new(host, provider_component_id()),
+        },
+        (),
+        (),
+    )
+}
 
 struct InvocationProvider;
 
@@ -37,7 +70,7 @@ impl PluginInstance for InvocationProvider {
         if service != &default_invocation_service() {
             return Err(format!("unsupported default invocation service: {service}"));
         }
-        let context = PluginContext::new(host, (), (), ());
+        let context = invocation_provider_context(host);
         let DefaultInvocationCommand::Invoke { request } = context
             .kernel
             .decode_projected::<DefaultInvocationCommand>(
@@ -64,6 +97,16 @@ impl PluginInstance for InvocationProvider {
             })
             .into_iter()
             .collect();
+
+        let configuration: ExecutionConfigurationResponse = context
+            .sdk
+            .execution_configuration
+            .invoke_projected(&ExecutionConfigurationCommand::ListAgents)
+            .map_err(|error| format!("execution back-edge failed: {error}"))?;
+        if !matches!(configuration, ExecutionConfigurationResponse::Agents { .. }) {
+            return Err("execution back-edge returned a non-agent-list response".into());
+        }
+
         context
             .kernel
             .encode_value(&StepRunnerResponse::Completed {
@@ -103,7 +146,7 @@ fn provider_manifest() -> PluginManifest {
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
-        maximum_authority: Authority::default(),
+        maximum_authority: regression_authority(),
     }
 }
 
@@ -112,14 +155,19 @@ fn provider_component() -> ComponentManifest {
         listeners: Vec::new(),
         id: provider_component_id(),
         owner: provider_id(),
-        imports: Vec::new(),
+        imports: vec![ComponentImport {
+            interface: ExecutionConfigurationInterface::interface_id(),
+            schema: ExecutionConfigurationInterface::schema(),
+            required: true,
+            authority: regression_authority(),
+        }],
         exports: vec![ComponentExport {
             interface: DefaultInvocationInterface::interface_id(),
             schema: DefaultInvocationInterface::schema(),
             priority: 200,
             required_authority: Authority::default(),
         }],
-        maximum_authority: Authority::default(),
+        maximum_authority: regression_authority(),
     }
 }
 
@@ -189,12 +237,14 @@ fn fixture_attempt() -> StepAttemptRecord {
 }
 
 fn resolved_harness(with_provider: bool) -> ResolvedHarness {
-    let execution = execution_manifest(Authority::default());
+    let authority = regression_authority();
+    let execution = execution_manifest(authority.clone());
+    let agent_loop = agent_loop_manifest(authority.clone());
     let ceiling = execution.maximum_authority.clone();
-    let mut plugins = vec![execution];
+    let mut plugins = vec![execution, agent_loop];
     let mut components = vec![
-        execution_component_manifest(Authority::default()),
-        agent_loop_component_manifest(Authority::default()),
+        execution_component_manifest(authority.clone()),
+        agent_loop_component_manifest(authority),
     ];
     if with_provider {
         plugins.push(provider_manifest());
@@ -206,10 +256,14 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
 fn kernel(with_provider: bool) -> (Kernel, PluginId) {
     let resolved = resolved_harness(with_provider);
     let execution = execution_manifest(Authority::default()).id;
+    let agent_loop = agent_loop_manifest(Authority::default()).id;
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel
-        .register_embedded_factory(execution.clone(), execution_factory)
+        .register_embedded_factory(execution, execution_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(agent_loop.clone(), agent_loop_factory)
         .unwrap();
     if with_provider {
         kernel
@@ -217,7 +271,7 @@ fn kernel(with_provider: bool) -> (Kernel, PluginId) {
             .unwrap();
     }
     kernel.activate_all().unwrap();
-    (kernel, execution)
+    (kernel, agent_loop)
 }
 
 fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
@@ -232,20 +286,28 @@ fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
     }
 }
 
-fn invoke_agent_loop(kernel: &mut Kernel, execution: &PluginId) -> Result<Vec<u8>, KernelError> {
+fn invoke_agent_loop(kernel: &mut Kernel, agent_loop: &PluginId) -> Result<Vec<u8>, KernelError> {
     kernel.invoke_component(
         &agent_loop_component_id(),
         &agent_loop_service(),
         &serde_json::to_vec(&PhenixValue::from(&command(Vec::new()))).unwrap(),
-        &Authority::default(),
-        execution,
+        &regression_authority(),
+        agent_loop,
     )
 }
 
 #[test]
+fn agent_loop_plugin_is_distinct_from_execution_state_owner() {
+    assert_ne!(
+        agent_loop_manifest(Authority::default()).id,
+        execution_manifest(Authority::default()).id
+    );
+}
+
+#[test]
 fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
-    let (mut kernel, execution) = kernel(true);
-    let output = invoke_agent_loop(&mut kernel, &execution).unwrap();
+    let (mut kernel, agent_loop) = kernel(true);
+    let output = invoke_agent_loop(&mut kernel, &agent_loop).unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
 
@@ -264,7 +326,7 @@ fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
 
 #[test]
 fn agent_loop_preserves_typed_invocation_tool_calls() {
-    let (mut kernel, execution) = kernel(true);
+    let (mut kernel, agent_loop) = kernel(true);
     let command = command(vec![ModelToolDescriptor {
         id: phenix_core::CallableId::parse("fixture.client.echo").unwrap(),
         description: "Echo fixture input".into(),
@@ -276,8 +338,8 @@ fn agent_loop_preserves_typed_invocation_tool_calls() {
             &agent_loop_component_id(),
             &agent_loop_service(),
             &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-            &Authority::default(),
-            &execution,
+            &regression_authority(),
+            &agent_loop,
         )
         .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
@@ -302,14 +364,14 @@ fn agent_loop_preserves_typed_invocation_tool_calls() {
 
 #[test]
 fn agent_loop_without_default_invocation_fails_at_optional_import_boundary() {
-    let (mut kernel, execution) = kernel(false);
-    match invoke_agent_loop(&mut kernel, &execution).unwrap_err() {
+    let (mut kernel, agent_loop) = kernel(false);
+    match invoke_agent_loop(&mut kernel, &agent_loop).unwrap_err() {
         KernelError::ServiceInvoke {
             plugin,
             service,
             message,
         } => {
-            assert_eq!(plugin, execution);
+            assert_eq!(plugin, agent_loop);
             assert_eq!(service, agent_loop_service());
             assert_eq!(
                 message,

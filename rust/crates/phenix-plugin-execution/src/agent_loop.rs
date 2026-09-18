@@ -1,13 +1,15 @@
 use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
-    Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
-    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId, SessionId,
+    Authority, Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor,
+    ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
 };
 use serde::{Deserialize, Serialize};
 
+pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
 pub const DEFAULT_MAX_PARALLEL_TOOL_CALLS: u32 = 10;
 
@@ -68,7 +70,26 @@ pub fn agent_loop_service() -> ServiceId {
     ServiceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop service id is valid")
 }
 
-pub(crate) fn agent_loop_factory() -> Box<dyn PluginInstance> {
+#[must_use]
+pub fn agent_loop_manifest(maximum_authority: Authority) -> PluginManifest {
+    PluginManifest {
+        id: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![ServiceContribution {
+            role: ServiceRole::Terminal,
+            service: agent_loop_service(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
+        resource_namespaces: Vec::new(),
+        maximum_authority,
+    }
+}
+
+#[must_use]
+pub fn agent_loop_factory() -> Box<dyn PluginInstance> {
     Box::new(AgentLoopPlugin)
 }
 

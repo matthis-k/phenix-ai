@@ -1,7 +1,7 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
     execution_manifest, AgentLoopCommand, AgentLoopResponse, ExecutionReviewInterface,
-    AGENT_LOOP_SERVICE,
+    AGENT_LOOP_PLUGIN, AGENT_LOOP_SERVICE,
 };
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
@@ -103,7 +103,7 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
     ComponentManifest {
         listeners: Vec::new(),
         id: agent_loop_component_id(),
-        owner: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),
+        owner: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
         imports: vec![ComponentImport {
             interface: DefaultInvocationInterface::interface_id(),
             schema: DefaultInvocationInterface::schema(),
@@ -135,6 +135,7 @@ fn workspace_write_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_loop_manifest;
     use phenix_core::ResolvedComponentGraph;
 
     #[test]
@@ -207,9 +208,12 @@ mod tests {
     #[test]
     fn agent_loop_component_owns_invocation_dependency_separately() {
         let network = CapabilityId::parse("network.model").unwrap();
-        let component = agent_loop_component_manifest(Authority::new([network.clone()]));
+        let authority = Authority::new([network.clone()]);
+        let plugin = agent_loop_manifest(authority.clone());
+        let component = agent_loop_component_manifest(authority);
 
         assert_eq!(component.id, agent_loop_component_id());
+        assert_eq!(component.owner, plugin.id);
         assert_eq!(component.imports.len(), 1);
         assert!(!component.imports[0].required);
         assert_eq!(

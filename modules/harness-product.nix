@@ -61,6 +61,30 @@
         '';
       };
 
+      phenixAcpFixture = pkgs.rustPlatform.buildRustPackage {
+        pname = "phenix-acp-fixture";
+        version = "0";
+        src = rustSource;
+
+        cargoLock.lockFile = ../rust/Cargo.lock;
+        cargoBuildFlags = [
+          "--package"
+          "phenix-harness"
+          "--bin"
+          "phenix-acp-fixture"
+        ];
+        doCheck = false;
+
+        installPhase = ''
+          runHook preInstall
+          mkdir -p "$out/bin"
+          acp_binary="$(find target -path '*/release/phenix-acp-fixture' -type f -print -quit)"
+          test -n "$acp_binary"
+          cp "$acp_binary" "$out/bin/phenix-acp-fixture"
+          runHook postInstall
+        '';
+      };
+
       runtimeConfig = pkgs.writeText "phenix-runtime.json" (
         builtins.toJSON (import ../config/phenix/runtime.nix)
       );
@@ -120,6 +144,7 @@
     {
       packages = {
         phenix-acp = phenixAcp;
+        phenix-acp-fixture = phenixAcpFixture;
         phenix-harness-runtime = phenixHarnessRuntime;
         phenix-harness-resources = phenixHarnessResources;
       };
