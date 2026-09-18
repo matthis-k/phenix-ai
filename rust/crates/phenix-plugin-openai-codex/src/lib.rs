@@ -359,6 +359,18 @@ impl OpenAiCodexPlugin {
     }
 }
 
+
+impl Drop for OpenAiCodexPlugin {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            pending.task.abort();
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 impl PluginInstance for OpenAiCodexPlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         self.runtime = Some(
