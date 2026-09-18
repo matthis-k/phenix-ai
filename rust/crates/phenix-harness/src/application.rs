@@ -10,20 +10,22 @@ use phenix_application_interface::{
         Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,
         ElicitationHandlerRef, ExecutionChange, ExecutionState, InteractionHandlers, Message,
         MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
-        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
-        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
-        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
+        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SelectionInfo,
+        SelectionPresentation, SelectionSelectInput, Selections, SessionChange, SessionCreateInput,
+        SessionInfo, SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SetInteractionHandlers,
+    InvokeCapability, ListCallables, ListSelections, ListSessions, Operation, Prompt,
+    RemoveClientTool, RenameSession, ResumeSession, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
     HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ModelToolResult, ModelToolTurn,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
+    PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec,
     ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
@@ -33,9 +35,11 @@ use phenix_plugin_catalog::{
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use phenix_sdk::{
-    execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,
-    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, RootBudgetLedger,
-    RootBudgetLimits,
+    execution_resource_service, execution_service, model_routing_service, options_service,
+    ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
+    OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
+    RoutingProfile,
 };
 use std::{
     collections::BTreeMap,
@@ -351,6 +355,12 @@ impl ApplicationWorker {
         input: PhenixValue,
     ) -> Result<PhenixValue, ApplicationError> {
         match operation.as_str() {
+            ListSelections::ID => self
+                .list_selections(decode(input)?)
+                .map(|value| value.to_value()),
+            SelectSelection::ID => self
+                .select_selection(decode(input)?)
+                .map(|value| value.to_value()),
             CreateSession::ID => self
                 .create_session(decode(input)?)
                 .map(|value| value.to_value()),
@@ -400,6 +410,184 @@ impl ApplicationWorker {
         }
         self.interaction_handlers = handlers;
         Ok(Acknowledged {})
+    }
+
+    fn list_selections(
+        &mut self,
+        request: ApplicationSessionInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        let selected = self.selected_routing_profile(&request.session_id)?;
+        let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
+            ModelResponse::Profiles { profiles } => profiles,
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "model routing returned an unexpected profile-list response: {response:?}"
+                    ),
+                })
+            }
+        };
+
+        let mut available = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            let profile = match self.invoke_model_command(ModelCommand::GetProfile {
+                id: descriptor.id.clone(),
+            })? {
+                ModelResponse::Profile {
+                    profile: Some(profile),
+                } => profile,
+                response => {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: format!(
+                            "model routing returned an unexpected profile response: {response:?}"
+                        ),
+                    })
+                }
+            };
+            available.push(selection_info(&profile)?);
+        }
+        available.sort_by(|left, right| {
+            selection_presentation_rank(&left.presentation)
+                .cmp(&selection_presentation_rank(&right.presentation))
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(Selections {
+            available,
+            selected: Some(selected),
+        })
+    }
+
+    fn select_selection(
+        &mut self,
+        request: SelectionSelectInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        match self.invoke_model_command(ModelCommand::GetProfile {
+            id: request.selection_id.clone(),
+        })? {
+            ModelResponse::Profile {
+                profile: Some(_),
+            } => {}
+            ModelResponse::Profile { profile: None } => {
+                return Err(ApplicationError::InvalidInput {
+                    message: format!("unknown routing selection {}", request.selection_id),
+                })
+            }
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "model routing returned an unexpected profile response: {response:?}"
+                    ),
+                })
+            }
+        }
+
+        let subject = OptionSubjectId::parse(request.session_id.as_str()).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            }
+        })?;
+        let response = self.invoke_option_command(OptionCommand::Set {
+            key: model_default_option(),
+            scope: OptionScope::Session(subject),
+            value: OptionValue::String(request.selection_id.to_string()),
+        })?;
+        if !matches!(response, OptionResponse::Updated { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("options service rejected routing selection: {response:?}"),
+            });
+        }
+        self.list_selections(ApplicationSessionInput {
+            session_id: request.session_id,
+        })
+    }
+
+    fn selected_routing_profile(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<RoutingProfileId, ApplicationError> {
+        let subject = OptionSubjectId::parse(session_id.as_str()).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            }
+        })?;
+        match self.invoke_option_command(OptionCommand::Resolve {
+            key: model_default_option(),
+            context: OptionContext {
+                session: Some(subject),
+                agent: None,
+            },
+        })? {
+            OptionResponse::Value { option } => match option.value {
+                OptionValue::String(value) => RoutingProfileId::parse(value).map_err(|error| {
+                    ApplicationError::InvalidResponse {
+                        message: format!("model.default is not a valid routing profile: {error}"),
+                    }
+                }),
+                value => Err(ApplicationError::InvalidResponse {
+                    message: format!("model.default must be a string, got {value:?}"),
+                }),
+            },
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!("options service returned an unexpected response: {response:?}"),
+            }),
+        }
+    }
+
+    fn invoke_model_command(
+        &self,
+        command: ModelCommand,
+    ) -> Result<ModelResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&model_routing_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        ModelResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
+    }
+
+    fn invoke_option_command(
+        &self,
+        command: OptionCommand,
+    ) -> Result<OptionResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&options_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        OptionResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
     }
 
     fn create_session(
@@ -913,6 +1101,56 @@ impl ApplicationWorker {
                 message: error.to_string(),
             }
         })
+    }
+}
+
+fn model_default_option() -> OptionKey {
+    OptionKey::parse("model.default").expect("static model.default option key is valid")
+}
+
+fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, ApplicationError> {
+    let mut targets = BTreeMap::new();
+    for target in std::iter::once(&profile.default_target)
+        .chain(profile.fallback_targets.iter())
+        .chain(profile.callable_targets.values())
+    {
+        let key = serde_json::to_string(target).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })?;
+        targets.entry(key).or_insert(target);
+    }
+
+    if targets.len() == 1 {
+        let target = targets
+            .into_values()
+            .next()
+            .expect("one routing target was counted");
+        return Ok(SelectionInfo {
+            id: profile.id.clone(),
+            name: target.model.to_string(),
+            description: Some(target.provider_plugin.to_string()),
+            presentation: SelectionPresentation::Model,
+        });
+    }
+
+    let providers = profile
+        .default_target
+        .provider_plugin
+        .to_string();
+    Ok(SelectionInfo {
+        id: profile.id.clone(),
+        name: profile.id.to_string(),
+        description: Some(providers),
+        presentation: SelectionPresentation::Router,
+    })
+}
+
+fn selection_presentation_rank(presentation: &SelectionPresentation) -> u8 {
+    match presentation {
+        SelectionPresentation::Router => 0,
+        SelectionPresentation::Model => 1,
     }
 }
 
@@ -1701,6 +1939,7 @@ fn configured_capabilities() -> Vec<ContractId> {
         "session-resume",
         "session-rename",
         "prompt",
+        "routing",
         "sdk",
         "capabilities",
         "callables",
