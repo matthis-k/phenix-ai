@@ -2,8 +2,8 @@
 
 use phenix_domain::{
     AuthenticationInput, AuthenticationMethodId, BackendCatalog, BackendId, CallableDescriptor,
-    CallableId, ConfigRevisionId, ExecutionEvent, ExecutionId, ExecutionSummary, ExecutionTarget,
-    RoutingProfileDescriptor, SessionId, SessionSummary, SkillDescriptor,
+    CallableId, ConfigRevisionId, ExecutionEvent, ExecutionId, ExecutionSummary,
+    RoutingProfileDescriptor, RoutingProfileId, SessionId, SessionSummary, SkillDescriptor,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -229,7 +229,7 @@ pub enum Command {
     CreateSession {
         parent_session: Option<SessionId>,
         name: Option<String>,
-        target: ExecutionTarget,
+        selection: RoutingProfileId,
     },
     ForkSession {
         session_id: SessionId,
