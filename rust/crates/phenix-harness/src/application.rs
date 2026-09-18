@@ -1126,7 +1126,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
         return Ok(SelectionInfo {
             id: profile.id.clone(),
             name: target.model.to_string(),
-            description: Some(target.provider_plugin.to_string()),
+            description: Some(model_selection_description(target)),
             presentation: SelectionPresentation::Model,
         });
     }
@@ -1138,6 +1138,18 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
         description: Some(providers),
         presentation: SelectionPresentation::Router,
     })
+}
+
+fn model_selection_description(target: &phenix_sdk::ModelTarget) -> String {
+    let mut details = vec![target.provider_plugin.to_string()];
+    if let Some(PhenixValue::Map(inference)) = target.options.get("inference") {
+        if let Some(PhenixValue::String(effort)) = inference.get("effort") {
+            if !effort.is_empty() {
+                details.push(format!("effort {effort}"));
+            }
+        }
+    }
+    details.join(" · ")
 }
 
 fn selection_presentation_rank(presentation: &SelectionPresentation) -> u8 {
