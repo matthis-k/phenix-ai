@@ -530,10 +530,7 @@ mod tests {
             "name": null,
             "workspace_id": "workspace:test",
             "config_revision": "config-1",
-            "default_target": {
-                "kind": "routed",
-                "value": "default"
-            }
+            "selection": "default"
         });
         let session: SessionSummary = serde_json::from_value(value).unwrap();
         assert_eq!(session.state, SessionState::Active);
