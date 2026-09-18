@@ -1,7 +1,7 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
-    agent_loop_manifest, execution_manifest, AgentLoopCommand, AgentLoopResponse,
-    ExecutionReviewInterface, AGENT_LOOP_PLUGIN, AGENT_LOOP_SERVICE,
+    execution_manifest, AgentLoopCommand, AgentLoopResponse, ExecutionReviewInterface,
+    AGENT_LOOP_PLUGIN, AGENT_LOOP_SERVICE,
 };
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
@@ -135,6 +135,7 @@ fn workspace_write_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_loop_manifest;
     use phenix_core::ResolvedComponentGraph;
 
     #[test]
