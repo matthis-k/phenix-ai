@@ -14,6 +14,7 @@ use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAu
 use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities};
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -274,11 +275,51 @@ fn apply_configuration(
         }
     }
 
-    for profile in configuration.routing_profiles {
-        ensure_routing_profile(harness, profile.into_routing_profile())?;
+    let profiles = configuration
+        .routing_profiles
+        .into_iter()
+        .map(RuntimeRoutingProfile::into_routing_profile)
+        .collect::<Vec<_>>();
+
+    let mut direct_targets = BTreeMap::new();
+    for profile in &profiles {
+        for target in std::iter::once(&profile.default_target)
+            .chain(profile.fallback_targets.iter())
+            .chain(profile.callable_targets.values())
+        {
+            direct_targets
+                .entry(serde_json::to_string(target)?)
+                .or_insert_with(|| target.clone());
+        }
+    }
+
+    for profile in profiles {
+        ensure_routing_profile(harness, profile)?;
+    }
+    for target in direct_targets.into_values() {
+        ensure_routing_profile(harness, direct_routing_profile(target)?)?;
     }
 
     Ok(())
+}
+
+fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
+    let encoded = serde_json::to_vec(&target)?;
+    let digest = Sha256::digest(encoded);
+    let suffix = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let id = RoutingProfileId::parse(format!(
+        "model.{}.{}.{}",
+        target.provider_plugin, target.model, suffix
+    ))?;
+    Ok(RoutingProfile {
+        id,
+        default_target: target,
+        fallback_targets: Vec::new(),
+        callable_targets: BTreeMap::new(),
+    })
 }
 
 fn ensure_routing_profile(
