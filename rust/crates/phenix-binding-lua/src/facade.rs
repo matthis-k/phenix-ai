@@ -658,11 +658,13 @@ fn decode_outcome(
     };
     match projection {
         RequestProjection::AuthenticationMethods => {
-            Ok(FacadeOutcome::AuthenticationMethods(decode::<AuthenticationMethods>(&value)?))
+            Ok(FacadeOutcome::AuthenticationMethods(decode::<
+                AuthenticationMethods,
+            >(&value)?))
         }
-        RequestProjection::Authentication => {
-            Ok(FacadeOutcome::Authentication(decode::<AuthenticationResult>(&value)?))
-        }
+        RequestProjection::Authentication => Ok(FacadeOutcome::Authentication(decode::<
+            AuthenticationResult,
+        >(&value)?)),
         RequestProjection::SessionCreate => {
             let info = decode::<SessionInfo>(&value)?;
             install_created_session(core, info.clone());

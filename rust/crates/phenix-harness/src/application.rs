@@ -13,10 +13,10 @@ use phenix_application_interface::{
         InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
         PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
         ReviewRecord, SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections,
-        SessionChange, SessionCreateInput,
-        SessionInfo, SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
-        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput, StopReason,
+        SessionChange, SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput,
+        SessionList, SessionProjection, SessionProjectionState, SessionRenameInput,
+        SessionResumeInput, SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
+        StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
@@ -2146,8 +2146,9 @@ fn configured_capabilities() -> Vec<ContractId> {
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        types::{Content, Empty}, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
-        ListSessions, Prompt, RenameSession, ResumeSession,
+        types::{Content, Empty},
+        Cancel, CloseSession, CreateSession, DiscoverAuthentication, ListSessions, Prompt,
+        RenameSession, ResumeSession,
     };
     use phenix_core::{Bytes, LocalPersistence, SessionId, ValueAddress};
     use std::{
