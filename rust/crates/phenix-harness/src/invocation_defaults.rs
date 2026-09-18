@@ -440,11 +440,15 @@ mod tests {
         let key = OptionKey::parse(ROUTING_PROFILE_OPTION).unwrap();
         for (scope, value) in [
             (
-                phenix_plugin_catalog::OptionScope::Agent(OptionSubjectId::parse("agent.coordinator").unwrap()),
+                phenix_plugin_catalog::OptionScope::Agent(
+                    OptionSubjectId::parse("agent.coordinator").unwrap(),
+                ),
                 "router.agent",
             ),
             (
-                phenix_plugin_catalog::OptionScope::Session(OptionSubjectId::parse("session-1").unwrap()),
+                phenix_plugin_catalog::OptionScope::Session(
+                    OptionSubjectId::parse("session-1").unwrap(),
+                ),
                 "router.session",
             ),
         ] {
