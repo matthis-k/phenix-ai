@@ -255,7 +255,11 @@ fn resolve_defaults(
     request: &InvocationRequest,
 ) -> Result<InvocationParams, String> {
     let option_context = OptionContext {
-        session: None,
+        session: request
+            .session_id
+            .as_ref()
+            .map(|session| OptionSubjectId::parse(session.as_str().to_owned()))
+            .transpose()?,
         agent: request
             .callable_id
             .as_ref()
