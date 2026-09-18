@@ -809,14 +809,31 @@ impl ApplicationWorker {
     }
 
     fn allocate_execution_id(&mut self) -> Result<String, ApplicationError> {
-        let ordinal = self.next_execution_ordinal;
-        self.next_execution_ordinal =
-            ordinal
-                .checked_add(1)
-                .ok_or_else(|| ApplicationError::Failed {
-                    message: "application execution id space exhausted".to_owned(),
-                })?;
-        Ok(format!("execution-{ordinal}"))
+        loop {
+            let ordinal = self.next_execution_ordinal;
+            self.next_execution_ordinal =
+                ordinal
+                    .checked_add(1)
+                    .ok_or_else(|| ApplicationError::Failed {
+                        message: "application execution id space exhausted".to_owned(),
+                    })?;
+            let id = format!("execution-{ordinal}");
+            match self.invoke_execution(ExecutionCommand::GetExecution { id: id.clone() })? {
+                ExecutionResponse::ExecutionLookup {
+                    execution: None, ..
+                } => return Ok(id),
+                ExecutionResponse::ExecutionLookup {
+                    execution: Some(_), ..
+                } => {}
+                response => {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: format!(
+                            "unexpected execution lookup while allocating an id: {response:?}"
+                        ),
+                    })
+                }
+            }
+        }
     }
 
     fn prepare_root_execution(&mut self, execution_id: &str) -> Result<(), ApplicationError> {
@@ -2612,6 +2629,52 @@ mod tests {
         let listed =
             invoke_operation::<ListSessions>(&mut worker, PageInput { cursor: None }).unwrap();
         assert!(listed.sessions.is_empty());
+    }
+
+    #[test]
+    fn execution_ids_skip_durable_collisions_after_restart() {
+        let path = temp_db("application-execution-id-restart");
+        let session_id;
+        {
+            let mut worker = persistent_application_worker(&path);
+            let created = invoke_operation::<CreateSession>(
+                &mut worker,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
+                },
+            )
+            .unwrap();
+            session_id = created.session_id;
+            let first = invoke_operation::<Prompt>(
+                &mut worker,
+                PromptInput {
+                    session_id: session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "first".into(),
+                    }],
+                },
+            )
+            .unwrap();
+            assert_eq!(first.execution_id, "execution-1");
+        }
+
+        {
+            let mut worker = persistent_application_worker(&path);
+            let second = invoke_operation::<Prompt>(
+                &mut worker,
+                PromptInput {
+                    session_id,
+                    content: vec![Content::Text {
+                        text: "second".into(),
+                    }],
+                },
+            )
+            .unwrap();
+            assert_eq!(second.execution_id, "execution-2");
+        }
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
