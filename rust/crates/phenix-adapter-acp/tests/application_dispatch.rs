@@ -151,10 +151,7 @@ fn initialize_advertises_only_implemented_standard_and_descriptor_extensions() {
     assert!(skill_list["input"].is_object());
     assert!(skill_list["output"].is_object());
 
-    for mapped in [
-        "_phenix/selection-list@1",
-        "_phenix/selection-select@1",
-    ] {
+    for mapped in ["_phenix/selection-list@1", "_phenix/selection-select@1"] {
         assert!(methods.iter().all(|method| method["method"] != mapped));
     }
     assert!(methods
@@ -245,8 +242,12 @@ async fn model_and_router_choices_share_one_standard_acp_config_option() {
     assert_eq!(selection["category"], "model");
     assert_eq!(selection["currentValue"], "balanced");
     let choices = selection["options"].as_array().expect("selection choices");
-    assert!(choices.iter().any(|choice| choice["name"] == "[router] Balanced"));
-    assert!(choices.iter().any(|choice| choice["name"] == "[model] Model A"));
+    assert!(choices
+        .iter()
+        .any(|choice| choice["name"] == "[router] Balanced"));
+    assert!(choices
+        .iter()
+        .any(|choice| choice["name"] == "[model] Model A"));
 
     let updated = adapter
         .set_session_config_option(SetSessionConfigOptionRequest::new(
@@ -263,10 +264,7 @@ async fn model_and_router_choices_share_one_standard_acp_config_option() {
         .iter()
         .find(|option| option["id"] == "model")
         .expect("updated unified selection");
-    assert_eq!(
-        selection["currentValue"],
-        "model.provider.model-a.deadbeef"
-    );
+    assert_eq!(selection["currentValue"], "model.provider.model-a.deadbeef");
 
     let calls = transport.calls.lock().expect("calls lock");
     let selection_call = calls

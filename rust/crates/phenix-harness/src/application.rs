@@ -25,8 +25,7 @@ use phenix_core::{
     HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ModelToolResult, ModelToolTurn,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
     PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
-    SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, sdk_contribution, session_service,
@@ -467,9 +466,7 @@ impl ApplicationWorker {
         match self.invoke_model_command(ModelCommand::GetProfile {
             id: request.selection_id.clone(),
         })? {
-            ModelResponse::Profile {
-                profile: Some(_),
-            } => {}
+            ModelResponse::Profile { profile: Some(_) } => {}
             ModelResponse::Profile { profile: None } => {
                 return Err(ApplicationError::InvalidInput {
                     message: format!("unknown routing selection {}", request.selection_id),
@@ -1114,11 +1111,10 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
         .chain(profile.fallback_targets.iter())
         .chain(profile.callable_targets.values())
     {
-        let key = serde_json::to_string(target).map_err(|error| {
-            ApplicationError::InvalidResponse {
+        let key =
+            serde_json::to_string(target).map_err(|error| ApplicationError::InvalidResponse {
                 message: error.to_string(),
-            }
-        })?;
+            })?;
         targets.entry(key).or_insert(target);
     }
 
@@ -1135,10 +1131,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
         });
     }
 
-    let providers = profile
-        .default_target
-        .provider_plugin
-        .to_string();
+    let providers = profile.default_target.provider_plugin.to_string();
     Ok(SelectionInfo {
         id: profile.id.clone(),
         name: profile.id.to_string(),
