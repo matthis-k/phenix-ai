@@ -9,8 +9,9 @@ use phenix_core::{
     PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_provider_sdk::{
-    normalize_http_error, provider_auth_service, AuthDescriptor, AuthKind, Endpoint, HttpMethod,
-    Protocol, ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
+    normalize_http_error, provider_auth_service, provider_http_client_builder, AuthDescriptor,
+    AuthKind, Endpoint, HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand,
+    ProviderAuthInterface, ProviderAuthMethod,
     ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderRequest,
     ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY, SECRETS_MANAGE_CAPABILITY,
 };
@@ -380,12 +381,14 @@ impl PluginInstance for OpenAiCodexPlugin {
                 .map_err(|error| format!("cannot start Codex provider runtime: {error}"))?,
         );
         self.client = Some(
-            reqwest::Client::builder()
+            provider_http_client_builder()
+                .map_err(|error| error.to_string())?
                 .build()
                 .map_err(|error| format!("cannot build Codex HTTP client: {error}"))?,
         );
         self.token_client = Some(
-            reqwest::Client::builder()
+            provider_http_client_builder()
+                .map_err(|error| error.to_string())?
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|error| format!("cannot build Codex OAuth token client: {error}"))?,
