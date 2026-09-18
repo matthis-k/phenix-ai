@@ -1,6 +1,7 @@
 use crate::{
-    normalize_http_error, provider_auth_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind,
-    CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError,
+    normalize_http_error, provider_auth_service, provider_http_client_builder, ApiTokenScheme,
+    ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand,
+    ProviderAuthResponse, ProviderError,
     ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
@@ -16,7 +17,7 @@ use std::{
 pub(crate) struct ProviderPlugin {
     spec: Arc<ProviderSpec>,
     runtime: Option<tokio::runtime::Runtime>,
-    client: OnceLock<Result<reqwest::Client, reqwest::Error>>,
+    client: OnceLock<Result<reqwest::Client, String>>,
     credentials: Option<CredentialStore>,
 }
 
@@ -32,10 +33,18 @@ impl ProviderPlugin {
 
     fn client(&self) -> Result<&reqwest::Client, ProviderError> {
         self.client
-            .get_or_init(|| reqwest::Client::builder().build())
+            .get_or_init(|| {
+                provider_http_client_builder()
+                    .and_then(|builder| {
+                        builder.build().map_err(|error| ProviderError::Transport {
+                            message: format!("cannot build provider HTTP client: {error}"),
+                        })
+                    })
+                    .map_err(|error| error.to_string())
+            })
             .as_ref()
-            .map_err(|error| ProviderError::Transport {
-                message: format!("cannot build provider HTTP client: {error}"),
+            .map_err(|message| ProviderError::Transport {
+                message: message.clone(),
             })
     }
 
