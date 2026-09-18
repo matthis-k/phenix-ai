@@ -5,8 +5,8 @@ use phenix_core::{
     ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest,
-    artifact_component_manifest, artifact_factory, artifact_manifest,
+    adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_context_component_manifest, basic_context_factory, basic_context_manifest,
     basic_model_component_manifest, basic_model_factory, basic_model_manifest,
     basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
@@ -138,6 +138,7 @@ impl HarnessBuilder {
         builder.add_embedded(cli_manifest(authority.clone()), cli_factory)?;
         builder.add_embedded(context_manifest(), context_factory)?;
         builder.add_embedded(execution_manifest(authority.clone()), execution_factory)?;
+        builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
         builder.add_embedded(language_manifest(), language_factory)?;
         builder.add_embedded(memory_manifest(), memory_factory)?;
         builder.add_embedded(planning_manifest(), planning_factory)?;
@@ -206,6 +207,7 @@ impl HarnessBuilder {
             cli_manifest(authority.clone()),
             context_manifest(),
             execution_manifest(authority.clone()),
+            agent_loop_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
             planning_manifest(),
@@ -275,6 +277,11 @@ impl HarnessBuilder {
             &enabled,
             execution_manifest(authority.clone()),
             execution_factory,
+        )?;
+        builder.add_selected(
+            &enabled,
+            agent_loop_manifest(authority.clone()),
+            agent_loop_factory,
         )?;
         builder.add_selected(&enabled, language_manifest(), language_factory)?;
         builder.add_selected(&enabled, memory_manifest(), memory_factory)?;
