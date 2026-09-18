@@ -2,13 +2,15 @@ use crate::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
     agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
     execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
+    ExecutionConfigurationCommand, ExecutionConfigurationInterface,
+    ExecutionConfigurationResponse,
 };
 use phenix_core::{
-    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
-    KernelError, ModelToolCall, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole,
-    SessionId,
+    Authority, Bytes, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor, PhenixSchema,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -20,6 +22,27 @@ use std::collections::BTreeSet;
 
 const INVOCATION_PROVIDER: &str = "fixture.agent-loop-invocation";
 const INVOCATION_PROVIDER_COMPONENT: &str = "fixture.agent-loop-invocation";
+
+struct InvocationProviderSdk<'host, 'runtime> {
+    execution_configuration:
+        SdkClient<'host, 'runtime, ExecutionConfigurationInterface>,
+}
+
+type InvocationProviderContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, InvocationProviderSdk<'host, 'runtime>>;
+
+fn invocation_provider_context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> InvocationProviderContext<'host, 'runtime> {
+    PluginContext::new(
+        host,
+        InvocationProviderSdk {
+            execution_configuration: SdkClient::new(host, provider_component_id()),
+        },
+        (),
+        (),
+    )
+}
 
 struct InvocationProvider;
 
@@ -37,7 +60,7 @@ impl PluginInstance for InvocationProvider {
         if service != &default_invocation_service() {
             return Err(format!("unsupported default invocation service: {service}"));
         }
-        let context = PluginContext::new(host, (), (), ());
+        let context = invocation_provider_context(host);
         let DefaultInvocationCommand::Invoke { request } = context
             .kernel
             .decode_projected::<DefaultInvocationCommand>(
@@ -64,6 +87,19 @@ impl PluginInstance for InvocationProvider {
             })
             .into_iter()
             .collect();
+
+        let configuration: ExecutionConfigurationResponse = context
+            .sdk
+            .execution_configuration
+            .invoke_projected(&ExecutionConfigurationCommand::ListAgents)
+            .map_err(|error| format!("execution back-edge failed: {error}"))?;
+        if !matches!(
+            configuration,
+            ExecutionConfigurationResponse::Agents { .. }
+        ) {
+            return Err("execution back-edge returned a non-agent-list response".into());
+        }
+
         context
             .kernel
             .encode_value(&StepRunnerResponse::Completed {
@@ -112,7 +148,12 @@ fn provider_component() -> ComponentManifest {
         listeners: Vec::new(),
         id: provider_component_id(),
         owner: provider_id(),
-        imports: Vec::new(),
+        imports: vec![ComponentImport {
+            interface: ExecutionConfigurationInterface::interface_id(),
+            schema: ExecutionConfigurationInterface::schema(),
+            required: true,
+            authority: Authority::default(),
+        }],
         exports: vec![ComponentExport {
             interface: DefaultInvocationInterface::interface_id(),
             schema: DefaultInvocationInterface::schema(),
@@ -237,14 +278,22 @@ fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
     }
 }
 
-fn invoke_agent_loop(kernel: &mut Kernel, execution: &PluginId) -> Result<Vec<u8>, KernelError> {
+fn invoke_agent_loop(kernel: &mut Kernel, agent_loop: &PluginId) -> Result<Vec<u8>, KernelError> {
     kernel.invoke_component(
         &agent_loop_component_id(),
         &agent_loop_service(),
         &serde_json::to_vec(&PhenixValue::from(&command(Vec::new()))).unwrap(),
         &Authority::default(),
-        execution,
+        agent_loop,
     )
+}
+
+#[test]
+fn agent_loop_plugin_is_distinct_from_execution_state_owner() {
+    assert_ne!(
+        agent_loop_manifest(Authority::default()).id,
+        execution_manifest(Authority::default()).id
+    );
 }
 
 #[test]
