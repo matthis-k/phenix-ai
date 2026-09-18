@@ -21,6 +21,34 @@ use std::sync::Arc;
 pub const PROVIDER_AUTH_SERVICE: &str = "phenix.providers.auth@1";
 pub const NETWORK_HTTP_CAPABILITY: &str = "network.http";
 pub const SECRETS_MANAGE_CAPABILITY: &str = "secrets.manage";
+pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
+
+/// Configure provider HTTP clients with an explicit CA bundle when the product
+/// supplies one. This avoids relying on a host certificate store in pure
+/// packaging environments while preserving platform verification elsewhere.
+pub fn provider_http_client_builder() -> Result<reqwest::ClientBuilder, ProviderError> {
+    let mut builder = reqwest::Client::builder().tls_backend_rustls();
+    let bundle = [PHENIX_CA_BUNDLE_ENV, "SSL_CERT_FILE", "NIX_SSL_CERT_FILE"]
+        .into_iter()
+        .find_map(|name| std::env::var_os(name).map(|path| (name, std::path::PathBuf::from(path))));
+    let Some((source, path)) = bundle else {
+        return Ok(builder);
+    };
+    let pem = std::fs::read(&path).map_err(|error| ProviderError::Transport {
+        message: format!("cannot read CA bundle from {source} ({}): {error}", path.display()),
+    })?;
+    let certificates =
+        reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| ProviderError::Transport {
+            message: format!("cannot parse CA bundle from {source} ({}): {error}", path.display()),
+        })?;
+    if certificates.is_empty() {
+        return Err(ProviderError::Transport {
+            message: format!("CA bundle from {source} ({}) contains no certificates", path.display()),
+        });
+    }
+    builder = builder.tls_certs_only(certificates);
+    Ok(builder)
+}
 
 pub mod provider {
     pub use super::{Endpoint, EndpointParseError, Protocol, ProtocolAdapter, ProviderDefinition};
