@@ -100,7 +100,7 @@ Semantic shape:
 
 ```rust
 struct StepPlan {
-    selection: ModelSelection,
+    selection: RoutingProfileId,
     reasoning: ReasoningBudget,
     context: ContextBudget,
     tools: ToolProvision,
