@@ -2,14 +2,14 @@ use phenix_adapter_acp::{wire, ApplicationAdapter};
 use phenix_application_interface::{
     application_descriptor,
     types::{
-        Acknowledged, ApplicationError, Content, ModelInfo, ModelSelectInput, Models, PageInput,
-        PromptInput, PromptResult, RoutingInfo, RoutingProfiles, RoutingSelectInput, SessionInfo,
+        Acknowledged, ApplicationError, Content, PageInput, PromptInput, PromptResult,
+        SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections, SessionInfo,
         SessionList, SessionResumeInput, SessionSnapshot, StopReason,
     },
-    ApplicationTransport, Cancel, CloseSession, CreateSession, ListModels, ListRoutingProfiles,
-    ListSessions, Operation, Prompt, ResumeSession, SelectModel, SelectRoutingProfile,
+    ApplicationTransport, Cancel, CloseSession, CreateSession, ListSelections, ListSessions,
+    Operation, Prompt, ResumeSession, SelectSelection,
 };
-use phenix_core::{ContractId, ModelId, PhenixValue, RoutingProfileId, SessionId, ValueCodec};
+use phenix_core::{ContractId, PhenixValue, RoutingProfileId, SessionId, ValueCodec};
 use std::sync::{Arc, Mutex};
 use wire::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, ResourceLink,
@@ -20,16 +20,14 @@ use wire::schema::ProtocolVersion;
 #[derive(Clone)]
 struct FakeTransport {
     calls: Arc<Mutex<Vec<(String, PhenixValue)>>>,
-    selected_model: Arc<Mutex<String>>,
-    selected_routing: Arc<Mutex<String>>,
+    selected: Arc<Mutex<String>>,
 }
 
 impl Default for FakeTransport {
     fn default() -> Self {
         Self {
             calls: Arc::new(Mutex::new(Vec::new())),
-            selected_model: Arc::new(Mutex::new("model-a".to_owned())),
-            selected_routing: Arc::new(Mutex::new("balanced".to_owned())),
+            selected: Arc::new(Mutex::new("balanced".to_owned())),
         }
     }
 }
@@ -41,8 +39,7 @@ impl ApplicationTransport for FakeTransport {
         input: PhenixValue,
     ) -> impl std::future::Future<Output = Result<PhenixValue, ApplicationError>> {
         let calls = self.calls.clone();
-        let selected_model = self.selected_model.clone();
-        let selected_routing = self.selected_routing.clone();
+        let selected = self.selected.clone();
         let operation = operation.as_str().to_owned();
         async move {
             calls
@@ -68,36 +65,19 @@ impl ApplicationTransport for FakeTransport {
                     stop_reason: StopReason::EndTurn,
                 }
                 .to_value()),
-                id if id == ListModels::ID => {
-                    let selected = selected_model.lock().expect("selected model lock").clone();
-                    Ok(models(&selected).to_value())
+                id if id == ListSelections::ID => {
+                    let selected = selected.lock().expect("selected route lock").clone();
+                    Ok(selections(&selected).to_value())
                 }
-                id if id == SelectModel::ID => {
+                id if id == SelectSelection::ID => {
                     let selection =
-                        ModelSelectInput::from_value(&input).expect("typed model selection");
-                    let selected = selection.model_id.to_string();
-                    selected_model
+                        SelectionSelectInput::from_value(&input).expect("typed route selection");
+                    let value = selection.selection_id.to_string();
+                    selected
                         .lock()
-                        .expect("selected model lock")
-                        .clone_from(&selected);
-                    Ok(models(&selected).to_value())
-                }
-                id if id == ListRoutingProfiles::ID => {
-                    let selected = selected_routing
-                        .lock()
-                        .expect("selected routing lock")
-                        .clone();
-                    Ok(routing_profiles(&selected).to_value())
-                }
-                id if id == SelectRoutingProfile::ID => {
-                    let selection =
-                        RoutingSelectInput::from_value(&input).expect("typed routing selection");
-                    let selected = selection.profile_id.to_string();
-                    selected_routing
-                        .lock()
-                        .expect("selected routing lock")
-                        .clone_from(&selected);
-                    Ok(routing_profiles(&selected).to_value())
+                        .expect("selected route lock")
+                        .clone_from(&value);
+                    Ok(selections(&value).to_value())
                 }
                 other => Err(ApplicationError::Failed {
                     message: format!("unexpected operation {other}"),
@@ -115,37 +95,24 @@ fn session_info() -> SessionInfo {
     }
 }
 
-fn models(selected: &str) -> Models {
-    Models {
+fn selections(selected: &str) -> Selections {
+    Selections {
         available: vec![
-            ModelInfo {
-                id: ModelId::parse("model-a").expect("valid model id"),
-                name: "Model A".to_owned(),
-                description: Some("Fast model".to_owned()),
-            },
-            ModelInfo {
-                id: ModelId::parse("model-b").expect("valid model id"),
-                name: "Model B".to_owned(),
-                description: Some("Deep model".to_owned()),
-            },
-        ],
-        selected: Some(ModelId::parse(selected).expect("valid selected model")),
-    }
-}
-
-fn routing_profiles(selected: &str) -> RoutingProfiles {
-    RoutingProfiles {
-        available: vec![
-            RoutingInfo {
-                id: RoutingProfileId::parse("balanced").expect("valid routing id"),
+            SelectionInfo {
+                id: RoutingProfileId::parse("balanced").expect("valid route id"),
                 name: "Balanced".to_owned(),
+                description: Some("Adaptive route".to_owned()),
+                presentation: SelectionPresentation::Router,
             },
-            RoutingInfo {
-                id: RoutingProfileId::parse("deep").expect("valid routing id"),
-                name: "Deep".to_owned(),
+            SelectionInfo {
+                id: RoutingProfileId::parse("model.provider.model-a.deadbeef")
+                    .expect("valid fixed route id"),
+                name: "Model A".to_owned(),
+                description: Some("provider".to_owned()),
+                presentation: SelectionPresentation::Model,
             },
         ],
-        selected: Some(RoutingProfileId::parse(selected).expect("valid selected routing")),
+        selected: Some(RoutingProfileId::parse(selected).expect("valid selected route")),
     }
 }
 
@@ -184,12 +151,7 @@ fn initialize_advertises_only_implemented_standard_and_descriptor_extensions() {
     assert!(skill_list["input"].is_object());
     assert!(skill_list["output"].is_object());
 
-    for mapped in [
-        "_phenix/model-list@1",
-        "_phenix/model-select@1",
-        "_phenix/routing-list@1",
-        "_phenix/routing-select@1",
-    ] {
+    for mapped in ["_phenix/selection-list@1", "_phenix/selection-select@1"] {
         assert!(methods.iter().all(|method| method["method"] != mapped));
     }
     assert!(methods
@@ -217,7 +179,7 @@ async fn standard_session_and_prompt_requests_use_typed_application_operations()
         .await
         .expect("create session");
     assert_eq!(created.session_id.to_string(), "session-1");
-    assert_eq!(created.config_options.as_ref().map(Vec::len), Some(2));
+    assert_eq!(created.config_options.as_ref().map(Vec::len), Some(1));
 
     let prompt = PromptRequest::new(
         "session-1",
@@ -262,7 +224,7 @@ async fn standard_session_and_prompt_requests_use_typed_application_operations()
 }
 
 #[tokio::test]
-async fn model_and_routing_state_use_standard_acp_config_options() {
+async fn model_and_router_choices_share_one_standard_acp_config_option() {
     let (adapter, transport) = adapter();
     let created = adapter
         .new_session(NewSessionRequest::new("/workspace"))
@@ -272,70 +234,50 @@ async fn model_and_routing_state_use_standard_acp_config_options() {
     let options = created["configOptions"]
         .as_array()
         .expect("initial config options");
-    let model = options
+    assert_eq!(options.len(), 1);
+    let selection = options
         .iter()
         .find(|option| option["id"] == "model")
-        .expect("model config");
-    assert_eq!(model["category"], "model");
-    assert_eq!(model["currentValue"], "model-a");
-    let routing = options
+        .expect("unified model/routing config");
+    assert_eq!(selection["category"], "model");
+    assert_eq!(selection["currentValue"], "balanced");
+    let choices = selection["options"].as_array().expect("selection choices");
+    assert!(choices
         .iter()
-        .find(|option| option["id"] == "_phenix/routing-profile")
-        .expect("routing config");
-    assert_eq!(routing["category"], "_phenix/routing");
-    assert_eq!(routing["currentValue"], "balanced");
+        .any(|choice| choice["name"] == "[router] Balanced"));
+    assert!(choices
+        .iter()
+        .any(|choice| choice["name"] == "[model] Model A"));
 
     let updated = adapter
         .set_session_config_option(SetSessionConfigOptionRequest::new(
             "session-1",
             "model",
-            "model-b",
+            "model.provider.model-a.deadbeef",
         ))
         .await
-        .expect("select model");
-    let updated = serde_json::to_value(updated).expect("config response JSON");
-    let model = updated["configOptions"]
+        .expect("select fixed route");
+    let updated = serde_json::to_value(updated).expect("selection response JSON");
+    let selection = updated["configOptions"]
         .as_array()
         .expect("updated config options")
         .iter()
         .find(|option| option["id"] == "model")
-        .expect("updated model config");
-    assert_eq!(model["currentValue"], "model-b");
-
-    let updated = adapter
-        .set_session_config_option(SetSessionConfigOptionRequest::new(
-            "session-1",
-            "_phenix/routing-profile",
-            "deep",
-        ))
-        .await
-        .expect("select routing profile");
-    let updated = serde_json::to_value(updated).expect("routing response JSON");
-    let routing = updated["configOptions"]
-        .as_array()
-        .expect("updated config options")
-        .iter()
-        .find(|option| option["id"] == "_phenix/routing-profile")
-        .expect("updated routing config");
-    assert_eq!(routing["currentValue"], "deep");
+        .expect("updated unified selection");
+    assert_eq!(selection["currentValue"], "model.provider.model-a.deadbeef");
 
     let calls = transport.calls.lock().expect("calls lock");
-    let model_call = calls
+    let selection_call = calls
         .iter()
-        .find(|(operation, _)| operation == SelectModel::ID)
-        .expect("model selection call");
-    let model_input = ModelSelectInput::from_value(&model_call.1).expect("model selection input");
-    assert_eq!(model_input.session_id.as_str(), "session-1");
-    assert_eq!(model_input.model_id.as_str(), "model-b");
-
-    let routing_call = calls
-        .iter()
-        .find(|(operation, _)| operation == SelectRoutingProfile::ID)
-        .expect("routing selection call");
-    let routing_input =
-        RoutingSelectInput::from_value(&routing_call.1).expect("routing selection input");
-    assert_eq!(routing_input.session_id.as_str(), "session-1");
-    assert_eq!(routing_input.profile_id.as_str(), "deep");
+        .find(|(operation, _)| operation == SelectSelection::ID)
+        .expect("selection call");
+    let selection_input =
+        SelectionSelectInput::from_value(&selection_call.1).expect("selection input");
+    assert_eq!(selection_input.session_id.as_str(), "session-1");
+    assert_eq!(
+        selection_input.selection_id.as_str(),
+        "model.provider.model-a.deadbeef"
+    );
 }
 
 #[tokio::test]
@@ -369,7 +311,7 @@ async fn list_and_resume_preserve_durable_session_identity_and_cwd() {
         ))
         .await
         .expect("resume session");
-    assert_eq!(resumed.config_options.as_ref().map(Vec::len), Some(2));
+    assert_eq!(resumed.config_options.as_ref().map(Vec::len), Some(1));
 
     let calls = transport.calls.lock().expect("calls lock");
     assert_eq!(calls[0].0, ListSessions::ID);

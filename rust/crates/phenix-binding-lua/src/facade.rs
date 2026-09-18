@@ -1,24 +1,22 @@
 use super::*;
 use phenix_application_interface::{
     types::{
-        Acknowledged, Content, ElicitationRequest, ElicitationResponse, ExecutionChange,
-        ExecutionState, InteractionHandlers, ModelSelectInput, Models, PageInput,
-        PermissionRequest, PermissionResponse, PromptInput, PromptResult, Provenance,
-        ReviewDecision, ReviewDecisionInput, ReviewRecord, RoutingProfiles, RoutingSelectInput,
-        SessionCreateInput, SessionInfo, SessionInput, SessionProjection, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
+        Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
+        ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
+        InteractionHandlers, PageInput, PermissionRequest, PermissionResponse, PromptInput,
+        PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
+        SelectionSelectInput, Selections, SessionCreateInput, SessionInfo, SessionInput,
+        SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
+        SetInteractionHandlersInput,
     },
-    Cancel as AppCancel, CloseSession as AppCloseSession, CreateSession as AppCreateSession,
-    DecideReview as AppDecideReview, GetProvenance as AppGetProvenance,
-    ListModels as AppListModels, ListRoutingProfiles as AppListRoutingProfiles,
-    ListSessions as AppListSessions, Prompt as AppPrompt, RenameSession as AppRenameSession,
-    ResumeSession as AppResumeSession, SelectModel as AppSelectModel,
-    SelectRoutingProfile as AppSelectRoutingProfile,
-    SetInteractionHandlers as AppSetInteractionHandlers,
+    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
+    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
+    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
+    ListSelections as AppListSelections, ListSessions as AppListSessions, Prompt as AppPrompt,
+    RenameSession as AppRenameSession, ResumeSession as AppResumeSession,
+    SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
 };
-use phenix_core::{
-    CapabilityOwnerId, ModelId, ReferenceId, RoutingProfileId, SessionId, ValueCodec,
-};
+use phenix_core::{CapabilityOwnerId, ReferenceId, RoutingProfileId, SessionId, ValueCodec};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -82,8 +80,7 @@ struct FacadeState {
     session_info: BTreeMap<String, SessionInfo>,
     repairs: BTreeMap<String, Request>,
     repair_backlog: BTreeMap<String, Vec<SessionUpdate>>,
-    models: BTreeMap<String, SelectionCache>,
-    routing: BTreeMap<String, SelectionCache>,
+    selections: BTreeMap<String, SelectionCache>,
     provenance: BTreeMap<(String, String), Provenance>,
     latest_execution: BTreeMap<String, String>,
 }
@@ -113,6 +110,8 @@ struct FacadeRequest {
 
 #[derive(Clone)]
 enum RequestProjection {
+    AuthenticationMethods,
+    Authentication,
     SessionCreate,
     SessionList,
     SessionResume,
@@ -121,10 +120,7 @@ enum RequestProjection {
     Prompt {
         session_id: String,
     },
-    Models {
-        session_id: String,
-    },
-    Routing {
+    Selections {
         session_id: String,
     },
     Provenance {
@@ -136,13 +132,14 @@ enum RequestProjection {
 
 #[derive(Clone)]
 enum FacadeOutcome {
+    AuthenticationMethods(AuthenticationMethods),
+    Authentication(AuthenticationResult),
     Session(SessionInfo),
     SessionPage(phenix_application_interface::types::SessionList),
     SessionInfo(SessionInfo),
     Acknowledged(Acknowledged),
     Prompt(PromptResult),
-    Models(Models),
-    Routing(RoutingProfiles),
+    Selections(Selections),
     Provenance(Provenance),
     Review(ReviewRecord),
 }
@@ -226,8 +223,7 @@ pub(super) fn connect(lua: &Lua, options: Table) -> LuaResult<FacadeClient> {
                 session_info: BTreeMap::new(),
                 repairs: BTreeMap::new(),
                 repair_backlog: BTreeMap::new(),
-                models: BTreeMap::new(),
-                routing: BTreeMap::new(),
+                selections: BTreeMap::new(),
                 provenance: BTreeMap::new(),
                 latest_execution: BTreeMap::new(),
             }),
@@ -243,6 +239,24 @@ impl UserData for FacadeClient {
             lua.create_userdata(FacadeSessions {
                 core: Rc::clone(&this.core),
             })
+        });
+        methods.add_method("authentication_methods", |lua, this, ()| {
+            require_ready(&this.core)?;
+            let request = application_request::<AppDiscoverAuthentication>(
+                &this.core,
+                Empty {},
+                RequestProjection::AuthenticationMethods,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method("authenticate", |lua, this, method_id: String| {
+            require_ready(&this.core)?;
+            let request = application_request::<AppAuthenticate>(
+                &this.core,
+                AuthenticateInput { method_id },
+                RequestProjection::Authentication,
+            )?;
+            lua.create_userdata(request)
         });
         methods.add_method("pump", |lua, this, budget: Option<usize>| {
             pump(lua, &this.core, budget.unwrap_or(DEFAULT_PUMP_BUDGET))
@@ -424,57 +438,30 @@ impl UserData for FacadeSession {
             )?;
             lua.create_userdata(request)
         });
-        methods.add_method("models", |lua, this, ()| {
+        methods.add_method("selections", |lua, this, ()| {
             require_ready(&this.core)?;
             let session_id = this.id.to_string();
-            let request = application_request::<AppListModels>(
+            let request = application_request::<AppListSelections>(
                 &this.core,
                 SessionInput {
                     session_id: this.id.clone(),
                 },
-                RequestProjection::Models { session_id },
+                RequestProjection::Selections { session_id },
             )?;
             lua.create_userdata(request)
         });
-        methods.add_method("select_model", |lua, this, model_id: String| {
+        methods.add_method("select", |lua, this, selection_id: String| {
             require_ready(&this.core)?;
-            let model_id = ModelId::parse(model_id)
+            let selection_id = RoutingProfileId::parse(selection_id)
                 .map_err(|error| lua_error(BindingError::conversion(error)))?;
             let session_id = this.id.to_string();
-            let request = application_request::<AppSelectModel>(
+            let request = application_request::<AppSelectSelection>(
                 &this.core,
-                ModelSelectInput {
+                SelectionSelectInput {
                     session_id: this.id.clone(),
-                    model_id,
+                    selection_id,
                 },
-                RequestProjection::Models { session_id },
-            )?;
-            lua.create_userdata(request)
-        });
-        methods.add_method("routing_profiles", |lua, this, ()| {
-            require_ready(&this.core)?;
-            let session_id = this.id.to_string();
-            let request = application_request::<AppListRoutingProfiles>(
-                &this.core,
-                SessionInput {
-                    session_id: this.id.clone(),
-                },
-                RequestProjection::Routing { session_id },
-            )?;
-            lua.create_userdata(request)
-        });
-        methods.add_method("select_routing_profile", |lua, this, profile_id: String| {
-            require_ready(&this.core)?;
-            let profile_id = RoutingProfileId::parse(profile_id)
-                .map_err(|error| lua_error(BindingError::conversion(error)))?;
-            let session_id = this.id.to_string();
-            let request = application_request::<AppSelectRoutingProfile>(
-                &this.core,
-                RoutingSelectInput {
-                    session_id: this.id.clone(),
-                    profile_id,
-                },
-                RequestProjection::Routing { session_id },
+                RequestProjection::Selections { session_id },
             )?;
             lua.create_userdata(request)
         });
@@ -670,6 +657,14 @@ fn decode_outcome(
         ));
     };
     match projection {
+        RequestProjection::AuthenticationMethods => {
+            Ok(FacadeOutcome::AuthenticationMethods(decode::<
+                AuthenticationMethods,
+            >(&value)?))
+        }
+        RequestProjection::Authentication => Ok(FacadeOutcome::Authentication(decode::<
+            AuthenticationResult,
+        >(&value)?)),
         RequestProjection::SessionCreate => {
             let info = decode::<SessionInfo>(&value)?;
             install_created_session(core, info.clone());
@@ -712,15 +707,10 @@ fn decode_outcome(
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::Prompt(result))
         }
-        RequestProjection::Models { session_id } => {
-            let models = decode::<Models>(&value)?;
-            cache_models(core, session_id, &models);
-            Ok(FacadeOutcome::Models(models))
-        }
-        RequestProjection::Routing { session_id } => {
-            let routing = decode::<RoutingProfiles>(&value)?;
-            cache_routing(core, session_id, &routing);
-            Ok(FacadeOutcome::Routing(routing))
+        RequestProjection::Selections { session_id } => {
+            let selections = decode::<Selections>(&value)?;
+            cache_selections(core, session_id, &selections);
+            Ok(FacadeOutcome::Selections(selections))
         }
         RequestProjection::Provenance {
             session_id,
@@ -745,6 +735,12 @@ fn decode<T: ValueCodec>(value: &PhenixValue) -> Result<T, BindingError> {
 
 fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> LuaResult<Value> {
     match outcome {
+        FacadeOutcome::AuthenticationMethods(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::Authentication(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Session(info) => lua
             .create_userdata(FacadeSession {
                 core: Rc::clone(core),
@@ -761,8 +757,7 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
             facade_value(lua, &value.to_value()).map_err(lua_error)
         }
         FacadeOutcome::Prompt(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
-        FacadeOutcome::Models(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
-        FacadeOutcome::Routing(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::Selections(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Provenance(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Review(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
     }
@@ -1352,44 +1347,28 @@ fn session_status_table(lua: &Lua, core: &FacadeCore, id: &SessionId) -> LuaResu
     let provenance = execution_id
         .as_ref()
         .and_then(|execution_id| state.provenance.get(&(key.clone(), execution_id.clone())));
-    let selected_model = state
-        .models
+    let selected = state
+        .selections
         .get(&key)
         .and_then(|cache| cache.selected.as_ref());
-    let effective_model = provenance.and_then(|provenance| provenance.model_id.as_ref());
-    let model_id = effective_model
+    let effective = provenance.and_then(|provenance| provenance.routing_profile.as_ref());
+    let selection_id = effective
         .map(ToString::to_string)
-        .or_else(|| selected_model.cloned());
-    if let Some(model_id) = model_id {
-        result.set("model_id", model_id.as_str())?;
+        .or_else(|| selected.cloned());
+    if let Some(selection_id) = selection_id {
+        result.set("selection_id", selection_id.as_str())?;
         if let Some(name) = state
-            .models
+            .selections
             .get(&key)
-            .and_then(|cache| cache.names.get(&model_id))
+            .and_then(|cache| cache.names.get(&selection_id))
         {
-            result.set("model_name", name.as_str())?;
+            result.set("selection_name", name.as_str())?;
         }
-        result.set("model_effective", effective_model.is_some())?;
+        result.set("selection_effective", effective.is_some())?;
     }
-
-    let selected_routing = state
-        .routing
-        .get(&key)
-        .and_then(|cache| cache.selected.as_ref());
-    let effective_routing = provenance.and_then(|provenance| provenance.routing_profile.as_ref());
-    let routing_id = effective_routing
-        .map(ToString::to_string)
-        .or_else(|| selected_routing.cloned());
-    if let Some(routing_id) = routing_id {
-        result.set("routing_profile_id", routing_id.as_str())?;
-        if let Some(name) = state
-            .routing
-            .get(&key)
-            .and_then(|cache| cache.names.get(&routing_id))
-        {
-            result.set("routing_profile_name", name.as_str())?;
-        }
-        result.set("routing_effective", effective_routing.is_some())?;
+    if let Some(model_id) = provenance.and_then(|provenance| provenance.model_id.as_ref()) {
+        result.set("model_id", model_id.to_string())?;
+        result.set("model_effective", true)?;
     }
     Ok(result)
 }
@@ -1435,8 +1414,7 @@ fn execution_settled(state: &ExecutionState) -> bool {
 fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
     let result = lua.create_table()?;
     for (name, operation) in [
-        ("models", AppListModels::ID),
-        ("routing", AppListRoutingProfiles::ID),
+        ("selection", AppListSelections::ID),
         ("provenance", AppGetProvenance::ID),
         ("review", AppDecideReview::ID),
     ] {
@@ -1449,35 +1427,34 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
                 .map_err(lua_error)?,
         )?;
     }
+    let authentication_list = ContractId::parse(AppDiscoverAuthentication::ID)
+        .expect("static authentication discovery operation");
+    let authenticate =
+        ContractId::parse(AppAuthenticate::ID).expect("static authentication operation");
+    let authentication = core
+        .raw
+        .state
+        .supports_extension(&authentication_list)
+        .map_err(lua_error)?
+        && core
+            .raw
+            .state
+            .supports_extension(&authenticate)
+            .map_err(lua_error)?;
+    result.set("authentication", authentication)?;
     Ok(result)
 }
 
-fn cache_models(core: &FacadeCore, session_id: &str, models: &Models) {
+fn cache_selections(core: &FacadeCore, session_id: &str, selections: &Selections) {
     let mut state = core.state.borrow_mut();
-    state.models.insert(
+    state.selections.insert(
         session_id.to_owned(),
         SelectionCache {
-            selected: models.selected.as_ref().map(ToString::to_string),
-            names: models
+            selected: selections.selected.as_ref().map(ToString::to_string),
+            names: selections
                 .available
                 .iter()
-                .map(|model| (model.id.to_string(), model.name.clone()))
-                .collect(),
-        },
-    );
-    state.events.push_back(FacadeEvent::Status);
-}
-
-fn cache_routing(core: &FacadeCore, session_id: &str, routing: &RoutingProfiles) {
-    let mut state = core.state.borrow_mut();
-    state.routing.insert(
-        session_id.to_owned(),
-        SelectionCache {
-            selected: routing.selected.as_ref().map(ToString::to_string),
-            names: routing
-                .available
-                .iter()
-                .map(|profile| (profile.id.to_string(), profile.name.clone()))
+                .map(|selection| (selection.id.to_string(), selection.name.clone()))
                 .collect(),
         },
     );

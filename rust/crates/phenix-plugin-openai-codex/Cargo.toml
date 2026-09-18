@@ -1,0 +1,21 @@
+[package]
+name = "phenix-plugin-openai-codex"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.phenix]
+role = "runtime-plugin"
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+parking_lot.workspace = true
+phenix-core = { path = "../phenix-core" }
+phenix-provider-sdk = { path = "../phenix-provider-sdk" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+url.workspace = true

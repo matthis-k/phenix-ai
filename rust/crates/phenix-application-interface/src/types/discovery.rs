@@ -17,30 +17,23 @@ variants!(AuthenticationResult, "phenix.application.type.authentication-result@1
     Authenticated,
     External { uri: String, instructions: Option<String> },
 });
-record!(ModelInfo, "phenix.application.type.model-info@1", {
-    id: ModelId,
-    name: String,
-    description: Option<String>,
+variants!(SelectionPresentation, "phenix.application.type.selection-presentation@1", {
+    Model,
+    Router,
 });
-record!(Models, "phenix.application.type.models@1", {
-    available: Vec<ModelInfo>,
-    selected: Option<ModelId>,
-});
-record!(ModelSelectInput, "phenix.application.type.model-select-input@1", {
-    session_id: SessionId,
-    model_id: ModelId,
-});
-record!(RoutingInfo, "phenix.application.type.routing-info@1", {
+record!(SelectionInfo, "phenix.application.type.selection-info@1", {
     id: RoutingProfileId,
     name: String,
+    description: Option<String>,
+    presentation: SelectionPresentation,
 });
-record!(RoutingProfiles, "phenix.application.type.routing-profiles@1", {
-    available: Vec<RoutingInfo>,
+record!(Selections, "phenix.application.type.selections@1", {
+    available: Vec<SelectionInfo>,
     selected: Option<RoutingProfileId>,
 });
-record!(RoutingSelectInput, "phenix.application.type.routing-select-input@1", {
+record!(SelectionSelectInput, "phenix.application.type.selection-select-input@1", {
     session_id: SessionId,
-    profile_id: RoutingProfileId,
+    selection_id: RoutingProfileId,
 });
 record!(SkillInfo, "phenix.application.type.skill-info@1", {
     id: SkillId,

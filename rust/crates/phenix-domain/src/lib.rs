@@ -219,13 +219,6 @@ impl BackendCatalog {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum ExecutionTarget {
-    Fixed(ModelTarget),
-    Routed(RoutingProfileId),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallableKind {
     Tool,
@@ -393,7 +386,7 @@ pub struct SessionSummary {
     pub name: Option<String>,
     pub workspace_id: WorkspaceId,
     pub config_revision: ConfigRevisionId,
-    pub default_target: ExecutionTarget,
+    pub selection: RoutingProfileId,
     #[serde(default)]
     pub state: SessionState,
 }
@@ -405,7 +398,7 @@ pub struct ExecutionSummary {
     pub parent_execution: Option<ExecutionId>,
     pub kind: ExecutionKind,
     pub callable: Option<CallableId>,
-    pub target: ExecutionTarget,
+    pub selection: RoutingProfileId,
     pub state: ExecutionState,
 }
 
@@ -494,9 +487,9 @@ mod tests {
     }
 
     #[test]
-    fn target_is_one_mode_only() {
-        let target = ExecutionTarget::Routed(RoutingProfileId::parse("default").unwrap());
-        assert!(matches!(target, ExecutionTarget::Routed(_)));
+    fn execution_selection_is_a_route_identity() {
+        let selection = RoutingProfileId::parse("default").unwrap();
+        assert_eq!(selection.as_str(), "default");
     }
 
     #[test]
@@ -537,10 +530,7 @@ mod tests {
             "name": null,
             "workspace_id": "workspace:test",
             "config_revision": "config-1",
-            "default_target": {
-                "kind": "routed",
-                "value": "default"
-            }
+            "selection": "default"
         });
         let session: SessionSummary = serde_json::from_value(value).unwrap();
         assert_eq!(session.state, SessionState::Active);

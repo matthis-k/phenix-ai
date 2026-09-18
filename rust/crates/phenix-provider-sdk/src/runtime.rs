@@ -1,7 +1,8 @@
 use crate::{
-    normalize_http_error, provider_auth_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind,
-    CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError,
-    ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
+    normalize_http_error, provider_auth_service, provider_http_client_builder, ApiTokenScheme,
+    ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand,
+    ProviderAuthResponse, ProviderError, ProviderRequest, ProviderResponse, ProviderSpec,
+    RateLimits, Token,
 };
 use phenix_core::{
     model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
@@ -16,7 +17,7 @@ use std::{
 pub(crate) struct ProviderPlugin {
     spec: Arc<ProviderSpec>,
     runtime: Option<tokio::runtime::Runtime>,
-    client: OnceLock<Result<reqwest::Client, reqwest::Error>>,
+    client: OnceLock<Result<reqwest::Client, String>>,
     credentials: Option<CredentialStore>,
 }
 
@@ -32,10 +33,18 @@ impl ProviderPlugin {
 
     fn client(&self) -> Result<&reqwest::Client, ProviderError> {
         self.client
-            .get_or_init(|| reqwest::Client::builder().build())
+            .get_or_init(|| {
+                provider_http_client_builder()
+                    .and_then(|builder| {
+                        builder.build().map_err(|error| ProviderError::Transport {
+                            message: format!("cannot build provider HTTP client: {error}"),
+                        })
+                    })
+                    .map_err(|error| error.to_string())
+            })
             .as_ref()
-            .map_err(|error| ProviderError::Transport {
-                message: format!("cannot build provider HTTP client: {error}"),
+            .map_err(|message| ProviderError::Transport {
+                message: message.clone(),
             })
     }
 
@@ -156,21 +165,31 @@ impl ProviderPlugin {
         &self,
         command: ProviderAuthCommand,
     ) -> Result<ProviderAuthResponse, ProviderError> {
-        let store = self.credentials()?;
         match command {
-            ProviderAuthCommand::Add { auth } => {
-                self.ensure_auth_supported(auth.kind())?;
-                let auth = store.add(self.spec.id.as_str(), auth)?;
-                Ok(ProviderAuthResponse::Added { auth })
-            }
             ProviderAuthCommand::Methods => Ok(ProviderAuthResponse::Methods {
                 methods: self.spec.auth_kinds(),
             }),
+            ProviderAuthCommand::InteractiveMethods => {
+                Ok(ProviderAuthResponse::InteractiveMethods {
+                    methods: Vec::new(),
+                })
+            }
+            ProviderAuthCommand::Authenticate { method } => Err(ProviderError::Authentication {
+                message: format!(
+                    "provider {} does not expose interactive authentication method {method:?}",
+                    self.spec.id
+                ),
+            }),
+            ProviderAuthCommand::Add { auth } => {
+                self.ensure_auth_supported(auth.kind())?;
+                let auth = self.credentials()?.add(self.spec.id.as_str(), auth)?;
+                Ok(ProviderAuthResponse::Added { auth })
+            }
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
                 credentials: self.available_auth_descriptors()?,
             }),
             ProviderAuthCommand::Remove { kind } => {
-                let auth = store.remove(self.spec.id.as_str(), kind)?;
+                let auth = self.credentials()?.remove(self.spec.id.as_str(), kind)?;
                 Ok(ProviderAuthResponse::Removed { auth })
             }
         }
@@ -190,6 +209,14 @@ impl ProviderPlugin {
             });
         }
         Ok(())
+    }
+}
+
+impl Drop for ProviderPlugin {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 

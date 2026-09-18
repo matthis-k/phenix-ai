@@ -511,6 +511,7 @@ fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
         &DefaultInvocationCommand::Invoke {
             request: InvocationRequest {
                 execution_id: "root".into(),
+                session_id: None,
                 parent_attempt_id: None,
                 callable_id: None,
                 input: b"work on prs".to_vec().into(),

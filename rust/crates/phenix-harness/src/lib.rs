@@ -19,7 +19,8 @@ use phenix_plugin_catalog::{
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
-    model_routing_factory, model_routing_manifest, options_component_manifest, options_factory,
+    model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
+    openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
     options_manifest, planning_component_manifest, planning_factory, planning_manifest,
     repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
     sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
@@ -149,6 +150,7 @@ impl HarnessBuilder {
         for provider in &provider_definitions {
             builder.add_embedded(provider.manifest(), provider.factory())?;
         }
+        builder.add_embedded(openai_codex_manifest(), openai_codex_factory)?;
         builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
@@ -174,6 +176,7 @@ impl HarnessBuilder {
             planning_component_manifest(),
             workspace_component_manifest(),
             model_routing_component_manifest(authority.clone()),
+            openai_codex_component_manifest(),
             step_runner_component_manifest(authority.clone()),
             helper_invocation_component_manifest(authority.clone()),
             job_component_manifest(),

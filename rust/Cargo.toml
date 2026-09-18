@@ -33,6 +33,7 @@ members = [
   "crates/phenix-plugin-memory",
   "crates/phenix-plugin-models",
   "crates/phenix-plugin-options",
+  "crates/phenix-plugin-openai-codex",
   "crates/phenix-plugin-planning",
   "crates/phenix-plugin-providers",
   "crates/phenix-plugin-repository-workers",

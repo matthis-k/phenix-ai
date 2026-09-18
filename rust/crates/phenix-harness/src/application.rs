@@ -7,24 +7,28 @@ use phenix_acp_stdio::{
 };
 use phenix_application_interface::{
     types::{
-        Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,
-        ElicitationHandlerRef, ExecutionChange, ExecutionState, InteractionHandlers, Message,
-        MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
-        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
-        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
-        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
+        Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
+        AuthenticationMethods, AuthenticationResult, CapabilityInvokeInput, CapabilityInvokeResult,
+        Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
+        InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
+        PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
+        ReviewRecord, SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections,
+        SessionChange, SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput,
+        SessionList, SessionProjection, SessionProjectionState, SessionRenameInput,
+        SessionResumeInput, SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
+        StopReason,
     },
-    AddClientTool, Cancel, CloseSession, CreateSession, DecideReview, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SetInteractionHandlers,
+    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
+    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
+    ListSelections, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession,
+    ResumeSession, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
     HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ModelToolResult, ModelToolTurn,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RuntimeId, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, sdk_contribution, session_service,
@@ -32,10 +36,15 @@ use phenix_plugin_catalog::{
     OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
+use phenix_provider_sdk::{
+    provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
+};
 use phenix_sdk::{
-    execution_resource_service, execution_service, ExecutionAuthority, ExecutionCommand,
-    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, RootBudgetLedger,
-    RootBudgetLimits,
+    execution_resource_service, execution_service, model_routing_service, options_service,
+    ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
+    OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
+    RoutingProfile,
 };
 use std::{
     collections::BTreeMap,
@@ -351,6 +360,18 @@ impl ApplicationWorker {
         input: PhenixValue,
     ) -> Result<PhenixValue, ApplicationError> {
         match operation.as_str() {
+            DiscoverAuthentication::ID => self
+                .discover_authentication(decode(input)?)
+                .map(|value| value.to_value()),
+            Authenticate::ID => self
+                .authenticate(decode(input)?)
+                .map(|value| value.to_value()),
+            ListSelections::ID => self
+                .list_selections(decode(input)?)
+                .map(|value| value.to_value()),
+            SelectSelection::ID => self
+                .select_selection(decode(input)?)
+                .map(|value| value.to_value()),
             CreateSession::ID => self
                 .create_session(decode(input)?)
                 .map(|value| value.to_value()),
@@ -400,6 +421,182 @@ impl ApplicationWorker {
         }
         self.interaction_handlers = handlers;
         Ok(Acknowledged {})
+    }
+
+    fn list_selections(
+        &mut self,
+        request: ApplicationSessionInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        let selected = self.selected_routing_profile(&request.session_id)?;
+        let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
+            ModelResponse::Profiles { profiles } => profiles,
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "model routing returned an unexpected profile-list response: {response:?}"
+                    ),
+                })
+            }
+        };
+
+        let mut available = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            let profile = match self.invoke_model_command(ModelCommand::GetProfile {
+                id: descriptor.id.clone(),
+            })? {
+                ModelResponse::Profile {
+                    profile: Some(profile),
+                } => profile,
+                response => {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: format!(
+                            "model routing returned an unexpected profile response: {response:?}"
+                        ),
+                    })
+                }
+            };
+            available.push(selection_info(&profile)?);
+        }
+        available.sort_by(|left, right| {
+            selection_presentation_rank(&left.presentation)
+                .cmp(&selection_presentation_rank(&right.presentation))
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(Selections {
+            available,
+            selected: Some(selected),
+        })
+    }
+
+    fn select_selection(
+        &mut self,
+        request: SelectionSelectInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_open_application_session(&request.session_id)?;
+        match self.invoke_model_command(ModelCommand::GetProfile {
+            id: request.selection_id.clone(),
+        })? {
+            ModelResponse::Profile { profile: Some(_) } => {}
+            ModelResponse::Profile { profile: None } => {
+                return Err(ApplicationError::InvalidInput {
+                    message: format!("unknown routing selection {}", request.selection_id),
+                })
+            }
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "model routing returned an unexpected profile response: {response:?}"
+                    ),
+                })
+            }
+        }
+
+        let subject = OptionSubjectId::parse(request.session_id.as_str()).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            }
+        })?;
+        let response = self.invoke_option_command(OptionCommand::Set {
+            key: model_default_option(),
+            scope: OptionScope::Session(subject),
+            value: OptionValue::String(request.selection_id.to_string()),
+        })?;
+        if !matches!(response, OptionResponse::Updated { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("options service rejected routing selection: {response:?}"),
+            });
+        }
+        self.list_selections(ApplicationSessionInput {
+            session_id: request.session_id,
+        })
+    }
+
+    fn selected_routing_profile(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<RoutingProfileId, ApplicationError> {
+        let subject = OptionSubjectId::parse(session_id.as_str()).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            }
+        })?;
+        match self.invoke_option_command(OptionCommand::Resolve {
+            key: model_default_option(),
+            context: OptionContext {
+                session: Some(subject),
+                agent: None,
+            },
+        })? {
+            OptionResponse::Value { option } => match option.value {
+                OptionValue::String(value) => RoutingProfileId::parse(value).map_err(|error| {
+                    ApplicationError::InvalidResponse {
+                        message: format!("model.default is not a valid routing profile: {error}"),
+                    }
+                }),
+                value => Err(ApplicationError::InvalidResponse {
+                    message: format!("model.default must be a string, got {value:?}"),
+                }),
+            },
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!("options service returned an unexpected response: {response:?}"),
+            }),
+        }
+    }
+
+    fn invoke_model_command(
+        &self,
+        command: ModelCommand,
+    ) -> Result<ModelResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&model_routing_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        ModelResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
+    }
+
+    fn invoke_option_command(
+        &self,
+        command: OptionCommand,
+    ) -> Result<OptionResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&options_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        OptionResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
     }
 
     fn create_session(
@@ -888,6 +1085,146 @@ impl ApplicationWorker {
             })
     }
 
+    fn discover_authentication(
+        &self,
+        _request: Empty,
+    ) -> Result<AuthenticationMethods, ApplicationError> {
+        let providers = self.provider_auth_plugins();
+        let mut methods = Vec::new();
+        for provider in providers {
+            let response =
+                self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
+            let ProviderAuthResponse::InteractiveMethods {
+                methods: provider_methods,
+            } = response
+            else {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected interactive-auth response"
+                    ),
+                });
+            };
+            for method in provider_methods {
+                methods.push(AuthenticationMethod {
+                    id: authentication_method_id(&provider, &method.id)?,
+                    name: method.name,
+                    description: method.description,
+                });
+            }
+        }
+        methods.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(AuthenticationMethods { methods })
+    }
+
+    fn authenticate(
+        &self,
+        request: AuthenticateInput,
+    ) -> Result<AuthenticationResult, ApplicationError> {
+        let (provider, method) = parse_authentication_method_id(&request.method_id)?;
+        let response =
+            self.invoke_provider_auth(&provider, ProviderAuthCommand::Authenticate { method })?;
+        let ProviderAuthResponse::Authentication { authentication } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "provider {provider} returned an unexpected authentication response"
+                ),
+            });
+        };
+        match authentication {
+            ProviderAuthenticationResult::Authenticated => {
+                self.set_provider_authenticated(&provider)?;
+                Ok(AuthenticationResult::Authenticated)
+            }
+            ProviderAuthenticationResult::External { uri, instructions } => {
+                Ok(AuthenticationResult::External { uri, instructions })
+            }
+        }
+    }
+
+    fn provider_auth_plugins(&self) -> Vec<PluginId> {
+        let service = provider_auth_service();
+        let harness = self.harness.lock();
+        let mut providers = harness
+            .kernel()
+            .config()
+            .manifests()
+            .filter(|manifest| {
+                manifest
+                    .services
+                    .iter()
+                    .any(|contribution| contribution.service == service)
+            })
+            .map(|manifest| manifest.id.clone())
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        providers
+    }
+
+    fn invoke_provider_auth(
+        &self,
+        provider: &PluginId,
+        command: ProviderAuthCommand,
+    ) -> Result<ProviderAuthResponse, ApplicationError> {
+        let input =
+            serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_string(),
+            })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(
+                &provider_auth_service(),
+                &input,
+                &self.authority,
+                Some(provider),
+            )
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn set_provider_authenticated(&self, provider: &PluginId) -> Result<(), ApplicationError> {
+        let command = ModelCommand::SetProviderAuthenticated {
+            provider_plugin: provider.clone(),
+            authenticated: true,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&model_routing_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        match ModelResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })? {
+            ModelResponse::Authentication {
+                provider_plugin,
+                authenticated: true,
+            } if &provider_plugin == provider => Ok(()),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected authentication response: {response:?}"
+                ),
+            }),
+        }
+    }
+
     fn invoke_session(
         &mut self,
         command: SessionCommand,
@@ -913,6 +1250,93 @@ impl ApplicationWorker {
                 message: error.to_string(),
             }
         })
+    }
+}
+
+fn authentication_method_id(provider: &PluginId, method: &str) -> Result<String, ApplicationError> {
+    if method.is_empty() {
+        return Err(ApplicationError::InvalidResponse {
+            message: format!("provider {provider} exposed an empty authentication method id"),
+        });
+    }
+    serde_json::to_string(&(provider.as_str(), method)).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })
+}
+
+fn parse_authentication_method_id(value: &str) -> Result<(PluginId, String), ApplicationError> {
+    let (provider, method): (String, String) =
+        serde_json::from_str(value).map_err(|error| ApplicationError::InvalidInput {
+            message: format!("invalid authentication method id: {error}"),
+        })?;
+    if method.is_empty() {
+        return Err(ApplicationError::InvalidInput {
+            message: "authentication method id contains an empty provider method".to_owned(),
+        });
+    }
+    let provider = PluginId::parse(provider).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("invalid authentication provider id: {error}"),
+    })?;
+    Ok((provider, method))
+}
+
+fn model_default_option() -> OptionKey {
+    OptionKey::parse("model.default").expect("static model.default option key is valid")
+}
+
+fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, ApplicationError> {
+    let mut targets = BTreeMap::new();
+    for target in std::iter::once(&profile.default_target)
+        .chain(profile.fallback_targets.iter())
+        .chain(profile.callable_targets.values())
+    {
+        let key =
+            serde_json::to_string(target).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        targets.entry(key).or_insert(target);
+    }
+
+    if targets.len() == 1 {
+        let target = targets
+            .into_values()
+            .next()
+            .expect("one routing target was counted");
+        return Ok(SelectionInfo {
+            id: profile.id.clone(),
+            name: target.model.to_string(),
+            description: Some(model_selection_description(target)),
+            presentation: SelectionPresentation::Model,
+        });
+    }
+
+    let providers = profile.default_target.provider_plugin.to_string();
+    Ok(SelectionInfo {
+        id: profile.id.clone(),
+        name: profile.id.to_string(),
+        description: Some(providers),
+        presentation: SelectionPresentation::Router,
+    })
+}
+
+fn model_selection_description(target: &phenix_sdk::ModelTarget) -> String {
+    let mut details = vec![target.provider_plugin.to_string()];
+    if let Some(PhenixValue::Map(inference)) = target.options.get("inference") {
+        if let Some(PhenixValue::String(effort)) = inference.get("effort") {
+            if !effort.is_empty() {
+                details.push(format!("effort {effort}"));
+            }
+        }
+    }
+    details.join(" · ")
+}
+
+fn selection_presentation_rank(presentation: &SelectionPresentation) -> u8 {
+    match presentation {
+        SelectionPresentation::Router => 0,
+        SelectionPresentation::Model => 1,
     }
 }
 
@@ -1525,6 +1949,7 @@ fn run_agent_execution(
         }
         let command = AgentLoopCommand::Run {
             execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
             parent_attempt_id: None,
             callable_id: Some(callable_id.clone()),
             input: input.clone(),
@@ -1696,11 +2121,13 @@ fn is_sdk_operation(operation: &ContractId) -> bool {
 fn configured_capabilities() -> Vec<ContractId> {
     [
         "discovery",
+        "authentication",
         "sessions",
         "session-list",
         "session-resume",
         "session-rename",
         "prompt",
+        "routing",
         "sdk",
         "capabilities",
         "callables",
@@ -1720,8 +2147,9 @@ fn configured_capabilities() -> Vec<ContractId> {
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        types::Content, Cancel, CloseSession, CreateSession, ListSessions, Prompt, RenameSession,
-        ResumeSession,
+        types::{Content, Empty},
+        Cancel, CloseSession, CreateSession, DiscoverAuthentication, ListSessions, Prompt,
+        RenameSession, ResumeSession,
     };
     use phenix_core::{Bytes, LocalPersistence, SessionId, ValueAddress};
     use std::{
@@ -1791,6 +2219,76 @@ mod tests {
             phenix_core::CapabilityGenerationId::parse("generation-1").unwrap(),
             phenix_core::ReferenceId::parse(reference).unwrap(),
         )
+    }
+
+    fn selection_target(provider: &str, model: &str) -> phenix_sdk::ModelTarget {
+        phenix_sdk::ModelTarget {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            model: phenix_core::ModelId::parse(model).unwrap(),
+            options: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn selection_presentation_is_derived_from_route_cardinality() {
+        let fixed = selection_target("provider-a", "model-a");
+        let fixed_profile = RoutingProfile {
+            id: RoutingProfileId::parse("fixed").unwrap(),
+            default_target: fixed.clone(),
+            fallback_targets: vec![fixed],
+            callable_targets: BTreeMap::new(),
+        };
+        let fixed_info = selection_info(&fixed_profile).unwrap();
+        assert_eq!(fixed_info.presentation, SelectionPresentation::Model);
+        assert_eq!(fixed_info.name, "model-a");
+
+        let routed_profile = RoutingProfile {
+            id: RoutingProfileId::parse("router").unwrap(),
+            default_target: selection_target("provider-a", "model-a"),
+            fallback_targets: vec![selection_target("provider-b", "model-b")],
+            callable_targets: BTreeMap::new(),
+        };
+        let routed_info = selection_info(&routed_profile).unwrap();
+        assert_eq!(routed_info.presentation, SelectionPresentation::Router);
+        assert_eq!(routed_info.name, "router");
+    }
+
+    #[test]
+    fn fixed_route_presentation_preserves_target_option_distinctions() {
+        let mut target = selection_target("openai-codex", "gpt-5.6-terra");
+        target.options.insert(
+            "inference".to_owned(),
+            PhenixValue::Map(BTreeMap::from([(
+                "effort".to_owned(),
+                PhenixValue::String("high".to_owned()),
+            )])),
+        );
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse("model.openai-codex.gpt-5.6-terra.fixture").unwrap(),
+            default_target: target,
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        let info = selection_info(&profile).unwrap();
+        assert_eq!(
+            info.description.as_deref(),
+            Some("openai-codex · effort high")
+        );
+    }
+
+    #[test]
+    fn authentication_discovery_projects_provider_owned_interactive_flows() {
+        let mut worker = application_worker();
+        let discovered = invoke_operation::<DiscoverAuthentication>(&mut worker, Empty {}).unwrap();
+        let method = discovered
+            .methods
+            .iter()
+            .find(|method| method.name == "OpenAI Codex (ChatGPT OAuth)")
+            .expect("default suite exposes Codex OAuth");
+        let (provider, local_method) =
+            parse_authentication_method_id(&method.id).expect("application auth id round-trips");
+        assert_eq!(provider.as_str(), "openai-codex");
+        assert_eq!(local_method, "oauth");
     }
 
     #[test]

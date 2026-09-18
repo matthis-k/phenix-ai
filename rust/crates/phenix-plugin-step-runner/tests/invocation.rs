@@ -348,6 +348,7 @@ fn setup(kernel: &mut Kernel) {
 fn request() -> InvocationRequest {
     InvocationRequest {
         execution_id: "root".into(),
+        session_id: None,
         parent_attempt_id: None,
         callable_id: None,
         input: b"public invocation request".to_vec().into(),

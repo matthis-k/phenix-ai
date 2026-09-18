@@ -2,15 +2,15 @@ use crate::{extension_meta, wire};
 use phenix_application_interface::{
     application_descriptor,
     types::{
-        Acknowledged, ApplicationError, Content as ApplicationContent, ModelSelectInput, Models,
-        PageInput, PromptInput, RoutingProfiles, RoutingSelectInput, SessionCreateInput,
-        SessionInput, SessionSnapshot, StopReason as ApplicationStopReason,
+        Acknowledged, ApplicationError, Content as ApplicationContent, PageInput, PromptInput,
+        SelectionPresentation, SelectionSelectInput, Selections, SessionCreateInput, SessionInput,
+        SessionSnapshot, StopReason as ApplicationStopReason,
     },
     ApplicationClient, ApplicationDescriptor, ApplicationTransport, Cancel, Capabilities,
-    CloseSession, CreateSession, ListModels, ListRoutingProfiles, ListSessions, Operation, Prompt,
-    ResumeSession, SelectModel, SelectRoutingProfile,
+    CloseSession, CreateSession, ListSelections, ListSessions, Operation, Prompt, ResumeSession,
+    SelectSelection,
 };
-use phenix_core::{ContractId, ModelId, PhenixValue, RoutingProfileId, SessionId};
+use phenix_core::{ContractId, PhenixValue, RoutingProfileId, SessionId};
 use std::path::Path;
 use wire::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
@@ -28,10 +28,8 @@ const SESSIONS_CAPABILITY: &str = "phenix.application.capability.sessions@1";
 const SESSION_LIST_CAPABILITY: &str = "phenix.application.capability.session-list@1";
 const SESSION_RESUME_CAPABILITY: &str = "phenix.application.capability.session-resume@1";
 const PROMPT_CAPABILITY: &str = "phenix.application.capability.prompt@1";
-const MODELS_CAPABILITY: &str = "phenix.application.capability.models@1";
 const ROUTING_CAPABILITY: &str = "phenix.application.capability.routing@1";
-const MODEL_CONFIG_ID: &str = "model";
-const ROUTING_CONFIG_ID: &str = "_phenix/routing-profile";
+const SELECTION_CONFIG_ID: &str = "model";
 
 pub struct ApplicationAdapter<T> {
     descriptor: ApplicationDescriptor,
@@ -260,28 +258,16 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
             .to_string();
 
         match request.config_id.to_string().as_str() {
-            MODEL_CONFIG_ID => {
-                let model_id =
-                    ModelId::parse(value).map_err(|error| ApplicationError::InvalidInput {
-                        message: format!("invalid ACP model id: {error}"),
-                    })?;
-                self.client
-                    .invoke::<SelectModel>(ModelSelectInput {
-                        session_id: session_id.clone(),
-                        model_id,
-                    })
-                    .await?;
-            }
-            ROUTING_CONFIG_ID => {
-                let profile_id = RoutingProfileId::parse(value).map_err(|error| {
+            SELECTION_CONFIG_ID => {
+                let selection_id = RoutingProfileId::parse(value).map_err(|error| {
                     ApplicationError::InvalidInput {
-                        message: format!("invalid ACP routing profile id: {error}"),
+                        message: format!("invalid ACP routing selection id: {error}"),
                     }
                 })?;
                 self.client
-                    .invoke::<SelectRoutingProfile>(RoutingSelectInput {
+                    .invoke::<SelectSelection>(SelectionSelectInput {
                         session_id: session_id.clone(),
-                        profile_id,
+                        selection_id,
                     })
                     .await?;
             }
@@ -322,26 +308,15 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
         session_id: &SessionId,
     ) -> Result<Vec<SessionConfigOption>, ApplicationError> {
         let mut options = Vec::new();
-        if self.supports(MODELS_CAPABILITY) {
-            let models = self
-                .client
-                .invoke::<ListModels>(SessionInput {
-                    session_id: session_id.clone(),
-                })
-                .await?;
-            if let Some(model) = model_config(models)? {
-                options.push(model);
-            }
-        }
         if self.supports(ROUTING_CAPABILITY) {
-            let routing = self
+            let selections = self
                 .client
-                .invoke::<ListRoutingProfiles>(SessionInput {
+                .invoke::<ListSelections>(SessionInput {
                     session_id: session_id.clone(),
                 })
                 .await?;
-            if let Some(routing) = routing_config(routing)? {
-                options.push(routing);
+            if let Some(selection) = selection_config(selections)? {
+                options.push(selection);
             }
         }
         Ok(options)
@@ -354,60 +329,45 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
     }
 }
 
-fn model_config(models: Models) -> Result<Option<SessionConfigOption>, ApplicationError> {
-    let Some(selected) = models.selected else {
-        return Ok(None);
-    };
-    if !models.available.iter().any(|model| model.id == selected) {
-        return Err(ApplicationError::InvalidResponse {
-            message: "selected Phenix model is missing from the available model list".to_owned(),
-        });
-    }
-    let choices = models
-        .available
-        .into_iter()
-        .map(|model| {
-            SessionConfigSelectOption::new(model.id.to_string(), model.name)
-                .description(model.description)
-        })
-        .collect::<Vec<_>>();
-    Ok(Some(
-        SessionConfigOption::select(MODEL_CONFIG_ID, "Model", selected.to_string(), choices)
-            .category(SessionConfigOptionCategory::Model),
-    ))
-}
-
-fn routing_config(
-    routing: RoutingProfiles,
+fn selection_config(
+    selections: Selections,
 ) -> Result<Option<SessionConfigOption>, ApplicationError> {
-    let Some(selected) = routing.selected else {
+    let Some(selected) = selections.selected else {
         return Ok(None);
     };
-    if !routing
+    if !selections
         .available
         .iter()
-        .any(|profile| profile.id == selected)
+        .any(|selection| selection.id == selected)
     {
         return Err(ApplicationError::InvalidResponse {
-            message: "selected Phenix routing profile is missing from the available routing list"
+            message: "selected Phenix route is missing from the available selection list"
                 .to_owned(),
         });
     }
-    let choices = routing
+    let choices = selections
         .available
         .into_iter()
-        .map(|profile| SessionConfigSelectOption::new(profile.id.to_string(), profile.name))
+        .map(|selection| {
+            let prefix = match selection.presentation {
+                SelectionPresentation::Router => "router",
+                SelectionPresentation::Model => "model",
+            };
+            SessionConfigSelectOption::new(
+                selection.id.to_string(),
+                format!("[{prefix}] {}", selection.name),
+            )
+            .description(selection.description)
+        })
         .collect::<Vec<_>>();
     Ok(Some(
         SessionConfigOption::select(
-            ROUTING_CONFIG_ID,
-            "Routing profile",
+            SELECTION_CONFIG_ID,
+            "Model / routing",
             selected.to_string(),
             choices,
         )
-        .category(SessionConfigOptionCategory::Other(
-            "_phenix/routing".to_owned(),
-        )),
+        .category(SessionConfigOptionCategory::Model),
     ))
 }
 

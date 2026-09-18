@@ -91,6 +91,10 @@ pub use phenix_plugin_models::{
     ModelRoutingInterface, ModelTarget, RoutingProfile, RoutingProfileDescriptor,
     MODEL_DISPATCH_SERVICE, MODEL_INFERENCE_SERVICE, MODEL_ROUTING_SERVICE,
 };
+pub use phenix_plugin_openai_codex::{
+    openai_codex_component_manifest, openai_codex_factory, openai_codex_manifest,
+    OPENAI_CODEX_PROVIDER,
+};
 pub use phenix_plugin_options::{
     default_option_definitions, options_component_id, options_component_manifest, options_factory,
     options_manifest, options_service, OptionAssignment, OptionCommand, OptionContext,

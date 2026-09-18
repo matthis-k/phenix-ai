@@ -79,18 +79,6 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.interaction@1"
     },
-    "phenix.application.model-list@1": {
-      "input": "phenix.application.type.session-input@1",
-      "output": "phenix.application.type.models@1",
-      "error": "phenix.application.error@1",
-      "capability": "phenix.application.capability.models@1"
-    },
-    "phenix.application.model-select@1": {
-      "input": "phenix.application.type.model-select-input@1",
-      "output": "phenix.application.type.models@1",
-      "error": "phenix.application.error@1",
-      "capability": "phenix.application.capability.models@1"
-    },
     "phenix.application.observable-get@1": {
       "input": "phenix.application.type.observable-get-input@1",
       "output": "phenix.application.type.observable-value@1",
@@ -127,23 +115,23 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.review@1"
     },
-    "phenix.application.routing-list@1": {
-      "input": "phenix.application.type.session-input@1",
-      "output": "phenix.application.type.routing-profiles@1",
-      "error": "phenix.application.error@1",
-      "capability": "phenix.application.capability.routing@1"
-    },
-    "phenix.application.routing-select@1": {
-      "input": "phenix.application.type.routing-select-input@1",
-      "output": "phenix.application.type.routing-profiles@1",
-      "error": "phenix.application.error@1",
-      "capability": "phenix.application.capability.routing@1"
-    },
     "phenix.application.sdk-get@1": {
       "input": "phenix.application.type.empty@1",
       "output": "phenix.application.type.sdk-value@1",
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.sdk@1"
+    },
+    "phenix.application.selection-list@1": {
+      "input": "phenix.application.type.session-input@1",
+      "output": "phenix.application.type.selections@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.routing@1"
+    },
+    "phenix.application.selection-select@1": {
+      "input": "phenix.application.type.selection-select-input@1",
+      "output": "phenix.application.type.selections@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.routing@1"
     },
     "phenix.application.session-close@1": {
       "input": "phenix.application.type.session-input@1",
@@ -277,11 +265,6 @@
       ]
     },
     "phenix.application.capability.lineage@1": {
-      "dependencies": [
-        "phenix.application.capability.sessions@1"
-      ]
-    },
-    "phenix.application.capability.models@1": {
       "dependencies": [
         "phenix.application.capability.sessions@1"
       ]
@@ -2232,65 +2215,6 @@
             "User": {
               "type": "unit"
             }
-          }
-        }
-      }
-    },
-    "phenix.application.type.model-info@1": {
-      "type": "table",
-      "value": {
-        "description": {
-          "type": "option",
-          "value": {
-            "type": "string"
-          }
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      }
-    },
-    "phenix.application.type.model-select-input@1": {
-      "type": "table",
-      "value": {
-        "model_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        }
-      }
-    },
-    "phenix.application.type.models@1": {
-      "type": "table",
-      "value": {
-        "available": {
-          "type": "list",
-          "value": {
-            "type": "table",
-            "value": {
-              "description": {
-                "type": "option",
-                "value": {
-                  "type": "string"
-                }
-              },
-              "id": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "selected": {
-          "type": "option",
-          "value": {
-            "type": "string"
           }
         }
       }
@@ -4280,18 +4204,68 @@
         }
       }
     },
-    "phenix.application.type.routing-info@1": {
+    "phenix.application.type.sdk-value@1": {
       "type": "table",
       "value": {
+        "schema": {
+          "type": "any"
+        },
+        "value": {
+          "type": "any"
+        }
+      }
+    },
+    "phenix.application.type.selection-info@1": {
+      "type": "table",
+      "value": {
+        "description": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        },
         "id": {
           "type": "string"
         },
         "name": {
           "type": "string"
+        },
+        "presentation": {
+          "type": "variant",
+          "value": {
+            "Model": {
+              "type": "unit"
+            },
+            "Router": {
+              "type": "unit"
+            }
+          }
         }
       }
     },
-    "phenix.application.type.routing-profiles@1": {
+    "phenix.application.type.selection-presentation@1": {
+      "type": "variant",
+      "value": {
+        "Model": {
+          "type": "unit"
+        },
+        "Router": {
+          "type": "unit"
+        }
+      }
+    },
+    "phenix.application.type.selection-select-input@1": {
+      "type": "table",
+      "value": {
+        "selection_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      }
+    },
+    "phenix.application.type.selections@1": {
       "type": "table",
       "value": {
         "available": {
@@ -4299,11 +4273,28 @@
           "value": {
             "type": "table",
             "value": {
+              "description": {
+                "type": "option",
+                "value": {
+                  "type": "string"
+                }
+              },
               "id": {
                 "type": "string"
               },
               "name": {
                 "type": "string"
+              },
+              "presentation": {
+                "type": "variant",
+                "value": {
+                  "Model": {
+                    "type": "unit"
+                  },
+                  "Router": {
+                    "type": "unit"
+                  }
+                }
               }
             }
           }
@@ -4313,28 +4304,6 @@
           "value": {
             "type": "string"
           }
-        }
-      }
-    },
-    "phenix.application.type.routing-select-input@1": {
-      "type": "table",
-      "value": {
-        "profile_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        }
-      }
-    },
-    "phenix.application.type.sdk-value@1": {
-      "type": "table",
-      "value": {
-        "schema": {
-          "type": "any"
-        },
-        "value": {
-          "type": "any"
         }
       }
     },

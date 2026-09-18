@@ -16,22 +16,17 @@ The design must support static routing now and later add model capability metada
 
 ## Canonical model selection
 
-The public model-selection type has two modes:
+The public selection is a `RoutingProfileId`. There is no separate model-selection wrapper type.
 
-```rust
-enum ModelSelection {
-    Routing(RoutingProfileId),
-    Concrete(ModelTarget),
-}
-```
+A direct model choice is represented by an ordinary routing profile whose complete target set contains exactly one `ModelTarget`. It therefore uses the same capability admission, authentication, evidence, dispatch, and failure path as every other route.
 
-`Concrete` identifies one deployable target. It bypasses profile ranking but still passes runtime validation such as availability and required model capabilities.
+A named router may contain multiple targets, fallbacks, or callable-specific targets. A fixed model route contains one target and no behavior capable of producing another target. This is a structural property of the route, not a second selection mode.
 
-`Routing` names a profile. The routing plugin resolves that profile against the invocation context and available model deployments.
+Frontends may present structurally fixed routes as “models” and variable routes as “routers”. That distinction is presentation metadata only; both select the same `RoutingProfileId` through the same operation.
 
-The current domain `ExecutionTarget::{Fixed, Routed}` already represents this distinction. Implementation must converge on one canonical semantic type. Do not keep parallel `ExecutionTarget` and `ModelSelection` enums with equivalent states.
+The domain no longer has a parallel fixed-vs-routed execution target. A concrete `ModelTarget` is a routing result/fact, not an alternative top-level user selection type.
 
-Task kind, estimated difficulty, required capabilities, provider constraints, and later budgets are request context. They do not become variants or fields of `ModelSelection`.
+Task kind, estimated difficulty, required capabilities, provider constraints, and later budgets are request context. They do not become variants or fields of selection.
 
 ## Routing profile publication
 
@@ -113,7 +108,7 @@ exploration policy
 budget policy
 ```
 
-Adding such policy must not change `ModelSelection`.
+Adding such policy must not change the routing-selection identity.
 
 Profile schema evolution uses the normal Phenix contract/versioning rules. A consumer must not guess the meaning of unknown fields.
 
@@ -123,7 +118,7 @@ Routing consumes a request context separate from model selection:
 
 ```rust
 struct RouteRequest {
-    selection: ModelSelection,
+    selection: RoutingProfileId,
     task: TaskKind,
     difficulty: Difficulty,
     required_capabilities: CapabilitySet,
@@ -133,7 +128,7 @@ struct RouteRequest {
 
 Not every field must land in the first implementation. The separation is contractual.
 
-`ModelSelection` answers which selection mode the caller requested. `RouteRequest` carries facts and constraints needed to resolve that request.
+`RoutingProfileId` identifies the selected routing policy. `RouteRequest` carries facts and constraints needed to resolve that route.
 
 For ordinary root/worker execution, the selection and routing requirements may originate from a `StepPlan`. Routing consumes that intent; it does not own the rest of the plan.
 
@@ -143,7 +138,7 @@ For ordinary root/worker execution, the selection and routing requirements may o
 
 ```rust
 struct StepPlan {
-    selection: ModelSelection,
+    selection: RoutingProfileId,
     reasoning: ReasoningBudget,
     context: ContextBudget,
     tools: ToolProvision,
@@ -157,11 +152,11 @@ Routing owns only the model-selection part plus eligibility/ranking against hard
 
 Fixed boundaries:
 
-- `UsagePolicy` may choose `Concrete` or a routing profile and may derive required model capabilities from the step's resource intent.
+- `UsagePolicy` chooses a routing profile and may derive required model capabilities from the step's resource intent. Selecting a specific model means choosing its one-target route.
 - Routing remains authoritative for deployment availability, hard target eligibility, profile resolution, candidate ranking, and the final concrete target.
 - Routing cannot silently alter context, tool, skill, delegation, retry, authority, deadline, or root-budget policy to make a target eligible.
-- A concrete selection remains concrete. If it cannot satisfy hard requirements, fail with a typed reason.
-- A routed selection may try the next eligible target only within the bounded admission rule below.
+- A one-target route remains fixed. If its only target cannot satisfy hard requirements, fail with a typed reason.
+- A multi-target route may try the next eligible target only within the bounded admission rule below.
 - Requested reasoning effort is an optional capability requirement only when the caller requires enforceable effort control. Otherwise unsupported effort control degrades to the target's fixed/default behavior and is reported as such.
 - A selected target returns its effective capabilities so the plan's other owners can enforce or degrade their own controls honestly.
 - Replanning after typed admission/provision failure belongs to `UsagePolicy`. Routing does not recursively widen the plan.
@@ -173,7 +168,7 @@ This separation lets deterministic planning work before adaptive estimates exist
 Routing uses ordered stages rather than a multidimensional lookup table:
 
 ```text
-ModelSelection + request context
+RoutingProfileId + request context
     |
     v
 resolve profile when routed
@@ -298,7 +293,7 @@ projection, including schema overhead, output reserve, and safety margin.
 
 If the projection cannot fit after permitted reduction, routed selection may try
 the next eligible target from the same pinned policy and plan. Default: at most two
-distinct targets per logical turn, each attempted once for admission. Concrete selection
+distinct targets per logical turn, each attempted once for admission. A one-target route
 never changes target. If all attempts fail, return typed context exhaustion with
 the required floor and available capacity. A wider context/tool/retry plan requires
 bounded replanning by `UsagePolicy`, not silent routing expansion.
@@ -370,7 +365,7 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 
 ## Implementation order
 
-1. Reuse or rename the existing `ExecutionTarget::{Fixed, Routed}` representation so there is one canonical `ModelSelection` concept.
+1. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
 2. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
 3. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
 4. Add owned profile contribution registration, replacement, removal, and lifetime cleanup.

@@ -24,6 +24,7 @@ phenix-plugin-language = { path = "../phenix-plugin-language" }
 phenix-plugin-memory = { path = "../phenix-plugin-memory" }
 phenix-plugin-models = { path = "../phenix-plugin-models" }
 phenix-plugin-options = { path = "../phenix-plugin-options" }
+phenix-plugin-openai-codex = { path = "../phenix-plugin-openai-codex" }
 phenix-plugin-planning = { path = "../phenix-plugin-planning" }
 phenix-plugin-providers = { path = "../phenix-plugin-providers" }
 phenix-plugin-repository-workers = { path = "../phenix-plugin-repository-workers" }

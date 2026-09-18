@@ -8,6 +8,7 @@ use phenix_core::{
     KernelError, ModelToolCall, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole,
+    SessionId,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -46,6 +47,9 @@ impl PluginInstance for InvocationProvider {
             .map_err(|error| error.to_string())?;
         if request.execution_id != "execution-1" || request.parent_attempt_id.is_some() {
             return Err("agent loop changed invocation execution identity".into());
+        }
+        if request.session_id.as_ref().map(SessionId::as_str) != Some("session-1") {
+            return Err("agent loop changed invocation session identity".into());
         }
         if request.input != Bytes::new(b"prompt".to_vec()) {
             return Err("agent loop changed invocation input".into());
@@ -219,6 +223,7 @@ fn kernel(with_provider: bool) -> (Kernel, PluginId) {
 fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
     AgentLoopCommand::Run {
         execution_id: "execution-1".into(),
+        session_id: Some(SessionId::parse("session-1").unwrap()),
         parent_attempt_id: None,
         callable_id: None,
         input: Bytes::new(b"prompt".to_vec()),

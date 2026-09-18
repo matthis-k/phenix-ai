@@ -1043,7 +1043,7 @@ fn normalize_update(update: SessionUpdate) -> Option<BackendEvent> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ModelSelection {
+struct AcpModelConfigSelection {
     config_id: String,
     current_value: Option<String>,
 }
@@ -1051,7 +1051,7 @@ struct ModelSelection {
 fn exact_model_selection(
     serialized_config_options: &Value,
     desired_model: &str,
-) -> Result<ModelSelection, BackendError> {
+) -> Result<AcpModelConfigSelection, BackendError> {
     let model_option = find_model_option(serialized_config_options)?;
     let config_id = model_option
         .get("id")
@@ -1065,7 +1065,7 @@ fn exact_model_selection(
             "ACP agent does not advertise exact model value {desired_model}"
         )));
     }
-    Ok(ModelSelection {
+    Ok(AcpModelConfigSelection {
         config_id: config_id.to_owned(),
         current_value: model_option
             .get("currentValue")
@@ -1189,7 +1189,7 @@ mod tests {
         }]);
         assert_eq!(
             exact_model_selection(&options, "gpt-5.6-sol").unwrap(),
-            ModelSelection {
+            AcpModelConfigSelection {
                 config_id: "model".to_owned(),
                 current_value: Some("other".to_owned()),
             }

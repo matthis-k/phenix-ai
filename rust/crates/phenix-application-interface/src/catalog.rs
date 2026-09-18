@@ -37,10 +37,8 @@ operations! {
     GetLineage: "session-lineage", "lineage", SessionInput => SessionLineage;
     Prompt: "prompt", "prompt", PromptInput => PromptResult;
     Cancel: "cancel", "prompt", SessionInput => Acknowledged;
-    ListModels: "model-list", "models", SessionInput => Models;
-    SelectModel: "model-select", "models", ModelSelectInput => Models;
-    ListRoutingProfiles: "routing-list", "routing", SessionInput => RoutingProfiles;
-    SelectRoutingProfile: "routing-select", "routing", RoutingSelectInput => RoutingProfiles;
+    ListSelections: "selection-list", "routing", SessionInput => Selections;
+    SelectSelection: "selection-select", "routing", SelectionSelectInput => Selections;
     ListSkills: "skill-list", "skills", SessionInput => Skills;
     ActivateSkill: "skill-activate", "skills", SkillActivateInput => Skills;
     ListCallables: "callable-list", "callables", SessionInput => Callables;
@@ -79,8 +77,8 @@ pub fn application_descriptor() -> ApplicationDescriptor {
     }
     named_types!(
         AuthenticationMethod,
-        ModelInfo,
-        RoutingInfo,
+        SelectionPresentation,
+        SelectionInfo,
         SkillInfo,
         CallableInfo,
         Diagnostic,
@@ -132,7 +130,6 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         ("session-rename", vec!["sessions"]),
         ("lineage", vec!["sessions"]),
         ("prompt", vec!["sessions"]),
-        ("models", vec!["sessions"]),
         ("routing", vec!["sessions"]),
         ("skills", vec!["sessions"]),
         ("callables", vec!["sessions"]),

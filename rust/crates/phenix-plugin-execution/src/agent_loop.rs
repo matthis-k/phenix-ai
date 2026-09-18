@@ -1,7 +1,7 @@
 use crate::{agent_loop_component_id, AgentLoopInterface};
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
-    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId,
+    PluginContext, PluginHost, PluginInstance, SdkClient, ServiceId, SessionId,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
@@ -36,6 +36,7 @@ impl Default for AgentLoopPolicy {
 pub enum AgentLoopCommand {
     Run {
         execution_id: String,
+        session_id: Option<SessionId>,
         parent_attempt_id: Option<String>,
         callable_id: Option<CallableId>,
         input: Bytes,
@@ -128,6 +129,7 @@ fn handle(
     match command {
         AgentLoopCommand::Run {
             execution_id,
+            session_id,
             parent_attempt_id,
             callable_id,
             input,
@@ -140,6 +142,7 @@ fn handle(
                 .invoke_projected(&DefaultInvocationCommand::Invoke {
                     request: InvocationRequest {
                         execution_id,
+                        session_id,
                         parent_attempt_id,
                         callable_id,
                         input,

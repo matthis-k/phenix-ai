@@ -1,7 +1,6 @@
 use phenix_application_interface::{
-    ApplicationDescriptor, Cancel, Capabilities, CloseSession, CreateSession, Discover, ListModels,
-    ListRoutingProfiles, ListSessions, Operation, Prompt, ResumeSession, SelectModel,
-    SelectRoutingProfile,
+    ApplicationDescriptor, Cancel, Capabilities, CloseSession, CreateSession, Discover,
+    ListSelections, ListSessions, Operation, Prompt, ResumeSession, SelectSelection,
 };
 use phenix_core::{ContractId, PhenixSchema};
 use serde_json::{json, Map, Value};
@@ -165,10 +164,8 @@ fn is_standard_operation(id: &str) -> bool {
         CloseSession::ID,
         Prompt::ID,
         Cancel::ID,
-        ListModels::ID,
-        SelectModel::ID,
-        ListRoutingProfiles::ID,
-        SelectRoutingProfile::ID,
+        ListSelections::ID,
+        SelectSelection::ID,
     ]
     .contains(&id)
 }
