@@ -1,15 +1,17 @@
 use super::*;
 use phenix_application_interface::{
     types::{
-        Acknowledged, Content, ElicitationRequest, ElicitationResponse, ExecutionChange,
-        ExecutionState, InteractionHandlers, PageInput, PermissionRequest, PermissionResponse,
-        PromptInput, PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
+        Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
+        ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
+        InteractionHandlers, PageInput, PermissionRequest, PermissionResponse, PromptInput,
+        PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
         SelectionSelectInput, Selections, SessionCreateInput, SessionInfo, SessionInput,
         SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
         SetInteractionHandlersInput,
     },
-    Cancel as AppCancel, CloseSession as AppCloseSession, CreateSession as AppCreateSession,
-    DecideReview as AppDecideReview, GetProvenance as AppGetProvenance,
+    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
+    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
+    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
     ListSelections as AppListSelections, ListSessions as AppListSessions, Prompt as AppPrompt,
     RenameSession as AppRenameSession, ResumeSession as AppResumeSession,
     SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
@@ -108,6 +110,8 @@ struct FacadeRequest {
 
 #[derive(Clone)]
 enum RequestProjection {
+    AuthenticationMethods,
+    Authentication,
     SessionCreate,
     SessionList,
     SessionResume,
@@ -128,6 +132,8 @@ enum RequestProjection {
 
 #[derive(Clone)]
 enum FacadeOutcome {
+    AuthenticationMethods(AuthenticationMethods),
+    Authentication(AuthenticationResult),
     Session(SessionInfo),
     SessionPage(phenix_application_interface::types::SessionList),
     SessionInfo(SessionInfo),
@@ -233,6 +239,24 @@ impl UserData for FacadeClient {
             lua.create_userdata(FacadeSessions {
                 core: Rc::clone(&this.core),
             })
+        });
+        methods.add_method("authentication_methods", |lua, this, ()| {
+            require_ready(&this.core)?;
+            let request = application_request::<AppDiscoverAuthentication>(
+                &this.core,
+                Empty {},
+                RequestProjection::AuthenticationMethods,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method("authenticate", |lua, this, method_id: String| {
+            require_ready(&this.core)?;
+            let request = application_request::<AppAuthenticate>(
+                &this.core,
+                AuthenticateInput { method_id },
+                RequestProjection::Authentication,
+            )?;
+            lua.create_userdata(request)
         });
         methods.add_method("pump", |lua, this, budget: Option<usize>| {
             pump(lua, &this.core, budget.unwrap_or(DEFAULT_PUMP_BUDGET))
@@ -633,6 +657,12 @@ fn decode_outcome(
         ));
     };
     match projection {
+        RequestProjection::AuthenticationMethods => {
+            Ok(FacadeOutcome::AuthenticationMethods(decode::<AuthenticationMethods>(&value)?))
+        }
+        RequestProjection::Authentication => {
+            Ok(FacadeOutcome::Authentication(decode::<AuthenticationResult>(&value)?))
+        }
         RequestProjection::SessionCreate => {
             let info = decode::<SessionInfo>(&value)?;
             install_created_session(core, info.clone());
@@ -703,6 +733,12 @@ fn decode<T: ValueCodec>(value: &PhenixValue) -> Result<T, BindingError> {
 
 fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> LuaResult<Value> {
     match outcome {
+        FacadeOutcome::AuthenticationMethods(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
+        FacadeOutcome::Authentication(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Session(info) => lua
             .create_userdata(FacadeSession {
                 core: Rc::clone(core),
@@ -1389,6 +1425,21 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
                 .map_err(lua_error)?,
         )?;
     }
+    let authentication_list = ContractId::parse(AppDiscoverAuthentication::ID)
+        .expect("static authentication discovery operation");
+    let authenticate =
+        ContractId::parse(AppAuthenticate::ID).expect("static authentication operation");
+    let authentication = core
+        .raw
+        .state
+        .supports_extension(&authentication_list)
+        .map_err(lua_error)?
+        && core
+            .raw
+            .state
+            .supports_extension(&authenticate)
+            .map_err(lua_error)?;
+    result.set("authentication", authentication)?;
     Ok(result)
 }
 
