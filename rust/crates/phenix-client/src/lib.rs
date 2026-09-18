@@ -239,9 +239,9 @@ pub enum Command {
         session_id: SessionId,
         name: String,
     },
-    SetSessionTarget {
+    SetSessionSelection {
         session_id: SessionId,
-        target: ExecutionTarget,
+        selection: RoutingProfileId,
     },
     RebaseSession {
         session_id: SessionId,
