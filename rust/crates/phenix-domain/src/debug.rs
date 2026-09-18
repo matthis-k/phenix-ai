@@ -155,9 +155,7 @@ impl Error for DebugSerializeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ConfigRevisionId, RoutingProfileId, SessionId, SessionState, WorkspaceId,
-    };
+    use crate::{ConfigRevisionId, RoutingProfileId, SessionId, SessionState, WorkspaceId};
     use std::path::PathBuf;
 
     fn fixture() -> SessionDebugBundle {
