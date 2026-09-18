@@ -1377,7 +1377,6 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
     let result = lua.create_table()?;
     for (name, operation) in [
         ("selection", AppListSelections::ID),
-        ("routing", AppListSelections::ID),
         ("provenance", AppGetProvenance::ID),
         ("review", AppDecideReview::ID),
     ] {
