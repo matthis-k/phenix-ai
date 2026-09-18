@@ -2037,6 +2037,61 @@ mod tests {
         )
     }
 
+    fn selection_target(provider: &str, model: &str) -> phenix_sdk::ModelTarget {
+        phenix_sdk::ModelTarget {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            model: phenix_core::ModelId::parse(model).unwrap(),
+            options: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn selection_presentation_is_derived_from_route_cardinality() {
+        let fixed = selection_target("provider-a", "model-a");
+        let fixed_profile = RoutingProfile {
+            id: RoutingProfileId::parse("fixed").unwrap(),
+            default_target: fixed.clone(),
+            fallback_targets: vec![fixed],
+            callable_targets: BTreeMap::new(),
+        };
+        let fixed_info = selection_info(&fixed_profile).unwrap();
+        assert_eq!(fixed_info.presentation, SelectionPresentation::Model);
+        assert_eq!(fixed_info.name, "model-a");
+
+        let routed_profile = RoutingProfile {
+            id: RoutingProfileId::parse("router").unwrap(),
+            default_target: selection_target("provider-a", "model-a"),
+            fallback_targets: vec![selection_target("provider-b", "model-b")],
+            callable_targets: BTreeMap::new(),
+        };
+        let routed_info = selection_info(&routed_profile).unwrap();
+        assert_eq!(routed_info.presentation, SelectionPresentation::Router);
+        assert_eq!(routed_info.name, "router");
+    }
+
+    #[test]
+    fn fixed_route_presentation_preserves_target_option_distinctions() {
+        let mut target = selection_target("openai-codex", "gpt-5.6-terra");
+        target.options.insert(
+            "inference".to_owned(),
+            PhenixValue::Map(BTreeMap::from([(
+                "effort".to_owned(),
+                PhenixValue::String("high".to_owned()),
+            )])),
+        );
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse("model.openai-codex.gpt-5.6-terra.fixture").unwrap(),
+            default_target: target,
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        let info = selection_info(&profile).unwrap();
+        assert_eq!(
+            info.description.as_deref(),
+            Some("openai-codex · effort high")
+        );
+    }
+
     #[test]
     fn interaction_registration_admits_exact_schemas_before_replacing_slots() {
         let mut worker = application_worker();
