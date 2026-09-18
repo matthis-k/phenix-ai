@@ -1949,6 +1949,7 @@ fn run_agent_execution(
         }
         let command = AgentLoopCommand::Run {
             execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
             parent_attempt_id: None,
             callable_id: Some(callable_id.clone()),
             input: input.clone(),
