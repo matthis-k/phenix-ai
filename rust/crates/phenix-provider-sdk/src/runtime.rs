@@ -156,21 +156,31 @@ impl ProviderPlugin {
         &self,
         command: ProviderAuthCommand,
     ) -> Result<ProviderAuthResponse, ProviderError> {
-        let store = self.credentials()?;
         match command {
-            ProviderAuthCommand::Add { auth } => {
-                self.ensure_auth_supported(auth.kind())?;
-                let auth = store.add(self.spec.id.as_str(), auth)?;
-                Ok(ProviderAuthResponse::Added { auth })
-            }
             ProviderAuthCommand::Methods => Ok(ProviderAuthResponse::Methods {
                 methods: self.spec.auth_kinds(),
             }),
+            ProviderAuthCommand::InteractiveMethods => {
+                Ok(ProviderAuthResponse::InteractiveMethods {
+                    methods: Vec::new(),
+                })
+            }
+            ProviderAuthCommand::Authenticate { method } => Err(ProviderError::Authentication {
+                message: format!(
+                    "provider {} does not expose interactive authentication method {method:?}",
+                    self.spec.id
+                ),
+            }),
+            ProviderAuthCommand::Add { auth } => {
+                self.ensure_auth_supported(auth.kind())?;
+                let auth = self.credentials()?.add(self.spec.id.as_str(), auth)?;
+                Ok(ProviderAuthResponse::Added { auth })
+            }
             ProviderAuthCommand::List => Ok(ProviderAuthResponse::Credentials {
                 credentials: self.available_auth_descriptors()?,
             }),
             ProviderAuthCommand::Remove { kind } => {
-                let auth = store.remove(self.spec.id.as_str(), kind)?;
+                let auth = self.credentials()?.remove(self.spec.id.as_str(), kind)?;
                 Ok(ProviderAuthResponse::Removed { auth })
             }
         }
