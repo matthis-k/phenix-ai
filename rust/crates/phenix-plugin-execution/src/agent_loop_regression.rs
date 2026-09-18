@@ -1,7 +1,7 @@
 use crate::{
-    agent_loop_component_id, agent_loop_component_manifest, agent_loop_service,
-    execution_component_manifest, execution_factory, execution_manifest, AgentLoopCommand,
-    AgentLoopResponse, AgentLoopUsage,
+    agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
+    execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
 };
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
@@ -190,8 +190,9 @@ fn fixture_attempt() -> StepAttemptRecord {
 
 fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     let execution = execution_manifest(Authority::default());
+    let agent_loop = agent_loop_manifest(Authority::default());
     let ceiling = execution.maximum_authority.clone();
-    let mut plugins = vec![execution];
+    let mut plugins = vec![execution, agent_loop];
     let mut components = vec![
         execution_component_manifest(Authority::default()),
         agent_loop_component_manifest(Authority::default()),
@@ -206,10 +207,14 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
 fn kernel(with_provider: bool) -> (Kernel, PluginId) {
     let resolved = resolved_harness(with_provider);
     let execution = execution_manifest(Authority::default()).id;
+    let agent_loop = agent_loop_manifest(Authority::default()).id;
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel
-        .register_embedded_factory(execution.clone(), execution_factory)
+        .register_embedded_factory(execution, execution_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(agent_loop.clone(), agent_loop_factory)
         .unwrap();
     if with_provider {
         kernel
@@ -217,7 +222,7 @@ fn kernel(with_provider: bool) -> (Kernel, PluginId) {
             .unwrap();
     }
     kernel.activate_all().unwrap();
-    (kernel, execution)
+    (kernel, agent_loop)
 }
 
 fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
@@ -244,8 +249,8 @@ fn invoke_agent_loop(kernel: &mut Kernel, execution: &PluginId) -> Result<Vec<u8
 
 #[test]
 fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
-    let (mut kernel, execution) = kernel(true);
-    let output = invoke_agent_loop(&mut kernel, &execution).unwrap();
+    let (mut kernel, agent_loop) = kernel(true);
+    let output = invoke_agent_loop(&mut kernel, &agent_loop).unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
 
@@ -264,7 +269,7 @@ fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
 
 #[test]
 fn agent_loop_preserves_typed_invocation_tool_calls() {
-    let (mut kernel, execution) = kernel(true);
+    let (mut kernel, agent_loop) = kernel(true);
     let command = command(vec![ModelToolDescriptor {
         id: phenix_core::CallableId::parse("fixture.client.echo").unwrap(),
         description: "Echo fixture input".into(),
@@ -277,7 +282,7 @@ fn agent_loop_preserves_typed_invocation_tool_calls() {
             &agent_loop_service(),
             &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
             &Authority::default(),
-            &execution,
+            &agent_loop,
         )
         .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
@@ -302,14 +307,14 @@ fn agent_loop_preserves_typed_invocation_tool_calls() {
 
 #[test]
 fn agent_loop_without_default_invocation_fails_at_optional_import_boundary() {
-    let (mut kernel, execution) = kernel(false);
-    match invoke_agent_loop(&mut kernel, &execution).unwrap_err() {
+    let (mut kernel, agent_loop) = kernel(false);
+    match invoke_agent_loop(&mut kernel, &agent_loop).unwrap_err() {
         KernelError::ServiceInvoke {
             plugin,
             service,
             message,
         } => {
-            assert_eq!(plugin, execution);
+            assert_eq!(plugin, agent_loop);
             assert_eq!(service, agent_loop_service());
             assert_eq!(
                 message,
