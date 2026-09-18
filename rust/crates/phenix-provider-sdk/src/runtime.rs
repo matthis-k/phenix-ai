@@ -203,7 +203,6 @@ impl ProviderPlugin {
     }
 }
 
-
 impl Drop for ProviderPlugin {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {

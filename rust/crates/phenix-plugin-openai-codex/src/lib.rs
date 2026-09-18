@@ -359,7 +359,6 @@ impl OpenAiCodexPlugin {
     }
 }
 
-
 impl Drop for OpenAiCodexPlugin {
     fn drop(&mut self) {
         if let Some(pending) = self.pending.take() {
