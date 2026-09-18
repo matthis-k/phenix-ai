@@ -1,14 +1,15 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    model_inference_service, Authority, Bytes, CapabilityGenerationId, ComponentExport, ComponentId,
-    ComponentInterface, ComponentManifest, LocalPersistence, ModelId, ModelInferenceInterface,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
-    ServiceContribution, ServiceId, ServiceRole,
+    model_inference_service, Authority, Bytes, CapabilityGenerationId, ComponentExport,
+    ComponentId, ComponentInterface, ComponentManifest, LocalPersistence, ModelId,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_harness::{
-    application::serve_configured_application, default_suite_authority, HarnessBuilder, PhenixHarness,
+    application::serve_configured_application, default_suite_authority, HarnessBuilder,
+    PhenixHarness,
 };
 use phenix_sdk::{
     model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelCapabilities,
