@@ -41,6 +41,7 @@ const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const RESPONSES_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/";
 const CREDENTIAL_FILE_ENV: &str = "PHENIX_CREDENTIAL_FILE";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MAX_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
 const REFRESH_MARGIN_SECONDS: u64 = 5 * 60;
 
 #[must_use]
@@ -679,13 +680,7 @@ async fn receive_callback(listener: TcpListener, expected_state: &str) -> Result
         .accept()
         .await
         .map_err(|error| format!("OAuth callback failed: {error}"))?;
-    let mut request = vec![0_u8; 16 * 1024];
-    let length = stream
-        .read(&mut request)
-        .await
-        .map_err(|error| format!("cannot read OAuth callback: {error}"))?;
-    let request = std::str::from_utf8(&request[..length])
-        .map_err(|_| "OAuth callback was not valid HTTP".to_owned())?;
+    let request = read_callback_request(&mut stream).await?;
     let target = request
         .lines()
         .next()
@@ -693,6 +688,9 @@ async fn receive_callback(listener: TcpListener, expected_state: &str) -> Result
         .ok_or_else(|| "OAuth callback did not contain a request target".to_owned())?;
     let url = Url::parse(&format!("http://localhost{target}"))
         .map_err(|error| format!("invalid OAuth callback URL: {error}"))?;
+    if url.path() != "/auth/callback" {
+        return Err("OAuth callback used an unexpected path".to_owned());
+    }
     let query = url.query_pairs().collect::<BTreeMap<_, _>>();
     let result = if let Some(error) = query.get("error") {
         Err(format!("OAuth authorization was rejected: {error}"))
@@ -725,6 +723,29 @@ async fn receive_callback(listener: TcpListener, expected_state: &str) -> Result
     );
     let _ = stream.write_all(response.as_bytes()).await;
     result
+}
+
+async fn read_callback_request(stream: &mut tokio::net::TcpStream) -> Result<String, String> {
+    let mut request = Vec::with_capacity(2048);
+    let mut chunk = [0_u8; 2048];
+    loop {
+        if request.len() >= MAX_CALLBACK_REQUEST_BYTES {
+            return Err("OAuth callback request exceeded 16 KiB".to_owned());
+        }
+        let remaining = MAX_CALLBACK_REQUEST_BYTES - request.len();
+        let length = stream
+            .read(&mut chunk[..remaining.min(chunk.len())])
+            .await
+            .map_err(|error| format!("cannot read OAuth callback: {error}"))?;
+        if length == 0 {
+            return Err("OAuth callback ended before the HTTP headers completed".to_owned());
+        }
+        request.extend_from_slice(&chunk[..length]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8(request).map_err(|_| "OAuth callback was not valid HTTP".to_owned())
 }
 
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
