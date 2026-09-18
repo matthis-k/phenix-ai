@@ -5,7 +5,7 @@ use super::{
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,
-    ModelToolTurn, RoutingProfileId, ServiceId, SkillId,
+    ModelToolTurn, RoutingProfileId, ServiceId, SessionId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -21,6 +21,7 @@ pub const STEP_RUNNER_SERVICE: &str = "phenix.step-runner@1";
 #[serde(deny_unknown_fields)]
 pub struct InvocationRequest {
     pub execution_id: String,
+    pub session_id: Option<SessionId>,
     pub parent_attempt_id: Option<String>,
     pub callable_id: Option<CallableId>,
     pub input: Bytes,
@@ -69,6 +70,7 @@ impl HelperInvocationRequest {
     pub fn as_invocation_request(&self) -> InvocationRequest {
         InvocationRequest {
             execution_id: self.execution_id.clone(),
+            session_id: None,
             parent_attempt_id: Some(self.parent_attempt_id.clone()),
             callable_id: Some(self.callable_id.clone()),
             input: self.input.clone(),
