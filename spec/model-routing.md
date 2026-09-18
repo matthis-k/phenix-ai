@@ -16,11 +16,7 @@ The design must support static routing now and later add model capability metada
 
 ## Canonical model selection
 
-The public selection is always a routing profile identity:
-
-```rust
-type ModelSelection = RoutingProfileId;
-```
+The public selection is a `RoutingProfileId`. There is no separate model-selection wrapper type.
 
 A direct model choice is represented by an ordinary routing profile whose complete target set contains exactly one `ModelTarget`. It therefore uses the same capability admission, authentication, evidence, dispatch, and failure path as every other route.
 
