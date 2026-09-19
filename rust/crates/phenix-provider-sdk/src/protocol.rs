@@ -94,9 +94,7 @@ fn opencode_zen_protocol(request: &ModelInferenceRequest) -> Result<Protocol, Pr
     Ok(Protocol::OpenAiChatCompletions)
 }
 
-fn opencode_response(
-    response: &ProviderResponse,
-) -> Result<ModelInferenceResponse, ProviderError> {
+fn opencode_response(response: &ProviderResponse) -> Result<ModelInferenceResponse, ProviderError> {
     let value = parse_json(response)?;
     if value.get("output").is_some() {
         return openai_responses_response(response);
@@ -861,10 +859,7 @@ mod tests {
             );
         }
         assert!(matches!(
-            Protocol::OpenCodeZen.encode(
-                &endpoint,
-                &request_for_model("gemini-3-pro")
-            ),
+            Protocol::OpenCodeZen.encode(&endpoint, &request_for_model("gemini-3-pro")),
             Err(ProviderError::InvalidRequest { .. })
         ));
     }
