@@ -655,7 +655,10 @@ mod tests {
         let reference = artifact.content_reference("text/plain");
 
         assert_eq!(reference.bytes, artifact.content.len());
-        assert_eq!(reference.digest, phenix_core::ArtifactRevision::from_content(&artifact.content));
+        assert_eq!(
+            reference.digest,
+            phenix_core::ArtifactRevision::from_content(&artifact.content)
+        );
         assert_eq!(reference.media_type, "text/plain");
         assert_eq!(
             reference.locator,

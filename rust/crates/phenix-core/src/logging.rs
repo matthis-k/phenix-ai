@@ -167,8 +167,8 @@ impl StructuredLogger {
     pub fn configured(sink: LogSink) -> Result<Self, String> {
         let mut logger = Self::new(sink)?;
         logger.detail_mode = LogDetailMode::from_env()?.unwrap_or(LogDetailMode::Inline);
-        if let Some(root) = env::var_os(PHENIX_LOG_STORE_ENV)
-            .filter(|root| !root.as_os_str().is_empty())
+        if let Some(root) =
+            env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
         {
             logger.reference_store = Some(FileContentReferenceStore::new(root));
         }
@@ -385,10 +385,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        env::temp_dir().join(format!(
-            "phenix-core-log-{}-{nonce}-{name}",
-            process::id()
-        ))
+        env::temp_dir().join(format!("phenix-core-log-{}-{nonce}-{name}", process::id()))
     }
 
     #[test]
@@ -412,12 +409,18 @@ mod tests {
 
     #[test]
     fn log_depth_parser_is_explicit() {
-        assert_eq!(LogDetailMode::parse("summary").unwrap(), LogDetailMode::Summary);
+        assert_eq!(
+            LogDetailMode::parse("summary").unwrap(),
+            LogDetailMode::Summary
+        );
         assert_eq!(
             LogDetailMode::parse("reference").unwrap(),
             LogDetailMode::Reference
         );
-        assert_eq!(LogDetailMode::parse("inline").unwrap(), LogDetailMode::Inline);
+        assert_eq!(
+            LogDetailMode::parse("inline").unwrap(),
+            LogDetailMode::Inline
+        );
         assert!(LogDetailMode::parse("everything").is_err());
     }
 
@@ -482,10 +485,8 @@ mod tests {
         assert!(!main.contains(marker));
 
         let record: Value = serde_json::from_str(main.lines().next().unwrap()).unwrap();
-        let reference: ContentReference = serde_json::from_value(
-            record["payload"]["detail"]["reference"].clone(),
-        )
-        .unwrap();
+        let reference: ContentReference =
+            serde_json::from_value(record["payload"]["detail"]["reference"].clone()).unwrap();
         let stored = logger
             .reference_store()
             .unwrap()
@@ -494,9 +495,10 @@ mod tests {
             .unwrap();
         let stored: Value = serde_json::from_slice(&stored).unwrap();
         assert_eq!(stored["body"], marker);
-        assert_eq!(reference.digest, crate::ArtifactRevision::from_content(
-            &canonical_json_bytes(&stored).unwrap()
-        ));
+        assert_eq!(
+            reference.digest,
+            crate::ArtifactRevision::from_content(&canonical_json_bytes(&stored).unwrap())
+        );
     }
 
     #[test]

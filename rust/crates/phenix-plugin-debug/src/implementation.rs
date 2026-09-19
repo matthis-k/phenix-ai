@@ -356,9 +356,12 @@ fn trace_logger() -> Result<&'static StructuredLogger, String> {
 }
 
 fn event_name<T: Serialize>(value: &T) -> Option<String> {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.get("event").and_then(serde_json::Value::as_str).map(str::to_owned))
+    serde_json::to_value(value).ok().and_then(|value| {
+        value
+            .get("event")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    })
 }
 
 fn record_trace_inline(kind: &str, payload: serde_json::Value) {
@@ -368,11 +371,7 @@ fn record_trace_inline(kind: &str, payload: serde_json::Value) {
     }
 }
 
-fn record_trace_detail(
-    kind: &str,
-    summary: serde_json::Value,
-    detail: serde_json::Value,
-) {
+fn record_trace_detail(kind: &str, summary: serde_json::Value, detail: serde_json::Value) {
     let result = trace_logger().and_then(|logger| logger.record_detail(kind, &summary, &detail));
     if let Err(error) = result {
         eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
