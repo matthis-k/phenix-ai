@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
-    ServiceId, TransactionOp,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, KernelError, PluginContext,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
+    ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     execution_service, CallableRecord, ExecutionAuthority, ExecutionCommand, ExecutionInterface,
@@ -138,6 +138,10 @@ fn execute(
     command: ExecutionCommand,
 ) -> Result<ExecutionResponse, String> {
     match command {
+        ExecutionCommand::AllocateExecution {
+            prefix,
+            requested_authority,
+        } => allocate_execution(context, &prefix, &requested_authority),
         ExecutionCommand::GetExecution { id } => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionResponse::ExecutionLookup {
@@ -377,12 +381,82 @@ fn mutate(
         | ExecutionCommand::GetDelegatedTask { .. } => {
             Err("delegated task runtime is not active at this stack layer".into())
         }
-        ExecutionCommand::GetExecution { .. }
+        ExecutionCommand::AllocateExecution { .. }
+        | ExecutionCommand::GetExecution { .. }
         | ExecutionCommand::GetTask { .. }
         | ExecutionCommand::InvokeCallable { .. } => {
-            Err("read-only execution command reached mutation path".into())
+            Err("non-mutation execution command reached mutation path".into())
         }
     }
+}
+
+fn allocate_execution(
+    context: &ExecutionContext<'_, '_>,
+    prefix: &str,
+    requested_authority: &ExecutionAuthority,
+) -> Result<ExecutionResponse, String> {
+    validate_identity("execution id prefix", prefix)?;
+    const MAX_RETRIES: usize = 64;
+
+    for _ in 0..MAX_RETRIES {
+        let (old, mut state) = read_state(context)?;
+        let next_ordinal = state
+            .executions
+            .keys()
+            .filter_map(|id| id.strip_prefix(prefix)?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| format!("execution id space exhausted for prefix {prefix:?}"))?;
+        let id = format!("{prefix}{next_ordinal}");
+        let requested = parse_execution_authority(requested_authority)?;
+        let effective = execution_authority_from(&context.call.authority.attenuate(&requested));
+        let graph_generation = context
+            .call
+            .graph_generation
+            .ok_or_else(|| "execution requires an active graph generation".to_owned())?
+            .as_str()
+            .to_owned();
+        let execution = ExecutionRecord {
+            id: id.clone(),
+            parent_execution: None,
+            graph_generation,
+            authority: effective,
+            state: ExecutionState::Active,
+        };
+        state.executions.insert(id, execution.clone());
+        let encoded = serde_json::to_vec(&state).map_err(|error| error.to_string())?;
+        match context.kernel.transact_durable(
+            &execution_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: STATE_KEY.into(),
+                    expected: old,
+                },
+                TransactionOp::Put {
+                    key: STATE_KEY.into(),
+                    value: encoded,
+                },
+            ],
+        ) {
+            Ok(()) => return Ok(ExecutionResponse::Execution { execution }),
+            Err(KernelError::Persistence { message, .. })
+                if message
+                    == format!(
+                        "transaction assertion failed for {}/{}",
+                        execution_namespace(),
+                        STATE_KEY
+                    ) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err(format!(
+        "execution allocation remained contended after {MAX_RETRIES} attempts"
+    ))
 }
 
 fn invoke_callable(
@@ -599,6 +673,25 @@ mod tests {
         ))
     }
 
+    fn allocate(
+        kernel: &mut Kernel,
+        prefix: &str,
+        requested: ExecutionAuthority,
+    ) -> ExecutionRecord {
+        match invoke(
+            kernel,
+            &ExecutionCommand::AllocateExecution {
+                prefix: prefix.into(),
+                requested_authority: requested,
+            },
+        )
+        .unwrap()
+        {
+            ExecutionResponse::Execution { execution } => execution,
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
     fn create(kernel: &mut Kernel, id: &str, requested: ExecutionAuthority) -> ExecutionRecord {
         match invoke(
             kernel,
@@ -612,6 +705,22 @@ mod tests {
             ExecutionResponse::Execution { execution } => execution,
             other => panic!("unexpected response: {other:?}"),
         }
+    }
+
+    #[test]
+    fn allocated_execution_identity_advances_from_durable_state() {
+        let path = temp_db("execution-allocation");
+        {
+            let mut first = kernel_with(&path);
+            let allocated = allocate(&mut first, "execution-", authority(&["fs.read"]));
+            assert_eq!(allocated.id, "execution-1");
+        }
+        {
+            let mut second = kernel_with(&path);
+            let allocated = allocate(&mut second, "execution-", authority(&["fs.read"]));
+            assert_eq!(allocated.id, "execution-2");
+        }
+        let _ = fs::remove_file(path);
     }
 
     #[test]
