@@ -263,13 +263,64 @@ impl<'a> PluginHost<'a> {
         namespace: &ResourceNamespace,
         operations: &[TransactionOp],
     ) -> Result<(), KernelError> {
-        self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
-        self.require_not_cancelled("durable transaction")?;
-        self.persistence
+        let resource = namespace.as_str().to_owned();
+        if let Err(error) = self.require_persistence_operation(PERSISTENCE_WRITE, namespace) {
+            self.trace_data_mutation(
+                resource,
+                "authorization",
+                operations.len(),
+                "denied",
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        self.trace_data_mutation(
+            resource.clone(),
+            "authorization",
+            operations.len(),
+            "allowed",
+            None,
+        );
+        if let Err(error) = self.require_not_cancelled("durable transaction") {
+            self.trace_data_mutation(
+                resource,
+                "cancellation_gate",
+                operations.len(),
+                "denied",
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        self.trace_data_mutation(
+            resource.clone(),
+            "commit",
+            operations.len(),
+            "started",
+            None,
+        );
+        let result = self
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error.to_string()));
+        match &result {
+            Ok(()) => self.trace_data_mutation(
+                resource,
+                "commit",
+                operations.len(),
+                "committed",
+                None,
+            ),
+            Err(error) => self.trace_data_mutation(
+                resource,
+                "commit",
+                operations.len(),
+                "failed",
+                Some(error.to_string()),
+            ),
+        }
+        result
     }
 
     pub fn prepare_durable_transaction(
@@ -277,13 +328,40 @@ impl<'a> PluginHost<'a> {
         namespace: &ResourceNamespace,
         operations: &[TransactionOp],
     ) -> Result<crate::PreparedMutationHandle, KernelError> {
-        self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
-        self.require_active_plugin(self.plugin)?;
-        self.require_not_cancelled("prepare durable transaction")?;
-        self.require_prepared_scope_generation()?;
-        self.prepared_mutations
-            .prepare(self.plugin, namespace, operations, self.authority)
-            .map_err(|message| self.persistence_error(message))
+        let resource = namespace.as_str().to_owned();
+        self.trace_data_mutation(
+            resource.clone(),
+            "prepare",
+            operations.len(),
+            "started",
+            None,
+        );
+        let result = (|| {
+            self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
+            self.require_active_plugin(self.plugin)?;
+            self.require_not_cancelled("prepare durable transaction")?;
+            self.require_prepared_scope_generation()?;
+            self.prepared_mutations
+                .prepare(self.plugin, namespace, operations, self.authority)
+                .map_err(|message| self.persistence_error(message))
+        })();
+        match &result {
+            Ok(_) => self.trace_data_mutation(
+                resource,
+                "prepare",
+                operations.len(),
+                "prepared",
+                None,
+            ),
+            Err(error) => self.trace_data_mutation(
+                resource,
+                "prepare",
+                operations.len(),
+                "failed",
+                Some(error.to_string()),
+            ),
+        }
+        result
     }
 
     pub fn transact_prepared(
@@ -442,6 +520,33 @@ impl<'a> PluginHost<'a> {
             plugin: self.plugin.clone(),
             operation: capability.as_str().to_owned(),
         })
+    }
+
+    pub(super) fn trace_data_mutation(
+        &self,
+        resource: String,
+        stage: &str,
+        operation_count: usize,
+        outcome: &str,
+        error: Option<String>,
+    ) {
+        let trace = crate::RuntimeTraceEvent::DataMutation {
+            resource,
+            stage: stage.to_owned(),
+            operation_count,
+            outcome: outcome.to_owned(),
+            error,
+        };
+        let Ok(payload) = serde_json::to_vec(&trace) else {
+            return;
+        };
+        let _ = self.dispatch_event(
+            crate::runtime_trace_event_type(),
+            crate::RUNTIME_TRACE_EVENT_VERSION,
+            0,
+            0,
+            payload,
+        );
     }
 
     fn persistence_error(&self, message: String) -> KernelError {
