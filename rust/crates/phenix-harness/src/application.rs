@@ -290,7 +290,6 @@ pub struct ApplicationWorker {
     interaction_handlers: InteractionHandlers,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
     next_session_ordinal: u64,
-    next_execution_ordinal: u64,
 }
 
 impl ApplicationWorker {
@@ -305,7 +304,6 @@ impl ApplicationWorker {
             },
             event_sender: None,
             next_session_ordinal: 1,
-            next_execution_ordinal: 1,
         })
     }
 
@@ -682,8 +680,7 @@ impl ApplicationWorker {
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
-        let execution_id = self.allocate_execution_id()?;
-        self.prepare_root_execution(&execution_id)?;
+        let execution_id = self.allocate_root_execution()?;
         if let Err(error) = self.append_session_change(
             &session,
             SessionChange::Message {
@@ -808,49 +805,22 @@ impl ApplicationWorker {
         }
     }
 
-    fn allocate_execution_id(&mut self) -> Result<String, ApplicationError> {
-        loop {
-            let ordinal = self.next_execution_ordinal;
-            self.next_execution_ordinal =
-                ordinal
-                    .checked_add(1)
-                    .ok_or_else(|| ApplicationError::Failed {
-                        message: "application execution id space exhausted".to_owned(),
-                    })?;
-            let id = format!("execution-{ordinal}");
-            match self.invoke_execution(ExecutionCommand::GetExecution { id: id.clone() })? {
-                ExecutionResponse::ExecutionLookup {
-                    execution: None, ..
-                } => return Ok(id),
-                ExecutionResponse::ExecutionLookup {
-                    execution: Some(_), ..
-                } => {}
-                response => {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: format!(
-                            "unexpected execution lookup while allocating an id: {response:?}"
-                        ),
-                    })
-                }
-            }
-        }
-    }
-
-    fn prepare_root_execution(&mut self, execution_id: &str) -> Result<(), ApplicationError> {
-        let response = self.invoke_execution(ExecutionCommand::CreateExecution {
-            id: execution_id.to_owned(),
+    fn allocate_root_execution(&mut self) -> Result<String, ApplicationError> {
+        let response = self.invoke_execution(ExecutionCommand::AllocateExecution {
+            prefix: "execution-".to_owned(),
             requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
         })?;
-        if !matches!(response, ExecutionResponse::Execution { .. }) {
+        let ExecutionResponse::Execution { execution } = response else {
             return Err(ApplicationError::InvalidResponse {
-                message: format!("unexpected execution creation response: {response:?}"),
+                message: format!("unexpected execution allocation response: {response:?}"),
             });
-        }
+        };
+        let execution_id = execution.id;
 
         let response =
             match self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {
                 ledger: RootBudgetLedger {
-                    root_execution_id: execution_id.to_owned(),
+                    root_execution_id: execution_id.clone(),
                     limits: RootBudgetLimits {
                         fresh_input_tokens: 128 * 1024,
                         output_tokens: 16 * 1024,
@@ -862,7 +832,7 @@ impl ApplicationWorker {
             }) {
                 Ok(response) => response,
                 Err(error) => {
-                    let _ = self.finish_root_execution(execution_id, false);
+                    let _ = self.finish_root_execution(&execution_id, false);
                     return Err(error);
                 }
             };
@@ -870,10 +840,10 @@ impl ApplicationWorker {
             let error = ApplicationError::InvalidResponse {
                 message: format!("unexpected root-budget registration response: {response:?}"),
             };
-            let _ = self.finish_root_execution(execution_id, false);
+            let _ = self.finish_root_execution(&execution_id, false);
             return Err(error);
         }
-        Ok(())
+        Ok(execution_id)
     }
 
     fn finish_root_execution(
@@ -2674,6 +2644,46 @@ mod tests {
             assert_eq!(second.execution_id, "execution-2");
         }
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn application_execution_allocation_survives_a_competing_durable_writer() {
+        let path = temp_db("application-execution-allocation-race");
+        let session_id;
+        {
+            let mut first = persistent_application_worker(&path);
+            let created = invoke_operation::<CreateSession>(
+                &mut first,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
+                },
+            )
+            .unwrap();
+            session_id = created.session_id;
+
+            let response = first
+                .invoke_execution(ExecutionCommand::CreateExecution {
+                    id: "execution-1".into(),
+                    requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+                })
+                .unwrap();
+            assert!(matches!(response, ExecutionResponse::Execution { .. }));
+        }
+
+        let mut second = persistent_application_worker(&path);
+        let prompt = invoke_operation::<Prompt>(
+            &mut second,
+            PromptInput {
+                session_id,
+                content: vec![Content::Text {
+                    text: "second writer".into(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(prompt.execution_id, "execution-2");
         let _ = fs::remove_file(path);
     }
 
