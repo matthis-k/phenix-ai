@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, CapabilityId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
-    ServiceId, TransactionOp,
+    Authority, CapabilityId, ContentLocator, ContentReference, PluginContext, PluginInstance,
+    PluginManifest, ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,20 @@ pub struct ArtifactRecord {
     pub content_identity: String,
     pub content: Vec<u8>,
     pub provenance: ArtifactProvenance,
+}
+
+impl ArtifactRecord {
+    #[must_use]
+    pub fn content_reference(&self, media_type: impl Into<String>) -> ContentReference {
+        ContentReference::new(
+            &self.content,
+            media_type,
+            ContentLocator::Service {
+                service: artifact_service().as_str().to_owned(),
+                resource: self.id.clone(),
+            },
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -628,6 +642,28 @@ mod tests {
             .unwrap();
         let output: phenix_core::PhenixValue = serde_json::from_slice(&output).unwrap();
         output.project().unwrap()
+    }
+
+    #[test]
+    fn artifact_projects_to_shared_content_reference() {
+        let artifact = ArtifactRecord {
+            id: "artifact:fixture".into(),
+            content_identity: "legacy-content-identity".into(),
+            content: b"fixture-body".to_vec(),
+            provenance: provenance(),
+        };
+        let reference = artifact.content_reference("text/plain");
+
+        assert_eq!(reference.bytes, artifact.content.len());
+        assert_eq!(reference.digest, phenix_core::ArtifactRevision::from_content(&artifact.content));
+        assert_eq!(reference.media_type, "text/plain");
+        assert_eq!(
+            reference.locator,
+            ContentLocator::Service {
+                service: ARTIFACT_SERVICE.into(),
+                resource: artifact.id,
+            }
+        );
     }
 
     fn provenance() -> ArtifactProvenance {
