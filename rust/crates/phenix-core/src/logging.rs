@@ -1,12 +1,11 @@
-use crate::ArtifactRevision;
+use crate::{ContentReference, ContentReferenceStore, FileContentReferenceStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     env,
-    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -133,40 +132,7 @@ impl LogDetailMode {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "backend", rename_all = "snake_case")]
-pub enum ContentLocator {
-    File { path: String },
-    Service { service: String, resource: String },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ContentReference {
-    pub digest: ArtifactRevision,
-    pub media_type: String,
-    pub bytes: usize,
-    pub locator: ContentLocator,
-}
-
-impl ContentReference {
-    #[must_use]
-    pub fn new(
-        content: &[u8],
-        media_type: impl Into<String>,
-        locator: ContentLocator,
-    ) -> Self {
-        Self {
-            digest: ArtifactRevision::from_content(content),
-            media_type: media_type.into(),
-            bytes: content.len(),
-            locator,
-        }
-    }
-}
-
-pub trait ContentReferenceStore {
-    fn put(&self, media_type: &str, content: &[u8]) -> Result<ContentReference, String>;
-    fn get(&self, reference: &ContentReference) -> Result<Option<Vec<u8>>, String>;
+ec<u8>>, String>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -188,7 +154,7 @@ impl FileContentReferenceStore {
 
 impl ContentReferenceStore for FileContentReferenceStore {
     fn put(&self, media_type: &str, content: &[u8]) -> Result<ContentReference, String> {
-        let digest = ArtifactRevision::from_content(content);
+        let digest = crate::ArtifactRevision::from_content(content);
         let hex = digest
             .as_ref()
             .strip_prefix("sha256:")
@@ -200,7 +166,7 @@ impl ContentReferenceStore for FileContentReferenceStore {
             digest,
             media_type: media_type.into(),
             bytes: content.len(),
-            locator: ContentLocator::File {
+            locator: crate::ContentLocator::File {
                 path: portable_relative_path(&relative)?,
             },
         })
@@ -233,7 +199,7 @@ impl ContentReferenceStore for FileContentReferenceStore {
                 content.len()
             ));
         }
-        let actual = ArtifactRevision::from_content(&content);
+        let actual = crate::ArtifactRevision::from_content(&content);
         if actual != reference.digest {
             return Err(format!(
                 "referenced content digest mismatch for {}: expected {}, got {}",
@@ -471,80 +437,6 @@ fn canonicalize_json(value: &mut Value) {
     }
 }
 
-fn persist_content_addressed(
-    path: &Path,
-    expected: &ArtifactRevision,
-    content: &[u8],
-) -> Result<(), String> {
-    if path.exists() {
-        return verify_content(path, expected);
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("content-addressed path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_nanos();
-    let mut temporary = OsString::from(path.as_os_str());
-    temporary.push(format!(".tmp-{}-{nonce}", process::id()));
-    let temporary = PathBuf::from(temporary);
-
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|error| format!("{}: {error}", temporary.display()))?;
-        file.write_all(content)
-            .map_err(|error| format!("{}: {error}", temporary.display()))?;
-        file.sync_all()
-            .map_err(|error| format!("{}: {error}", temporary.display()))?;
-        fs::rename(&temporary, path)
-            .map_err(|error| format!("{} -> {}: {error}", temporary.display(), path.display()))?;
-        verify_content(path, expected)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
-fn verify_content(path: &Path, expected: &ArtifactRevision) -> Result<(), String> {
-    let content = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let actual = ArtifactRevision::from_content(&content);
-    if &actual != expected {
-        return Err(format!(
-            "content-addressed object mismatch at {}: expected {}, got {}",
-            path.display(),
-            expected,
-            actual
-        ));
-    }
-    Ok(())
-}
-
-fn portable_relative_path(path: &Path) -> Result<String, String> {
-    let path = path
-        .to_str()
-        .ok_or_else(|| "content reference path must be UTF-8".to_owned())?;
-    Ok(path.replace('\\', "/"))
-}
-
-fn safe_relative_path(path: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(path);
-    if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(format!("content reference path is not a safe relative path: {path:?}"));
-    }
-    Ok(path)
-}
-
 fn open_file(path: &Path, truncate: bool) -> Result<File, String> {
     if let Some(parent) = path
         .parent()
@@ -682,7 +574,7 @@ mod tests {
             .unwrap();
         let stored: Value = serde_json::from_slice(&stored).unwrap();
         assert_eq!(stored["body"], marker);
-        assert_eq!(reference.digest, ArtifactRevision::from_content(
+        assert_eq!(reference.digest, crate::ArtifactRevision::from_content(
             &canonical_json_bytes(&stored).unwrap()
         ));
     }
@@ -721,7 +613,7 @@ mod tests {
     fn file_reference_store_rejects_path_traversal() {
         let store = FileContentReferenceStore::new(unique_path("safe"));
         let reference = ContentReference {
-            digest: ArtifactRevision::from_content(b"content"),
+            digest: crate::ArtifactRevision::from_content(b"content"),
             media_type: "application/octet-stream".into(),
             bytes: 7,
             locator: ContentLocator::File {
