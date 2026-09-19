@@ -1407,16 +1407,14 @@ fn run_client(
                                 }
                             } else {
                                 match connection.invoke_extension(&operation, input).await {
-                                    Ok(value) => {
-                                        cache_application_session_config_options(
-                                            &connection,
-                                            &worker_state,
-                                            &operation,
-                                            &value,
-                                        )
-                                        .await
-                                        .map(|()| Response::Application { operation, value })
-                                    }
+                                    Ok(value) => cache_application_session_config_options(
+                                        &connection,
+                                        &worker_state,
+                                        &operation,
+                                        &value,
+                                    )
+                                    .await
+                                    .map(|()| Response::Application { operation, value }),
                                     Err(error) => Err(BindingError::from_client(error)),
                                 }
                             };
