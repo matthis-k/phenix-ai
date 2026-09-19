@@ -256,6 +256,19 @@ impl ClientState {
             .map(|extensions| extensions.contains(operation.as_str()))
             .map_err(|_| BindingError::transport("extension lock is poisoned"))
     }
+
+    fn has_model_config(&self) -> Result<bool, BindingError> {
+        self.session_config_options
+            .lock()
+            .map(|sessions| {
+                sessions.values().any(|options| {
+                    options
+                        .iter()
+                        .any(|option| option.id.to_string() == MODEL_CONFIG_ID)
+                })
+            })
+            .map_err(|_| BindingError::transport("session config option lock is poisoned"))
+    }
 }
 
 #[derive(Clone)]
