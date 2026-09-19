@@ -2648,6 +2648,48 @@ mod tests {
     }
 
     #[test]
+    fn legacy_execution_preflight_reproduces_duplicate_create_rejection() {
+        let path = temp_db("application-execution-preflight-race");
+        let mut first = persistent_application_worker(&path);
+        let mut second = persistent_application_worker(&path);
+
+        for worker in [&mut first, &mut second] {
+            let lookup = worker
+                .invoke_execution(ExecutionCommand::GetExecution {
+                    id: "execution-1".into(),
+                })
+                .unwrap();
+            assert!(matches!(
+                lookup,
+                ExecutionResponse::ExecutionLookup { execution: None }
+            ));
+        }
+
+        first
+            .invoke_execution(ExecutionCommand::CreateExecution {
+                id: "execution-1".into(),
+                requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+            })
+            .unwrap();
+        let duplicate = second
+            .invoke_execution(ExecutionCommand::CreateExecution {
+                id: "execution-1".into(),
+                requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+            })
+            .unwrap_err();
+        assert!(
+            duplicate
+                .to_string()
+                .contains("execution already exists: execution-1"),
+            "unexpected duplicate-create error: {duplicate}"
+        );
+
+        let allocated = second.allocate_root_execution().unwrap();
+        assert_eq!(allocated, "execution-2");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn application_execution_allocation_survives_a_competing_durable_writer() {
         let path = temp_db("application-execution-allocation-race");
         let session_id;
