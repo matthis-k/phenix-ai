@@ -215,16 +215,41 @@ fn run(
             "planned step runner does not support {:?} attempts",
             attribution.kind
         );
-        trace_policy_stage(context, "attempt_kind", "denied", Some(&policy.revision), Some(reason.clone()));
+        trace_policy_stage(
+            context,
+            "attempt_kind",
+            "denied",
+            Some(&policy.revision),
+            Some(reason.clone()),
+        );
         return Err(reason);
     }
-    trace_policy_stage(context, "attempt_kind", "allowed", Some(&policy.revision), None);
+    trace_policy_stage(
+        context,
+        "attempt_kind",
+        "allowed",
+        Some(&policy.revision),
+        None,
+    );
     if attribution.policy_revision != policy.revision {
-        let reason = "planned step attribution policy revision does not match UsagePolicy".to_owned();
-        trace_policy_stage(context, "policy_revision", "denied", Some(&policy.revision), Some(reason.clone()));
+        let reason =
+            "planned step attribution policy revision does not match UsagePolicy".to_owned();
+        trace_policy_stage(
+            context,
+            "policy_revision",
+            "denied",
+            Some(&policy.revision),
+            Some(reason.clone()),
+        );
         return Err(reason);
     }
-    trace_policy_stage(context, "policy_revision", "allowed", Some(&policy.revision), None);
+    trace_policy_stage(
+        context,
+        "policy_revision",
+        "allowed",
+        Some(&policy.revision),
+        None,
+    );
 
     let execution: ExecutionResponse = context
         .sdk
@@ -247,10 +272,22 @@ fn run(
             "planned step execution is not active: {}",
             attribution.execution_id
         );
-        trace_policy_stage(context, "execution_state", "denied", Some(&policy.revision), Some(reason.clone()));
+        trace_policy_stage(
+            context,
+            "execution_state",
+            "denied",
+            Some(&policy.revision),
+            Some(reason.clone()),
+        );
         return Err(reason);
     }
-    trace_policy_stage(context, "execution_state", "allowed", Some(&policy.revision), None);
+    trace_policy_stage(
+        context,
+        "execution_state",
+        "allowed",
+        Some(&policy.revision),
+        None,
+    );
 
     let parent_reservation_id = helper_parent_reservation(context, &attribution)?;
     let remaining_command = match &parent_reservation_id {
@@ -277,25 +314,61 @@ fn run(
         now_ms,
     }) {
         Ok(plan) => {
-            trace_policy_stage(context, "usage_plan", "allowed", Some(&policy.revision), None);
+            trace_policy_stage(
+                context,
+                "usage_plan",
+                "allowed",
+                Some(&policy.revision),
+                None,
+            );
             plan
         }
         Err(error) => {
             let reason = format!("usage planning failed: {error:?}");
-            trace_policy_stage(context, "usage_plan", "denied", Some(&policy.revision), Some(reason.clone()));
+            trace_policy_stage(
+                context,
+                "usage_plan",
+                "denied",
+                Some(&policy.revision),
+                Some(reason.clone()),
+            );
             return Err(reason);
         }
     };
     if let Err(error) = validate_tools(&tools, &plan) {
-        trace_policy_stage(context, "tool_set", "denied", Some(&plan.policy_revision), Some(error.clone()));
+        trace_policy_stage(
+            context,
+            "tool_set",
+            "denied",
+            Some(&plan.policy_revision),
+            Some(error.clone()),
+        );
         return Err(error);
     }
-    trace_policy_stage(context, "tool_set", "allowed", Some(&plan.policy_revision), None);
+    trace_policy_stage(
+        context,
+        "tool_set",
+        "allowed",
+        Some(&plan.policy_revision),
+        None,
+    );
     if let Err(error) = validate_retry_lineage(context, &attribution, &plan) {
-        trace_policy_stage(context, "retry_lineage", "denied", Some(&plan.policy_revision), Some(error.clone()));
+        trace_policy_stage(
+            context,
+            "retry_lineage",
+            "denied",
+            Some(&plan.policy_revision),
+            Some(error.clone()),
+        );
         return Err(error);
     }
-    trace_policy_stage(context, "retry_lineage", "allowed", Some(&plan.policy_revision), None);
+    trace_policy_stage(
+        context,
+        "retry_lineage",
+        "allowed",
+        Some(&plan.policy_revision),
+        None,
+    );
 
     let created: StepAttemptResponse = context
         .sdk
@@ -342,12 +415,19 @@ fn run(
                     &attribution.attempt_id,
                     None,
                     reason,
-                )
+                );
             }
         };
     if !matches!(reserved, ExecutionResourceResponse::RootBudget { .. }) {
-        let reason = "execution resource service returned a non-budget response to reserve".to_owned();
-        trace_policy_stage(context, "budget_reservation", "denied", Some(&plan.policy_revision), Some(reason.clone()));
+        let reason =
+            "execution resource service returned a non-budget response to reserve".to_owned();
+        trace_policy_stage(
+            context,
+            "budget_reservation",
+            "denied",
+            Some(&plan.policy_revision),
+            Some(reason.clone()),
+        );
         return fail_before_dispatch(
             context,
             &attribution.root_execution_id,
@@ -356,7 +436,13 @@ fn run(
             reason,
         );
     }
-    trace_policy_stage(context, "budget_reservation", "allowed", Some(&plan.policy_revision), None);
+    trace_policy_stage(
+        context,
+        "budget_reservation",
+        "allowed",
+        Some(&plan.policy_revision),
+        None,
+    );
     if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::BindReservation {
@@ -399,12 +485,18 @@ fn run(
                     &attribution.attempt_id,
                     Some(&reservation_id),
                     reason,
-                )
+                );
             }
         };
     let ModelResponse::Decision { selection } = routed else {
         let reason = "model routing returned a non-decision response".to_owned();
-        trace_policy_stage(context, "model_routing", "denied", Some(&plan.policy_revision), Some(reason.clone()));
+        trace_policy_stage(
+            context,
+            "model_routing",
+            "denied",
+            Some(&plan.policy_revision),
+            Some(reason.clone()),
+        );
         return fail_before_dispatch(
             context,
             &attribution.root_execution_id,
@@ -413,7 +505,13 @@ fn run(
             reason,
         );
     };
-    trace_policy_stage(context, "model_routing", "allowed", Some(&plan.policy_revision), None);
+    trace_policy_stage(
+        context,
+        "model_routing",
+        "allowed",
+        Some(&plan.policy_revision),
+        None,
+    );
     let decision = selection.decision;
     if let Err(error) = bind_attempt(
         context,
@@ -481,12 +579,18 @@ fn run(
                         &attribution.attempt_id,
                         Some(&reservation_id),
                         reason,
-                    )
+                    );
                 }
             };
         let ContextResponse::Admission { projection, .. } = admitted else {
             let reason = "context service returned a non-admission response".to_owned();
-            trace_policy_stage(context, "context_admission", "denied", Some(&plan.policy_revision), Some(reason.clone()));
+            trace_policy_stage(
+                context,
+                "context_admission",
+                "denied",
+                Some(&plan.policy_revision),
+                Some(reason.clone()),
+            );
             return fail_before_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -495,7 +599,13 @@ fn run(
                 reason,
             );
         };
-        trace_policy_stage(context, "context_admission", "allowed", Some(&plan.policy_revision), None);
+        trace_policy_stage(
+            context,
+            "context_admission",
+            "allowed",
+            Some(&plan.policy_revision),
+            None,
+        );
         if let Err(error) = bind_attempt(
             context,
             StepAttemptCommand::BindProjection {
@@ -579,12 +689,18 @@ fn run(
                     &attribution.attempt_id,
                     Some(&reservation_id),
                     reason,
-                )
+                );
             }
         };
     let ModelDispatchResponse::Ready { prepared } = prepared else {
         let reason = "model dispatch returned inference during preflight".to_owned();
-        trace_policy_stage(context, "dispatch_preflight", "denied", Some(&plan.policy_revision), Some(reason.clone()));
+        trace_policy_stage(
+            context,
+            "dispatch_preflight",
+            "denied",
+            Some(&plan.policy_revision),
+            Some(reason.clone()),
+        );
         return fail_before_dispatch(
             context,
             &attribution.root_execution_id,
@@ -593,7 +709,13 @@ fn run(
             reason,
         );
     };
-    trace_policy_stage(context, "dispatch_preflight", "allowed", Some(&plan.policy_revision), None);
+    trace_policy_stage(
+        context,
+        "dispatch_preflight",
+        "allowed",
+        Some(&plan.policy_revision),
+        None,
+    );
     if prepared.decision() != &decision {
         return fail_before_dispatch(
             context,

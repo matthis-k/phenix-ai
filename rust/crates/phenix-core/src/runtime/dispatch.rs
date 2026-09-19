@@ -229,7 +229,10 @@ pub(super) fn invoke_service_with(
     if guards.active_services.contains(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let chain = match runtime.config.resolve_chain(service, caller_authority, binding) {
+    let chain = match runtime
+        .config
+        .resolve_chain(service, caller_authority, binding)
+    {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,

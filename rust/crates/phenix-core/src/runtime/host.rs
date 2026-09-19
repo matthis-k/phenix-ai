@@ -305,13 +305,9 @@ impl<'a> PluginHost<'a> {
             .transact(self.plugin, namespace, operations)
             .map_err(|error| self.persistence_error(error.to_string()));
         match &result {
-            Ok(()) => self.trace_data_mutation(
-                resource,
-                "commit",
-                operations.len(),
-                "committed",
-                None,
-            ),
+            Ok(()) => {
+                self.trace_data_mutation(resource, "commit", operations.len(), "committed", None)
+            }
             Err(error) => self.trace_data_mutation(
                 resource,
                 "commit",
@@ -346,13 +342,9 @@ impl<'a> PluginHost<'a> {
                 .map_err(|message| self.persistence_error(message))
         })();
         match &result {
-            Ok(_) => self.trace_data_mutation(
-                resource,
-                "prepare",
-                operations.len(),
-                "prepared",
-                None,
-            ),
+            Ok(_) => {
+                self.trace_data_mutation(resource, "prepare", operations.len(), "prepared", None)
+            }
             Err(error) => self.trace_data_mutation(
                 resource,
                 "prepare",
@@ -388,7 +380,7 @@ impl<'a> PluginHost<'a> {
                     operation: "commit prepared durable transactions without participants".into(),
                 });
             }
-    
+
             let participants = self.prepared_mutations.consume(handles).map_err(|_| {
                 KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
@@ -413,7 +405,7 @@ impl<'a> PluginHost<'a> {
                     operation: "prepared commit requires a caller-owned participant".into(),
                 });
             }
-    
+
             let write = CapabilityId::parse(PERSISTENCE_WRITE)
                 .expect("kernel persistence write capability is valid");
             for participant in &participants {
@@ -460,7 +452,7 @@ impl<'a> PluginHost<'a> {
                     });
                 }
             }
-    
+
             let transactions: Vec<_> = participants
                 .into_iter()
                 .map(|participant| participant.transaction)
@@ -470,7 +462,7 @@ impl<'a> PluginHost<'a> {
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)
                 .map_err(|error| self.persistence_error(error.to_string()))
-            })();
+        })();
 
         match &result {
             Ok(()) => self.trace_data_mutation(
