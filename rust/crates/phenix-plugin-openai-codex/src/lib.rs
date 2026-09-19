@@ -24,7 +24,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -128,8 +128,8 @@ fn capability(value: &str) -> CapabilityId {
 #[derive(Default)]
 struct OpenAiCodexPlugin {
     runtime: Option<tokio::runtime::Runtime>,
-    client: Option<reqwest::Client>,
-    token_client: Option<reqwest::Client>,
+    client: OnceLock<Result<reqwest::Client, String>>,
+    token_client: OnceLock<Result<reqwest::Client, String>>,
     store: Option<CredentialStore>,
     pending: Option<PendingAuthentication>,
 }
@@ -139,6 +139,21 @@ struct PendingAuthentication {
     instructions: String,
     result: Arc<parking_lot::Mutex<Option<Result<(), String>>>>,
     task: JoinHandle<()>,
+}
+
+fn build_codex_http_client() -> Result<reqwest::Client, String> {
+    provider_http_client_builder()
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| format!("cannot build Codex HTTP client: {error}"))
+}
+
+fn build_codex_token_client() -> Result<reqwest::Client, String> {
+    provider_http_client_builder()
+        .map_err(|error| error.to_string())?
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("cannot build Codex OAuth token client: {error}"))
 }
 
 impl OpenAiCodexPlugin {
@@ -151,16 +166,20 @@ impl OpenAiCodexPlugin {
     }
 
     fn client(&self) -> Result<&reqwest::Client, ProviderError> {
-        self.client.as_ref().ok_or_else(|| ProviderError::Protocol {
-            message: "Codex provider HTTP client is not initialized".to_owned(),
-        })
+        self.client
+            .get_or_init(build_codex_http_client)
+            .as_ref()
+            .map_err(|message| ProviderError::Transport {
+                message: message.clone(),
+            })
     }
 
     fn token_client(&self) -> Result<&reqwest::Client, ProviderError> {
         self.token_client
+            .get_or_init(build_codex_token_client)
             .as_ref()
-            .ok_or_else(|| ProviderError::Protocol {
-                message: "Codex OAuth token client is not initialized".to_owned(),
+            .map_err(|message| ProviderError::Transport {
+                message: message.clone(),
             })
     }
 
@@ -340,11 +359,10 @@ impl OpenAiCodexPlugin {
         let instructions =
             "Complete the ChatGPT authorization in your browser, then return to Neovim.".to_owned();
         let store = self.store()?.clone();
-        let token_client = self.token_client()?.clone();
         let result = Arc::new(parking_lot::Mutex::new(None));
         let task_result = Arc::clone(&result);
         let task = self.runtime()?.spawn(async move {
-            let completed = finish_authorization(&store, &token_client, start).await;
+            let completed = finish_authorization(&store, start).await;
             *task_result.lock() = Some(completed);
         });
         self.pending = Some(PendingAuthentication {
@@ -379,19 +397,6 @@ impl PluginInstance for OpenAiCodexPlugin {
                 .enable_all()
                 .build()
                 .map_err(|error| format!("cannot start Codex provider runtime: {error}"))?,
-        );
-        self.client = Some(
-            provider_http_client_builder()
-                .map_err(|error| error.to_string())?
-                .build()
-                .map_err(|error| format!("cannot build Codex HTTP client: {error}"))?,
-        );
-        self.token_client = Some(
-            provider_http_client_builder()
-                .map_err(|error| error.to_string())?
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|error| format!("cannot build Codex OAuth token client: {error}"))?,
         );
         self.store = Some(CredentialStore::discover()?);
         Ok(())
@@ -654,7 +659,6 @@ fn start_authorization() -> Result<AuthorizationStart, String> {
 
 async fn finish_authorization(
     store: &CredentialStore,
-    client: &reqwest::Client,
     start: AuthorizationStart,
 ) -> Result<(), String> {
     let listener = TcpListener::from_std(start.listener)
@@ -665,7 +669,8 @@ async fn finish_authorization(
         Ok(result) => result?,
         Err(_) => return Err("OAuth login timed out after 10 minutes".to_owned()),
     };
-    let tokens = exchange_code(client, &code, &start.redirect_uri, &start.verifier).await?;
+    let client = build_codex_token_client()?;
+    let tokens = exchange_code(&client, &code, &start.redirect_uri, &start.verifier).await?;
     store.save(credential_from_tokens(tokens)?)
 }
 
