@@ -31,10 +31,11 @@ use phenix_core::{
     SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_service, execution_review_service, sdk_contribution, session_service,
-    AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand, ExecutionReviewResponse,
-    OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
-    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+    agent_loop_service, execution_review_service, options_component_manifest, sdk_contribution,
+    session_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
+    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
+    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
+    SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
@@ -579,10 +580,18 @@ impl ApplicationWorker {
                 message: error.to_string(),
             }
         })?;
+        let component = options_component_manifest();
         let output = self
             .harness
             .lock()
-            .invoke(&options_service(), &input, &self.authority, None)
+            .kernel_mut()
+            .invoke_component(
+                &component.id,
+                &options_service(),
+                &input,
+                &self.authority,
+                &component.owner,
+            )
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
@@ -2214,6 +2223,21 @@ mod tests {
             model: phenix_core::ModelId::parse(model).unwrap(),
             options: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn application_options_use_the_resolved_component_endpoint() {
+        let worker = application_worker();
+        let response = worker
+            .invoke_option_command(OptionCommand::Resolve {
+                key: model_default_option(),
+                context: OptionContext::default(),
+            })
+            .unwrap();
+        let OptionResponse::Value { option } = response else {
+            panic!("options resolve returned an unexpected response");
+        };
+        assert_eq!(option.value, OptionValue::String("default".into()));
     }
 
     #[test]
