@@ -20,11 +20,17 @@ pub const PHENIX_LOG_STORE_ENV: &str = "PHENIX_LOG_STORE";
 pub enum LogSink {
     Stderr,
     Stdout,
+    Directory(PathBuf),
     AppendFile(PathBuf),
     TruncateFile(PathBuf),
 }
 
 impl LogSink {
+    #[must_use]
+    pub fn directory(path: impl Into<PathBuf>) -> Self {
+        Self::Directory(path.into())
+    }
+
     #[must_use]
     pub fn append_file(path: impl Into<PathBuf>) -> Self {
         Self::AppendFile(path.into())
@@ -44,6 +50,12 @@ impl LogSink {
             "stderr" | "console" => Ok(Self::Stderr),
             "stdout" => Ok(Self::Stdout),
             _ => {
+                if let Some(path) = spec
+                    .strip_prefix("directory:")
+                    .or_else(|| spec.strip_prefix("dir:"))
+                {
+                    return non_empty_path(path, Self::Directory);
+                }
                 if let Some(path) = spec.strip_prefix("append:") {
                     return non_empty_path(path, Self::AppendFile);
                 }
@@ -74,19 +86,22 @@ impl LogSink {
         match self {
             Self::Stderr => "stderr".into(),
             Self::Stdout => "stdout".into(),
+            Self::Directory(path) => format!("dir:{}", path.display()),
             Self::AppendFile(path) => format!("append:{}", path.display()),
             Self::TruncateFile(path) => format!("truncate:{}", path.display()),
         }
     }
 
     fn inferred_store_root(&self) -> Option<PathBuf> {
-        let path = match self {
-            Self::AppendFile(path) | Self::TruncateFile(path) => path,
-            Self::Stderr | Self::Stdout => return None,
-        };
-        let mut root = OsString::from(path.as_os_str());
-        root.push(".d");
-        Some(PathBuf::from(root).join("objects"))
+        match self {
+            Self::Directory(root) => Some(root.join("objects")),
+            Self::AppendFile(path) | Self::TruncateFile(path) => {
+                let mut root = OsString::from(path.as_os_str());
+                root.push(".d");
+                Some(PathBuf::from(root).join("objects"))
+            }
+            Self::Stderr | Self::Stdout => None,
+        }
     }
 }
 
@@ -95,7 +110,7 @@ fn non_empty_path(
     constructor: impl FnOnce(PathBuf) -> LogSink,
 ) -> Result<LogSink, String> {
     if path.is_empty() {
-        return Err("file log sink requires a path".into());
+        return Err("log sink requires a non-empty path".into());
     }
     Ok(constructor(PathBuf::from(path)))
 }
@@ -151,6 +166,9 @@ impl StructuredLogger {
         let writer = match &sink {
             LogSink::Stderr => LogWriter::Stderr,
             LogSink::Stdout => LogWriter::Stdout,
+            LogSink::Directory(root) => {
+                LogWriter::File(open_file(&root.join("phenix.log"), false)?)
+            }
             LogSink::AppendFile(path) => LogWriter::File(open_file(path, false)?),
             LogSink::TruncateFile(path) => LogWriter::File(open_file(path, true)?),
         };
@@ -167,12 +185,18 @@ impl StructuredLogger {
 
     pub fn configured(sink: LogSink) -> Result<Self, String> {
         let mut logger = Self::new(sink)?;
-        logger.detail_mode = LogDetailMode::from_env()?.unwrap_or(LogDetailMode::Inline);
         if let Some(root) =
             env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
         {
             logger.reference_store = Some(FileContentReferenceStore::new(root));
         }
+        logger.detail_mode = LogDetailMode::from_env()?.unwrap_or_else(|| {
+            if logger.reference_store.is_some() {
+                LogDetailMode::Reference
+            } else {
+                LogDetailMode::Inline
+            }
+        });
         Ok(logger)
     }
 
@@ -395,6 +419,14 @@ mod tests {
         assert_eq!(LogSink::parse("console").unwrap(), LogSink::Stderr);
         assert_eq!(LogSink::parse("stdout").unwrap(), LogSink::Stdout);
         assert_eq!(
+            LogSink::parse("dir:/tmp/phenix").unwrap(),
+            LogSink::Directory(PathBuf::from("/tmp/phenix"))
+        );
+        assert_eq!(
+            LogSink::parse("directory:/tmp/phenix").unwrap(),
+            LogSink::Directory(PathBuf::from("/tmp/phenix"))
+        );
+        assert_eq!(
             LogSink::parse("append:/tmp/phenix.log").unwrap(),
             LogSink::AppendFile(PathBuf::from("/tmp/phenix.log"))
         );
@@ -464,6 +496,49 @@ mod tests {
         assert!(content.contains("\"kind\":\"first\""));
         assert!(content.contains("\"kind\":\"second\""));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn directory_sink_uses_phenix_log_as_root_and_shared_object_store() {
+        let root = unique_path("directory");
+        let logger = StructuredLogger::new(LogSink::directory(&root))
+            .unwrap()
+            .with_detail_mode(LogDetailMode::Reference);
+        let child = logger
+            .store_json(&serde_json::json!({"body": "child"}))
+            .unwrap();
+        logger
+            .record_detail(
+                "response",
+                &serde_json::json!({"status": "ok"}),
+                &serde_json::json!({"child": child}),
+            )
+            .unwrap();
+
+        let main_path = root.join("phenix.log");
+        let main = fs::read_to_string(&main_path).unwrap();
+        assert!(main.contains("\"kind\":\"reference\""));
+        assert_eq!(
+            logger.reference_store().unwrap().root(),
+            root.join("objects").as_path()
+        );
+
+        let record: Value = serde_json::from_str(main.lines().next().unwrap()).unwrap();
+        let detail: ContentReference =
+            serde_json::from_value(record["payload"]["detail"]["reference"].clone()).unwrap();
+        let detail_bytes = logger
+            .reference_store()
+            .unwrap()
+            .get(&detail)
+            .unwrap()
+            .unwrap();
+        let detail_value: Value = serde_json::from_slice(&detail_bytes).unwrap();
+        assert_eq!(
+            detail_value["child"]["digest"],
+            serde_json::to_value(child.digest).unwrap()
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
