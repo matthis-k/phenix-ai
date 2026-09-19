@@ -65,6 +65,9 @@ impl ProtocolAdapter for Protocol {
     }
 }
 
+// OpenCode gateways multiplex several provider wire protocols behind one
+// provider identity, so protocol selection remains a pure function of the model
+// and never leaks into routing or authentication semantics.
 fn opencode_go_protocol(request: &ModelInferenceRequest) -> Protocol {
     let model = request.model.as_str();
     if model.starts_with("gpt-") {
