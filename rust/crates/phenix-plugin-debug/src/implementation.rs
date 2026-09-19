@@ -322,20 +322,20 @@ fn env_text(name: &str) -> Option<String> {
     env::var_os(name).map(|value| value.to_string_lossy().into_owned())
 }
 
-fn default_trace_path() -> PathBuf {
+fn default_trace_directory() -> PathBuf {
     if let Some(state_db) = env::var_os("PHENIX_STATE_DB") {
         let state_db = PathBuf::from(state_db);
         if let Some(parent) = state_db.parent() {
-            return parent.join("debug.jsonl");
+            return parent.to_path_buf();
         }
     }
     if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
-        return PathBuf::from(state_home).join("phenix/debug.jsonl");
+        return PathBuf::from(state_home).join("phenix");
     }
     if let Some(home) = env::var_os("HOME") {
-        return PathBuf::from(home).join(".local/state/phenix/debug.jsonl");
+        return PathBuf::from(home).join(".local/state/phenix");
     }
-    env::temp_dir().join("phenix-debug.jsonl")
+    env::temp_dir().join("phenix")
 }
 
 fn trace_sink() -> Result<LogSink, String> {
@@ -345,7 +345,7 @@ fn trace_sink() -> Result<LogSink, String> {
     if let Some(sink) = LogSink::from_env()? {
         return Ok(sink);
     }
-    Ok(LogSink::append_file(default_trace_path()))
+    Ok(LogSink::directory(default_trace_directory()))
 }
 
 fn trace_logger() -> Result<&'static StructuredLogger, String> {
