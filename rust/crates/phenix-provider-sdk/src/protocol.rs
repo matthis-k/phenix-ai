@@ -756,6 +756,12 @@ mod tests {
         }
     }
 
+    fn request_for_model(model: &str) -> ModelInferenceRequest {
+        let mut request = request();
+        request.model = phenix_core::ModelId::parse(model).unwrap();
+        request
+    }
+
     fn tool() -> ModelToolDescriptor {
         ModelToolDescriptor {
             id: CallableId::parse("fixture.echo").unwrap(),
@@ -812,6 +818,91 @@ mod tests {
             decoded.provider_metadata["id"],
             PhenixValue::String("response-1".into())
         );
+    }
+
+    #[test]
+    fn opencode_go_selects_wire_protocol_by_model() {
+        let endpoint = Endpoint::parse("https://opencode.ai/zen/go/v1").unwrap();
+        for (model, path) in [
+            ("gpt-5.6-luna", "/zen/go/v1/responses"),
+            ("qwen3.7-plus", "/zen/go/v1/messages"),
+            ("minimax-m3", "/zen/go/v1/messages"),
+            ("deepseek-v4-flash", "/zen/go/v1/chat/completions"),
+            ("mimo-v2.5", "/zen/go/v1/chat/completions"),
+        ] {
+            let encoded = Protocol::OpenCodeGo
+                .encode(&endpoint, &request_for_model(model))
+                .unwrap();
+            assert!(
+                encoded.url.ends_with(path),
+                "{model} routed to unexpected URL {}",
+                encoded.url
+            );
+        }
+    }
+
+    #[test]
+    fn opencode_zen_selects_wire_protocol_by_model() {
+        let endpoint = Endpoint::parse("https://opencode.ai/zen/v1").unwrap();
+        for (model, path) in [
+            ("gpt-5.6-terra", "/zen/v1/responses"),
+            ("grok-4", "/zen/v1/responses"),
+            ("claude-sonnet-5", "/zen/v1/messages"),
+            ("qwen3.7-plus", "/zen/v1/messages"),
+            ("mimo-v2.5-free", "/zen/v1/chat/completions"),
+        ] {
+            let encoded = Protocol::OpenCodeZen
+                .encode(&endpoint, &request_for_model(model))
+                .unwrap();
+            assert!(
+                encoded.url.ends_with(path),
+                "{model} routed to unexpected URL {}",
+                encoded.url
+            );
+        }
+        assert!(matches!(
+            Protocol::OpenCodeZen.encode(
+                &endpoint,
+                &request_for_model("gemini-3-pro")
+            ),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn opencode_protocol_decodes_supported_response_shapes() {
+        let responses = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "output":[{"content":[{"type":"output_text","text":"responses"}]}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(responses.output.as_ref(), b"responses");
+
+        let chat = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "choices":[{"message":{"content":"chat"}}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(chat.output.as_ref(), b"chat");
+
+        let anthropic = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "content":[{"type":"text","text":"anthropic"}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(anthropic.output.as_ref(), b"anthropic");
     }
 
     #[test]
