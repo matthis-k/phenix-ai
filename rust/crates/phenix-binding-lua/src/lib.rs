@@ -1343,7 +1343,7 @@ fn run_client(
                                             SetSessionConfigOptionRequest::new(
                                                 request.session_id.to_string(),
                                                 MODEL_CONFIG_ID,
-                                                request.selection_id.to_string(),
+                                                request.selection_id.as_str(),
                                             ),
                                         )
                                         .await
