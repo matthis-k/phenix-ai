@@ -99,7 +99,7 @@ impl ProviderPreset {
     }
 }
 
-pub const COMMON_PROVIDERS: [ProviderPreset; 10] = [
+pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
     ProviderPreset::bearer(
         "openai-api",
         "https://api.openai.com/v1",
@@ -118,6 +118,18 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 10] = [
         "https://openrouter.ai/api/v1",
         Protocol::OpenAiChatCompletions,
         "OPEN_ROUTER_API_KEY",
+    ),
+    ProviderPreset::bearer(
+        "opencode-go",
+        "https://opencode.ai/zen/go/v1/",
+        Protocol::OpenCodeGo,
+        "OPENCODE_API_KEY",
+    ),
+    ProviderPreset::bearer(
+        "opencode-zen",
+        "https://opencode.ai/zen/v1/",
+        Protocol::OpenCodeZen,
+        "OPENCODE_API_KEY",
     ),
     ProviderPreset::bearer(
         "groq",
