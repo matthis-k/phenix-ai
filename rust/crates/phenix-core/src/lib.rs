@@ -143,7 +143,11 @@ pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
 pub use live_reconciliation::LiveReconciliationError;
-pub use logging::{LogSink, StructuredLogger, PHENIX_LOG_ENV};
+pub use logging::{
+    ContentLocator, ContentReference, ContentReferenceStore, FileContentReferenceStore,
+    LogDetailMode, LogSink, StructuredLogger, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV,
+    PHENIX_LOG_STORE_ENV,
+};
 pub use management::{
     PluginBuildReport, PluginLoadRequest, PluginManagementContext, PluginManagementError,
     PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginSetRequest,
