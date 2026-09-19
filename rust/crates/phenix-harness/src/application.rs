@@ -31,11 +31,11 @@ use phenix_core::{
     SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_service, execution_review_service, sdk_contribution, session_service,
-    AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand, ExecutionReviewResponse,
-    options_component_manifest, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
-    SessionJournalEntry,
-    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
+    agent_loop_service, execution_review_service, options_component_manifest, sdk_contribution,
+    session_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
+    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
+    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
+    SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
