@@ -14,6 +14,7 @@ mod configuration;
 #[cfg(test)]
 mod configuration_regression;
 mod contract;
+mod content_reference;
 mod contract_wire;
 mod events;
 mod frontend_metadata;
@@ -143,8 +144,10 @@ pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
 pub use live_reconciliation::LiveReconciliationError;
-pub use logging::{
+pub use content_reference::{
     ContentLocator, ContentReference, ContentReferenceStore, FileContentReferenceStore,
+};
+pub use logging::{
     LogDetailMode, LogSink, StructuredLogger, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV,
     PHENIX_LOG_STORE_ENV,
 };
