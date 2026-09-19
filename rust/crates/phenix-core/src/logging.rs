@@ -1,5 +1,4 @@
 use serde::Serialize;
-use serde_json::Value;
 use std::{
     env,
     fs::{self, File, OpenOptions},
@@ -161,9 +160,9 @@ fn open_file(path: &Path, truncate: bool) -> Result<File, String> {
         fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
     let mut options = OpenOptions::new();
-    options.create(true).write(true);
+    options.create(true);
     if truncate {
-        options.truncate(true);
+        options.write(true).truncate(true);
     } else {
         options.append(true);
     }
@@ -251,7 +250,7 @@ mod tests {
     fn record_accepts_arbitrary_serializable_payloads() {
         let path = unique_path("payload");
         let logger = StructuredLogger::new(LogSink::append_file(&path)).unwrap();
-        let payload = Value::String("metadata-only".into());
+        let payload = serde_json::Value::String("metadata-only".into());
         logger.record("fixture", payload).unwrap();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("metadata-only"));
