@@ -231,6 +231,21 @@ mod tests {
     }
 
     #[test]
+    fn common_catalog_exposes_opencode_gateways() {
+        for (id, protocol) in [
+            ("opencode-go", Protocol::OpenCodeGo),
+            ("opencode-zen", Protocol::OpenCodeZen),
+        ] {
+            let provider = COMMON_PROVIDERS
+                .into_iter()
+                .find(|provider| provider.id() == id)
+                .expect("OpenCode gateway is part of the common catalog");
+            assert_eq!(provider.protocol(), protocol);
+            assert_eq!(provider.environment(), "OPENCODE_API_KEY");
+        }
+    }
+
+    #[test]
     fn provider_bundle_depends_on_every_common_provider() {
         let expected = COMMON_PROVIDERS
             .into_iter()
