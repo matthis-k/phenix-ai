@@ -12,11 +12,12 @@ use phenix_application_interface::{
     types::{
         Acknowledged, ApplicationError, CapabilityInvokeInput, CapabilityInvokeResult, Content,
         ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState, InteractionHandlers, Message,
-        MessageRole, PageInput, PermissionHandlerRef, PermissionRequest, PermissionResponse,
-        PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord, SessionChange,
-        SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput, SessionList,
-        SessionProjection, SessionProjectionState, SessionRenameInput, SessionResumeInput,
-        SessionSnapshot, SessionUpdate, SetInteractionHandlersInput, StopReason,
+        MessageRole, ModelSelectInput, PageInput, PermissionHandlerRef, PermissionRequest,
+        PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput, ReviewRecord,
+        RoutingSelectInput, SessionChange, SessionCreateInput, SessionInfo,
+        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables, ListModels,
@@ -367,25 +368,25 @@ impl ApplicationWorker {
             )
             .map(|value| value.to_value()),
             ListModels::ID => {
-                let request = decode(input)?;
+                let request: ApplicationSessionInput = decode(input)?;
                 self.require_open_application_session(&request.session_id)?;
                 application_selection::list_models(&mut self.harness.lock(), request)
                     .map(|value| value.to_value())
             }
             SelectModel::ID => {
-                let request = decode(input)?;
+                let request: ModelSelectInput = decode(input)?;
                 self.require_open_application_session(&request.session_id)?;
                 application_selection::select_model(&mut self.harness.lock(), request)
                     .map(|value| value.to_value())
             }
             ListRoutingProfiles::ID => {
-                let request = decode(input)?;
+                let request: ApplicationSessionInput = decode(input)?;
                 self.require_open_application_session(&request.session_id)?;
                 application_selection::list_routing_profiles(&mut self.harness.lock(), request)
                     .map(|value| value.to_value())
             }
             SelectRoutingProfile::ID => {
-                let request = decode(input)?;
+                let request: RoutingSelectInput = decode(input)?;
                 self.require_open_application_session(&request.session_id)?;
                 application_selection::select_routing_profile(&mut self.harness.lock(), request)
                     .map(|value| value.to_value())
