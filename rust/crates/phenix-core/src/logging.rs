@@ -132,86 +132,6 @@ impl LogDetailMode {
     }
 }
 
-ec<u8>>, String>;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileContentReferenceStore {
-    root: PathBuf,
-}
-
-impl FileContentReferenceStore {
-    #[must_use]
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-}
-
-impl ContentReferenceStore for FileContentReferenceStore {
-    fn put(&self, media_type: &str, content: &[u8]) -> Result<ContentReference, String> {
-        let digest = crate::ArtifactRevision::from_content(content);
-        let hex = digest
-            .as_ref()
-            .strip_prefix("sha256:")
-            .expect("artifact revisions use canonical sha256 identities");
-        let relative = PathBuf::from("sha256").join(&hex[..2]).join(hex);
-        let path = self.root.join(&relative);
-        persist_content_addressed(&path, &digest, content)?;
-        Ok(ContentReference {
-            digest,
-            media_type: media_type.into(),
-            bytes: content.len(),
-            locator: crate::ContentLocator::File {
-                path: portable_relative_path(&relative)?,
-            },
-        })
-    }
-
-    fn get(&self, reference: &ContentReference) -> Result<Option<Vec<u8>>, String> {
-        let ContentLocator::File { path } = &reference.locator else {
-            return Ok(None);
-        };
-        let relative = safe_relative_path(path)?;
-        let path = self.root.join(relative);
-        let Some(content) = fs::read(&path)
-            .map(Some)
-            .or_else(|error| {
-                if error.kind() == io::ErrorKind::NotFound {
-                    Ok(None)
-                } else {
-                    Err(error)
-                }
-            })
-            .map_err(|error| format!("{}: {error}", path.display()))?
-        else {
-            return Ok(None);
-        };
-        if content.len() != reference.bytes {
-            return Err(format!(
-                "referenced content length mismatch for {}: expected {}, got {}",
-                path.display(),
-                reference.bytes,
-                content.len()
-            ));
-        }
-        let actual = crate::ArtifactRevision::from_content(&content);
-        if actual != reference.digest {
-            return Err(format!(
-                "referenced content digest mismatch for {}: expected {}, got {}",
-                path.display(),
-                reference.digest,
-                actual
-            ));
-        }
-        Ok(Some(content))
-    }
-}
-
 enum LogWriter {
     Stderr,
     Stdout,
@@ -616,7 +536,7 @@ mod tests {
             digest: crate::ArtifactRevision::from_content(b"content"),
             media_type: "application/octet-stream".into(),
             bytes: 7,
-            locator: ContentLocator::File {
+            locator: crate::ContentLocator::File {
                 path: "../outside".into(),
             },
         };
