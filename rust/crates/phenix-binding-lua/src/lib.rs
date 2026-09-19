@@ -25,9 +25,11 @@ use mlua::{
 use phenix_application_interface::{
     types::{
         CapabilityInvokeInput, CapabilityInvokeResult, Empty, SdkValue, SelectionInfo,
-        SelectionPresentation, SelectionSelectInput, Selections, SessionInput,
+        SelectionPresentation, SelectionSelectInput, Selections, SessionInfo, SessionInput,
+        SessionSnapshot,
     },
-    GetSdk, InvokeCapability, ListSelections as AppListSelections, Operation,
+    CreateSession as AppCreateSession, GetSdk, InvokeCapability,
+    ListSelections as AppListSelections, Operation, ResumeSession as AppResumeSession,
     SelectSelection as AppSelectSelection,
 };
 use phenix_client_acp::{
@@ -1066,6 +1068,44 @@ fn cache_session_config_options(
     Ok(())
 }
 
+async fn cache_application_session_config_options(
+    connection: &phenix_client_acp::AcpConnection,
+    state: &ClientState,
+    operation: &ContractId,
+    value: &PhenixValue,
+) -> Result<(), BindingError> {
+    let (session_id, working_directory) = if operation.as_str() == AppCreateSession::ID {
+        let session = SessionInfo::from_value(value)
+            .map_err(|error| BindingError::conversion(error.to_string()))?;
+        (
+            session.session_id.to_string(),
+            PathBuf::from(session.working_directory),
+        )
+    } else if operation.as_str() == AppResumeSession::ID {
+        let snapshot = SessionSnapshot::from_value(value)
+            .map_err(|error| BindingError::conversion(error.to_string()))?;
+        (
+            snapshot.session.session_id.to_string(),
+            PathBuf::from(snapshot.session.working_directory),
+        )
+    } else {
+        return Ok(());
+    };
+
+    let response = connection
+        .resume_session(ResumeSessionRequest::new(
+            session_id.clone(),
+            working_directory,
+        ))
+        .await
+        .map_err(BindingError::from_client)?;
+    cache_session_config_options(
+        state,
+        &session_id,
+        response.config_options.unwrap_or_default(),
+    )
+}
+
 fn cached_application_selections(
     state: &ClientState,
     session_id: &str,
@@ -1366,11 +1406,19 @@ fn run_client(
                                     Err(error) => Err(error),
                                 }
                             } else {
-                                connection
-                                    .invoke_extension(&operation, input)
-                                    .await
-                                    .map(|value| Response::Application { operation, value })
-                                    .map_err(BindingError::from_client)
+                                match connection.invoke_extension(&operation, input).await {
+                                    Ok(value) => {
+                                        cache_application_session_config_options(
+                                            &connection,
+                                            &worker_state,
+                                            &operation,
+                                            &value,
+                                        )
+                                        .await
+                                        .map(|()| Response::Application { operation, value })
+                                    }
+                                    Err(error) => Err(BindingError::from_client(error)),
+                                }
                             };
                             let _ = reply.send(result);
                         }
