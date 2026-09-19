@@ -1,5 +1,12 @@
 # Referenced logging
 
+status: implemented
+coverage:
+  - rust/crates/phenix-core/src/content_reference.rs
+  - rust/crates/phenix-core/src/logging.rs
+  - rust/crates/phenix-plugin-artifacts/src/implementation.rs
+  - rust/crates/phenix-plugin-debug/src/implementation.rs
+
 Phenix logging separates a compact chronological index from optional deep diagnostic content.
 
 ## Modes
