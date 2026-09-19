@@ -125,9 +125,10 @@ pub use contract::{
     ValueMatch,
 };
 pub use events::{
-    EventAdmissionReceipt, EventBus, EventDeliveryCancellation, EventDeliveryStatus,
-    EventDispatchReport, EventEnvelope, EventError, EventFailurePolicy, EventHandler,
-    EventSubscription, KernelEvent, SubscriptionSpec,
+    runtime_trace_event_type, EventAdmissionReceipt, EventBus, EventDeliveryCancellation,
+    EventDeliveryStatus, EventDispatchReport, EventEnvelope, EventError, EventFailurePolicy,
+    EventHandler, EventSubscription, KernelEvent, RuntimeTraceEvent, RuntimeTraceParticipant,
+    SubscriptionSpec, RUNTIME_TRACE_EVENT, RUNTIME_TRACE_EVENT_VERSION,
 };
 pub use frontend_metadata::FrontendMetadataResolutionError;
 pub use identity::{

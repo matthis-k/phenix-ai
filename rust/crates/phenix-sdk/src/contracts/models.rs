@@ -4,8 +4,8 @@ pub use phenix_core::{
     ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    CallableId, CapabilityGenerationId, ComponentInterface, InterfaceId, ModelId, PhenixValue,
-    PluginId, RoutingProfileId, ServiceId,
+    CallableId, CapabilityGenerationId, ComponentInterface, EventTypeId, InterfaceId, ModelId,
+    PhenixValue, PluginId, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,6 +14,70 @@ use std::{
 };
 
 pub const MODEL_ROUTING_SERVICE: &str = "phenix.models.routing@1";
+
+pub const MODEL_DIAGNOSTIC_EVENT: &str = "phenix.models.diagnostic";
+pub const MODEL_DIAGNOSTIC_EVENT_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum ModelDiagnosticEvent {
+    AuthenticationChanged {
+        provider_plugin: String,
+        authenticated: bool,
+        authenticated_providers: Vec<String>,
+    },
+    RoutingDecision {
+        profile_id: String,
+        callable_id: Option<String>,
+        provider_plugin: String,
+        model: String,
+        candidate_ordinal: u32,
+        rejected_candidates: usize,
+    },
+    DispatchPreflight {
+        provider_plugin: String,
+        model: String,
+        authenticated: bool,
+        authenticated_providers: Vec<String>,
+        candidate_ordinal: u32,
+        policy_revision: String,
+        capability_generation: String,
+        input_bytes: usize,
+        tool_count: usize,
+        continuation_turns: usize,
+    },
+    DispatchPreflightRejected {
+        provider_plugin: String,
+        model: String,
+        authenticated: bool,
+        authenticated_providers: Vec<String>,
+        reason: String,
+    },
+    DispatchPrepared {
+        provider_plugin: String,
+        model: String,
+        request_bytes: usize,
+    },
+    DispatchInvocationStarted {
+        provider_plugin: String,
+        model: String,
+        request_bytes: usize,
+    },
+    DispatchInvocationSucceeded {
+        provider_plugin: String,
+        model: String,
+    },
+    DispatchInvocationFailed {
+        provider_plugin: String,
+        model: String,
+        reason: String,
+    },
+}
+
+#[must_use]
+pub fn model_diagnostic_event_type() -> EventTypeId {
+    EventTypeId::parse(MODEL_DIAGNOSTIC_EVENT).expect("static model diagnostic event id is valid")
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct ModelTarget {

@@ -7,10 +7,11 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
-    model_dispatch_service, model_routing_service, ModelCommand, ModelDispatchCommand,
-    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
-    ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
-    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
+    model_diagnostic_event_type, model_dispatch_service, model_routing_service, ModelCommand,
+    ModelDiagnosticEvent, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
+    ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
+    RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
+    MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -160,6 +161,7 @@ fn handle_routing(
         if mutates_runtime {
             persist_runtime_state(context, routing, previous_runtime)?;
         }
+        emit_routing_diagnostic(context, &command, &response);
         return Ok(response);
     }
 
@@ -188,6 +190,14 @@ fn handle_routing(
             } else {
                 context.plugin.state.remove(&provider_plugin);
             }
+            emit_diagnostic(
+                context,
+                ModelDiagnosticEvent::AuthenticationChanged {
+                    provider_plugin: provider_plugin.as_str().to_owned(),
+                    authenticated,
+                    authenticated_providers: authenticated_providers(context),
+                },
+            );
             Ok(ModelResponse::Authentication {
                 provider_plugin,
                 authenticated,
@@ -214,18 +224,143 @@ fn handle_dispatch(
             tools,
             continuation,
         } => {
-            validate_dispatch(context, routing, &decision)?;
+            let authenticated = context
+                .plugin
+                .state
+                .contains(&decision.target.provider_plugin);
+            emit_diagnostic(
+                context,
+                ModelDiagnosticEvent::DispatchPreflight {
+                    provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                    model: decision.target.model.as_str().to_owned(),
+                    authenticated,
+                    authenticated_providers: authenticated_providers(context),
+                    candidate_ordinal: decision.candidate_ordinal,
+                    policy_revision: decision.policy_revision.clone(),
+                    capability_generation: decision.capability_generation.as_str().to_owned(),
+                    input_bytes: input.as_ref().len(),
+                    tool_count: tools.len(),
+                    continuation_turns: continuation.len(),
+                },
+            );
+            if let Err(reason) = validate_dispatch(context, routing, &decision) {
+                emit_diagnostic(
+                    context,
+                    ModelDiagnosticEvent::DispatchPreflightRejected {
+                        provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                        model: decision.target.model.as_str().to_owned(),
+                        authenticated,
+                        authenticated_providers: authenticated_providers(context),
+                        reason: reason.clone(),
+                    },
+                );
+                return Err(reason);
+            }
             let request = encode_request(context, &decision.target, input, tools, continuation)?;
+            emit_diagnostic(
+                context,
+                ModelDiagnosticEvent::DispatchPrepared {
+                    provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                    model: decision.target.model.as_str().to_owned(),
+                    request_bytes: request.as_ref().len(),
+                },
+            );
             Ok(ModelDispatchResponse::Ready {
                 prepared: PreparedDispatch::new(decision, request),
             })
         }
         ModelDispatchCommand::InvokePrepared { prepared } => {
             let (decision, request) = prepared.into_parts();
-            let response = invoke_encoded_target(context, &decision.target, request)?;
+            emit_diagnostic(
+                context,
+                ModelDiagnosticEvent::DispatchInvocationStarted {
+                    provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                    model: decision.target.model.as_str().to_owned(),
+                    request_bytes: request.as_ref().len(),
+                },
+            );
+            let response = match invoke_encoded_target(context, &decision.target, request) {
+                Ok(response) => response,
+                Err(reason) => {
+                    emit_diagnostic(
+                        context,
+                        ModelDiagnosticEvent::DispatchInvocationFailed {
+                            provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                            model: decision.target.model.as_str().to_owned(),
+                            reason: reason.clone(),
+                        },
+                    );
+                    return Err(reason);
+                }
+            };
+            emit_diagnostic(
+                context,
+                ModelDiagnosticEvent::DispatchInvocationSucceeded {
+                    provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                    model: decision.target.model.as_str().to_owned(),
+                },
+            );
             Ok(ModelDispatchResponse::Inference { decision, response })
         }
     }
+}
+
+fn authenticated_providers(context: &ModelContext<'_, '_, '_>) -> Vec<String> {
+    context
+        .plugin
+        .state
+        .iter()
+        .map(|provider| provider.as_str().to_owned())
+        .collect()
+}
+
+fn emit_routing_diagnostic(
+    context: &ModelContext<'_, '_, '_>,
+    command: &ModelCommand,
+    response: &ModelResponse,
+) {
+    let (
+        ModelCommand::ResolveWithRequirements {
+            profile_id,
+            callable_id,
+            ..
+        },
+        ModelResponse::Decision { selection },
+    ) = (command, response)
+    else {
+        return;
+    };
+    emit_diagnostic(
+        context,
+        ModelDiagnosticEvent::RoutingDecision {
+            profile_id: profile_id.as_str().to_owned(),
+            callable_id: callable_id
+                .as_ref()
+                .map(|callable| callable.as_str().to_owned()),
+            provider_plugin: selection
+                .decision
+                .target
+                .provider_plugin
+                .as_str()
+                .to_owned(),
+            model: selection.decision.target.model.as_str().to_owned(),
+            candidate_ordinal: selection.decision.candidate_ordinal,
+            rejected_candidates: selection.rejected.len(),
+        },
+    );
+}
+
+fn emit_diagnostic(context: &ModelContext<'_, '_, '_>, diagnostic: ModelDiagnosticEvent) {
+    let Ok(payload) = serde_json::to_vec(&diagnostic) else {
+        return;
+    };
+    let _ = context.kernel.dispatch_event(
+        model_diagnostic_event_type(),
+        MODEL_DIAGNOSTIC_EVENT_VERSION,
+        0,
+        0,
+        payload,
+    );
 }
 
 fn validate_dispatch(
