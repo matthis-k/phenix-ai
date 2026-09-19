@@ -416,12 +416,19 @@ fn runtime_trace_reports_service_chain_without_request_payload() {
         b"layer:terminal:secret-marker"
     );
 
-    let event = receiver
-        .recv_timeout(Duration::from_secs(1))
-        .expect("runtime trace should be delivered");
+    let (event, trace) = loop {
+        let event = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("runtime trace should be delivered");
+        let encoded = String::from_utf8(event.payload.clone()).unwrap();
+        assert!(!encoded.contains("secret-marker"));
+        let trace: RuntimeTraceEvent = serde_json::from_slice(&event.payload).unwrap();
+        if matches!(trace, RuntimeTraceEvent::ServiceInvocation { .. }) {
+            break (event, trace);
+        }
+    };
     let encoded = String::from_utf8(event.payload.clone()).unwrap();
     assert!(!encoded.contains("secret-marker"));
-    let trace: RuntimeTraceEvent = serde_json::from_slice(&event.payload).unwrap();
     let RuntimeTraceEvent::ServiceInvocation {
         service: traced_service,
         input_bytes,
@@ -430,7 +437,10 @@ fn runtime_trace_reports_service_chain_without_request_payload() {
         error,
         terminal_reached,
         participants,
-    } = trace;
+    } = trace
+    else {
+        unreachable!("filtered to service invocation");
+    };
     assert_eq!(traced_service, service().as_str());
     assert_eq!(input_bytes, input.len());
     assert_eq!(output_bytes, Some(b"layer:terminal:secret-marker".len()));
