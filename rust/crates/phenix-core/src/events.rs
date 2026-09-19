@@ -42,6 +42,21 @@ pub enum RuntimeTraceEvent {
         terminal_reached: bool,
         participants: Vec<RuntimeTraceParticipant>,
     },
+    PolicyStage {
+        policy: String,
+        stage: String,
+        outcome: String,
+        subject: Option<String>,
+        revision: Option<String>,
+        reason: Option<String>,
+    },
+    DataMutation {
+        resource: String,
+        stage: String,
+        operation_count: usize,
+        outcome: String,
+        error: Option<String>,
+    },
 }
 
 #[must_use]
