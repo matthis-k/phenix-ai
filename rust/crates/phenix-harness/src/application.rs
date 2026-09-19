@@ -2234,15 +2234,10 @@ mod tests {
                 context: OptionContext::default(),
             })
             .unwrap();
-        assert!(matches!(
-            response,
-            OptionResponse::Value {
-                option: phenix_sdk::ResolvedOption {
-                    value: OptionValue::String(ref value),
-                    ..
-                }
-            } if value == "default"
-        ));
+        let OptionResponse::Value { option } = response else {
+            panic!("options resolve returned an unexpected response");
+        };
+        assert_eq!(option.value, OptionValue::String("default".into()));
     }
 
     #[test]
