@@ -156,7 +156,10 @@ impl StructuredLogger {
 }
 
 fn open_file(path: &Path, truncate: bool) -> Result<File, String> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
     let mut options = OpenOptions::new();
