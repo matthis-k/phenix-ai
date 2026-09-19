@@ -328,12 +328,20 @@ fn run(
             }) {
             Ok(response) => response,
             Err(error) => {
+                let reason = format!("budget reservation failed: {error}");
+                trace_policy_stage(
+                    context,
+                    "budget_reservation",
+                    "denied",
+                    Some(&plan.policy_revision),
+                    Some(reason.clone()),
+                );
                 return fail_before_dispatch(
                     context,
                     &attribution.root_execution_id,
                     &attribution.attempt_id,
                     None,
-                    format!("budget reservation failed: {error}"),
+                    reason,
                 )
             }
         };
@@ -377,12 +385,20 @@ fn run(
             }) {
             Ok(response) => response,
             Err(error) => {
+                let reason = format!("model routing failed: {error}");
+                trace_policy_stage(
+                    context,
+                    "model_routing",
+                    "denied",
+                    Some(&plan.policy_revision),
+                    Some(reason.clone()),
+                );
                 return fail_before_dispatch(
                     context,
                     &attribution.root_execution_id,
                     &attribution.attempt_id,
                     Some(&reservation_id),
-                    format!("model routing failed: {error}"),
+                    reason,
                 )
             }
         };
@@ -451,12 +467,20 @@ fn run(
                 }) {
                 Ok(response) => response,
                 Err(error) => {
+                    let reason = format!("context admission failed: {error}");
+                    trace_policy_stage(
+                        context,
+                        "context_admission",
+                        "denied",
+                        Some(&plan.policy_revision),
+                        Some(reason.clone()),
+                    );
                     return fail_before_dispatch(
                         context,
                         &attribution.root_execution_id,
                         &attribution.attempt_id,
                         Some(&reservation_id),
-                        format!("context admission failed: {error}"),
+                        reason,
                     )
                 }
             };
@@ -541,12 +565,20 @@ fn run(
             }) {
             Ok(response) => response,
             Err(error) => {
+                let reason = format!("resolved model preflight failed: {error}");
+                trace_policy_stage(
+                    context,
+                    "dispatch_preflight",
+                    "denied",
+                    Some(&plan.policy_revision),
+                    Some(reason.clone()),
+                );
                 return fail_before_dispatch(
                     context,
                     &attribution.root_execution_id,
                     &attribution.attempt_id,
                     Some(&reservation_id),
-                    format!("resolved model preflight failed: {error}"),
+                    reason,
                 )
             }
         };
