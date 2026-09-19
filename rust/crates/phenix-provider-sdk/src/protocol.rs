@@ -26,6 +26,8 @@ pub enum Protocol {
     OpenAiResponses,
     OpenAiChatCompletions,
     AnthropicMessages,
+    OpenCodeGo,
+    OpenCodeZen,
 }
 
 impl ProtocolAdapter for Protocol {
@@ -34,6 +36,8 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => "openai_responses",
             Self::OpenAiChatCompletions => "openai_chat_completions",
             Self::AnthropicMessages => "anthropic_messages",
+            Self::OpenCodeGo => "opencode_go",
+            Self::OpenCodeZen => "opencode_zen",
         }
     }
 
@@ -46,6 +50,8 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_request(endpoint, request),
             Self::OpenAiChatCompletions => openai_chat_request(endpoint, request),
             Self::AnthropicMessages => anthropic_request(endpoint, request),
+            Self::OpenCodeGo => opencode_go_protocol(request)?.encode(endpoint, request),
+            Self::OpenCodeZen => opencode_zen_protocol(request)?.encode(endpoint, request),
         }
     }
 
@@ -54,8 +60,56 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_response(response),
             Self::OpenAiChatCompletions => openai_chat_response(response),
             Self::AnthropicMessages => anthropic_response(response),
+            Self::OpenCodeGo | Self::OpenCodeZen => opencode_response(response),
         }
     }
+}
+
+fn opencode_go_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
+    let model = request.model.as_str();
+    if model.starts_with("gpt-") {
+        return Ok(Protocol::OpenAiResponses);
+    }
+    if model.starts_with("minimax-") || model.starts_with("qwen") {
+        return Ok(Protocol::AnthropicMessages);
+    }
+    Ok(Protocol::OpenAiChatCompletions)
+}
+
+fn opencode_zen_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
+    let model = request.model.as_str();
+    if model.starts_with("gemini-") {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "OpenCode Zen model {model:?} requires the Google-native endpoint, which Phenix does not expose yet"
+            ),
+        });
+    }
+    if model.starts_with("gpt-") || model.starts_with("grok-") {
+        return Ok(Protocol::OpenAiResponses);
+    }
+    if model.starts_with("claude-") || model.starts_with("qwen") {
+        return Ok(Protocol::AnthropicMessages);
+    }
+    Ok(Protocol::OpenAiChatCompletions)
+}
+
+fn opencode_response(
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
+    let value = parse_json(response)?;
+    if value.get("output").is_some() {
+        return openai_responses_response(response);
+    }
+    if value.get("choices").is_some() {
+        return openai_chat_response(response);
+    }
+    if value.get("content").is_some() {
+        return anthropic_response(response);
+    }
+    Err(ProviderError::Protocol {
+        message: "OpenCode response does not match a supported provider protocol".to_owned(),
+    })
 }
 
 fn base_request(
