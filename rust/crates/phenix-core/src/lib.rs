@@ -13,6 +13,7 @@ mod composition_metadata;
 mod configuration;
 #[cfg(test)]
 mod configuration_regression;
+mod content_reference;
 mod contract;
 mod contract_wire;
 mod events;
@@ -119,6 +120,9 @@ pub use configuration::{
     ConfigSourceClass, ConfigurationFrontendMetadata, FrontendConfigContribution,
     FrontendConfigError, ResolvedConfigContribution, ResolvedConfigContributions,
 };
+pub use content_reference::{
+    ContentLocator, ContentReference, ContentReferenceStore, FileContentReferenceStore,
+};
 pub use contract::{
     Bytes, CallableRef, CapabilityOwnerId, Contract, ContractId, ContractValue, Exact,
     HasPhenixSchema, Key, ObjectRef, PhenixContract, PhenixSchema, PhenixValue, Project,
@@ -143,7 +147,10 @@ pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
 pub use live_reconciliation::LiveReconciliationError;
-pub use logging::{LogSink, StructuredLogger, PHENIX_LOG_ENV};
+pub use logging::{
+    LogDetailMode, LogSink, StructuredLogger, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV,
+    PHENIX_LOG_STORE_ENV,
+};
 pub use management::{
     PluginBuildReport, PluginLoadRequest, PluginManagementContext, PluginManagementError,
     PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginSetRequest,

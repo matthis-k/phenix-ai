@@ -112,15 +112,20 @@ struct RuntimeTraceLogger;
 impl PluginListener for RuntimeTraceLogger {
     fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
         match serde_json::from_slice::<RuntimeTraceEvent>(&event.payload) {
-            Ok(trace) => record_trace(
+            Ok(trace) => record_trace_detail(
                 "runtime_trace",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "event": event_name(&trace),
+                }),
                 json!({
                     "emitter": event.emitter.as_str(),
                     "causality_id": event.causality_id,
                     "trace": trace,
                 }),
             ),
-            Err(error) => record_trace(
+            Err(error) => record_trace_inline(
                 "runtime_trace_decode_failed",
                 json!({
                     "emitter": event.emitter.as_str(),
@@ -139,15 +144,20 @@ struct ModelDiagnosticLogger;
 impl PluginListener for ModelDiagnosticLogger {
     fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
         match serde_json::from_slice::<ModelDiagnosticEvent>(&event.payload) {
-            Ok(diagnostic) => record_trace(
+            Ok(diagnostic) => record_trace_detail(
                 "model_diagnostic",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "event": event_name(&diagnostic),
+                }),
                 json!({
                     "emitter": event.emitter.as_str(),
                     "causality_id": event.causality_id,
                     "diagnostic": diagnostic,
                 }),
             ),
-            Err(error) => record_trace(
+            Err(error) => record_trace_inline(
                 "model_diagnostic_decode_failed",
                 json!({
                     "emitter": event.emitter.as_str(),
@@ -164,12 +174,19 @@ impl PluginListener for ModelDiagnosticLogger {
 impl PluginInstance for crate::Plugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         let openai_api_key = env::var_os("OPENAI_API_KEY");
-        record_trace(
+        record_trace_inline(
             "debug_started",
             json!({
                 "log_sink": trace_sink()
                     .map(|sink| sink.description())
                     .unwrap_or_else(|error| format!("invalid: {error}")),
+                "log_depth": trace_logger()
+                    .map(|logger| format!("{:?}", logger.detail_mode()).to_lowercase())
+                    .unwrap_or_else(|error| format!("invalid: {error}")),
+                "log_reference_store": trace_logger()
+                    .ok()
+                    .and_then(|logger| logger.reference_store())
+                    .map(|store| store.root().to_string_lossy().into_owned()),
                 "openai_api_key": {
                     "defined": openai_api_key.is_some(),
                     "non_empty": openai_api_key
@@ -333,13 +350,29 @@ fn trace_sink() -> Result<LogSink, String> {
 
 fn trace_logger() -> Result<&'static StructuredLogger, String> {
     TRACE_LOGGER
-        .get_or_init(|| trace_sink().and_then(StructuredLogger::new))
+        .get_or_init(|| trace_sink().and_then(StructuredLogger::configured))
         .as_ref()
         .map_err(Clone::clone)
 }
 
-fn record_trace(kind: &str, payload: serde_json::Value) {
+fn event_name<T: Serialize>(value: &T) -> Option<String> {
+    serde_json::to_value(value).ok().and_then(|value| {
+        value
+            .get("event")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+fn record_trace_inline(kind: &str, payload: serde_json::Value) {
     let result = trace_logger().and_then(|logger| logger.record(kind, payload));
+    if let Err(error) = result {
+        eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
+    }
+}
+
+fn record_trace_detail(kind: &str, summary: serde_json::Value, detail: serde_json::Value) {
+    let result = trace_logger().and_then(|logger| logger.record_detail(kind, &summary, &detail));
     if let Err(error) = result {
         eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
     }
