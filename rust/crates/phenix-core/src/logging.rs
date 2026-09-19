@@ -185,6 +185,11 @@ impl StructuredLogger {
 
     pub fn configured(sink: LogSink) -> Result<Self, String> {
         let mut logger = Self::new(sink)?;
+        if let Some(root) =
+            env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
+        {
+            logger.reference_store = Some(FileContentReferenceStore::new(root));
+        }
         logger.detail_mode = LogDetailMode::from_env()?.unwrap_or_else(|| {
             if logger.reference_store.is_some() {
                 LogDetailMode::Reference
@@ -192,11 +197,6 @@ impl StructuredLogger {
                 LogDetailMode::Inline
             }
         });
-        if let Some(root) =
-            env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
-        {
-            logger.reference_store = Some(FileContentReferenceStore::new(root));
-        }
         Ok(logger)
     }
 
