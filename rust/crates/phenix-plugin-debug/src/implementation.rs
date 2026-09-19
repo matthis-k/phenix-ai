@@ -4,8 +4,9 @@ use crate::{
 };
 use phenix_core::{
     Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GraphGenerationId,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance, PluginListener,
-    PluginManifest, ResolvedListener, RuntimeTraceEvent, SdkClient, ServiceContribution, ServiceId,
+    LogSink, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance,
+    PluginListener, PluginManifest, ResolvedListener, RuntimeTraceEvent, SdkClient,
+    ServiceContribution, ServiceId, StructuredLogger,
 };
 use phenix_sdk::{
     ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent, ModelRoutingInterface,
@@ -16,19 +17,15 @@ use serde_json::json;
 use std::{
     collections::BTreeMap,
     env,
-    fs::{self, OpenOptions},
-    io::Write,
     path::PathBuf,
-    process,
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, OnceLock},
 };
 
 pub const DEBUG_SERVICE: &str = "phenix.debug@1";
 pub const DEBUG_LOG_ENV: &str = "PHENIX_DEBUG_LOG";
 const RUNTIME_TRACE_LISTENER_METHOD: &str = "runtime_trace";
 const MODEL_DIAGNOSTIC_LISTENER_METHOD: &str = "model_diagnostic";
-static TRACE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static TRACE_LOGGER: OnceLock<Result<StructuredLogger, String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
@@ -170,7 +167,9 @@ impl PluginInstance for crate::Plugin {
         record_trace(
             "debug_started",
             json!({
-                "trace_path": trace_path().to_string_lossy(),
+                "log_sink": trace_sink()
+                    .map(|sink| sink.description())
+                    .unwrap_or_else(|error| format!("invalid: {error}")),
                 "openai_api_key": {
                     "defined": openai_api_key.is_some(),
                     "non_empty": openai_api_key
@@ -306,10 +305,7 @@ fn env_text(name: &str) -> Option<String> {
     env::var_os(name).map(|value| value.to_string_lossy().into_owned())
 }
 
-fn trace_path() -> PathBuf {
-    if let Some(path) = env::var_os(DEBUG_LOG_ENV).filter(|path| !path.as_os_str().is_empty()) {
-        return PathBuf::from(path);
-    }
+fn default_trace_path() -> PathBuf {
     if let Some(state_db) = env::var_os("PHENIX_STATE_DB") {
         let state_db = PathBuf::from(state_db);
         if let Some(parent) = state_db.parent() {
@@ -325,40 +321,28 @@ fn trace_path() -> PathBuf {
     env::temp_dir().join("phenix-debug.jsonl")
 }
 
-fn record_trace(kind: &str, payload: serde_json::Value) {
-    if let Err(error) = append_trace(kind, payload) {
-        eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
+fn trace_sink() -> Result<LogSink, String> {
+    if let Some(spec) = env::var_os(DEBUG_LOG_ENV).filter(|value| !value.as_os_str().is_empty()) {
+        return LogSink::parse(&spec.to_string_lossy());
     }
+    if let Some(sink) = LogSink::from_env()? {
+        return Ok(sink);
+    }
+    Ok(LogSink::append_file(default_trace_path()))
 }
 
-fn append_trace(kind: &str, payload: serde_json::Value) -> Result<(), String> {
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
-    let record = json!({
-        "timestamp_ms": timestamp_ms,
-        "pid": process::id(),
-        "kind": kind,
-        "payload": payload,
-    });
-    let mut line = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
-    line.push(b'\n');
+fn trace_logger() -> Result<&'static StructuredLogger, String> {
+    TRACE_LOGGER
+        .get_or_init(|| trace_sink().and_then(StructuredLogger::new))
+        .as_ref()
+        .map_err(Clone::clone)
+}
 
-    let _guard = TRACE_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let path = trace_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+fn record_trace(kind: &str, payload: serde_json::Value) {
+    let result = trace_logger().and_then(|logger| logger.record(kind, payload));
+    if let Err(error) = result {
+        eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    file.write_all(&line)
-        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 #[cfg(test)]
