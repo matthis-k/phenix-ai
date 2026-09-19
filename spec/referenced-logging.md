@@ -17,7 +17,7 @@ Phenix logging separates a compact chronological index from optional deep diagno
 - `reference`: write the summary plus a typed `ContentReference`; full detail is stored in a content-addressed backend.
 - `inline`: write summary and full detail directly in the main log.
 
-The default remains `inline` for compatibility. Product frontends may choose a different default.
+Sinks with a backing content store default to `reference`; console-only sinks default to `inline` unless a reference store is configured explicitly.
 
 ## Content references
 
@@ -34,22 +34,30 @@ Backends implement `ContentReferenceStore`. Core provides a filesystem CAS. `phe
 
 Backend selection must not create recursive tracing. In particular, a trace listener must not synchronously call a traced artifact service merely to persist the trace that caused the call. Physical backend reuse therefore happens below service-dispatch boundaries or through explicitly non-recursive adapters.
 
-## File layout
+## Directory layout
 
-For a file sink such as:
-
-```text
-append:/state/phenix/phenix.jsonl
-```
-
-reference mode defaults to:
+The canonical filesystem form is a directory sink:
 
 ```text
-/state/phenix/phenix.jsonl
-/state/phenix/phenix.jsonl.d/objects/sha256/ab/abcdef...
+dir:/state/phenix
 ```
 
-`PHENIX_LOG_STORE` overrides the CAS root. Console sinks require an explicit store root when `reference` mode is selected.
+which owns one root chronological stream and one shared immutable object store:
+
+```text
+/state/phenix/
+├── phenix.log
+└── objects/
+    └── sha256/
+        └── ab/
+            └── abcdef...
+```
+
+`phenix.log` is newline-delimited structured JSON. In reference mode its detail fields point into `objects/`. Referenced JSON objects may themselves contain further `ContentReference` values, so the root log can expand recursively into a tree or DAG without duplicating large payloads.
+
+Explicit file sinks remain supported. Their implicit store remains adjacent at `<file>.d/objects` so existing file-oriented consumers retain a self-contained reference namespace.
+
+`PHENIX_LOG_STORE` overrides the inferred CAS root. Console sinks require an explicit store root when `reference` mode is selected. With no explicit log sink, `phenix.debug` uses the Phenix state directory as the canonical directory sink.
 
 ## Invariants
 
