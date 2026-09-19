@@ -50,7 +50,7 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_request(endpoint, request),
             Self::OpenAiChatCompletions => openai_chat_request(endpoint, request),
             Self::AnthropicMessages => anthropic_request(endpoint, request),
-            Self::OpenCodeGo => opencode_go_protocol(request)?.encode(endpoint, request),
+            Self::OpenCodeGo => opencode_go_protocol(request).encode(endpoint, request),
             Self::OpenCodeZen => opencode_zen_protocol(request)?.encode(endpoint, request),
         }
     }
@@ -65,15 +65,15 @@ impl ProtocolAdapter for Protocol {
     }
 }
 
-fn opencode_go_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
+fn opencode_go_protocol(request: &ModelInferenceRequest) -> Protocol {
     let model = request.model.as_str();
     if model.starts_with("gpt-") {
-        return Ok(Protocol::OpenAiResponses);
+        return Protocol::OpenAiResponses;
     }
     if model.starts_with("minimax-") || model.starts_with("qwen") {
-        return Ok(Protocol::AnthropicMessages);
+        return Protocol::AnthropicMessages;
     }
-    Ok(Protocol::OpenAiChatCompletions)
+    Protocol::OpenAiChatCompletions
 }
 
 fn opencode_zen_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
