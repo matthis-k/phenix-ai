@@ -1413,8 +1413,11 @@ fn execution_settled(state: &ExecutionState) -> bool {
 
 fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
     let result = lua.create_table()?;
+    result.set(
+        "selection",
+        core.raw.state.has_model_config().map_err(lua_error)?,
+    )?;
     for (name, operation) in [
-        ("selection", AppListSelections::ID),
         ("provenance", AppGetProvenance::ID),
         ("review", AppDecideReview::ID),
     ] {
