@@ -1,13 +1,57 @@
 use super::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+fn emit_policy_stage(
+    runtime: InvocationContext<'_>,
+    policy: &str,
+    stage: &str,
+    outcome: &str,
+    subject: Option<String>,
+    revision: Option<String>,
+    reason: Option<String>,
+) {
+    let trace = crate::RuntimeTraceEvent::PolicyStage {
+        policy: policy.to_owned(),
+        stage: stage.to_owned(),
+        outcome: outcome.to_owned(),
+        subject,
+        revision,
+        reason,
+    };
+    let Ok(payload) = serde_json::to_vec(&trace) else {
+        return;
+    };
+    let event = EventEnvelope {
+        event_type: crate::runtime_trace_event_type(),
+        version: crate::RUNTIME_TRACE_EVENT_VERSION,
+        emitter: PluginId::parse("kernel.runtime").expect("static runtime trace emitter is valid"),
+        causality_id: 0,
+        kernel_policy_revision: 0,
+        payload,
+    };
+    let _ =
+        runtime
+            .events
+            .admit_in_generation(&event, &Authority::default(), runtime.graph_generation);
+}
+
 fn prepare_active_chain(
     runtime: InvocationContext<'_>,
     mut chain: ResolvedServiceChain,
 ) -> Result<ResolvedServiceChain, KernelError> {
     let configured_layers = std::mem::take(&mut chain.layers);
     for layer in configured_layers {
+        let subject = Some(format!("{}:{}", chain.service, layer.plugin));
         if runtime.states.get(&layer.plugin).copied() == Some(PluginState::Active) {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "allowed",
+                subject,
+                None,
+                None,
+            );
             chain.layers.push(layer);
             continue;
         }
@@ -18,15 +62,52 @@ fn prepare_active_chain(
             .find(|policy| policy.plugin == layer.plugin)
             .is_some_and(|policy| policy.required);
         if required {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "denied",
+                subject,
+                None,
+                Some("required layer is inactive".into()),
+            );
             return Err(KernelError::RequiredLayerUnavailable {
                 service: chain.service.clone(),
                 plugin: layer.plugin,
             });
         }
+        emit_policy_stage(
+            runtime,
+            "kernel.service_chain",
+            "layer_availability",
+            "skipped",
+            subject,
+            None,
+            Some("optional layer is inactive".into()),
+        );
     }
+    let terminal_subject = Some(format!("{}:{}", chain.service, chain.terminal.plugin));
     if runtime.states.get(&chain.terminal.plugin).copied() != Some(PluginState::Active) {
+        emit_policy_stage(
+            runtime,
+            "kernel.service_chain",
+            "terminal_availability",
+            "denied",
+            terminal_subject,
+            None,
+            Some("terminal provider is inactive".into()),
+        );
         return Err(KernelError::PluginNotActive(chain.terminal.plugin.clone()));
     }
+    emit_policy_stage(
+        runtime,
+        "kernel.service_chain",
+        "terminal_availability",
+        "allowed",
+        terminal_subject,
+        None,
+        None,
+    );
     Ok(chain)
 }
 
@@ -69,9 +150,35 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = runtime
+    let chain = match runtime
         .config
-        .resolve_component_chain(service, caller_authority, binding)?;
+        .resolve_component_chain(service, caller_authority, binding)
+    {
+        Ok(chain) => {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "component_resolution",
+                "allowed",
+                Some(service.as_str().to_owned()),
+                None,
+                None,
+            );
+            chain
+        }
+        Err(error) => {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "component_resolution",
+                "denied",
+                Some(service.as_str().to_owned()),
+                None,
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+    };
     let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
@@ -122,9 +229,32 @@ pub(super) fn invoke_service_with(
     if guards.active_services.contains(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let chain = runtime
-        .config
-        .resolve_chain(service, caller_authority, binding)?;
+    let chain = match runtime.config.resolve_chain(service, caller_authority, binding) {
+        Ok(chain) => {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "service_resolution",
+                "allowed",
+                Some(service.as_str().to_owned()),
+                None,
+                None,
+            );
+            chain
+        }
+        Err(error) => {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "service_resolution",
+                "denied",
+                Some(service.as_str().to_owned()),
+                None,
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+    };
     let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
@@ -213,6 +343,15 @@ pub(super) fn invoke_resolved_chain_with(
         .manifest(&provider.plugin)
         .expect("resolved providers are registered");
     let effective_authority = caller_authority.attenuate(&provider_manifest.maximum_authority);
+    emit_policy_stage(
+        runtime,
+        "kernel.authority",
+        "provider_attenuation",
+        "allowed",
+        Some(format!("{}:{}", chain.service, provider.plugin)),
+        None,
+        None,
+    );
     let trace_index = trace
         .lock()
         .expect("service invocation trace mutex poisoned")
