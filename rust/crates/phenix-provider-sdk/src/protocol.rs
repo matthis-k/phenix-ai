@@ -26,6 +26,8 @@ pub enum Protocol {
     OpenAiResponses,
     OpenAiChatCompletions,
     AnthropicMessages,
+    OpenCodeGo,
+    OpenCodeZen,
 }
 
 impl ProtocolAdapter for Protocol {
@@ -34,6 +36,8 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => "openai_responses",
             Self::OpenAiChatCompletions => "openai_chat_completions",
             Self::AnthropicMessages => "anthropic_messages",
+            Self::OpenCodeGo => "opencode_go",
+            Self::OpenCodeZen => "opencode_zen",
         }
     }
 
@@ -46,6 +50,8 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_request(endpoint, request),
             Self::OpenAiChatCompletions => openai_chat_request(endpoint, request),
             Self::AnthropicMessages => anthropic_request(endpoint, request),
+            Self::OpenCodeGo => opencode_go_protocol(request).encode(endpoint, request),
+            Self::OpenCodeZen => opencode_zen_protocol(request)?.encode(endpoint, request),
         }
     }
 
@@ -54,8 +60,57 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_response(response),
             Self::OpenAiChatCompletions => openai_chat_response(response),
             Self::AnthropicMessages => anthropic_response(response),
+            Self::OpenCodeGo | Self::OpenCodeZen => opencode_response(response),
         }
     }
+}
+
+// OpenCode gateways multiplex several provider wire protocols behind one
+// provider identity, so protocol selection remains a pure function of the model
+// and never leaks into routing or authentication semantics.
+fn opencode_go_protocol(request: &ModelInferenceRequest) -> Protocol {
+    let model = request.model.as_str();
+    if model.starts_with("gpt-") {
+        return Protocol::OpenAiResponses;
+    }
+    if model.starts_with("minimax-") || model.starts_with("qwen") {
+        return Protocol::AnthropicMessages;
+    }
+    Protocol::OpenAiChatCompletions
+}
+
+fn opencode_zen_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
+    let model = request.model.as_str();
+    if model.starts_with("gemini-") {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "OpenCode Zen model {model:?} requires the Google-native endpoint, which Phenix does not expose yet"
+            ),
+        });
+    }
+    if model.starts_with("gpt-") || model.starts_with("grok-") {
+        return Ok(Protocol::OpenAiResponses);
+    }
+    if model.starts_with("claude-") || model.starts_with("qwen") {
+        return Ok(Protocol::AnthropicMessages);
+    }
+    Ok(Protocol::OpenAiChatCompletions)
+}
+
+fn opencode_response(response: &ProviderResponse) -> Result<ModelInferenceResponse, ProviderError> {
+    let value = parse_json(response)?;
+    if value.get("output").is_some() {
+        return openai_responses_response(response);
+    }
+    if value.get("choices").is_some() {
+        return openai_chat_response(response);
+    }
+    if value.get("content").is_some() {
+        return anthropic_response(response);
+    }
+    Err(ProviderError::Protocol {
+        message: "OpenCode response does not match a supported provider protocol".to_owned(),
+    })
 }
 
 fn base_request(
@@ -702,6 +757,12 @@ mod tests {
         }
     }
 
+    fn request_for_model(model: &str) -> ModelInferenceRequest {
+        let mut request = request();
+        request.model = phenix_core::ModelId::parse(model).unwrap();
+        request
+    }
+
     fn tool() -> ModelToolDescriptor {
         ModelToolDescriptor {
             id: CallableId::parse("fixture.echo").unwrap(),
@@ -758,6 +819,88 @@ mod tests {
             decoded.provider_metadata["id"],
             PhenixValue::String("response-1".into())
         );
+    }
+
+    #[test]
+    fn opencode_go_selects_wire_protocol_by_model() {
+        let endpoint = Endpoint::parse("https://opencode.ai/zen/go/v1").unwrap();
+        for (model, path) in [
+            ("gpt-5.6-luna", "/zen/go/v1/responses"),
+            ("qwen3.7-plus", "/zen/go/v1/messages"),
+            ("minimax-m3", "/zen/go/v1/messages"),
+            ("deepseek-v4-flash", "/zen/go/v1/chat/completions"),
+            ("mimo-v2.5", "/zen/go/v1/chat/completions"),
+        ] {
+            let encoded = Protocol::OpenCodeGo
+                .encode(&endpoint, &request_for_model(model))
+                .unwrap();
+            assert!(
+                encoded.url.ends_with(path),
+                "{model} routed to unexpected URL {}",
+                encoded.url
+            );
+        }
+    }
+
+    #[test]
+    fn opencode_zen_selects_wire_protocol_by_model() {
+        let endpoint = Endpoint::parse("https://opencode.ai/zen/v1").unwrap();
+        for (model, path) in [
+            ("gpt-5.6-terra", "/zen/v1/responses"),
+            ("grok-4", "/zen/v1/responses"),
+            ("claude-sonnet-5", "/zen/v1/messages"),
+            ("qwen3.7-plus", "/zen/v1/messages"),
+            ("mimo-v2.5-free", "/zen/v1/chat/completions"),
+        ] {
+            let encoded = Protocol::OpenCodeZen
+                .encode(&endpoint, &request_for_model(model))
+                .unwrap();
+            assert!(
+                encoded.url.ends_with(path),
+                "{model} routed to unexpected URL {}",
+                encoded.url
+            );
+        }
+        assert!(matches!(
+            Protocol::OpenCodeZen.encode(&endpoint, &request_for_model("gemini-3-pro")),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn opencode_protocol_decodes_supported_response_shapes() {
+        let responses = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "output":[{"content":[{"type":"output_text","text":"responses"}]}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(responses.output.as_ref(), b"responses");
+
+        let chat = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "choices":[{"message":{"content":"chat"}}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(chat.output.as_ref(), b"chat");
+
+        let anthropic = Protocol::OpenCodeGo
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "content":[{"type":"text","text":"anthropic"}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(anthropic.output.as_ref(), b"anthropic");
     }
 
     #[test]
