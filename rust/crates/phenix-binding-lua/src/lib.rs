@@ -10,7 +10,8 @@ mod tools;
 
 use agent_client_protocol::schema::v1::{
     CancelNotification, CloseSessionRequest, ContentBlock, ListSessionsRequest, LoadSessionRequest,
-    NewSessionRequest, PromptRequest, ResumeSessionRequest, SetSessionConfigOptionRequest,
+    NewSessionRequest, PromptRequest, ResumeSessionRequest, SessionConfigKind, SessionConfigOption,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SetSessionConfigOptionRequest,
     TextContent,
 };
 use futures::{
@@ -22,8 +23,12 @@ use mlua::{
     Table, UserData, UserDataMethods, Value,
 };
 use phenix_application_interface::{
-    types::{CapabilityInvokeInput, CapabilityInvokeResult, Empty, SdkValue},
-    GetSdk, InvokeCapability, Operation,
+    types::{
+        CapabilityInvokeInput, CapabilityInvokeResult, Empty, SdkValue, SelectionInfo,
+        SelectionPresentation, SelectionSelectInput, Selections, SessionInput,
+    },
+    GetSdk, InvokeCapability, ListSelections as AppListSelections, Operation,
+    SelectSelection as AppSelectSelection,
 };
 use phenix_client_acp::{
     application_descriptor, AcpClient, ApplicationEvent, ClientError, ExtensionCallbacks,
@@ -31,7 +36,7 @@ use phenix_client_acp::{
 };
 use phenix_core::{
     CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, Key,
-    ObjectRef, PhenixSchema, PhenixValue, ReferenceId, Type, ValueCodec,
+    ObjectRef, PhenixSchema, PhenixValue, ReferenceId, RoutingProfileId, Type, ValueCodec,
 };
 use std::{
     cell::RefCell,
@@ -219,6 +224,7 @@ struct ClientState {
     callbacks: Mutex<std_mpsc::Receiver<phenix_client_acp::ExtensionCallbackRequest>>,
     capabilities: Mutex<BTreeSet<String>>,
     extensions: Mutex<BTreeSet<String>>,
+    session_config_options: Mutex<BTreeMap<String, Vec<SessionConfigOption>>>,
     terminal_error: Mutex<Option<BindingError>>,
     owner: ClientConnectionId,
     generation: CapabilityGenerationId,
@@ -250,6 +256,19 @@ impl ClientState {
             .lock()
             .map(|extensions| extensions.contains(operation.as_str()))
             .map_err(|_| BindingError::transport("extension lock is poisoned"))
+    }
+
+    fn has_model_config(&self) -> Result<bool, BindingError> {
+        self.session_config_options
+            .lock()
+            .map(|sessions| {
+                sessions.values().any(|options| {
+                    options
+                        .iter()
+                        .any(|option| option.id.to_string() == MODEL_CONFIG_ID)
+                })
+            })
+            .map_err(|_| BindingError::transport("session config option lock is poisoned"))
     }
 }
 
@@ -1005,6 +1024,7 @@ fn connect(options: Table) -> LuaResult<Client> {
         callbacks: Mutex::new(callback_receiver),
         capabilities: Mutex::new(BTreeSet::new()),
         extensions: Mutex::new(BTreeSet::new()),
+        session_config_options: Mutex::new(BTreeMap::new()),
         terminal_error: Mutex::new(None),
         owner: ClientConnectionId::parse(format!("lua-client-{connection}"))
             .expect("generated client id is valid"),
@@ -1028,6 +1048,106 @@ fn connect(options: Table) -> LuaResult<Client> {
     Ok(Client {
         state,
         local_callables: Rc::new(RefCell::new(LocalCallables::default())),
+    })
+}
+
+const MODEL_CONFIG_ID: &str = "model";
+
+fn cache_session_config_options(
+    state: &ClientState,
+    session_id: &str,
+    options: Vec<SessionConfigOption>,
+) -> Result<(), BindingError> {
+    state
+        .session_config_options
+        .lock()
+        .map_err(|_| BindingError::transport("session config option lock is poisoned"))?
+        .insert(session_id.to_owned(), options);
+    Ok(())
+}
+
+fn cached_application_selections(
+    state: &ClientState,
+    session_id: &str,
+) -> Result<Selections, BindingError> {
+    let options = state
+        .session_config_options
+        .lock()
+        .map_err(|_| BindingError::transport("session config option lock is poisoned"))?;
+    let options = options.get(session_id).ok_or_else(|| {
+        BindingError::local(
+            ErrorKind::Rejected,
+            format!("session {session_id} has no cached ACP config options"),
+        )
+    })?;
+    application_selections_from_config_options(options)
+}
+
+fn application_selections_from_config_options(
+    options: &[SessionConfigOption],
+) -> Result<Selections, BindingError> {
+    let option = options
+        .iter()
+        .find(|option| option.id.to_string() == MODEL_CONFIG_ID)
+        .ok_or_else(|| {
+            BindingError::local(
+                ErrorKind::UnsupportedCapability,
+                "ACP session does not expose the model/routing config option",
+            )
+        })?;
+    let SessionConfigKind::Select(selection) = &option.kind else {
+        return Err(BindingError::conversion(
+            "ACP model/routing config option must be a select option",
+        ));
+    };
+    let selected = RoutingProfileId::parse(selection.current_value.to_string())
+        .map_err(|error| BindingError::conversion(error.to_string()))?;
+    let choices = match &selection.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect::<Vec<_>>(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .collect::<Vec<_>>(),
+        _ => {
+            return Err(BindingError::conversion(
+                "unsupported ACP model/routing option grouping",
+            ))
+        }
+    };
+    let available = choices
+        .into_iter()
+        .map(application_selection_info)
+        .collect::<Result<Vec<_>, _>>()?;
+    if !available.iter().any(|selection| selection.id == selected) {
+        return Err(BindingError::conversion(
+            "selected ACP model/routing value is absent from its option list",
+        ));
+    }
+    Ok(Selections {
+        available,
+        selected: Some(selected),
+    })
+}
+
+fn application_selection_info(
+    option: &SessionConfigSelectOption,
+) -> Result<SelectionInfo, BindingError> {
+    let (presentation, name) = if let Some(name) = option.name.strip_prefix("[model] ") {
+        (SelectionPresentation::Model, name.to_owned())
+    } else if let Some(name) = option.name.strip_prefix("[router] ") {
+        (SelectionPresentation::Router, name.to_owned())
+    } else {
+        return Err(BindingError::conversion(format!(
+            "Phenix ACP model/routing option {} is missing its presentation prefix",
+            option.value
+        )));
+    };
+    Ok(SelectionInfo {
+        id: RoutingProfileId::parse(option.value.to_string())
+            .map_err(|error| BindingError::conversion(error.to_string()))?,
+        name,
+        description: option.description.clone(),
+        presentation,
     })
 }
 
@@ -1069,8 +1189,16 @@ fn run_client(
                             let result = connection
                                 .new_session(NewSessionRequest::new(cwd))
                                 .await
-                                .map(|response| Response::Session(response.session_id.to_string()))
-                                .map_err(BindingError::from_client);
+                                .map_err(BindingError::from_client)
+                                .and_then(|response| {
+                                    let session_id = response.session_id.to_string();
+                                    cache_session_config_options(
+                                        &worker_state,
+                                        &session_id,
+                                        response.config_options.unwrap_or_default(),
+                                    )?;
+                                    Ok(Response::Session(session_id))
+                                });
                             let _ = reply.send(result);
                         }
                         Command::ListSessions { cwd, cursor, reply } => {
@@ -1100,8 +1228,15 @@ fn run_client(
                             let result = connection
                                 .resume_session(ResumeSessionRequest::new(session_id.clone(), cwd))
                                 .await
-                                .map(|_| Response::Session(session_id))
-                                .map_err(BindingError::from_client);
+                                .map_err(BindingError::from_client)
+                                .and_then(|response| {
+                                    cache_session_config_options(
+                                        &worker_state,
+                                        &session_id,
+                                        response.config_options.unwrap_or_default(),
+                                    )?;
+                                    Ok(Response::Session(session_id))
+                                });
                             let _ = reply.send(result);
                         }
                         Command::LoadSession {
@@ -1112,8 +1247,15 @@ fn run_client(
                             let result = connection
                                 .load_session(LoadSessionRequest::new(session_id.clone(), cwd))
                                 .await
-                                .map(|_| Response::Session(session_id))
-                                .map_err(BindingError::from_client);
+                                .map_err(BindingError::from_client)
+                                .and_then(|response| {
+                                    cache_session_config_options(
+                                        &worker_state,
+                                        &session_id,
+                                        response.config_options.unwrap_or_default(),
+                                    )?;
+                                    Ok(Response::Session(session_id))
+                                });
                             let _ = reply.send(result);
                         }
                         Command::CloseSession { session_id, reply } => {
@@ -1152,13 +1294,18 @@ fn run_client(
                         } => {
                             let result = connection
                                 .set_session_config_option(SetSessionConfigOptionRequest::new(
-                                    session_id,
+                                    session_id.clone(),
                                     config_id,
                                     value.as_str(),
                                 ))
                                 .await
                                 .map_err(BindingError::from_client)
                                 .and_then(|response| {
+                                    cache_session_config_options(
+                                        &worker_state,
+                                        &session_id,
+                                        response.config_options.clone(),
+                                    )?;
                                     serde_json::to_value(response).map(Response::Json).map_err(
                                         |error| BindingError::conversion(error.to_string()),
                                     )
@@ -1170,11 +1317,61 @@ fn run_client(
                             input,
                             reply,
                         } => {
-                            let result = connection
-                                .invoke_extension(&operation, input)
-                                .await
-                                .map(|value| Response::Application { operation, value })
-                                .map_err(BindingError::from_client);
+                            let list_selections = ContractId::parse(AppListSelections::ID)
+                                .expect("static selection list operation id");
+                            let select_selection = ContractId::parse(AppSelectSelection::ID)
+                                .expect("static selection update operation id");
+                            let result = if operation == list_selections {
+                                SessionInput::from_value(&input)
+                                    .map_err(|error| BindingError::conversion(error.to_string()))
+                                    .and_then(|request| {
+                                        cached_application_selections(
+                                            &worker_state,
+                                            request.session_id.as_str(),
+                                        )
+                                    })
+                                    .map(|selections| Response::Application {
+                                        operation,
+                                        value: selections.to_value(),
+                                    })
+                            } else if operation == select_selection {
+                                match SelectionSelectInput::from_value(&input)
+                                    .map_err(|error| BindingError::conversion(error.to_string()))
+                                {
+                                    Ok(request) => connection
+                                        .set_session_config_option(
+                                            SetSessionConfigOptionRequest::new(
+                                                request.session_id.as_str(),
+                                                MODEL_CONFIG_ID,
+                                                request.selection_id.as_str(),
+                                            ),
+                                        )
+                                        .await
+                                        .map_err(BindingError::from_client)
+                                        .and_then(|response| {
+                                            cache_session_config_options(
+                                                &worker_state,
+                                                request.session_id.as_str(),
+                                                response.config_options,
+                                            )?;
+                                            cached_application_selections(
+                                                &worker_state,
+                                                request.session_id.as_str(),
+                                            )
+                                        })
+                                        .map(|selections| Response::Application {
+                                            operation,
+                                            value: selections.to_value(),
+                                        }),
+                                    Err(error) => Err(error),
+                                }
+                            } else {
+                                connection
+                                    .invoke_extension(&operation, input)
+                                    .await
+                                    .map(|value| Response::Application { operation, value })
+                                    .map_err(BindingError::from_client)
+                            };
                             let _ = reply.send(result);
                         }
                         Command::InvokeCapability {
@@ -2180,6 +2377,38 @@ mod tests {
     use phenix_core::{CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ReferenceId};
 
     #[test]
+    fn standard_acp_model_config_projects_to_application_selections() {
+        let options = vec![SessionConfigOption::select(
+            MODEL_CONFIG_ID,
+            "Model / routing",
+            "router.balanced",
+            vec![
+                SessionConfigSelectOption::new("router.balanced", "[router] Balanced")
+                    .description("Adaptive route"),
+                SessionConfigSelectOption::new("model.openai-codex.gpt-5", "[model] GPT-5")
+                    .description("Fixed model"),
+            ],
+        )];
+
+        let selections = application_selections_from_config_options(&options).unwrap();
+        assert_eq!(
+            selections.selected.as_ref().map(RoutingProfileId::as_str),
+            Some("router.balanced")
+        );
+        assert_eq!(selections.available.len(), 2);
+        assert_eq!(selections.available[0].name, "Balanced");
+        assert_eq!(
+            selections.available[0].presentation,
+            SelectionPresentation::Router
+        );
+        assert_eq!(selections.available[1].name, "GPT-5");
+        assert_eq!(
+            selections.available[1].presentation,
+            SelectionPresentation::Model
+        );
+    }
+
+    #[test]
     fn descriptor_source_is_deterministic_and_complete() {
         let descriptor = application_descriptor();
         let first =
@@ -2374,6 +2603,7 @@ mod tests {
             callbacks: Mutex::new(callbacks),
             capabilities: Mutex::new(BTreeSet::new()),
             extensions: Mutex::new(BTreeSet::new()),
+            session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
@@ -2430,6 +2660,7 @@ mod tests {
                 callbacks: Mutex::new(callbacks),
                 capabilities: Mutex::new(BTreeSet::new()),
                 extensions: Mutex::new(BTreeSet::new()),
+                session_config_options: Mutex::new(BTreeMap::new()),
                 terminal_error: Mutex::new(None),
                 owner: ClientConnectionId::parse("fixture-client").unwrap(),
                 generation: CapabilityGenerationId::parse("generation-1").unwrap(),
@@ -2466,6 +2697,7 @@ mod tests {
             callbacks: Mutex::new(callbacks),
             capabilities: Mutex::new(BTreeSet::new()),
             extensions: Mutex::new(BTreeSet::new()),
+            session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
@@ -2536,6 +2768,7 @@ mod tests {
             callbacks: Mutex::new(callbacks),
             capabilities: Mutex::new(BTreeSet::new()),
             extensions: Mutex::new(BTreeSet::new()),
+            session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
@@ -2644,6 +2877,7 @@ mod tests {
             callbacks: Mutex::new(callbacks),
             capabilities: Mutex::new(BTreeSet::new()),
             extensions: Mutex::new(BTreeSet::new()),
+            session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),

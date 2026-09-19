@@ -28,10 +28,10 @@ pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
 /// packaging environments while preserving platform verification elsewhere.
 pub fn provider_http_client_builder() -> Result<reqwest::ClientBuilder, ProviderError> {
     let mut builder = reqwest::Client::builder().tls_backend_rustls();
-    let bundle = [PHENIX_CA_BUNDLE_ENV, "SSL_CERT_FILE", "NIX_SSL_CERT_FILE"]
-        .into_iter()
-        .find_map(|name| std::env::var_os(name).map(|path| (name, std::path::PathBuf::from(path))));
-    let Some((source, path)) = bundle else {
+    let Some((source, path)) = provider_ca_bundle_from(
+        |name| std::env::var_os(name).map(std::path::PathBuf::from),
+        std::path::Path::is_file,
+    ) else {
         return Ok(builder);
     };
     let pem = std::fs::read(&path).map_err(|error| ProviderError::Transport {
@@ -57,6 +57,22 @@ pub fn provider_http_client_builder() -> Result<reqwest::ClientBuilder, Provider
     }
     builder = builder.tls_certs_only(certificates);
     Ok(builder)
+}
+
+fn provider_ca_bundle_from(
+    mut value: impl FnMut(&str) -> Option<std::path::PathBuf>,
+    readable_file: impl Fn(&std::path::Path) -> bool,
+) -> Option<(&'static str, std::path::PathBuf)> {
+    if let Some(path) = value(PHENIX_CA_BUNDLE_ENV) {
+        return Some((PHENIX_CA_BUNDLE_ENV, path));
+    }
+    ["SSL_CERT_FILE", "NIX_SSL_CERT_FILE"]
+        .into_iter()
+        .find_map(|name| {
+            value(name)
+                .filter(|path| readable_file(path))
+                .map(|path| (name, path))
+        })
 }
 
 pub mod provider {
@@ -304,6 +320,40 @@ mod tests {
         net::TcpListener,
         thread,
     };
+
+    #[test]
+    fn ca_bundle_selection_keeps_explicit_override_strict_and_skips_stale_compat_paths() {
+        let explicit = provider_ca_bundle_from(
+            |name| {
+                (name == PHENIX_CA_BUNDLE_ENV)
+                    .then(|| std::path::PathBuf::from("/missing/explicit.pem"))
+            },
+            |_| false,
+        );
+        assert_eq!(
+            explicit,
+            Some((
+                PHENIX_CA_BUNDLE_ENV,
+                std::path::PathBuf::from("/missing/explicit.pem")
+            ))
+        );
+
+        let fallback = provider_ca_bundle_from(
+            |name| match name {
+                "SSL_CERT_FILE" => Some(std::path::PathBuf::from("/missing/ssl.pem")),
+                "NIX_SSL_CERT_FILE" => Some(std::path::PathBuf::from("/nix/store/ca-bundle.crt")),
+                _ => None,
+            },
+            |path| path == std::path::Path::new("/nix/store/ca-bundle.crt"),
+        );
+        assert_eq!(
+            fallback,
+            Some((
+                "NIX_SSL_CERT_FILE",
+                std::path::PathBuf::from("/nix/store/ca-bundle.crt")
+            ))
+        );
+    }
 
     #[test]
     fn provider_definition_derives_plugin_contracts_from_description() {
