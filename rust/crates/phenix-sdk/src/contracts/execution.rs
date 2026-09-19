@@ -84,6 +84,10 @@ pub struct DelegatedWorkerTaskRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ExecutionCommand {
+    AllocateExecution {
+        prefix: String,
+        requested_authority: ExecutionAuthority,
+    },
     CreateExecution {
         id: String,
         requested_authority: ExecutionAuthority,
