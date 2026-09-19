@@ -1,11 +1,13 @@
 use crate::{debug_manifest, DEBUG_SERVICE};
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, HasPhenixSchema, InterfaceId, InterfaceSchema, PhenixValue,
+    runtime_trace_event_type, Authority, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentListener, ComponentManifest, EventFailurePolicy, HasPhenixSchema,
+    InterfaceId, InterfaceSchema, ListenerProjection, PhenixSchema, PhenixValue, SubscriptionId,
+    RUNTIME_TRACE_EVENT_VERSION,
 };
 use phenix_sdk::{
-    ContextInterface, FrontendInterface, JobInterface, ModelRoutingInterface, PlanningInterface,
-    SessionInterface,
+    model_diagnostic_event_type, ContextInterface, FrontendInterface, JobInterface,
+    ModelRoutingInterface, PlanningInterface, SessionInterface, MODEL_DIAGNOSTIC_EVENT_VERSION,
 };
 
 pub struct DebugInterface;
@@ -74,7 +76,32 @@ fn optional_import<Request: HasPhenixSchema>(
 pub fn debug_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let authority = debug_manifest(maximum_authority).maximum_authority;
     ComponentManifest {
-        listeners: Vec::new(),
+        listeners: vec![
+            ComponentListener {
+                id: SubscriptionId::parse("phenix.debug/listener/runtime-trace")
+                    .expect("static runtime trace listener id is valid"),
+                event: runtime_trace_event_type(),
+                event_version: RUNTIME_TRACE_EVENT_VERSION,
+                method: "runtime_trace".into(),
+                payload_schema: PhenixSchema::Any,
+                projection: ListenerProjection::Exact,
+                dependencies: Vec::new(),
+                failure_policy: EventFailurePolicy::Warn,
+                required_authority: Authority::default(),
+            },
+            ComponentListener {
+                id: SubscriptionId::parse("phenix.debug/listener/model-diagnostic")
+                    .expect("static model diagnostic listener id is valid"),
+                event: model_diagnostic_event_type(),
+                event_version: MODEL_DIAGNOSTIC_EVENT_VERSION,
+                method: "model_diagnostic".into(),
+                payload_schema: PhenixSchema::Any,
+                projection: ListenerProjection::Exact,
+                dependencies: Vec::new(),
+                failure_policy: EventFailurePolicy::Warn,
+                required_authority: Authority::default(),
+            },
+        ],
         id: debug_component_id(),
         owner: crate::Plugin::plugin_id(),
         imports: vec![
@@ -122,5 +149,18 @@ mod tests {
             .import_handle(&debug_component_id(), &ContextInterface::interface_id())
             .unwrap()
             .is_none());
+        let manifest = debug_component_manifest(authority);
+        let runtime_listener = manifest
+            .listeners
+            .iter()
+            .find(|listener| listener.event == runtime_trace_event_type())
+            .expect("runtime trace listener");
+        assert_eq!(runtime_listener.failure_policy, EventFailurePolicy::Warn);
+        let model_listener = manifest
+            .listeners
+            .iter()
+            .find(|listener| listener.event == model_diagnostic_event_type())
+            .expect("model diagnostic listener");
+        assert_eq!(model_listener.failure_policy, EventFailurePolicy::Warn);
     }
 }

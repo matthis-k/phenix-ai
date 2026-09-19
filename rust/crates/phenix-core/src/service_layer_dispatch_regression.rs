@@ -1,11 +1,16 @@
 use crate::{
-    Authority, CapabilityId, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ServiceContribution,
-    ServiceId, ServiceRole,
+    runtime_trace_event_type, Authority, CapabilityId, EventEnvelope, EventFailurePolicy,
+    EventSubscription, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, RuntimeTraceEvent,
+    ServiceContribution, ServiceId, ServiceRole, SubscriptionId, SubscriptionSpec,
+    RUNTIME_TRACE_EVENT_VERSION,
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    time::Duration,
 };
 
 fn plugin(value: &str) -> PluginId {
@@ -367,6 +372,88 @@ fn provenance_records_planned_chain_delegation_terminal_and_authority() {
         record.participants[1].effective_authority,
         Authority::new([read])
     );
+}
+
+#[test]
+fn runtime_trace_reports_service_chain_without_request_payload() {
+    let called = Arc::new(AtomicBool::new(false));
+    let mut kernel = kernel_with_layer(
+        Behavior::Delegate,
+        Arc::clone(&called),
+        Authority::default(),
+    );
+    let (sender, receiver) = mpsc::channel();
+    let handler = Arc::new(
+        move |event: &EventEnvelope, _authority: &Authority| -> Result<(), String> {
+            sender
+                .send(event.clone())
+                .map_err(|error| error.to_string())
+        },
+    );
+    kernel
+        .events()
+        .install_subscriptions([EventSubscription {
+            spec: SubscriptionSpec {
+                id: SubscriptionId::parse("test/runtime-trace").unwrap(),
+                owner: plugin("trace-listener"),
+                event_type: runtime_trace_event_type(),
+                event_version: RUNTIME_TRACE_EVENT_VERSION,
+                dependencies: Vec::new(),
+                failure_policy: EventFailurePolicy::FailDelivery,
+                required_authority: Authority::default(),
+                maximum_authority: Authority::default(),
+                kernel_policy_revision: 0,
+            },
+            handler,
+        }])
+        .unwrap();
+
+    let input = b"secret-marker";
+    assert_eq!(
+        kernel
+            .invoke(&service(), input, &Authority::default(), None)
+            .unwrap(),
+        b"layer:terminal:secret-marker"
+    );
+
+    let (event, trace) = loop {
+        let event = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("runtime trace should be delivered");
+        let encoded = String::from_utf8(event.payload.clone()).unwrap();
+        assert!(!encoded.contains("secret-marker"));
+        let trace: RuntimeTraceEvent = serde_json::from_slice(&event.payload).unwrap();
+        if matches!(trace, RuntimeTraceEvent::ServiceInvocation { .. }) {
+            break (event, trace);
+        }
+    };
+    let encoded = String::from_utf8(event.payload.clone()).unwrap();
+    assert!(!encoded.contains("secret-marker"));
+    let RuntimeTraceEvent::ServiceInvocation {
+        service: traced_service,
+        input_bytes,
+        output_bytes,
+        success,
+        error,
+        terminal_reached,
+        participants,
+    } = trace
+    else {
+        unreachable!("filtered to service invocation");
+    };
+    assert_eq!(traced_service, service().as_str());
+    assert_eq!(input_bytes, input.len());
+    assert_eq!(output_bytes, Some(b"layer:terminal:secret-marker".len()));
+    assert!(success);
+    assert_eq!(error, None);
+    assert!(terminal_reached);
+    assert_eq!(participants.len(), 2);
+    assert_eq!(participants[0].plugin, "layer");
+    assert_eq!(participants[0].role, "layer");
+    assert_eq!(participants[0].outcome, "delegated");
+    assert_eq!(participants[1].plugin, "terminal");
+    assert_eq!(participants[1].role, "terminal");
+    assert_eq!(participants[1].outcome, "succeeded");
 }
 
 #[test]

@@ -263,13 +263,60 @@ impl<'a> PluginHost<'a> {
         namespace: &ResourceNamespace,
         operations: &[TransactionOp],
     ) -> Result<(), KernelError> {
-        self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
-        self.require_not_cancelled("durable transaction")?;
-        self.persistence
+        let resource = namespace.as_str().to_owned();
+        if let Err(error) = self.require_persistence_operation(PERSISTENCE_WRITE, namespace) {
+            self.trace_data_mutation(
+                resource,
+                "authorization",
+                operations.len(),
+                "denied",
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        self.trace_data_mutation(
+            resource.clone(),
+            "authorization",
+            operations.len(),
+            "allowed",
+            None,
+        );
+        if let Err(error) = self.require_not_cancelled("durable transaction") {
+            self.trace_data_mutation(
+                resource,
+                "cancellation_gate",
+                operations.len(),
+                "denied",
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        self.trace_data_mutation(
+            resource.clone(),
+            "commit",
+            operations.len(),
+            "started",
+            None,
+        );
+        let result = self
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error.to_string()));
+        match &result {
+            Ok(()) => {
+                self.trace_data_mutation(resource, "commit", operations.len(), "committed", None)
+            }
+            Err(error) => self.trace_data_mutation(
+                resource,
+                "commit",
+                operations.len(),
+                "failed",
+                Some(error.to_string()),
+            ),
+        }
+        result
     }
 
     pub fn prepare_durable_transaction(
@@ -277,110 +324,163 @@ impl<'a> PluginHost<'a> {
         namespace: &ResourceNamespace,
         operations: &[TransactionOp],
     ) -> Result<crate::PreparedMutationHandle, KernelError> {
-        self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
-        self.require_active_plugin(self.plugin)?;
-        self.require_not_cancelled("prepare durable transaction")?;
-        self.require_prepared_scope_generation()?;
-        self.prepared_mutations
-            .prepare(self.plugin, namespace, operations, self.authority)
-            .map_err(|message| self.persistence_error(message))
+        let resource = namespace.as_str().to_owned();
+        self.trace_data_mutation(
+            resource.clone(),
+            "prepare",
+            operations.len(),
+            "started",
+            None,
+        );
+        let result = (|| {
+            self.require_persistence_operation(PERSISTENCE_WRITE, namespace)?;
+            self.require_active_plugin(self.plugin)?;
+            self.require_not_cancelled("prepare durable transaction")?;
+            self.require_prepared_scope_generation()?;
+            self.prepared_mutations
+                .prepare(self.plugin, namespace, operations, self.authority)
+                .map_err(|message| self.persistence_error(message))
+        })();
+        match &result {
+            Ok(_) => {
+                self.trace_data_mutation(resource, "prepare", operations.len(), "prepared", None)
+            }
+            Err(error) => self.trace_data_mutation(
+                resource,
+                "prepare",
+                operations.len(),
+                "failed",
+                Some(error.to_string()),
+            ),
+        }
+        result
     }
 
     pub fn transact_prepared(
         &self,
         handles: &[crate::PreparedMutationHandle],
     ) -> Result<(), KernelError> {
-        self.require_capability(PERSISTENCE_WRITE)?;
-        self.require_not_cancelled("commit prepared durable transactions")?;
-        self.require_prepared_scope_generation()?;
-        if handles.is_empty() {
-            return Err(KernelError::HostOperationDenied {
-                plugin: self.plugin.clone(),
-                operation: "commit prepared durable transactions without participants".into(),
-            });
-        }
+        let operation_count = handles.len();
+        let resource = "prepared-multi".to_owned();
+        self.trace_data_mutation(
+            resource.clone(),
+            "prepared_commit",
+            operation_count,
+            "started",
+            None,
+        );
 
-        let participants = self.prepared_mutations.consume(handles).map_err(|_| {
-            KernelError::HostOperationDenied {
-                plugin: self.plugin.clone(),
-                operation: "prepared mutation is unavailable in this invocation scope".into(),
-            }
-        })?;
-        if participants
-            .iter()
-            .any(|participant| &participant.coordinator != self.plugin)
-        {
-            return Err(KernelError::HostOperationDenied {
-                plugin: self.plugin.clone(),
-                operation: "prepared mutation was issued to another coordinator".into(),
-            });
-        }
-        if !participants
-            .iter()
-            .any(|participant| &participant.transaction.owner == self.plugin)
-        {
-            return Err(KernelError::HostOperationDenied {
-                plugin: self.plugin.clone(),
-                operation: "prepared commit requires a caller-owned participant".into(),
-            });
-        }
-
-        let write = CapabilityId::parse(PERSISTENCE_WRITE)
-            .expect("kernel persistence write capability is valid");
-        for participant in &participants {
-            let transaction = &participant.transaction;
-            if !participant.authority.permits(&write) {
+        let result = (|| {
+            self.require_capability(PERSISTENCE_WRITE)?;
+            self.require_not_cancelled("commit prepared durable transactions")?;
+            self.require_prepared_scope_generation()?;
+            if handles.is_empty() {
                 return Err(KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
-                    operation: format!(
-                        "prepared mutation from {} lacks attenuated persistence write authority",
-                        transaction.owner
-                    ),
+                    operation: "commit prepared durable transactions without participants".into(),
                 });
             }
-            if self.config.resource_owner(&transaction.namespace) != Some(&transaction.owner) {
-                return Err(KernelError::HostOperationDenied {
-                    plugin: self.plugin.clone(),
-                    operation: format!(
-                        "{PERSISTENCE_WRITE}:{}:{}",
-                        transaction.owner, transaction.namespace
-                    ),
-                });
-            }
-            if &transaction.owner == self.plugin {
-                continue;
-            }
-            self.require_active_plugin(&transaction.owner)?;
-            let authorized_import = self
-                .component_graph
-                .components()
-                .filter(|component| &component.owning_plugin == self.plugin)
-                .flat_map(|component| component.imports.iter())
-                .flat_map(|import| import.binding.iter().chain(import.fallbacks.iter()))
-                .any(|binding| {
-                    binding.owning_plugin() == &transaction.owner
-                        && binding.effective_authority().permits(&write)
-                });
-            if !authorized_import {
-                return Err(KernelError::HostOperationDenied {
-                    plugin: self.plugin.clone(),
-                    operation: format!(
-                        "{PERSISTENCE_WRITE}:{}:{} without authorized typed import",
-                        transaction.owner, transaction.namespace
-                    ),
-                });
-            }
-        }
 
-        let transactions: Vec<_> = participants
-            .into_iter()
-            .map(|participant| participant.transaction)
-            .collect();
-        self.persistence
-            .lock()
-            .expect("kernel persistence mutex poisoned")
-            .transact_many(&transactions)
-            .map_err(|error| self.persistence_error(error.to_string()))
+            let participants = self.prepared_mutations.consume(handles).map_err(|_| {
+                KernelError::HostOperationDenied {
+                    plugin: self.plugin.clone(),
+                    operation: "prepared mutation is unavailable in this invocation scope".into(),
+                }
+            })?;
+            if participants
+                .iter()
+                .any(|participant| &participant.coordinator != self.plugin)
+            {
+                return Err(KernelError::HostOperationDenied {
+                    plugin: self.plugin.clone(),
+                    operation: "prepared mutation was issued to another coordinator".into(),
+                });
+            }
+            if !participants
+                .iter()
+                .any(|participant| &participant.transaction.owner == self.plugin)
+            {
+                return Err(KernelError::HostOperationDenied {
+                    plugin: self.plugin.clone(),
+                    operation: "prepared commit requires a caller-owned participant".into(),
+                });
+            }
+
+            let write = CapabilityId::parse(PERSISTENCE_WRITE)
+                .expect("kernel persistence write capability is valid");
+            for participant in &participants {
+                let transaction = &participant.transaction;
+                if !participant.authority.permits(&write) {
+                    return Err(KernelError::HostOperationDenied {
+                        plugin: self.plugin.clone(),
+                        operation: format!(
+                            "prepared mutation from {} lacks attenuated persistence write authority",
+                            transaction.owner
+                        ),
+                    });
+                }
+                if self.config.resource_owner(&transaction.namespace) != Some(&transaction.owner) {
+                    return Err(KernelError::HostOperationDenied {
+                        plugin: self.plugin.clone(),
+                        operation: format!(
+                            "{PERSISTENCE_WRITE}:{}:{}",
+                            transaction.owner, transaction.namespace
+                        ),
+                    });
+                }
+                if &transaction.owner == self.plugin {
+                    continue;
+                }
+                self.require_active_plugin(&transaction.owner)?;
+                let authorized_import = self
+                    .component_graph
+                    .components()
+                    .filter(|component| &component.owning_plugin == self.plugin)
+                    .flat_map(|component| component.imports.iter())
+                    .flat_map(|import| import.binding.iter().chain(import.fallbacks.iter()))
+                    .any(|binding| {
+                        binding.owning_plugin() == &transaction.owner
+                            && binding.effective_authority().permits(&write)
+                    });
+                if !authorized_import {
+                    return Err(KernelError::HostOperationDenied {
+                        plugin: self.plugin.clone(),
+                        operation: format!(
+                            "{PERSISTENCE_WRITE}:{}:{} without authorized typed import",
+                            transaction.owner, transaction.namespace
+                        ),
+                    });
+                }
+            }
+
+            let transactions: Vec<_> = participants
+                .into_iter()
+                .map(|participant| participant.transaction)
+                .collect();
+            self.persistence
+                .lock()
+                .expect("kernel persistence mutex poisoned")
+                .transact_many(&transactions)
+                .map_err(|error| self.persistence_error(error.to_string()))
+        })();
+
+        match &result {
+            Ok(()) => self.trace_data_mutation(
+                resource,
+                "prepared_commit",
+                operation_count,
+                "committed",
+                None,
+            ),
+            Err(error) => self.trace_data_mutation(
+                resource,
+                "prepared_commit",
+                operation_count,
+                "failed",
+                Some(error.to_string()),
+            ),
+        }
+        result
     }
 
     fn require_prepared_scope_generation(&self) -> Result<(), KernelError> {
@@ -442,6 +542,33 @@ impl<'a> PluginHost<'a> {
             plugin: self.plugin.clone(),
             operation: capability.as_str().to_owned(),
         })
+    }
+
+    pub(super) fn trace_data_mutation(
+        &self,
+        resource: String,
+        stage: &str,
+        operation_count: usize,
+        outcome: &str,
+        error: Option<String>,
+    ) {
+        let trace = crate::RuntimeTraceEvent::DataMutation {
+            resource,
+            stage: stage.to_owned(),
+            operation_count,
+            outcome: outcome.to_owned(),
+            error,
+        };
+        let Ok(payload) = serde_json::to_vec(&trace) else {
+            return;
+        };
+        let _ = self.dispatch_event(
+            crate::runtime_trace_event_type(),
+            crate::RUNTIME_TRACE_EVENT_VERSION,
+            0,
+            0,
+            payload,
+        );
     }
 
     fn persistence_error(&self, message: String) -> KernelError {

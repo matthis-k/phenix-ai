@@ -3,18 +3,29 @@ use crate::{
     ModelProbeCommand, PlanningProbeCommand, SessionProbeCommand,
 };
 use phenix_core::{
-    Authority, ComponentInterface, ComponentInvocationError, PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
-    ServiceId,
+    Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GraphGenerationId,
+    LogSink, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance,
+    PluginListener, PluginManifest, ResolvedListener, RuntimeTraceEvent, SdkClient,
+    ServiceContribution, ServiceId, StructuredLogger,
 };
 use phenix_sdk::{
-    ContextInterface, FrontendInterface, JobInterface, ModelRoutingInterface, PlanningInterface,
-    SessionInterface,
+    ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent, ModelRoutingInterface,
+    PlanningInterface, SessionInterface,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use serde_json::json;
+use std::{
+    collections::BTreeMap,
+    env,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 pub const DEBUG_SERVICE: &str = "phenix.debug@1";
+pub const DEBUG_LOG_ENV: &str = "PHENIX_DEBUG_LOG";
+const RUNTIME_TRACE_LISTENER_METHOD: &str = "runtime_trace";
+const MODEL_DIAGNOSTIC_LISTENER_METHOD: &str = "model_diagnostic";
+static TRACE_LOGGER: OnceLock<Result<StructuredLogger, String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
@@ -96,9 +107,96 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> DebugContext<'
     )
 }
 
+struct RuntimeTraceLogger;
+
+impl PluginListener for RuntimeTraceLogger {
+    fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
+        match serde_json::from_slice::<RuntimeTraceEvent>(&event.payload) {
+            Ok(trace) => record_trace(
+                "runtime_trace",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "trace": trace,
+                }),
+            ),
+            Err(error) => record_trace(
+                "runtime_trace_decode_failed",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "error": error.to_string(),
+                    "payload_bytes": event.payload.len(),
+                }),
+            ),
+        }
+        Ok(())
+    }
+}
+
+struct ModelDiagnosticLogger;
+
+impl PluginListener for ModelDiagnosticLogger {
+    fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
+        match serde_json::from_slice::<ModelDiagnosticEvent>(&event.payload) {
+            Ok(diagnostic) => record_trace(
+                "model_diagnostic",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "diagnostic": diagnostic,
+                }),
+            ),
+            Err(error) => record_trace(
+                "model_diagnostic_decode_failed",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "error": error.to_string(),
+                    "payload_bytes": event.payload.len(),
+                }),
+            ),
+        }
+        Ok(())
+    }
+}
+
 impl PluginInstance for crate::Plugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        let openai_api_key = env::var_os("OPENAI_API_KEY");
+        record_trace(
+            "debug_started",
+            json!({
+                "log_sink": trace_sink()
+                    .map(|sink| sink.description())
+                    .unwrap_or_else(|error| format!("invalid: {error}")),
+                "openai_api_key": {
+                    "defined": openai_api_key.is_some(),
+                    "non_empty": openai_api_key
+                        .as_ref()
+                        .is_some_and(|value| !value.as_os_str().is_empty()),
+                },
+                "phenix_state_db": env_text("PHENIX_STATE_DB"),
+                "phenix_config_dir": env_text("PHENIX_CONFIG_DIR"),
+                "phenix_default_config_dir": env_text("PHENIX_DEFAULT_CONFIG_DIR"),
+                "phenix_nix_settings": env_text("PHENIX_NIX_SETTINGS"),
+                "phenix_settings_precedence": env_text("PHENIX_SETTINGS_PRECEDENCE"),
+                "phenix_enabled_plugins": env_text("PHENIX_ENABLED_PLUGINS"),
+            }),
+        );
         Ok(())
+    }
+
+    fn bind_plugin_listener(
+        &mut self,
+        listener: &ResolvedListener,
+        _generation: &GraphGenerationId,
+    ) -> Option<Result<Arc<dyn PluginListener>, String>> {
+        match listener.declaration.method.as_str() {
+            RUNTIME_TRACE_LISTENER_METHOD => Some(Ok(Arc::new(RuntimeTraceLogger))),
+            MODEL_DIAGNOSTIC_LISTENER_METHOD => Some(Ok(Arc::new(ModelDiagnosticLogger))),
+            _ => None,
+        }
     }
 
     fn invoke(
@@ -200,6 +298,50 @@ fn response_entry(response: PhenixValue) -> DiagnosticEntry {
 fn error_entry(error: ComponentInvocationError) -> DiagnosticEntry {
     DiagnosticEntry::Unavailable {
         error: error.to_string(),
+    }
+}
+
+fn env_text(name: &str) -> Option<String> {
+    env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+}
+
+fn default_trace_path() -> PathBuf {
+    if let Some(state_db) = env::var_os("PHENIX_STATE_DB") {
+        let state_db = PathBuf::from(state_db);
+        if let Some(parent) = state_db.parent() {
+            return parent.join("debug.jsonl");
+        }
+    }
+    if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
+        return PathBuf::from(state_home).join("phenix/debug.jsonl");
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".local/state/phenix/debug.jsonl");
+    }
+    env::temp_dir().join("phenix-debug.jsonl")
+}
+
+fn trace_sink() -> Result<LogSink, String> {
+    if let Some(spec) = env::var_os(DEBUG_LOG_ENV).filter(|value| !value.as_os_str().is_empty()) {
+        return LogSink::parse(&spec.to_string_lossy());
+    }
+    if let Some(sink) = LogSink::from_env()? {
+        return Ok(sink);
+    }
+    Ok(LogSink::append_file(default_trace_path()))
+}
+
+fn trace_logger() -> Result<&'static StructuredLogger, String> {
+    TRACE_LOGGER
+        .get_or_init(|| trace_sink().and_then(StructuredLogger::new))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn record_trace(kind: &str, payload: serde_json::Value) {
+    let result = trace_logger().and_then(|logger| logger.record(kind, payload));
+    if let Err(error) = result {
+        eprintln!("phenix.debug: failed to write diagnostic trace: {error}");
     }
 }
 

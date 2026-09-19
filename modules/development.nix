@@ -118,7 +118,8 @@
               fi
 
               # `phenix-binding-lua-load` covers the host-linked LuaJIT module.
-              timeout --signal=KILL 300 \
+              # Keep a deadlock guard, but leave enough room for a cold/shared CI runner.
+              timeout --signal=KILL 900 \
                 cargo test --quiet --workspace --lib --bins --exclude phenix-binding-lua --locked
             '';
           };

@@ -20,6 +20,52 @@ pub enum KernelEvent {
     TaskCancelled(u64),
 }
 
+pub const RUNTIME_TRACE_EVENT: &str = "kernel.runtime.trace";
+pub const RUNTIME_TRACE_EVENT_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeTraceParticipant {
+    pub plugin: String,
+    pub role: String,
+    pub outcome: String,
+}
+
+/// Metadata-only runtime diagnostics. Keep request/response payloads and secret values out of
+/// these records so enabling tracing does not turn the debug sink into a data-exfiltration path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum RuntimeTraceEvent {
+    ServiceInvocation {
+        service: String,
+        input_bytes: usize,
+        output_bytes: Option<usize>,
+        success: bool,
+        error: Option<String>,
+        terminal_reached: bool,
+        participants: Vec<RuntimeTraceParticipant>,
+    },
+    PolicyStage {
+        policy: String,
+        stage: String,
+        outcome: String,
+        subject: Option<String>,
+        revision: Option<String>,
+        reason: Option<String>,
+    },
+    DataMutation {
+        resource: String,
+        stage: String,
+        operation_count: usize,
+        outcome: String,
+        error: Option<String>,
+    },
+}
+
+#[must_use]
+pub fn runtime_trace_event_type() -> EventTypeId {
+    EventTypeId::parse(RUNTIME_TRACE_EVENT).expect("static runtime trace event id is valid")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventEnvelope {
     pub event_type: EventTypeId,
