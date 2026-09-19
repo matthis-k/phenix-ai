@@ -1341,7 +1341,7 @@ fn run_client(
                                     Ok(request) => connection
                                         .set_session_config_option(
                                             SetSessionConfigOptionRequest::new(
-                                                request.session_id.as_str(),
+                                                request.session_id.to_string(),
                                                 MODEL_CONFIG_ID,
                                                 request.selection_id.as_str(),
                                             ),

@@ -15,6 +15,7 @@ fn client() -> (Client, mpsc::UnboundedReceiver<Command>) {
             AddClientTool::ID.to_owned(),
             RemoveClientTool::ID.to_owned(),
         ])),
+        session_config_options: Mutex::new(BTreeMap::new()),
         terminal_error: Mutex::new(None),
         owner: ClientConnectionId::parse("fixture-client").unwrap(),
         generation: CapabilityGenerationId::parse("generation-1").unwrap(),
