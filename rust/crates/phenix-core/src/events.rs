@@ -30,6 +30,8 @@ pub struct RuntimeTraceParticipant {
     pub outcome: String,
 }
 
+/// Metadata-only runtime diagnostics. Keep request/response payloads and secret values out of
+/// these records so enabling tracing does not turn the debug sink into a data-exfiltration path.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum RuntimeTraceEvent {
