@@ -2660,7 +2660,7 @@ mod tests {
                 callbacks: Mutex::new(callbacks),
                 capabilities: Mutex::new(BTreeSet::new()),
                 extensions: Mutex::new(BTreeSet::new()),
-            session_config_options: Mutex::new(BTreeMap::new()),
+                session_config_options: Mutex::new(BTreeMap::new()),
                 terminal_error: Mutex::new(None),
                 owner: ClientConnectionId::parse("fixture-client").unwrap(),
                 generation: CapabilityGenerationId::parse("generation-1").unwrap(),
