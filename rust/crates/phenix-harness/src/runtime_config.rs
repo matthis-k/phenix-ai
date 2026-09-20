@@ -72,7 +72,6 @@ impl From<SettingValue> for OptionValue {
 
 #[derive(Debug, Deserialize)]
 struct RuntimeModelTarget {
-    backend: String,
     provider: PluginId,
     model: ModelId,
     #[serde(default)]
@@ -82,7 +81,6 @@ struct RuntimeModelTarget {
 impl RuntimeModelTarget {
     fn into_model_target(self) -> ModelTarget {
         let Self {
-            backend: _,
             provider,
             model,
             inference,
@@ -489,7 +487,6 @@ mod tests {
     #[test]
     fn runtime_model_target_lowers_foreign_json_before_dispatch() {
         let target = RuntimeModelTarget {
-            backend: "phenix".into(),
             provider: PluginId::parse("provider.fixture").unwrap(),
             model: ModelId::parse("model.test").unwrap(),
             inference: json!({"effort": "low"}),
