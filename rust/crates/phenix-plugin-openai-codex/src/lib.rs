@@ -166,9 +166,11 @@ fn codex_request(
         serde_json::from_slice(&outgoing.body).map_err(|error| ProviderError::Protocol {
             message: format!("cannot decode generated Codex request: {error}"),
         })?;
-    let object = body.as_object_mut().ok_or_else(|| ProviderError::Protocol {
-        message: "generated Codex request body is not an object".to_owned(),
-    })?;
+    let object = body
+        .as_object_mut()
+        .ok_or_else(|| ProviderError::Protocol {
+            message: "generated Codex request body is not an object".to_owned(),
+        })?;
 
     // backend described the Phenix execution path in legacy runtime targets.
     // It is never part of the provider wire contract.
@@ -203,10 +205,9 @@ fn codex_request(
         .entry("include".to_owned())
         .or_insert_with(|| Value::Array(Vec::new()));
 
-    outgoing.body =
-        serde_json::to_vec(&body).map_err(|error| ProviderError::Protocol {
-            message: format!("cannot encode Codex request: {error}"),
-        })?;
+    outgoing.body = serde_json::to_vec(&body).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode Codex request: {error}"),
+    })?;
     outgoing
         .headers
         .insert("accept".to_owned(), "text/event-stream".to_owned());
@@ -238,12 +239,11 @@ fn canonicalize_codex_input_item(item: Value) -> Result<Value, ProviderError> {
     if object.contains_key("type") {
         return Ok(item);
     }
-    let role = object
-        .get("role")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ProviderError::InvalidRequest {
+    let role = object.get("role").and_then(Value::as_str).ok_or_else(|| {
+        ProviderError::InvalidRequest {
             message: "Codex message input contains no role".to_owned(),
-        })?;
+        }
+    })?;
     let content = object
         .get("content")
         .and_then(Value::as_str)
@@ -279,10 +279,9 @@ fn decode_codex_response(
         if data.is_empty() || data == "[DONE]" {
             continue;
         }
-        let event: Value =
-            serde_json::from_str(data).map_err(|error| ProviderError::Protocol {
-                message: format!("cannot decode Codex SSE event: {error}"),
-            })?;
+        let event: Value = serde_json::from_str(data).map_err(|error| ProviderError::Protocol {
+            message: format!("cannot decode Codex SSE event: {error}"),
+        })?;
         match event.get("type").and_then(Value::as_str) {
             Some("response.completed") => {
                 completed = event.get("response").cloned().or(Some(event));
@@ -1215,7 +1214,10 @@ mod tests {
         let request = codex_request(&endpoint, &model_request()).unwrap();
         let body: Value = serde_json::from_slice(&request.body).unwrap();
 
-        assert_eq!(request.url, "https://chatgpt.com/backend-api/codex/responses");
+        assert_eq!(
+            request.url,
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
         assert_eq!(
             request.headers.get("accept").map(String::as_str),
             Some("text/event-stream")

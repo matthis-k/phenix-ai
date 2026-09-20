@@ -318,9 +318,7 @@ fn validate_tool_turn(turn: &ModelToolTurn) -> Result<(), ProviderError> {
     Ok(())
 }
 
-fn take_inference_effort(
-    body: &mut Map<String, Value>,
-) -> Result<Option<Value>, ProviderError> {
+fn take_inference_effort(body: &mut Map<String, Value>) -> Result<Option<Value>, ProviderError> {
     let Some(inference) = body.remove("inference") else {
         return Ok(None);
     };
@@ -350,19 +348,21 @@ fn take_inference_effort(
     }
 }
 
-fn apply_openai_responses_inference(
-    body: &mut Map<String, Value>,
-) -> Result<(), ProviderError> {
+fn apply_openai_responses_inference(body: &mut Map<String, Value>) -> Result<(), ProviderError> {
     let Some(effort) = take_inference_effort(body)? else {
         return Ok(());
     };
     if body.contains_key("reasoning") {
         return Err(ProviderError::InvalidRequest {
-            message: "provider-neutral inference effort conflicts with provider option \"reasoning\""
-                .to_owned(),
+            message:
+                "provider-neutral inference effort conflicts with provider option \"reasoning\""
+                    .to_owned(),
         });
     }
-    body.insert("reasoning".to_owned(), serde_json::json!({ "effort": effort }));
+    body.insert(
+        "reasoning".to_owned(),
+        serde_json::json!({ "effort": effort }),
+    );
     Ok(())
 }
 
