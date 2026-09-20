@@ -194,11 +194,12 @@ fn codex_request(
         }
     };
     object.insert("input".to_owned(), Value::Array(input));
-    object.insert("tool_choice".to_owned(), Value::String("auto".to_owned()));
+    let has_tools = !request.tools.is_empty();
     object.insert(
-        "parallel_tool_calls".to_owned(),
-        Value::Bool(!request.tools.is_empty()),
+        "tool_choice".to_owned(),
+        Value::String(if has_tools { "auto" } else { "none" }.to_owned()),
     );
+    object.insert("parallel_tool_calls".to_owned(), Value::Bool(has_tools));
     object.insert("store".to_owned(), Value::Bool(false));
     object.insert("stream".to_owned(), Value::Bool(true));
     object
@@ -1225,7 +1226,7 @@ mod tests {
         assert!(body.get("backend").is_none());
         assert!(body.get("inference").is_none());
         assert_eq!(body["reasoning"]["effort"], "medium");
-        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["tool_choice"], "none");
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(body["store"], false);
         assert_eq!(body["stream"], true);
