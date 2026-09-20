@@ -318,11 +318,75 @@ fn validate_tool_turn(turn: &ModelToolTurn) -> Result<(), ProviderError> {
     Ok(())
 }
 
+fn take_inference_effort(body: &mut Map<String, Value>) -> Result<Option<Value>, ProviderError> {
+    let Some(inference) = body.remove("inference") else {
+        return Ok(None);
+    };
+    if inference.is_null() {
+        return Ok(None);
+    }
+    let Value::Object(mut inference) = inference else {
+        return Err(ProviderError::InvalidRequest {
+            message: "provider-neutral inference options must be an object".to_owned(),
+        });
+    };
+    let effort = inference.remove("effort");
+    if !inference.is_empty() {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "unsupported provider-neutral inference options: {}",
+                inference.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        });
+    }
+    match effort {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(effort)) => Ok(Some(Value::String(effort))),
+        Some(_) => Err(ProviderError::InvalidRequest {
+            message: "provider-neutral inference effort must be a string".to_owned(),
+        }),
+    }
+}
+
+fn apply_openai_responses_inference(body: &mut Map<String, Value>) -> Result<(), ProviderError> {
+    let Some(effort) = take_inference_effort(body)? else {
+        return Ok(());
+    };
+    if body.contains_key("reasoning") {
+        return Err(ProviderError::InvalidRequest {
+            message:
+                "provider-neutral inference effort conflicts with provider option \"reasoning\""
+                    .to_owned(),
+        });
+    }
+    body.insert(
+        "reasoning".to_owned(),
+        serde_json::json!({ "effort": effort }),
+    );
+    Ok(())
+}
+
+fn apply_openai_chat_inference(body: &mut Map<String, Value>) -> Result<(), ProviderError> {
+    let Some(effort) = take_inference_effort(body)? else {
+        return Ok(());
+    };
+    if body.contains_key("reasoning_effort") {
+        return Err(ProviderError::InvalidRequest {
+            message:
+                "provider-neutral inference effort conflicts with provider option \"reasoning_effort\""
+                    .to_owned(),
+        });
+    }
+    body.insert("reasoning_effort".to_owned(), effort);
+    Ok(())
+}
+
 fn openai_responses_request(
     endpoint: &Endpoint,
     request: &ModelInferenceRequest,
 ) -> Result<ProviderRequest, ProviderError> {
     let (mut body, text) = request_object(request, &["model", "input", "tools"])?;
+    apply_openai_responses_inference(&mut body)?;
     body.insert(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
@@ -366,6 +430,7 @@ fn openai_chat_request(
     request: &ModelInferenceRequest,
 ) -> Result<ProviderRequest, ProviderError> {
     let (mut body, text) = request_object(request, &["model", "messages", "tools"])?;
+    apply_openai_chat_inference(&mut body)?;
     body.insert(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
@@ -734,7 +799,9 @@ fn error_message(body: &[u8]) -> String {
         .pointer("/error/message")
         .and_then(Value::as_str)
         .or_else(|| value.get("message").and_then(Value::as_str))
+        .or_else(|| value.get("detail").and_then(Value::as_str))
         .or_else(|| value.pointer("/error/code").and_then(Value::as_str))
+        .or_else(|| value.pointer("/error/type").and_then(Value::as_str))
         .or_else(|| value.get("error").and_then(Value::as_str))
         .unwrap_or("provider request failed")
         .to_owned()
@@ -790,6 +857,30 @@ mod tests {
                 .collect(),
             body: serde_json::to_vec(&body).unwrap(),
         }
+    }
+
+    #[test]
+    fn openai_protocols_lower_provider_neutral_inference_effort() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request();
+        request.options.insert(
+            "inference".to_owned(),
+            serde_json::json!({"effort": "medium"}).into(),
+        );
+
+        let encoded = Protocol::OpenAiResponses
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert!(body.get("inference").is_none());
+
+        let encoded = Protocol::OpenAiChatCompletions
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert!(body.get("inference").is_none());
     }
 
     #[test]

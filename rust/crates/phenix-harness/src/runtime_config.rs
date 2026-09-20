@@ -72,7 +72,6 @@ impl From<SettingValue> for OptionValue {
 
 #[derive(Debug, Deserialize)]
 struct RuntimeModelTarget {
-    backend: String,
     provider: PluginId,
     model: ModelId,
     #[serde(default)]
@@ -81,12 +80,18 @@ struct RuntimeModelTarget {
 
 impl RuntimeModelTarget {
     fn into_model_target(self) -> ModelTarget {
+        let Self {
+            provider,
+            model,
+            inference,
+        } = self;
         let mut options = BTreeMap::new();
-        options.insert("backend".into(), PhenixValue::String(self.backend));
-        options.insert("inference".into(), self.inference.into());
+        if !inference.is_null() {
+            options.insert("inference".into(), inference.into());
+        }
         ModelTarget {
-            provider_plugin: self.provider,
-            model: self.model,
+            provider_plugin: provider,
+            model,
             options,
         }
     }
@@ -481,18 +486,16 @@ mod tests {
 
     #[test]
     fn runtime_model_target_lowers_foreign_json_before_dispatch() {
-        let target = RuntimeModelTarget {
-            backend: "phenix".into(),
-            provider: PluginId::parse("provider.fixture").unwrap(),
-            model: ModelId::parse("model.test").unwrap(),
-            inference: json!({"effort": "low"}),
-        }
-        .into_model_target();
+        let target: RuntimeModelTarget = serde_json::from_value(json!({
+            "backend": "phenix",
+            "provider": "provider.fixture",
+            "model": "model.test",
+            "inference": {"effort": "low"}
+        }))
+        .unwrap();
+        let target = target.into_model_target();
 
-        assert_eq!(
-            target.options["backend"],
-            PhenixValue::String("phenix".into())
-        );
+        assert!(!target.options.contains_key("backend"));
         assert!(matches!(
             &target.options["inference"],
             PhenixValue::Map(values)
