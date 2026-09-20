@@ -156,6 +156,165 @@ fn build_codex_token_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("cannot build Codex OAuth token client: {error}"))
 }
 
+fn codex_request(
+    endpoint: &Endpoint,
+    request: &ModelInferenceRequest,
+) -> Result<ProviderRequest, ProviderError> {
+    let protocol = Protocol::OpenAiResponses;
+    let mut outgoing = protocol.encode(endpoint, request)?;
+    let mut body: Value =
+        serde_json::from_slice(&outgoing.body).map_err(|error| ProviderError::Protocol {
+            message: format!("cannot decode generated Codex request: {error}"),
+        })?;
+    let object = body.as_object_mut().ok_or_else(|| ProviderError::Protocol {
+        message: "generated Codex request body is not an object".to_owned(),
+    })?;
+
+    // backend described the Phenix execution path in legacy runtime targets.
+    // It is never part of the provider wire contract.
+    object.remove("backend");
+
+    let input = object
+        .remove("input")
+        .ok_or_else(|| ProviderError::Protocol {
+            message: "generated Codex request contains no input".to_owned(),
+        })?;
+    let input = match input {
+        Value::String(text) => vec![codex_message("user", text)],
+        Value::Array(items) => items
+            .into_iter()
+            .map(canonicalize_codex_input_item)
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => {
+            return Err(ProviderError::InvalidRequest {
+                message: "Codex input must be text or response input items".to_owned(),
+            });
+        }
+    };
+    object.insert("input".to_owned(), Value::Array(input));
+    object.insert("tool_choice".to_owned(), Value::String("auto".to_owned()));
+    object.insert(
+        "parallel_tool_calls".to_owned(),
+        Value::Bool(!request.tools.is_empty()),
+    );
+    object.insert("store".to_owned(), Value::Bool(false));
+    object.insert("stream".to_owned(), Value::Bool(true));
+    object
+        .entry("include".to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+
+    outgoing.body =
+        serde_json::to_vec(&body).map_err(|error| ProviderError::Protocol {
+            message: format!("cannot encode Codex request: {error}"),
+        })?;
+    outgoing
+        .headers
+        .insert("accept".to_owned(), "text/event-stream".to_owned());
+    Ok(outgoing)
+}
+
+fn codex_message(role: &str, text: String) -> Value {
+    let content_type = if role == "assistant" {
+        "output_text"
+    } else {
+        "input_text"
+    };
+    serde_json::json!({
+        "type": "message",
+        "role": role,
+        "content": [{
+            "type": content_type,
+            "text": text,
+        }],
+    })
+}
+
+fn canonicalize_codex_input_item(item: Value) -> Result<Value, ProviderError> {
+    let Some(object) = item.as_object() else {
+        return Err(ProviderError::InvalidRequest {
+            message: "Codex response input item must be an object".to_owned(),
+        });
+    };
+    if object.contains_key("type") {
+        return Ok(item);
+    }
+    let role = object
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message: "Codex message input contains no role".to_owned(),
+        })?;
+    let content = object
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message: "Codex message input contains no text content".to_owned(),
+        })?;
+    Ok(codex_message(role, content.to_owned()))
+}
+
+fn decode_codex_response(
+    protocol: Protocol,
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
+    let is_event_stream = response
+        .headers
+        .get("content-type")
+        .is_some_and(|value| value.contains("text/event-stream"));
+    if !is_event_stream && serde_json::from_slice::<Value>(&response.body).is_ok() {
+        return protocol.decode(response);
+    }
+
+    let body = std::str::from_utf8(&response.body).map_err(|_| ProviderError::Protocol {
+        message: "Codex streaming response was not UTF-8".to_owned(),
+    })?;
+    let mut completed = None;
+    let mut failure = None;
+    for raw_line in body.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let event: Value =
+            serde_json::from_str(data).map_err(|error| ProviderError::Protocol {
+                message: format!("cannot decode Codex SSE event: {error}"),
+            })?;
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.completed") => {
+                completed = event.get("response").cloned().or(Some(event));
+            }
+            Some("response.failed") | Some("error") => {
+                failure = event
+                    .pointer("/response/error/message")
+                    .or_else(|| event.pointer("/error/message"))
+                    .or_else(|| event.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| Some(data.to_owned()));
+            }
+            _ => {}
+        }
+    }
+    if let Some(message) = failure {
+        return Err(ProviderError::Unavailable { message });
+    }
+    let completed = completed.ok_or_else(|| ProviderError::Protocol {
+        message: "Codex SSE stream ended without response.completed".to_owned(),
+    })?;
+    let completed_response = ProviderResponse {
+        status: response.status,
+        headers: response.headers.clone(),
+        body: serde_json::to_vec(&completed).map_err(|error| ProviderError::Protocol {
+            message: format!("cannot encode completed Codex response: {error}"),
+        })?,
+    };
+    protocol.decode(&completed_response)
+}
+
 impl OpenAiCodexPlugin {
     fn runtime(&self) -> Result<&tokio::runtime::Runtime, ProviderError> {
         self.runtime
@@ -210,7 +369,7 @@ impl OpenAiCodexPlugin {
                 message: error.to_string(),
             })?;
         let protocol = Protocol::OpenAiResponses;
-        let mut outgoing = protocol.encode(&endpoint, &request)?;
+        let mut outgoing = codex_request(&endpoint, &request)?;
         outgoing.headers.insert(
             AUTHORIZATION.as_str().to_owned(),
             format!("Bearer {}", credential.access_token),
@@ -232,7 +391,7 @@ impl OpenAiCodexPlugin {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
-            let mut decoded = protocol.decode(&response)?;
+            let mut decoded = decode_codex_response(protocol, &response)?;
             decoded.provider_metadata.insert(
                 "provider".to_owned(),
                 PhenixValue::String(OPENAI_CODEX_PROVIDER.to_owned()),
@@ -1030,6 +1189,75 @@ fn secure_file(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn model_request() -> ModelInferenceRequest {
+        ModelInferenceRequest {
+            model: phenix_core::ModelId::parse("gpt-5.6-terra").unwrap(),
+            input: b"hello".to_vec().into(),
+            options: BTreeMap::from([
+                (
+                    "backend".to_owned(),
+                    PhenixValue::String("phenix".to_owned()),
+                ),
+                (
+                    "inference".to_owned(),
+                    serde_json::json!({"effort": "medium"}).into(),
+                ),
+            ]),
+            tools: Vec::new(),
+            continuation: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn codex_request_matches_chatgpt_responses_contract() {
+        let endpoint = Endpoint::parse(RESPONSES_ENDPOINT).unwrap();
+        let request = codex_request(&endpoint, &model_request()).unwrap();
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+
+        assert_eq!(request.url, "https://chatgpt.com/backend-api/codex/responses");
+        assert_eq!(
+            request.headers.get("accept").map(String::as_str),
+            Some("text/event-stream")
+        );
+        assert!(body.get("backend").is_none());
+        assert!(body.get("inference").is_none());
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], false);
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(body["input"][0]["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn codex_response_decodes_completed_sse() {
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",",
+                "\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}],",
+                "\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded = decode_codex_response(Protocol::OpenAiResponses, &response).unwrap();
+        assert_eq!(decoded.output.as_ref(), b"world");
+        assert_eq!(
+            decoded.provider_metadata["id"],
+            PhenixValue::String("response-1".to_owned())
+        );
+    }
 
     #[test]
     fn provider_exposes_chatgpt_oauth_as_interactive_auth() {
