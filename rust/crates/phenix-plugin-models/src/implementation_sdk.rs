@@ -172,6 +172,12 @@ fn handle_routing(
                 profile: Some(profile),
             })
         }
+        ModelCommand::ReplaceProfile { expected, profile } => {
+            replace_profile(context, &expected, &profile)?;
+            Ok(ModelResponse::Profile {
+                profile: Some(profile),
+            })
+        }
         ModelCommand::GetProfile { id } => Ok(ModelResponse::Profile {
             profile: read_profile(context, &id)?,
         }),
@@ -517,6 +523,53 @@ fn insert_profile(
                 TransactionOp::Put {
                     key: PROFILE_INDEX.into(),
                     value: serde_json::to_vec(&ids).map_err(|error| error.to_string())?,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn replace_profile(
+    context: &ModelContext<'_, '_, '_>,
+    expected: &RoutingProfile,
+    replacement: &RoutingProfile,
+) -> Result<(), String> {
+    if expected.id != replacement.id {
+        return Err(format!(
+            "routing profile replacement identity mismatch: {} != {}",
+            expected.id, replacement.id
+        ));
+    }
+
+    let key = profile_key(&expected.id);
+    let Some(current_raw) = read_raw(context, &key)? else {
+        return Err(format!(
+            "routing profile replacement target is missing: {}",
+            expected.id
+        ));
+    };
+    let current: RoutingProfile =
+        serde_json::from_slice(&current_raw).map_err(|error| error.to_string())?;
+    if current != *expected {
+        return Err(format!(
+            "routing profile replacement conflict: {}",
+            expected.id
+        ));
+    }
+
+    context
+        .kernel
+        .transact_durable(
+            &model_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: Some(current_raw),
+                },
+                TransactionOp::Put {
+                    key,
+                    value: serde_json::to_vec(replacement)
+                        .map_err(|error| error.to_string())?,
                 },
             ],
         )
