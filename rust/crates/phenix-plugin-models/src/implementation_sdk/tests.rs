@@ -224,6 +224,65 @@ mod profile_store {
         assert_eq!(profiles[0].providers.len(), 3);
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn profile_replacement_is_compare_and_swap_and_survives_restart() {
+        let path = temp_db("routing-profile-replacement");
+        let original = profile();
+        let mut replacement = original.clone();
+        replacement.default_target = target("provider.default", "root-v2");
+
+        {
+            let mut kernel = kernel_with(&path);
+            invoke_routing(
+                &mut kernel,
+                ModelCommand::RegisterProfile {
+                    profile: original.clone(),
+                },
+            )
+            .unwrap();
+
+            let response = invoke_routing(
+                &mut kernel,
+                ModelCommand::ReplaceProfile {
+                    expected: original.clone(),
+                    profile: replacement.clone(),
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                response,
+                ModelResponse::Profile {
+                    profile: Some(replacement.clone())
+                }
+            );
+
+            assert!(invoke_routing(
+                &mut kernel,
+                ModelCommand::ReplaceProfile {
+                    expected: original,
+                    profile: replacement.clone(),
+                },
+            )
+            .unwrap_err()
+            .contains("replacement conflict"));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert_eq!(
+            invoke_routing(
+                &mut restored,
+                ModelCommand::GetProfile {
+                    id: replacement.id.clone()
+                },
+            )
+            .unwrap(),
+            ModelResponse::Profile {
+                profile: Some(replacement)
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
 }
 
 mod smart_selection {
