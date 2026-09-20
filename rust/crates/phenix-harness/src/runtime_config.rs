@@ -81,12 +81,19 @@ struct RuntimeModelTarget {
 
 impl RuntimeModelTarget {
     fn into_model_target(self) -> ModelTarget {
+        let Self {
+            backend: _,
+            provider,
+            model,
+            inference,
+        } = self;
         let mut options = BTreeMap::new();
-        options.insert("backend".into(), PhenixValue::String(self.backend));
-        options.insert("inference".into(), self.inference.into());
+        if !inference.is_null() {
+            options.insert("inference".into(), inference.into());
+        }
         ModelTarget {
-            provider_plugin: self.provider,
-            model: self.model,
+            provider_plugin: provider,
+            model,
             options,
         }
     }
@@ -489,10 +496,7 @@ mod tests {
         }
         .into_model_target();
 
-        assert_eq!(
-            target.options["backend"],
-            PhenixValue::String("phenix".into())
-        );
+        assert!(!target.options.contains_key("backend"));
         assert!(matches!(
             &target.options["inference"],
             PhenixValue::Map(values)
