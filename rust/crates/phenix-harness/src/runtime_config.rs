@@ -486,12 +486,14 @@ mod tests {
 
     #[test]
     fn runtime_model_target_lowers_foreign_json_before_dispatch() {
-        let target = RuntimeModelTarget {
-            provider: PluginId::parse("provider.fixture").unwrap(),
-            model: ModelId::parse("model.test").unwrap(),
-            inference: json!({"effort": "low"}),
-        }
-        .into_model_target();
+        let target: RuntimeModelTarget = serde_json::from_value(json!({
+            "backend": "phenix",
+            "provider": "provider.fixture",
+            "model": "model.test",
+            "inference": {"effort": "low"}
+        }))
+        .unwrap();
+        let target = target.into_model_target();
 
         assert!(!target.options.contains_key("backend"));
         assert!(matches!(
