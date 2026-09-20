@@ -327,13 +327,16 @@ fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn
     })
 }
 
-fn without_legacy_runtime_backend(mut profile: RoutingProfile) -> RoutingProfile {
+fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
     fn normalize_target(target: &mut ModelTarget) {
         if matches!(
             target.options.get("backend"),
             Some(PhenixValue::String(backend)) if backend == "phenix"
         ) {
             target.options.remove("backend");
+        }
+        if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
+            target.options.remove("inference");
         }
     }
 
@@ -364,7 +367,7 @@ fn ensure_routing_profile(
 
     match existing {
         Some(existing) if existing == profile => {}
-        Some(existing) if without_legacy_runtime_backend(existing.clone()) == profile => {
+        Some(existing) if without_legacy_runtime_metadata(existing.clone()) == profile => {
             let command = ModelCommand::ReplaceProfile {
                 expected: existing,
                 profile: profile.clone(),
@@ -643,6 +646,70 @@ mod tests {
         ));
 
         apply_configuration(&mut harness, sample_runtime()).unwrap();
+
+        let response: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::GetProfile {
+                id: desired.id.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            response,
+            ModelResponse::Profile {
+                profile: Some(desired)
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_configuration_migrates_legacy_null_inference_metadata() {
+        fn configuration() -> RuntimeConfiguration {
+            serde_json::from_value(json!({
+                "agents": [],
+                "orchestrations": [],
+                "routing_profiles": [{
+                    "id": "router.legacy-null-inference",
+                    "default_target": {
+                        "backend": "phenix",
+                        "provider": "provider.fixture",
+                        "model": "model.test"
+                    }
+                }]
+            }))
+            .unwrap()
+        }
+
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+
+        let desired = configuration()
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        let mut legacy = desired.clone();
+        legacy
+            .default_target
+            .options
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
+        legacy
+            .default_target
+            .options
+            .insert("inference".into(), PhenixValue::Unit);
+
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile { profile: legacy },
+            &default_suite_authority(),
+        )
+        .unwrap();
+
+        apply_configuration(&mut harness, configuration()).unwrap();
 
         let response: ModelResponse = invoke_projected(
             &mut harness,
