@@ -568,8 +568,7 @@ fn replace_profile(
                 },
                 TransactionOp::Put {
                     key,
-                    value: serde_json::to_vec(replacement)
-                        .map_err(|error| error.to_string())?,
+                    value: serde_json::to_vec(replacement).map_err(|error| error.to_string())?,
                 },
             ],
         )

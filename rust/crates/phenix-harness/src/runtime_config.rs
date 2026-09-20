@@ -615,10 +615,10 @@ mod tests {
             .unwrap()
             .into_routing_profile();
         let mut legacy = desired.clone();
-        legacy.default_target.options.insert(
-            "backend".into(),
-            PhenixValue::String("phenix".into()),
-        );
+        legacy
+            .default_target
+            .options
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
         for target in &mut legacy.fallback_targets {
             target
                 .options
