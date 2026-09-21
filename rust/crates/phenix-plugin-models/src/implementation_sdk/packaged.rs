@@ -94,6 +94,7 @@ pub(super) fn prepare(
     profiles: Vec<RoutingProfile>,
 ) -> Result<ModelResponse, String> {
     let (old_manifest, mut ownership) = manifest(context)?;
+    let initial_adoption = old_manifest.is_none();
     let old_index = read_raw(context, PROFILE_INDEX)?;
     let mut current = load_profiles(context)?
         .into_iter()
@@ -130,7 +131,7 @@ pub(super) fn prepare(
     ];
     // Recognize old content-addressed records by recomputing the full ID, never by prefix.
     for profile in current.values() {
-        if generated(profile)? {
+        if initial_adoption && generated(profile)? {
             ownership
                 .owned
                 .entry(profile.id.clone())

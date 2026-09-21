@@ -944,6 +944,62 @@ mod tests {
     }
 
     #[test]
+    fn later_foreign_generated_profiles_and_callables_remain_visible() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+        let empty = || RuntimeConfiguration {
+            agents: vec![],
+            orchestrations: vec![],
+            routing_profiles: vec![],
+        };
+        apply_configuration(&mut harness, empty()).unwrap();
+        let sample = sample_runtime();
+        let agent = sample.agents.into_iter().next().unwrap();
+        invoke_configuration(
+            &mut harness,
+            ExecutionConfigurationCommand::RegisterAgent {
+                agent: agent.clone(),
+            },
+        );
+        let foreign = direct_routing_profile(
+            sample
+                .routing_profiles
+                .into_iter()
+                .next()
+                .unwrap()
+                .into_routing_profile()
+                .default_target,
+        )
+        .unwrap();
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile {
+                profile: foreign.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        apply_configuration(&mut harness, empty()).unwrap();
+        assert_eq!(
+            invoke_configuration(&mut harness, ExecutionConfigurationCommand::ListAgents),
+            ExecutionConfigurationResponse::Agents {
+                agents: vec![agent]
+            }
+        );
+        let catalog: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ListProfiles,
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(
+            matches!(catalog, ModelResponse::Profiles { profiles } if profiles.len() == 1 && profiles[0].id == foreign.id)
+        );
+    }
+
+    #[test]
     fn migrated_runtime_configuration_is_active_and_restart_safe() {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
