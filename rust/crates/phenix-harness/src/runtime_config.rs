@@ -788,8 +788,10 @@ mod tests {
         })).unwrap();
         changed.agents = vec![updated_agent.clone()];
         let mut updated_orchestration = serde_json::to_value(&changed.orchestrations[0]).unwrap();
-        updated_orchestration["descriptor"]["description"] = json!("Updated packaged orchestration.");
-        let updated_orchestration: OrchestrationDefinition = serde_json::from_value(updated_orchestration).unwrap();
+        updated_orchestration["descriptor"]["description"] =
+            json!("Updated packaged orchestration.");
+        let updated_orchestration: OrchestrationDefinition =
+            serde_json::from_value(updated_orchestration).unwrap();
         changed.orchestrations = vec![updated_orchestration.clone()];
         apply_configuration(&mut harness, changed).unwrap();
         drop(harness);
@@ -809,7 +811,17 @@ mod tests {
                 agent: Some(updated_agent)
             }
         );
-        assert_eq!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::GetOrchestration { id: updated_orchestration.id().clone() }), ExecutionConfigurationResponse::Orchestration { orchestration: Some(updated_orchestration) });
+        assert_eq!(
+            invoke_configuration(
+                &mut harness,
+                ExecutionConfigurationCommand::GetOrchestration {
+                    id: updated_orchestration.id().clone()
+                }
+            ),
+            ExecutionConfigurationResponse::Orchestration {
+                orchestration: Some(updated_orchestration)
+            }
+        );
         apply_configuration(
             &mut harness,
             RuntimeConfiguration {
@@ -894,13 +906,41 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();
-        let expected = sample_runtime().routing_profiles.remove(0).into_routing_profile();
+        let expected = sample_runtime()
+            .routing_profiles
+            .remove(0)
+            .into_routing_profile();
         let mut changed = expected.clone();
         changed.default_target.model = ModelId::parse("model.external-change").unwrap();
-        invoke_projected::<_, ModelResponse>(&mut harness, &model_routing_service(), &ModelCommand::ReplaceProfile { expected, profile: changed.clone() }, &default_suite_authority()).unwrap();
-        assert!(apply_configuration(&mut harness, sample_runtime()).unwrap_err().to_string().contains("changed outside configuration"));
-        let retained: ModelResponse = invoke_projected(&mut harness, &model_routing_service(), &ModelCommand::GetProfile { id: changed.id.clone() }, &default_suite_authority()).unwrap();
-        assert_eq!(retained, ModelResponse::Profile { profile: Some(changed) });
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ReplaceProfile {
+                expected,
+                profile: changed.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(apply_configuration(&mut harness, sample_runtime())
+            .unwrap_err()
+            .to_string()
+            .contains("changed outside configuration"));
+        let retained: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::GetProfile {
+                id: changed.id.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            retained,
+            ModelResponse::Profile {
+                profile: Some(changed)
+            }
+        );
     }
 
     #[test]

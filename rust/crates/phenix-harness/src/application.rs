@@ -2476,25 +2476,56 @@ mod tests {
         });
         std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
         let mut worker = persistent_application_worker(&path);
-        super::super::runtime_config::apply_runtime_config(&mut worker.harness.lock().unwrap(), &config_path).unwrap();
-        let session = invoke_operation::<CreateSession>(&mut worker, SessionCreateInput {
-            working_directory: "/workspace".into(), title: None,
-        }).unwrap();
+        super::super::runtime_config::apply_runtime_config(
+            &mut worker.harness.lock().unwrap(),
+            &config_path,
+        )
+        .unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
         drop(worker);
 
-        std::fs::write(&config_path, br#"{"agents":[],"orchestrations":[],"routing_profiles":[]}"#).unwrap();
+        std::fs::write(
+            &config_path,
+            br#"{"agents":[],"orchestrations":[],"routing_profiles":[]}"#,
+        )
+        .unwrap();
         let mut worker = persistent_application_worker(&path);
-        super::super::runtime_config::apply_runtime_config(&mut worker.harness.lock().unwrap(), &config_path).unwrap();
-        invoke_operation::<ResumeSession>(&mut worker, SessionResumeInput {
-            session_id: session.session_id.clone(), after_sequence: None,
-        }).unwrap();
-        let choices = invoke_operation::<ListSelections>(&mut worker, ApplicationSessionInput {
-            session_id: session.session_id,
-        }).unwrap();
-        assert_eq!(choices.selected.as_ref().map(RoutingProfileId::as_str), Some("default"));
+        super::super::runtime_config::apply_runtime_config(
+            &mut worker.harness.lock().unwrap(),
+            &config_path,
+        )
+        .unwrap();
+        invoke_operation::<ResumeSession>(
+            &mut worker,
+            SessionResumeInput {
+                session_id: session.session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        let choices = invoke_operation::<ListSelections>(
+            &mut worker,
+            ApplicationSessionInput {
+                session_id: session.session_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            choices.selected.as_ref().map(RoutingProfileId::as_str),
+            Some("default")
+        );
         assert_eq!(choices.available.len(), 1);
         assert_eq!(choices.available[0].provider.as_str(), "provider.fixture");
-        assert!(matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty()));
+        assert!(
+            matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty())
+        );
         drop(worker);
         std::fs::remove_file(config_path).unwrap();
         std::fs::remove_file(path).unwrap();
