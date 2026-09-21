@@ -327,6 +327,29 @@ fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn
     })
 }
 
+fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
+    fn normalize_target(target: &mut ModelTarget) {
+        if matches!(
+            target.options.get("backend"),
+            Some(PhenixValue::String(backend)) if backend == "phenix"
+        ) {
+            target.options.remove("backend");
+        }
+        if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
+            target.options.remove("inference");
+        }
+    }
+
+    normalize_target(&mut profile.default_target);
+    for target in &mut profile.fallback_targets {
+        normalize_target(target);
+    }
+    for target in profile.callable_targets.values_mut() {
+        normalize_target(target);
+    }
+    profile
+}
+
 fn ensure_routing_profile(
     harness: &mut PhenixHarness,
     profile: RoutingProfile,
@@ -344,6 +367,20 @@ fn ensure_routing_profile(
 
     match existing {
         Some(existing) if existing == profile => {}
+        Some(existing) if without_legacy_runtime_metadata(existing.clone()) == profile => {
+            let command = ModelCommand::ReplaceProfile {
+                expected: existing,
+                profile: profile.clone(),
+            };
+            if !matches!(
+                invoke_projected::<_, ModelResponse>(harness, &service, &command, &authority)?,
+                ModelResponse::Profile {
+                    profile: Some(replaced)
+                } if replaced == profile
+            ) {
+                return Err("model routing service rejected legacy profile migration".into());
+            }
+        }
         Some(_) => {
             return Err(format!("routing profile identity is immutable: {}", profile.id).into())
         }
@@ -567,6 +604,156 @@ mod tests {
                     && option.layer == OptionValueLayer::File
         ));
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn runtime_configuration_migrates_legacy_backend_metadata() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+
+        let desired = sample_runtime()
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        let mut legacy = desired.clone();
+        legacy
+            .default_target
+            .options
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
+        for target in &mut legacy.fallback_targets {
+            target
+                .options
+                .insert("backend".into(), PhenixValue::String("phenix".into()));
+        }
+        for target in legacy.callable_targets.values_mut() {
+            target
+                .options
+                .insert("backend".into(), PhenixValue::String("phenix".into()));
+        }
+
+        let response: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile { profile: legacy },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            ModelResponse::Profile { profile: Some(_) }
+        ));
+
+        apply_configuration(&mut harness, sample_runtime()).unwrap();
+
+        let response: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::GetProfile {
+                id: desired.id.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            response,
+            ModelResponse::Profile {
+                profile: Some(desired)
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_configuration_migrates_legacy_null_inference_metadata() {
+        fn configuration() -> RuntimeConfiguration {
+            serde_json::from_value(json!({
+                "agents": [],
+                "orchestrations": [],
+                "routing_profiles": [{
+                    "id": "router.legacy-null-inference",
+                    "default_target": {
+                        "backend": "phenix",
+                        "provider": "provider.fixture",
+                        "model": "model.test"
+                    }
+                }]
+            }))
+            .unwrap()
+        }
+
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+
+        let desired = configuration()
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        let mut legacy = desired.clone();
+        legacy
+            .default_target
+            .options
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
+        legacy
+            .default_target
+            .options
+            .insert("inference".into(), PhenixValue::Unit);
+
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile { profile: legacy },
+            &default_suite_authority(),
+        )
+        .unwrap();
+
+        apply_configuration(&mut harness, configuration()).unwrap();
+
+        let response: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::GetProfile {
+                id: desired.id.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            response,
+            ModelResponse::Profile {
+                profile: Some(desired)
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_configuration_rejects_nonlegacy_profile_identity_changes() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+
+        let mut conflicting = sample_runtime()
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        conflicting.default_target.model = ModelId::parse("model.conflict").unwrap();
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile {
+                profile: conflicting,
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+
+        let error = apply_configuration(&mut harness, sample_runtime()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("routing profile identity is immutable: router.test"));
     }
 
     #[test]

@@ -356,6 +356,10 @@ pub enum ModelCommand {
     RegisterProfile {
         profile: RoutingProfile,
     },
+    ReplaceProfile {
+        expected: RoutingProfile,
+        profile: RoutingProfile,
+    },
     GetProfile {
         id: RoutingProfileId,
     },
