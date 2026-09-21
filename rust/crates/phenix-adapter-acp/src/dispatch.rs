@@ -350,7 +350,10 @@ fn selection_config(
         .into_iter()
         .map(|selection| {
             let mut meta = serde_json::Map::new();
-            meta.insert("phenix.provider".into(), serde_json::Value::String(selection.provider.to_string()));
+            meta.insert(
+                "phenix.provider".into(),
+                serde_json::Value::String(selection.provider.to_string()),
+            );
             let prefix = match selection.presentation {
                 SelectionPresentation::Router => "router",
                 SelectionPresentation::Model => "model",

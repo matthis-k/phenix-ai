@@ -187,13 +187,13 @@ fn handle_routing(
         ModelCommand::ListProfiles => {
             let retired = packaged::retired(context)?;
             Ok(ModelResponse::Profiles {
-            profiles: load_profiles(context)?
-                .into_iter()
-                .filter(|profile| !retired.contains(&profile.id))
-                .map(|profile| descriptor(&profile))
-                .collect(),
-        })
-        },
+                profiles: load_profiles(context)?
+                    .into_iter()
+                    .filter(|profile| !retired.contains(&profile.id))
+                    .map(|profile| descriptor(&profile))
+                    .collect(),
+            })
+        }
         ModelCommand::SetProviderAuthenticated {
             provider_plugin,
             authenticated,

@@ -1,7 +1,7 @@
 use phenix_core::{
     CallableId, CapabilityId, ComponentInterface, DurableSchema, InterfaceId, PhenixSchema,
-    PhenixValue, PluginContext, PluginHost, PluginInstance, ResourceNamespace, ServiceId,
-    TransactionOp, TypeKind, ValueCodec, ValueError, SdkClient,
+    PhenixValue, PluginContext, PluginHost, PluginInstance, ResourceNamespace, SdkClient,
+    ServiceId, TransactionOp, TypeKind, ValueCodec, ValueError,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,12 +15,18 @@ const STATE_KEY: &str = "state";
 
 mod packaged;
 
-type ExecutionConfigurationContext<'host, 'runtime> = PluginContext<'host, 'runtime, SdkClient<'host, 'runtime, phenix_sdk::ModelRoutingInterface>>;
+type ExecutionConfigurationContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, SdkClient<'host, 'runtime, phenix_sdk::ModelRoutingInterface>>;
 
 fn context<'host, 'runtime>(
     host: &'host PluginHost<'runtime>,
 ) -> ExecutionConfigurationContext<'host, 'runtime> {
-    PluginContext::new(host, SdkClient::new(host, crate::component::execution_component_id()), (), ())
+    PluginContext::new(
+        host,
+        SdkClient::new(host, crate::component::execution_component_id()),
+        (),
+        (),
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -283,7 +289,9 @@ pub enum ExecutionConfigurationCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum ExecutionConfigurationResponse {
-    Configured { profiles: Vec<phenix_sdk::RoutingProfile> },
+    Configured {
+        profiles: Vec<phenix_sdk::RoutingProfile>,
+    },
     Agent {
         agent: Option<AgentDefinition>,
     },
@@ -377,9 +385,11 @@ fn execute(
     command: ExecutionConfigurationCommand,
 ) -> Result<ExecutionConfigurationResponse, String> {
     match command {
-        ExecutionConfigurationCommand::ConfigurePackaged { agents, orchestrations, profiles } => {
-            packaged::configure(context, agents, orchestrations, profiles)
-        }
+        ExecutionConfigurationCommand::ConfigurePackaged {
+            agents,
+            orchestrations,
+            profiles,
+        } => packaged::configure(context, agents, orchestrations, profiles),
         ExecutionConfigurationCommand::GetAgent { id } => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionConfigurationResponse::Agent {
@@ -389,7 +399,15 @@ fn execute(
         ExecutionConfigurationCommand::ListAgents => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionConfigurationResponse::Agents {
-                agents: state.agents.into_iter().filter(|(id, _)| !state.packaged.agents.contains_key(id) || state.packaged.active_agents.contains(id)).map(|(_, agent)| agent).collect(),
+                agents: state
+                    .agents
+                    .into_iter()
+                    .filter(|(id, _)| {
+                        !state.packaged.agents.contains_key(id)
+                            || state.packaged.active_agents.contains(id)
+                    })
+                    .map(|(_, agent)| agent)
+                    .collect(),
             })
         }
         ExecutionConfigurationCommand::GetOrchestration { id } => {
@@ -401,7 +419,15 @@ fn execute(
         ExecutionConfigurationCommand::ListOrchestrations => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionConfigurationResponse::Orchestrations {
-                orchestrations: state.orchestrations.into_iter().filter(|(id, _)| !state.packaged.orchestrations.contains_key(id) || state.packaged.active_orchestrations.contains(id)).map(|(_, orchestration)| orchestration).collect(),
+                orchestrations: state
+                    .orchestrations
+                    .into_iter()
+                    .filter(|(id, _)| {
+                        !state.packaged.orchestrations.contains_key(id)
+                            || state.packaged.active_orchestrations.contains(id)
+                    })
+                    .map(|(_, orchestration)| orchestration)
+                    .collect(),
             })
         }
         ExecutionConfigurationCommand::RegisterAgent { agent } => mutate_state(context, |state| {

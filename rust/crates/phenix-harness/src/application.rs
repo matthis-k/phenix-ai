@@ -460,7 +460,11 @@ impl ApplicationWorker {
         // Retired packaged routes stay available to sessions already selecting them.
         // ACP requires the current selection to remain in this session's option list.
         if !available.iter().any(|item| item.id == selected) {
-            if let ModelResponse::Profile { profile: Some(profile) } = self.invoke_model_command(ModelCommand::GetProfile { id: selected.clone() })? {
+            if let ModelResponse::Profile {
+                profile: Some(profile),
+            } = self.invoke_model_command(ModelCommand::GetProfile {
+                id: selected.clone(),
+            })? {
                 available.push(selection_info(&profile)?);
             }
         }
