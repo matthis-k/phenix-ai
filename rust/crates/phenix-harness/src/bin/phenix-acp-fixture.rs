@@ -143,33 +143,37 @@ fn invoke_model(
 
 fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> {
     let target = fixture_target();
-    let profile = RoutingProfile {
-        id: RoutingProfileId::parse(FIXTURE_PROFILE)?,
-        default_target: target.clone(),
-        fallback_targets: Vec::new(),
-        callable_targets: BTreeMap::new(),
-    };
-    match invoke_model(
-        harness,
-        &ModelCommand::GetProfile {
-            id: profile.id.clone(),
-        },
-    )? {
-        ModelResponse::Profile {
-            profile: Some(existing),
-        } if existing == profile => {}
-        ModelResponse::Profile { profile: Some(_) } => {
-            return Err("fixture routing profile identity changed".into())
-        }
-        ModelResponse::Profile { profile: None } => {
-            match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
-                ModelResponse::Profile { profile: Some(_) } => {}
-                other => {
-                    return Err(format!("fixture profile registration failed: {other:?}").into())
+    // Session snapshots resolve the default route before the frontend can select
+    // the named fixture route. Both must be valid in this standalone runtime.
+    for profile_id in ["default", FIXTURE_PROFILE] {
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse(profile_id)?,
+            default_target: target.clone(),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        match invoke_model(
+            harness,
+            &ModelCommand::GetProfile {
+                id: profile.id.clone(),
+            },
+        )? {
+            ModelResponse::Profile {
+                profile: Some(existing),
+            } if existing == profile => {}
+            ModelResponse::Profile { profile: Some(_) } => {
+                return Err("fixture routing profile identity changed".into())
+            }
+            ModelResponse::Profile { profile: None } => {
+                match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
+                    ModelResponse::Profile { profile: Some(_) } => {}
+                    other => {
+                        return Err(format!("fixture profile registration failed: {other:?}").into())
+                    }
                 }
             }
+            other => return Err(format!("fixture profile lookup failed: {other:?}").into()),
         }
-        other => return Err(format!("fixture profile lookup failed: {other:?}").into()),
     }
     match invoke_model(
         harness,

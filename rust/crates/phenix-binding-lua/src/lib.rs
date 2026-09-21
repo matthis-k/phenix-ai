@@ -16,6 +16,7 @@ use agent_client_protocol::schema::v1::{
 };
 use futures::{
     channel::{mpsc, oneshot},
+    future::{AbortHandle, AbortRegistration, Abortable},
     StreamExt,
 };
 use mlua::{
@@ -278,6 +279,29 @@ impl ClientState {
 struct Client {
     state: Arc<ClientState>,
     local_callables: Rc<RefCell<LocalCallables>>,
+    worker: Rc<ClientWorker>,
+}
+
+// The worker must not own this guard: its state owns the command sender, so
+// channel disconnection alone cannot terminate the worker's receive loop.
+struct ClientWorker {
+    abort: AbortHandle,
+    thread: RefCell<Option<thread::JoinHandle<()>>>,
+}
+
+impl ClientWorker {
+    fn close(&self) {
+        self.abort.abort();
+        if let Some(thread) = self.thread.borrow_mut().take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for ClientWorker {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 struct LocalCallable {
@@ -542,6 +566,10 @@ impl Request {
 
 impl UserData for Client {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("close", |_lua, this, ()| {
+            this.worker.close();
+            Ok(())
+        });
         methods.add_method("tools", |lua, this, ()| tools::bind(lua, this.clone()));
         methods.add_method("capabilities", |lua, this, ()| {
             capabilities(lua, &this.state)
@@ -1034,7 +1062,11 @@ fn connect(options: Table) -> LuaResult<Client> {
             .expect("generated generation id is valid"),
     });
     let worker_state = Arc::clone(&state);
-    thread::Builder::new()
+    let config = config
+        .env("PHENIX_ACP_CLIENT_ID", state.owner.as_str())
+        .env("PHENIX_ACP_CLIENT_GENERATION", state.generation.as_str());
+    let (abort, registration) = AbortHandle::new_pair();
+    let thread = thread::Builder::new()
         .name("phenix-lua-acp".to_owned())
         .spawn(move || {
             run_client(
@@ -1044,12 +1076,17 @@ fn connect(options: Table) -> LuaResult<Client> {
                 extension_updates,
                 callbacks,
                 worker_state,
+                registration,
             )
         })
         .map_err(|error| lua_error(BindingError::transport(error.to_string())))?;
     Ok(Client {
         state,
         local_callables: Rc::new(RefCell::new(LocalCallables::default())),
+        worker: Rc::new(ClientWorker {
+            abort,
+            thread: RefCell::new(Some(thread)),
+        }),
     })
 }
 
@@ -1198,9 +1235,10 @@ fn run_client(
     extension_updates: ExtensionUpdates,
     callbacks: ExtensionCallbacks,
     state: Arc<ClientState>,
+    registration: AbortRegistration,
 ) {
     let worker_state = Arc::clone(&state);
-    let result = futures::executor::block_on(
+    let result = futures::executor::block_on(Abortable::new(
         AcpClient::new(config).connect_with_updates_extensions_and_callbacks(
             updates,
             extension_updates,
@@ -1458,9 +1496,13 @@ fn run_client(
                 Ok(())
             },
         ),
-    );
-    if let Err(error) = result {
-        state.record_failure(BindingError::from_client(error));
+        registration,
+    ));
+    match result {
+        Ok(Err(error)) => state.record_failure(BindingError::from_client(error)),
+        Ok(Ok(())) | Err(_) => {
+            state.record_failure(BindingError::transport("ACP connection is closed"))
+        }
     }
 }
 
@@ -2712,6 +2754,10 @@ mod tests {
                 generation: CapabilityGenerationId::parse("generation-1").unwrap(),
             }),
             local_callables: Rc::new(RefCell::new(LocalCallables::default())),
+            worker: Rc::new(ClientWorker {
+                abort: AbortHandle::new_pair().0,
+                thread: RefCell::new(None),
+            }),
         };
         lua.globals()
             .set("client", lua.create_userdata(client).unwrap())

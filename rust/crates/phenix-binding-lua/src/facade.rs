@@ -78,6 +78,7 @@ struct FacadeState {
     events: VecDeque<FacadeEvent>,
     sessions: BTreeMap<String, SessionProjection>,
     session_info: BTreeMap<String, SessionInfo>,
+    closed_sessions: std::collections::BTreeSet<String>,
     repairs: BTreeMap<String, Request>,
     repair_backlog: BTreeMap<String, Vec<SessionUpdate>>,
     selections: BTreeMap<String, SelectionCache>,
@@ -116,6 +117,9 @@ enum RequestProjection {
     SessionList,
     SessionResume,
     SessionRename,
+    SessionClose {
+        session_id: String,
+    },
     Acknowledged,
     Prompt {
         session_id: String,
@@ -221,6 +225,7 @@ pub(super) fn connect(lua: &Lua, options: Table) -> LuaResult<FacadeClient> {
                 events: VecDeque::from([FacadeEvent::Status]),
                 sessions: BTreeMap::new(),
                 session_info: BTreeMap::new(),
+                closed_sessions: std::collections::BTreeSet::new(),
                 repairs: BTreeMap::new(),
                 repair_backlog: BTreeMap::new(),
                 selections: BTreeMap::new(),
@@ -295,8 +300,13 @@ impl UserData for FacadeClient {
             },
         );
         methods.add_method_mut("close", |_lua, this, ()| {
+            this.core.raw.worker.close();
             let mut state = this.core.state.borrow_mut();
             state.phase = FacadePhase::Closed;
+            state.bootstrap = None;
+            state.repairs.clear();
+            state.repair_backlog.clear();
+            state.events.clear();
             state.events.push_back(FacadeEvent::Status);
             Ok(())
         });
@@ -422,7 +432,9 @@ impl UserData for FacadeSession {
                 SessionInput {
                     session_id: this.id.clone(),
                 },
-                RequestProjection::Acknowledged,
+                RequestProjection::SessionClose {
+                    session_id: this.id.to_string(),
+                },
             )?;
             lua.create_userdata(request)
         });
@@ -507,6 +519,9 @@ impl UserData for FacadeRequest {
 
 impl FacadeRequest {
     fn poll_lua(&mut self, lua: &Lua) -> LuaResult<MultiValue> {
+        if self.result.is_none() && self.core.state.borrow().phase == FacadePhase::Closed {
+            self.result = Some(Err(BindingError::transport("ACP connection is closed")));
+        }
         if self.result.is_none() {
             let Some(result) = self.request.poll() else {
                 return Ok(MultiValue::from_vec(vec![Value::Boolean(false)]));
@@ -674,6 +689,9 @@ fn decode_outcome(
             let page = decode::<phenix_application_interface::types::SessionList>(&value)?;
             let mut state = core.state.borrow_mut();
             for info in &page.sessions {
+                if state.closed_sessions.contains(info.session_id.as_str()) {
+                    continue;
+                }
                 state
                     .session_info
                     .insert(info.session_id.to_string(), info.clone());
@@ -690,6 +708,9 @@ fn decode_outcome(
             let info = decode::<SessionInfo>(&value)?;
             let key = info.session_id.to_string();
             let mut state = core.state.borrow_mut();
+            if state.closed_sessions.contains(&key) {
+                return Err(BindingError::transport("session is closed"));
+            }
             state.session_info.insert(key.clone(), info.clone());
             if let Some(session) = state.sessions.get_mut(&key) {
                 session.session = info.clone();
@@ -697,10 +718,34 @@ fn decode_outcome(
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::SessionInfo(info))
         }
+        RequestProjection::SessionClose { session_id } => {
+            let acknowledgement = decode(&value)?;
+            let mut state = core.state.borrow_mut();
+            state.closed_sessions.insert(session_id.clone());
+            state.sessions.remove(session_id);
+            state.session_info.remove(session_id);
+            state.selections.remove(session_id);
+            state.repairs.remove(session_id);
+            state.repair_backlog.remove(session_id);
+            state.latest_execution.remove(session_id);
+            state.provenance.retain(|(id, _), _| id != session_id);
+            state.events.retain(|event| match event {
+                FacadeEvent::SessionSnapshot { projection, .. } => {
+                    projection.session.session_id.as_str() != session_id
+                }
+                FacadeEvent::SessionUpdate(update) => update.session_id.as_str() != session_id,
+                FacadeEvent::Status => true,
+            });
+            state.events.push_back(FacadeEvent::Status);
+            Ok(FacadeOutcome::Acknowledged(acknowledgement))
+        }
         RequestProjection::Acknowledged => Ok(FacadeOutcome::Acknowledged(decode(&value)?)),
         RequestProjection::Prompt { session_id } => {
             let result = decode::<PromptResult>(&value)?;
             let mut state = core.state.borrow_mut();
+            if state.closed_sessions.contains(session_id) {
+                return Err(BindingError::transport("session is closed"));
+            }
             state
                 .latest_execution
                 .insert(session_id.clone(), result.execution_id.clone());
@@ -718,6 +763,9 @@ fn decode_outcome(
         } => {
             let provenance = decode::<Provenance>(&value)?;
             let mut state = core.state.borrow_mut();
+            if state.closed_sessions.contains(session_id) {
+                return Err(BindingError::transport("session is closed"));
+            }
             state.provenance.insert(
                 (session_id.clone(), execution_id.clone()),
                 provenance.clone(),
@@ -782,6 +830,9 @@ fn install_created_session(core: &FacadeCore, info: SessionInfo) {
 
 fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'static str) {
     let key = snapshot.session.session_id.to_string();
+    if core.state.borrow().closed_sessions.contains(&key) {
+        return;
+    }
     let projection = SessionProjection {
         session: snapshot.session.clone(),
         through_sequence: snapshot.through_sequence,
@@ -803,6 +854,9 @@ fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'stat
 
 fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
     let key = update.session_id.to_string();
+    if core.state.borrow().closed_sessions.contains(&key) {
+        return;
+    }
     let needs_repair;
     {
         let mut state = core.state.borrow_mut();
@@ -984,6 +1038,9 @@ fn required_operations() -> [&'static str; 8] {
 
 fn pump(lua: &Lua, core: &Rc<FacadeCore>, budget: usize) -> LuaResult<Table> {
     let budget = budget.clamp(1, MAX_PUMP_BUDGET);
+    if core.state.borrow().phase == FacadePhase::Closed {
+        return lua.create_table();
+    }
     drive_bootstrap(core);
     drive_repairs(core);
 
@@ -1450,6 +1507,9 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
 
 fn cache_selections(core: &FacadeCore, session_id: &str, selections: &Selections) {
     let mut state = core.state.borrow_mut();
+    if state.closed_sessions.contains(session_id) {
+        return;
+    }
     state.selections.insert(
         session_id.to_owned(),
         SelectionCache {
