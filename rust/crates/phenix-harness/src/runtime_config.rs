@@ -246,70 +246,36 @@ fn apply_configuration(
     harness: &mut PhenixHarness,
     configuration: RuntimeConfiguration,
 ) -> Result<(), Box<dyn Error>> {
-    let authority = default_suite_authority();
-
-    migrate_legacy_routing_profiles(harness)?;
-
-    for agent in configuration.agents {
-        if !matches!(
-            invoke_projected::<_, ExecutionConfigurationResponse>(
-                harness,
-                &execution_configuration_service(),
-                &ExecutionConfigurationCommand::RegisterAgent { agent },
-                &authority,
-            )?,
-            ExecutionConfigurationResponse::Agent { agent: Some(_) }
-        ) {
-            return Err("execution configuration service rejected agent registration".into());
-        }
-    }
-
-    for orchestration in configuration.orchestrations {
-        if !matches!(
-            invoke_projected::<_, ExecutionConfigurationResponse>(
-                harness,
-                &execution_configuration_service(),
-                &ExecutionConfigurationCommand::RegisterOrchestration { orchestration },
-                &authority,
-            )?,
-            ExecutionConfigurationResponse::Orchestration {
-                orchestration: Some(_)
-            }
-        ) {
-            return Err(
-                "execution configuration service rejected orchestration registration".into(),
-            );
-        }
-    }
-
-    let profiles = configuration
-        .routing_profiles
-        .into_iter()
-        .map(RuntimeRoutingProfile::into_routing_profile)
-        .collect::<Vec<_>>();
-
+    let mut profiles = configuration.routing_profiles.into_iter()
+        .map(RuntimeRoutingProfile::into_routing_profile).collect::<Vec<_>>();
     let mut direct_targets = BTreeMap::new();
     for profile in &profiles {
         for target in std::iter::once(&profile.default_target)
-            .chain(profile.fallback_targets.iter())
-            .chain(profile.callable_targets.values())
-        {
-            direct_targets
-                .entry(serde_json::to_string(target)?)
-                .or_insert_with(|| target.clone());
+            .chain(profile.fallback_targets.iter()).chain(profile.callable_targets.values()) {
+            direct_targets.entry(serde_json::to_string(target)?).or_insert_with(|| target.clone());
         }
     }
-
-    for profile in profiles {
-        ensure_routing_profile(harness, profile)?;
-    }
     for target in direct_targets.into_values() {
-        ensure_routing_profile(harness, direct_routing_profile(target)?)?;
+        profiles.push(direct_routing_profile(target)?);
     }
-
+    let response: ExecutionConfigurationResponse = invoke_projected(
+        harness, &execution_configuration_service(),
+        &ExecutionConfigurationCommand::ConfigurePackaged {
+            agents: configuration.agents,
+            orchestrations: configuration.orchestrations,
+            profiles,
+        }, &default_suite_authority(),
+    )?;
+    let ExecutionConfigurationResponse::Configured { profiles } = response else {
+        return Err("execution configuration service rejected packaged configuration".into());
+    };
+    // Derived runtime facts are replayable after a crash. The durable definitions
+    // and their ownership manifests have already committed as one transaction.
+    for profile in profiles {
+        publish_routing_profile_runtime_state(harness, &profile)?;
+    }
     Ok(())
 }
-
 fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
     let encoded = serde_json::to_vec(&target)?;
     let digest = Sha256::digest(encoded);
@@ -329,6 +295,7 @@ fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn
     })
 }
 
+#[cfg(test)]
 fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
     fn normalize_target(target: &mut ModelTarget) {
         if matches!(
@@ -352,89 +319,6 @@ fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfil
     profile
 }
 
-// Generated fixed routes have content-derived IDs. Migrating only IDs still
-// present in runtime.json leaves older session selections dispatching bad options.
-fn migrate_legacy_routing_profiles(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> {
-    let authority = default_suite_authority();
-    let service = model_routing_service();
-    let ModelResponse::Profiles { profiles } = invoke_projected::<_, ModelResponse>(
-        harness,
-        &service,
-        &ModelCommand::ListProfiles,
-        &authority,
-    )?
-    else {
-        return Err("model routing service returned the wrong catalog response".into());
-    };
-    for descriptor in profiles {
-        let ModelResponse::Profile {
-            profile: Some(existing),
-        } = invoke_projected::<_, ModelResponse>(
-            harness,
-            &service,
-            &ModelCommand::GetProfile { id: descriptor.id },
-            &authority,
-        )?
-        else {
-            return Err("model routing service returned a missing catalog profile".into());
-        };
-        let profile = without_legacy_runtime_metadata(existing.clone());
-        if existing != profile {
-            ensure_routing_profile(harness, profile)?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_routing_profile(
-    harness: &mut PhenixHarness,
-    profile: RoutingProfile,
-) -> Result<(), Box<dyn Error>> {
-    let authority = default_suite_authority();
-    let service = model_routing_service();
-    let command = ModelCommand::GetProfile {
-        id: profile.id.clone(),
-    };
-    let existing =
-        match invoke_projected::<_, ModelResponse>(harness, &service, &command, &authority)? {
-            ModelResponse::Profile { profile } => profile,
-            _ => return Err("model routing service returned the wrong profile response".into()),
-        };
-
-    match existing {
-        Some(existing) if existing == profile => {}
-        Some(existing) if without_legacy_runtime_metadata(existing.clone()) == profile => {
-            let command = ModelCommand::ReplaceProfile {
-                expected: existing,
-                profile: profile.clone(),
-            };
-            if !matches!(
-                invoke_projected::<_, ModelResponse>(harness, &service, &command, &authority)?,
-                ModelResponse::Profile {
-                    profile: Some(replaced)
-                } if replaced == profile
-            ) {
-                return Err("model routing service rejected legacy profile migration".into());
-            }
-        }
-        Some(_) => {
-            return Err(format!("routing profile identity is immutable: {}", profile.id).into())
-        }
-        None => {
-            let command = ModelCommand::RegisterProfile {
-                profile: profile.clone(),
-            };
-            if !matches!(
-                invoke_projected::<_, ModelResponse>(harness, &service, &command, &authority)?,
-                ModelResponse::Profile { profile: Some(_) }
-            ) {
-                return Err("model routing service rejected profile registration".into());
-            }
-        }
-    }
-
-    publish_routing_profile_runtime_state(harness, &profile)
-}
 
 fn publish_routing_profile_runtime_state(
     harness: &mut PhenixHarness,
@@ -847,6 +731,61 @@ mod tests {
         assert!(error
             .to_string()
             .contains("routing profile identity is immutable: router.test"));
+        assert!(matches!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::GetAgent {
+            id: CallableId::parse("agent.scout").unwrap()
+        }), ExecutionConfigurationResponse::Agent { agent: None }));
+    }
+
+    #[test]
+    fn packaged_configuration_updates_retires_and_preserves_foreign_records_after_restart() {
+        let path = std::env::temp_dir().join(format!("phenix-config-{}-{}.sqlite", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let mut harness = PhenixHarness::default_suite_with_persistence(phenix_core::LocalPersistence::open(&path).unwrap()).unwrap();
+        harness.activate().unwrap();
+        apply_configuration(&mut harness, sample_runtime()).unwrap();
+        let mut foreign = sample_runtime().routing_profiles.remove(0).into_routing_profile();
+        foreign.id = RoutingProfileId::parse("user.custom").unwrap();
+        invoke_projected::<_, ModelResponse>(&mut harness, &model_routing_service(), &ModelCommand::RegisterProfile { profile: foreign.clone() }, &default_suite_authority()).unwrap();
+        let mut changed = sample_runtime();
+        changed.routing_profiles[0].default_target.model = ModelId::parse("model.updated").unwrap();
+        let updated_agent: AgentDefinition = serde_json::from_value(json!({
+            "id": "agent.scout", "kind": "agent", "description": "Updated packaged agent.",
+            "input_schema": {"type":"string"}, "output_schema": {"type":"string"}, "capabilities": [], "policy": {"requires_permission":false}
+        })).unwrap();
+        changed.agents = vec![updated_agent.clone()];
+        apply_configuration(&mut harness, changed).unwrap();
+        drop(harness);
+        let mut harness = PhenixHarness::default_suite_with_persistence(phenix_core::LocalPersistence::open(&path).unwrap()).unwrap();
+        harness.activate().unwrap();
+        assert_eq!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::GetAgent { id: updated_agent.id().clone() }), ExecutionConfigurationResponse::Agent { agent: Some(updated_agent) });
+        apply_configuration(&mut harness, RuntimeConfiguration { agents: vec![], orchestrations: vec![], routing_profiles: vec![] }).unwrap();
+        assert!(matches!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::ListAgents), ExecutionConfigurationResponse::Agents { agents } if agents.is_empty()));
+        assert!(matches!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::ListOrchestrations), ExecutionConfigurationResponse::Orchestrations { orchestrations } if orchestrations.is_empty()));
+        let catalog: ModelResponse = invoke_projected(&mut harness, &model_routing_service(), &ModelCommand::ListProfiles, &default_suite_authority()).unwrap();
+        assert!(matches!(catalog, ModelResponse::Profiles { profiles } if profiles.len() == 1 && profiles[0].id == foreign.id));
+        let retained: ModelResponse = invoke_projected(&mut harness, &model_routing_service(), &ModelCommand::GetProfile { id: RoutingProfileId::parse("router.test").unwrap() }, &default_suite_authority()).unwrap();
+        assert!(matches!(retained, ModelResponse::Profile { profile: Some(profile) } if profile.default_target.model.as_str() == "model.updated"));
+        // Reapplying the same desired state after retirement is idempotent.
+        apply_configuration(&mut harness, RuntimeConfiguration { agents: vec![], orchestrations: vec![], routing_profiles: vec![] }).unwrap();
+        drop(harness);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_orchestration_and_duplicate_profiles_do_not_publish_agents() {
+        for duplicate in [false, true] {
+            let mut harness = PhenixHarness::default_suite().unwrap();
+            harness.activate().unwrap();
+            let mut config = sample_runtime();
+            if duplicate {
+                config.routing_profiles.push(sample_runtime().routing_profiles.remove(0));
+            } else {
+                config.agents.clear();
+            }
+            assert!(apply_configuration(&mut harness, config).is_err());
+            assert!(matches!(invoke_configuration(&mut harness, ExecutionConfigurationCommand::ListAgents), ExecutionConfigurationResponse::Agents { agents } if agents.is_empty()));
+            let catalog: ModelResponse = invoke_projected(&mut harness, &model_routing_service(), &ModelCommand::ListProfiles, &default_suite_authority()).unwrap();
+            assert!(matches!(catalog, ModelResponse::Profiles { profiles } if profiles.is_empty()));
+        }
     }
 
     #[test]

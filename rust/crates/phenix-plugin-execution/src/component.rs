@@ -55,6 +55,11 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
             schema: WorkspaceInterface::schema(),
             required: false,
             authority: workspace_authority,
+        }, ComponentImport {
+            interface: phenix_sdk::ModelRoutingInterface::interface_id(),
+            schema: phenix_sdk::ModelRoutingInterface::schema(),
+            required: false,
+            authority: persistence_authority(),
         }],
         exports: vec![
             ComponentExport {
@@ -189,7 +194,7 @@ mod tests {
             component.exports[5].required_authority,
             persistence_authority()
         );
-        assert_eq!(component.imports.len(), 1);
+        assert_eq!(component.imports.len(), 2);
         assert_eq!(
             component.imports[0].interface,
             WorkspaceInterface::interface_id()

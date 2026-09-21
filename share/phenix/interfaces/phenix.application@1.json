@@ -4240,6 +4240,9 @@
               "type": "unit"
             }
           }
+        },
+        "provider": {
+          "type": "string"
         }
       }
     },
@@ -4295,6 +4298,9 @@
                     "type": "unit"
                   }
                 }
+              },
+              "provider": {
+                "type": "string"
               }
             }
           }

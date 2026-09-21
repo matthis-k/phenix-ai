@@ -457,6 +457,13 @@ impl ApplicationWorker {
             };
             available.push(selection_info(&profile)?);
         }
+        // Retired packaged routes stay available to sessions already selecting them.
+        // ACP requires the current selection to remain in this session's option list.
+        if !available.iter().any(|item| item.id == selected) {
+            if let ModelResponse::Profile { profile: Some(profile) } = self.invoke_model_command(ModelCommand::GetProfile { id: selected.clone() })? {
+                available.push(selection_info(&profile)?);
+            }
+        }
         available.sort_by(|left, right| {
             selection_presentation_rank(&left.presentation)
                 .cmp(&selection_presentation_rank(&right.presentation))
@@ -1302,6 +1309,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
             .expect("one routing target was counted");
         return Ok(SelectionInfo {
             id: profile.id.clone(),
+            provider: profile.default_target.provider_plugin.clone(),
             name: target.model.to_string(),
             description: Some(model_selection_description(target)),
             presentation: SelectionPresentation::Model,
@@ -1311,6 +1319,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
     let providers = profile.default_target.provider_plugin.to_string();
     Ok(SelectionInfo {
         id: profile.id.clone(),
+        provider: profile.default_target.provider_plugin.clone(),
         name: profile.id.to_string(),
         description: Some(providers),
         presentation: SelectionPresentation::Router,
