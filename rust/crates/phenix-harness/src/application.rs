@@ -1513,10 +1513,30 @@ pub async fn serve_configured_application(
         let harness = worker.harness.lock();
         CapabilityGenerationId::from(harness.generation())
     };
+    // The process owner supplies one connection identity pair. Standalone stdio
+    // callers retain the conventional first-connection identity.
+    let (client_id, client_generation) = match (
+        env::var("PHENIX_ACP_CLIENT_ID"),
+        env::var("PHENIX_ACP_CLIENT_GENERATION"),
+    ) {
+        (Ok(id), Ok(generation)) => (id, generation),
+        (Err(env::VarError::NotPresent), Err(env::VarError::NotPresent)) =>
+            ("lua-client-1".to_owned(), "connection-1".to_owned()),
+        _ => return Err(ConfiguredApplicationError::Configuration {
+            message: "PHENIX_ACP_CLIENT_ID and PHENIX_ACP_CLIENT_GENERATION must both be valid strings or both be absent".to_owned(),
+        }),
+    };
     let client = ClientCapabilityIdentity::new(
-        ClientConnectionId::parse("lua-client-1").expect("static ACP client id is valid"),
-        CapabilityGenerationId::parse("connection-1")
-            .expect("static ACP connection generation is valid"),
+        ClientConnectionId::parse(client_id).map_err(|error| {
+            ConfiguredApplicationError::Configuration {
+                message: error.to_string(),
+            }
+        })?,
+        CapabilityGenerationId::parse(client_generation).map_err(|error| {
+            ConfiguredApplicationError::Configuration {
+                message: error.to_string(),
+            }
+        })?,
     );
     let (client_callbacks, callback_receiver) =
         ClientCapabilityCallbacks::bounded(CLIENT_CAPABILITY_CAPACITY);

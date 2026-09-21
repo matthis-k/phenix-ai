@@ -24,6 +24,10 @@ fn client() -> (Client, mpsc::UnboundedReceiver<Command>) {
         Client {
             state,
             local_callables: Rc::new(RefCell::new(LocalCallables::default())),
+            worker: Rc::new(ClientWorker {
+                abort: AbortHandle::new_pair().0,
+                thread: RefCell::new(None),
+            }),
         },
         receiver,
     )

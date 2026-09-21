@@ -248,6 +248,8 @@ fn apply_configuration(
 ) -> Result<(), Box<dyn Error>> {
     let authority = default_suite_authority();
 
+    migrate_legacy_routing_profiles(harness)?;
+
     for agent in configuration.agents {
         if !matches!(
             invoke_projected::<_, ExecutionConfigurationResponse>(
@@ -348,6 +350,40 @@ fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfil
         normalize_target(target);
     }
     profile
+}
+
+// Generated fixed routes have content-derived IDs. Migrating only IDs still
+// present in runtime.json leaves older session selections dispatching bad options.
+fn migrate_legacy_routing_profiles(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> {
+    let authority = default_suite_authority();
+    let service = model_routing_service();
+    let ModelResponse::Profiles { profiles } = invoke_projected::<_, ModelResponse>(
+        harness,
+        &service,
+        &ModelCommand::ListProfiles,
+        &authority,
+    )?
+    else {
+        return Err("model routing service returned the wrong catalog response".into());
+    };
+    for descriptor in profiles {
+        let ModelResponse::Profile {
+            profile: Some(existing),
+        } = invoke_projected::<_, ModelResponse>(
+            harness,
+            &service,
+            &ModelCommand::GetProfile { id: descriptor.id },
+            &authority,
+        )?
+        else {
+            return Err("model routing service returned a missing catalog profile".into());
+        };
+        let profile = without_legacy_runtime_metadata(existing.clone());
+        if existing != profile {
+            ensure_routing_profile(harness, profile)?;
+        }
+    }
+    Ok(())
 }
 
 fn ensure_routing_profile(
@@ -604,6 +640,63 @@ mod tests {
                     && option.layer == OptionValueLayer::File
         ));
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn startup_migrates_legacy_generated_routes_outside_current_configuration() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+        let mut target = sample_runtime()
+            .routing_profiles
+            .remove(0)
+            .into_routing_profile()
+            .default_target;
+        target
+            .options
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
+        target.options.insert("inference".into(), PhenixValue::Unit);
+        let legacy = direct_routing_profile(target).unwrap();
+        let normalized = without_legacy_runtime_metadata(legacy.clone());
+        let canonical = direct_routing_profile(normalized.default_target.clone()).unwrap();
+        assert_ne!(legacy.id, canonical.id);
+        invoke_projected::<_, ModelResponse>(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::RegisterProfile {
+                profile: legacy.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        apply_configuration(&mut harness, sample_runtime()).unwrap();
+        let migrated: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::GetProfile {
+                id: legacy.id.clone(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert_eq!(
+            migrated,
+            ModelResponse::Profile {
+                profile: Some(normalized.clone())
+            }
+        );
+        let candidates: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ListCandidates {
+                profile_id: legacy.id,
+                callable_id: None,
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(
+            matches!(candidates, ModelResponse::Candidates { candidates } if candidates.len() == 1 && candidates[0].capabilities.target == normalized.default_target)
+        );
     }
 
     #[test]
