@@ -2477,7 +2477,7 @@ mod tests {
         std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
         let mut worker = persistent_application_worker(&path);
         super::super::runtime_config::apply_runtime_config(
-            &mut worker.harness.lock().unwrap(),
+            &mut worker.harness.lock(),
             &config_path,
         )
         .unwrap();
@@ -2498,7 +2498,7 @@ mod tests {
         .unwrap();
         let mut worker = persistent_application_worker(&path);
         super::super::runtime_config::apply_runtime_config(
-            &mut worker.harness.lock().unwrap(),
+            &mut worker.harness.lock(),
             &config_path,
         )
         .unwrap();
