@@ -2465,6 +2465,42 @@ mod tests {
     }
 
     #[test]
+    fn retired_route_survives_session_resume_but_leaves_the_global_catalog() {
+        let path = temp_db("retired-routing");
+        let config_path = path.with_extension("json");
+        let config = serde_json::json!({
+            "agents": [], "orchestrations": [],
+            "routing_profiles": [{"id":"default", "default_target": {
+                "provider":"provider.fixture", "model":"model.fixture"
+            }}]
+        });
+        std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let mut worker = persistent_application_worker(&path);
+        super::super::runtime_config::apply_runtime_config(&mut worker.harness.lock().unwrap(), &config_path).unwrap();
+        let session = invoke_operation::<CreateSession>(&mut worker, SessionCreateInput {
+            working_directory: "/workspace".into(), title: None,
+        }).unwrap();
+        drop(worker);
+
+        std::fs::write(&config_path, br#"{"agents":[],"orchestrations":[],"routing_profiles":[]}"#).unwrap();
+        let mut worker = persistent_application_worker(&path);
+        super::super::runtime_config::apply_runtime_config(&mut worker.harness.lock().unwrap(), &config_path).unwrap();
+        invoke_operation::<ResumeSession>(&mut worker, SessionResumeInput {
+            session_id: session.session_id.clone(), after_sequence: None,
+        }).unwrap();
+        let choices = invoke_operation::<ListSelections>(&mut worker, ApplicationSessionInput {
+            session_id: session.session_id,
+        }).unwrap();
+        assert_eq!(choices.selected.as_ref().map(RoutingProfileId::as_str), Some("default"));
+        assert_eq!(choices.available.len(), 1);
+        assert_eq!(choices.available[0].provider.as_str(), "provider.fixture");
+        assert!(matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty()));
+        drop(worker);
+        std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn worker_emits_journaled_session_updates() {
         let (sender, mut events) = mpsc::channel(1);
         let mut worker = application_worker().with_event_sender(sender);
