@@ -50,12 +50,20 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
         listeners: Vec::new(),
         id: execution_component_id(),
         owner: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),
-        imports: vec![ComponentImport {
-            interface: WorkspaceInterface::interface_id(),
-            schema: WorkspaceInterface::schema(),
-            required: false,
-            authority: workspace_authority,
-        }],
+        imports: vec![
+            ComponentImport {
+                interface: WorkspaceInterface::interface_id(),
+                schema: WorkspaceInterface::schema(),
+                required: false,
+                authority: workspace_authority,
+            },
+            ComponentImport {
+                interface: phenix_sdk::ModelRoutingInterface::interface_id(),
+                schema: phenix_sdk::ModelRoutingInterface::schema(),
+                required: false,
+                authority: persistence_authority(),
+            },
+        ],
         exports: vec![
             ComponentExport {
                 interface: ExecutionInterface::interface_id(),
@@ -189,7 +197,7 @@ mod tests {
             component.exports[5].required_authority,
             persistence_authority()
         );
-        assert_eq!(component.imports.len(), 1);
+        assert_eq!(component.imports.len(), 2);
         assert_eq!(
             component.imports[0].interface,
             WorkspaceInterface::interface_id()

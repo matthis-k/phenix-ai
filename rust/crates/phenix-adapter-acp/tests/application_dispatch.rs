@@ -100,11 +100,13 @@ fn selections(selected: &str) -> Selections {
         available: vec![
             SelectionInfo {
                 id: RoutingProfileId::parse("balanced").expect("valid route id"),
+                provider: phenix_core::PluginId::parse("provider").unwrap(),
                 name: "Balanced".to_owned(),
                 description: Some("Adaptive route".to_owned()),
                 presentation: SelectionPresentation::Router,
             },
             SelectionInfo {
+                provider: phenix_core::PluginId::parse("provider").unwrap(),
                 id: RoutingProfileId::parse("model.provider.model-a.deadbeef")
                     .expect("valid fixed route id"),
                 name: "Model A".to_owned(),
@@ -180,6 +182,8 @@ async fn standard_session_and_prompt_requests_use_typed_application_operations()
         .expect("create session");
     assert_eq!(created.session_id.to_string(), "session-1");
     assert_eq!(created.config_options.as_ref().map(Vec::len), Some(1));
+    let options_json = serde_json::to_value(&created.config_options).unwrap();
+    assert!(options_json.to_string().contains("phenix.provider"));
 
     let prompt = PromptRequest::new(
         "session-1",

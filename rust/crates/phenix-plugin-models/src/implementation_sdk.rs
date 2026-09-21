@@ -17,6 +17,8 @@ use std::collections::BTreeSet;
 
 use crate::routing_service::{RoutingServiceState, ROUTING_RUNTIME_KEY};
 
+mod packaged;
+
 const MODEL_ROUTING_PLUGIN: &str = "phenix.models";
 const MODEL_NAMESPACE: &str = "phenix.models.state";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
@@ -166,6 +168,7 @@ fn handle_routing(
     }
 
     match command {
+        ModelCommand::PreparePackagedProfiles { profiles } => packaged::prepare(context, profiles),
         ModelCommand::RegisterProfile { profile } => {
             insert_profile(context, &profile)?;
             Ok(ModelResponse::Profile {
@@ -181,12 +184,16 @@ fn handle_routing(
         ModelCommand::GetProfile { id } => Ok(ModelResponse::Profile {
             profile: read_profile(context, &id)?,
         }),
-        ModelCommand::ListProfiles => Ok(ModelResponse::Profiles {
-            profiles: load_profiles(context)?
-                .into_iter()
-                .map(|profile| descriptor(&profile))
-                .collect(),
-        }),
+        ModelCommand::ListProfiles => {
+            let retired = packaged::retired(context)?;
+            Ok(ModelResponse::Profiles {
+                profiles: load_profiles(context)?
+                    .into_iter()
+                    .filter(|profile| !retired.contains(&profile.id))
+                    .map(|profile| descriptor(&profile))
+                    .collect(),
+            })
+        }
         ModelCommand::SetProviderAuthenticated {
             provider_plugin,
             authenticated,

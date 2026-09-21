@@ -457,6 +457,17 @@ impl ApplicationWorker {
             };
             available.push(selection_info(&profile)?);
         }
+        // Retired packaged routes stay available to sessions already selecting them.
+        // ACP requires the current selection to remain in this session's option list.
+        if !available.iter().any(|item| item.id == selected) {
+            if let ModelResponse::Profile {
+                profile: Some(profile),
+            } = self.invoke_model_command(ModelCommand::GetProfile {
+                id: selected.clone(),
+            })? {
+                available.push(selection_info(&profile)?);
+            }
+        }
         available.sort_by(|left, right| {
             selection_presentation_rank(&left.presentation)
                 .cmp(&selection_presentation_rank(&right.presentation))
@@ -1302,6 +1313,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
             .expect("one routing target was counted");
         return Ok(SelectionInfo {
             id: profile.id.clone(),
+            provider: profile.default_target.provider_plugin.clone(),
             name: target.model.to_string(),
             description: Some(model_selection_description(target)),
             presentation: SelectionPresentation::Model,
@@ -1311,6 +1323,7 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
     let providers = profile.default_target.provider_plugin.to_string();
     Ok(SelectionInfo {
         id: profile.id.clone(),
+        provider: profile.default_target.provider_plugin.clone(),
         name: profile.id.to_string(),
         description: Some(providers),
         presentation: SelectionPresentation::Router,
@@ -2449,6 +2462,73 @@ mod tests {
         assert_eq!(record.lifecycle, SessionLifecycle::Closed);
         assert_eq!(record.title.as_deref(), Some("renamed"));
         assert_eq!(record.working_directory.as_deref(), Some("/workspace"));
+    }
+
+    #[test]
+    fn retired_route_survives_session_resume_but_leaves_the_global_catalog() {
+        let path = temp_db("retired-routing");
+        let config_path = path.with_extension("json");
+        let config = serde_json::json!({
+            "agents": [], "orchestrations": [],
+            "routing_profiles": [{"id":"default", "default_target": {
+                "provider":"provider.fixture", "model":"model.fixture"
+            }}]
+        });
+        std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let mut worker = persistent_application_worker(&path);
+        super::super::runtime_config::apply_runtime_config(
+            &mut worker.harness.lock(),
+            &config_path,
+        )
+        .unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        drop(worker);
+
+        std::fs::write(
+            &config_path,
+            br#"{"agents":[],"orchestrations":[],"routing_profiles":[]}"#,
+        )
+        .unwrap();
+        let mut worker = persistent_application_worker(&path);
+        super::super::runtime_config::apply_runtime_config(
+            &mut worker.harness.lock(),
+            &config_path,
+        )
+        .unwrap();
+        invoke_operation::<ResumeSession>(
+            &mut worker,
+            SessionResumeInput {
+                session_id: session.session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .unwrap();
+        let choices = invoke_operation::<ListSelections>(
+            &mut worker,
+            ApplicationSessionInput {
+                session_id: session.session_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            choices.selected.as_ref().map(RoutingProfileId::as_str),
+            Some("default")
+        );
+        assert_eq!(choices.available.len(), 1);
+        assert_eq!(choices.available[0].provider.as_str(), "provider.fixture");
+        assert!(
+            matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty())
+        );
+        drop(worker);
+        std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

@@ -5,7 +5,7 @@ pub use phenix_core::{
 };
 use phenix_core::{
     CallableId, CapabilityGenerationId, ComponentInterface, EventTypeId, InterfaceId, ModelId,
-    PhenixValue, PluginId, RoutingProfileId, ServiceId,
+    PhenixValue, PluginId, PreparedMutationHandle, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -353,6 +353,9 @@ fn trusted_estimate(candidate: &RoutingCandidate, minimum: u16) -> Option<&Routi
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ModelCommand {
+    PreparePackagedProfiles {
+        profiles: Vec<RoutingProfile>,
+    },
     RegisterProfile {
         profile: RoutingProfile,
     },
@@ -390,6 +393,10 @@ pub enum ModelCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModelResponse {
+    PreparedProfiles {
+        mutation: PreparedMutationHandle,
+        profiles: Vec<RoutingProfile>,
+    },
     Profile {
         profile: Option<RoutingProfile>,
     },

@@ -39,7 +39,8 @@ use phenix_client_acp::{
 };
 use phenix_core::{
     CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, Key,
-    ObjectRef, PhenixSchema, PhenixValue, ReferenceId, RoutingProfileId, Type, ValueCodec,
+    ObjectRef, PhenixSchema, PhenixValue, PluginId, ReferenceId, RoutingProfileId, Type,
+    ValueCodec,
 };
 use std::{
     cell::RefCell,
@@ -1220,6 +1221,18 @@ fn application_selection_info(
         )));
     };
     Ok(SelectionInfo {
+        provider: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.provider"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                BindingError::conversion("Phenix routing option is missing provider metadata")
+            })
+            .and_then(|provider| {
+                PluginId::parse(provider)
+                    .map_err(|error| BindingError::conversion(error.to_string()))
+            })?,
         id: RoutingProfileId::parse(option.value.to_string())
             .map_err(|error| BindingError::conversion(error.to_string()))?,
         name,
@@ -2466,15 +2479,21 @@ mod tests {
 
     #[test]
     fn standard_acp_model_config_projects_to_application_selections() {
+        let provider = serde_json::Map::from_iter([(
+            "phenix.provider".into(),
+            serde_json::json!("openai-codex"),
+        )]);
         let options = vec![SessionConfigOption::select(
             MODEL_CONFIG_ID,
             "Model / routing",
             "router.balanced",
             vec![
                 SessionConfigSelectOption::new("router.balanced", "[router] Balanced")
-                    .description("Adaptive route"),
+                    .description("Adaptive route")
+                    .meta(provider.clone()),
                 SessionConfigSelectOption::new("model.openai-codex.gpt-5", "[model] GPT-5")
-                    .description("Fixed model"),
+                    .description("Fixed model")
+                    .meta(provider),
             ],
         )];
 
@@ -2485,6 +2504,8 @@ mod tests {
         );
         assert_eq!(selections.available.len(), 2);
         assert_eq!(selections.available[0].name, "Balanced");
+        assert_eq!(selections.available[0].provider.as_str(), "openai-codex");
+        assert_eq!(selections.available[1].provider.as_str(), "openai-codex");
         assert_eq!(
             selections.available[0].presentation,
             SelectionPresentation::Router

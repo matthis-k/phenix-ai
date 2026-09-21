@@ -72,6 +72,10 @@ Supported runtime configuration lives in `config/phenix/runtime.nix`. Skills and
 
 The Harness packages these resources and loads agent definitions, orchestration definitions, and routing profiles through plugin-owned services. Product configuration does not become hidden conductor policy.
 
+Packaged definitions and their ownership records commit atomically across the execution and model plugins. The first application adopts matching preexisting definitions and recognizes generated model profiles by their content-derived IDs. Conflicting foreign records are rejected before any definitions change. Later applications compare against the last owned values, update packaged definitions, and retire removed entries from catalogs. Retired entries remain addressable by ID for durable sessions and orchestration references; a session's current retired route remains in its own selection list. A retained ID uses its latest packaged definition. Authentication and capability publication follow the durable commit and are replayed on startup if interrupted.
+
+Selection metadata carries the default provider as a typed field across the application and ACP boundaries. Display descriptions do not determine routing behavior.
+
 Project context and skills are context-plugin resources. Their metadata never expands execution authority. Script or workspace access still uses ordinary service authority.
 
 ## Packages

@@ -349,6 +349,11 @@ fn selection_config(
         .available
         .into_iter()
         .map(|selection| {
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "phenix.provider".into(),
+                serde_json::Value::String(selection.provider.to_string()),
+            );
             let prefix = match selection.presentation {
                 SelectionPresentation::Router => "router",
                 SelectionPresentation::Model => "model",
@@ -358,6 +363,7 @@ fn selection_config(
                 format!("[{prefix}] {}", selection.name),
             )
             .description(selection.description)
+            .meta(meta)
         })
         .collect::<Vec<_>>();
     Ok(Some(

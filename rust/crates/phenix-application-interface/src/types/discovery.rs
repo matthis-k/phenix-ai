@@ -23,6 +23,7 @@ variants!(SelectionPresentation, "phenix.application.type.selection-presentation
 });
 record!(SelectionInfo, "phenix.application.type.selection-info@1", {
     id: RoutingProfileId,
+    provider: PluginId,
     name: String,
     description: Option<String>,
     presentation: SelectionPresentation,
