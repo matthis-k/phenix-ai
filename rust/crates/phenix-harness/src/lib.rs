@@ -1,8 +1,9 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentManifest, ConfigContribution, DurableSchemaRegistration,
-    GraphGenerationId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
-    ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
+    Authority, CallableId, CapabilityId, ComponentManifest, ConfigContribution,
+    DurableSchemaRegistration, GraphGenerationId, Kernel, KernelError, LayerPolicy, ModelToolCall,
+    ModelToolDescriptor, PersistenceBackend, PhenixValue, PluginExecution, PluginId, PluginInstance,
+    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ResolvedHarnessActivationError,
+    ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest, agent_loop_factory,
@@ -40,6 +41,9 @@ mod basic_suite;
 mod invocation_defaults;
 mod persistence;
 pub mod runtime_config;
+mod runtime_tools;
+
+pub use runtime_tools::RuntimeModelTool;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
@@ -120,6 +124,7 @@ pub struct HarnessBuilder {
     components: Vec<ComponentManifest>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
+    runtime_tools: BTreeMap<CallableId, RuntimeModelTool>,
 }
 
 impl HarnessBuilder {
@@ -143,6 +148,9 @@ impl HarnessBuilder {
         builder.add_embedded(memory_manifest(), memory_factory)?;
         builder.add_embedded(planning_manifest(), planning_factory)?;
         builder.add_embedded(workspace_manifest(), workspace_factory)?;
+        builder
+            .register_runtime_tool(runtime_tools::bash_tool())
+            .expect("static default runtime tool ids are unique");
         builder.add_embedded(
             model_routing_manifest(authority.clone()),
             model_routing_factory,
@@ -391,6 +399,15 @@ impl HarnessBuilder {
         self.layer_policies.insert(service, layers);
     }
 
+    pub fn register_runtime_tool(&mut self, tool: RuntimeModelTool) -> Result<(), String> {
+        let id = tool.descriptor().id.clone();
+        if self.runtime_tools.contains_key(&id) {
+            return Err(format!("duplicate runtime model tool: {id}"));
+        }
+        self.runtime_tools.insert(id, tool);
+        Ok(())
+    }
+
     pub fn add_embedded<F>(
         &mut self,
         manifest: PluginManifest,
@@ -443,13 +460,18 @@ impl HarnessBuilder {
         for (plugin, factory) in self.embedded_factories {
             kernel.register_embedded_factory(plugin, move || factory())?;
         }
-        Ok(PhenixHarness { kernel, resolved })
+        Ok(PhenixHarness {
+            kernel,
+            resolved,
+            runtime_tools: self.runtime_tools,
+        })
     }
 }
 
 pub struct PhenixHarness {
     kernel: Kernel,
     resolved: ResolvedHarness,
+    runtime_tools: BTreeMap<CallableId, RuntimeModelTool>,
 }
 
 impl PhenixHarness {
@@ -484,7 +506,28 @@ impl PhenixHarness {
         kernel
             .activate_resolved_harness(&resolved)
             .expect("kernel-only resolved Harness activates");
-        Self { kernel, resolved }
+        Self {
+            kernel,
+            resolved,
+            runtime_tools: BTreeMap::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn runtime_model_tools(&self) -> Vec<ModelToolDescriptor> {
+        self.runtime_tools
+            .values()
+            .map(|tool| tool.descriptor().clone())
+            .collect()
+    }
+
+    pub fn invoke_runtime_model_tool(
+        &mut self,
+        authority: &Authority,
+        call: &ModelToolCall,
+    ) -> Option<Result<PhenixValue, phenix_application_interface::types::ApplicationError>> {
+        let tool = self.runtime_tools.get(&call.callable_id).cloned()?;
+        Some(tool.invoke(&mut self.kernel, authority, call))
     }
 
     pub fn default_suite() -> Result<Self, HarnessBuildError> {
