@@ -2342,6 +2342,45 @@ mod tests {
     }
 
     #[test]
+    fn default_runtime_exposes_backend_neutral_bash_tool() {
+        let tools = runtime_model_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id.as_str(), "bash");
+        assert_eq!(
+            tools[0].input_schema,
+            PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixSchema::String,
+            )]))
+        );
+
+        let worker = application_worker();
+        let call = ModelToolCall {
+            call_id: "call-1".into(),
+            callable_id: CallableId::parse("bash").unwrap(),
+            input: PhenixValue::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixValue::String("printf phenix-runtime-bash".into()),
+            )])),
+        };
+        let change =
+            execute_runtime_model_tool_call(&worker.harness, &worker.authority, &call);
+        let ExecutionChange::ToolResult { call_id, output } = change else {
+            panic!("default bash tool must execute through the workspace provider");
+        };
+        assert_eq!(call_id, "call-1");
+        let response = WorkspaceResponse::from_value(&output).unwrap();
+        assert!(matches!(
+            response,
+            WorkspaceResponse::Process {
+                exit_code: 0,
+                ref stdout,
+                ref stderr,
+            } if stdout == "phenix-runtime-bash" && stderr.is_empty()
+        ));
+    }
+
+    #[test]
     fn application_options_use_the_resolved_component_endpoint() {
         let worker = application_worker();
         let response = worker
