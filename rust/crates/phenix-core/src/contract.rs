@@ -1,6 +1,7 @@
 use crate::{
     CapabilityGenerationId, ClientConnectionId, GraphGenerationId, InterfaceId, PluginId, RuntimeId,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Borrow,
@@ -382,6 +383,117 @@ impl Type {
         }
     }
 
+    /// Projects a dynamically represented value into this structural type.
+    ///
+    /// JSON boundaries lower objects to `PhenixValue::Map`, numbers to their
+    /// natural numeric variant, and null to `Unit`. Use the declared schema to
+    /// restore the exact structural representation before typed dispatch.
+    pub fn project_value(&self, value: PhenixValue) -> Result<PhenixValue, ValueError> {
+        if self.parse(&value).is_ok() {
+            return Ok(value);
+        }
+
+        match self {
+            Self::Any => Ok(value),
+            Self::Never => Err(ValueError::TypeMismatch {
+                expected: TypeKind::Never,
+                actual: value.kind(),
+            }),
+            Self::Unit | Self::Bool | Self::String | Self::Callable { .. } | Self::Object { .. } => {
+                Err(ValueError::TypeMismatch {
+                    expected: self.kind(),
+                    actual: value.kind(),
+                })
+            }
+            Self::I64 => project_i64(value),
+            Self::U64 => project_u64(value),
+            Self::F64 => project_f64(value),
+            Self::Bytes => match value {
+                PhenixValue::String(value) => BASE64_STANDARD
+                    .decode(value)
+                    .map(PhenixValue::Bytes)
+                    .map_err(|error| {
+                        ValueError::InvalidValue(format!("invalid base64 bytes: {error}"))
+                    }),
+                value => Err(ValueError::TypeMismatch {
+                    expected: TypeKind::Bytes,
+                    actual: value.kind(),
+                }),
+            },
+            Self::Option(item) => match value {
+                PhenixValue::Unit | PhenixValue::Option(None) => Ok(PhenixValue::Option(None)),
+                PhenixValue::Option(Some(value)) => item
+                    .project_value(*value)
+                    .map(|value| PhenixValue::Option(Some(Box::new(value)))),
+                value => item
+                    .project_value(value)
+                    .map(|value| PhenixValue::Option(Some(Box::new(value)))),
+            },
+            Self::Array { item, len } => {
+                let PhenixValue::List(values) = value else {
+                    return Err(ValueError::TypeMismatch {
+                        expected: TypeKind::Array,
+                        actual: value.kind(),
+                    });
+                };
+                if values.len() != *len {
+                    return Err(ValueError::InvalidValue(format!(
+                        "expected {} values, got {}",
+                        *len,
+                        values.len()
+                    )));
+                }
+                values
+                    .into_iter()
+                    .map(|value| item.project_value(value))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(PhenixValue::List)
+            }
+            Self::List(item) => {
+                let PhenixValue::List(values) = value else {
+                    return Err(ValueError::TypeMismatch {
+                        expected: TypeKind::List,
+                        actual: value.kind(),
+                    });
+                };
+                values
+                    .into_iter()
+                    .map(|value| item.project_value(value))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(PhenixValue::List)
+            }
+            Self::Map(item) => {
+                let PhenixValue::Map(values) = value else {
+                    return Err(ValueError::TypeMismatch {
+                        expected: TypeKind::Map,
+                        actual: value.kind(),
+                    });
+                };
+                values
+                    .into_iter()
+                    .map(|(key, value)| item.project_value(value).map(|value| (key, value)))
+                    .collect::<Result<BTreeMap<_, _>, _>>()
+                    .map(PhenixValue::Map)
+            }
+            Self::Table(fields) => project_table(fields, value),
+            Self::Variant(variants) => {
+                let PhenixValue::Variant { tag, value } = value else {
+                    return Err(ValueError::TypeMismatch {
+                        expected: TypeKind::Variant,
+                        actual: value.kind(),
+                    });
+                };
+                let schema = variants
+                    .get(&tag)
+                    .ok_or_else(|| ValueError::UnknownVariant(tag.clone()))?;
+                schema.project_value(*value).map(|value| PhenixValue::Variant {
+                    tag,
+                    value: Box::new(value),
+                })
+            }
+        }
+    }
+
     pub fn kind(&self) -> TypeKind {
         match self {
             Self::Any => TypeKind::Any,
@@ -403,6 +515,93 @@ impl Type {
             Self::Object { .. } => TypeKind::Object,
         }
     }
+}
+
+fn project_i64(value: PhenixValue) -> Result<PhenixValue, ValueError> {
+    match value {
+        PhenixValue::U64(value) if value <= i64::MAX as u64 => Ok(PhenixValue::I64(value as i64)),
+        PhenixValue::F64(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && value >= i64::MIN as f64
+                && value <= i64::MAX as f64 =>
+        {
+            Ok(PhenixValue::I64(value as i64))
+        }
+        value => Err(ValueError::TypeMismatch {
+            expected: TypeKind::I64,
+            actual: value.kind(),
+        }),
+    }
+}
+
+fn project_u64(value: PhenixValue) -> Result<PhenixValue, ValueError> {
+    match value {
+        PhenixValue::I64(value) if value >= 0 => Ok(PhenixValue::U64(value as u64)),
+        PhenixValue::F64(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && value >= 0.0
+                && value <= u64::MAX as f64 =>
+        {
+            Ok(PhenixValue::U64(value as u64))
+        }
+        value => Err(ValueError::TypeMismatch {
+            expected: TypeKind::U64,
+            actual: value.kind(),
+        }),
+    }
+}
+
+fn project_f64(value: PhenixValue) -> Result<PhenixValue, ValueError> {
+    match value {
+        PhenixValue::I64(value) => Ok(PhenixValue::F64(value as f64)),
+        PhenixValue::U64(value) => Ok(PhenixValue::F64(value as f64)),
+        value => Err(ValueError::TypeMismatch {
+            expected: TypeKind::F64,
+            actual: value.kind(),
+        }),
+    }
+}
+
+fn project_table(
+    fields: &BTreeMap<Key, Type>,
+    value: PhenixValue,
+) -> Result<PhenixValue, ValueError> {
+    let values = match value {
+        PhenixValue::Map(values) => values,
+        PhenixValue::Table(values) => values
+            .into_iter()
+            .map(|(key, value)| (key.as_str().to_owned(), value))
+            .collect(),
+        value => {
+            return Err(ValueError::TypeMismatch {
+                expected: TypeKind::Table,
+                actual: value.kind(),
+            })
+        }
+    };
+
+    if let Some(key) = values
+        .keys()
+        .find(|key| !fields.contains_key(key.as_str()))
+    {
+        return Err(ValueError::InvalidValue(format!(
+            "unexpected table field {key}"
+        )));
+    }
+
+    fields
+        .iter()
+        .map(|(key, schema)| {
+            let value = values
+                .get(key.as_str())
+                .cloned()
+                .ok_or_else(|| ValueError::MissingKey(key.clone()))?;
+            schema.project_value(value).map(|value| (key.clone(), value))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map(PhenixValue::Table)
 }
 
 fn nested_path(path: &[String], segment: impl Into<String>) -> Vec<String> {
@@ -1339,6 +1538,35 @@ mod tests {
 
     fn key(value: &str) -> Key {
         Key::parse(value).unwrap()
+    }
+
+    #[test]
+    fn structural_schema_projects_dynamic_json_shapes() {
+        let schema = Type::Table(BTreeMap::from([
+            (key("command"), Type::String),
+            (key("count"), Type::I64),
+            (key("maybe"), Type::Option(Box::new(Type::String))),
+        ]));
+        let dynamic = PhenixValue::Map(BTreeMap::from([
+            (
+                "command".to_owned(),
+                PhenixValue::String("printf ok".to_owned()),
+            ),
+            ("count".to_owned(), PhenixValue::U64(2)),
+            ("maybe".to_owned(), PhenixValue::Unit),
+        ]));
+
+        assert_eq!(
+            schema.project_value(dynamic).unwrap(),
+            PhenixValue::Table(BTreeMap::from([
+                (
+                    key("command"),
+                    PhenixValue::String("printf ok".to_owned()),
+                ),
+                (key("count"), PhenixValue::I64(2)),
+                (key("maybe"), PhenixValue::Option(None)),
+            ]))
+        );
     }
 
     #[test]
