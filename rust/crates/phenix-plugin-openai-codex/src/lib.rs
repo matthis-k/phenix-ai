@@ -277,6 +277,8 @@ fn decode_codex_response(
     })?;
     let mut completed = None;
     let mut failure = None;
+    let mut output_items = Vec::new();
+    let mut output_text = String::new();
     for raw_line in body.lines() {
         let line = raw_line.trim_end_matches('\r');
         let Some(data) = line.strip_prefix("data:") else {
@@ -290,12 +292,28 @@ fn decode_codex_response(
             message: format!("cannot decode Codex SSE event: {error}"),
         })?;
         match event.get("type").and_then(Value::as_str) {
+            Some("response.output_item.done") => {
+                if let Some(item) = event.get("item") {
+                    output_items.push(item.clone());
+                }
+            }
+            Some("response.output_text.delta") => {
+                if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                    output_text.push_str(delta);
+                }
+            }
+            Some("response.output_text.done") if output_text.is_empty() => {
+                if let Some(text) = event.get("text").and_then(Value::as_str) {
+                    output_text.push_str(text);
+                }
+            }
             Some("response.completed") => {
                 completed = event.get("response").cloned().or(Some(event));
             }
-            Some("response.failed") | Some("error") => {
+            Some("response.failed") | Some("response.incomplete") | Some("error") => {
                 failure = event
                     .pointer("/response/error/message")
+                    .or_else(|| event.pointer("/response/incomplete_details/reason"))
                     .or_else(|| event.pointer("/error/message"))
                     .or_else(|| event.get("message"))
                     .and_then(Value::as_str)
@@ -308,9 +326,28 @@ fn decode_codex_response(
     if let Some(message) = failure {
         return Err(ProviderError::Unavailable { message });
     }
-    let completed = completed.ok_or_else(|| ProviderError::Protocol {
+    let mut completed = completed.ok_or_else(|| ProviderError::Protocol {
         message: "Codex SSE stream ended without response.completed".to_owned(),
     })?;
+    let completed_object = completed
+        .as_object_mut()
+        .ok_or_else(|| ProviderError::Protocol {
+            message: "Codex response.completed payload was not an object".to_owned(),
+        })?;
+    let completed_has_output = completed_object
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|output| !output.is_empty());
+    let completed_has_output_text = completed_object
+        .get("output_text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty());
+    if !completed_has_output && !output_items.is_empty() {
+        completed_object.insert("output".to_owned(), Value::Array(output_items));
+    } else if !completed_has_output && !completed_has_output_text && !output_text.is_empty() {
+        completed_object.insert("output_text".to_owned(), Value::String(output_text));
+    }
+
     let completed_response = ProviderResponse {
         status: response.status,
         headers: response.headers.clone(),
@@ -1266,6 +1303,89 @@ mod tests {
         assert_eq!(
             decoded.provider_metadata["id"],
             PhenixValue::String("response-1".to_owned())
+        );
+    }
+
+    #[test]
+    fn codex_response_accumulates_streamed_output_before_metadata_only_completion() {
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+                "event: response.output_text.delta\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"wor\"}\n\n",
+                "event: response.output_text.delta\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ld\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded = decode_codex_response(Protocol::OpenAiResponses, &response).unwrap();
+        assert_eq!(decoded.output.as_ref(), b"world");
+        assert_eq!(
+            decoded.provider_metadata["id"],
+            PhenixValue::String("response-1".to_owned())
+        );
+    }
+
+    #[test]
+    fn codex_response_falls_back_to_text_deltas_without_output_item_done() {
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"wor\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ld\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded = decode_codex_response(Protocol::OpenAiResponses, &response).unwrap();
+        assert_eq!(decoded.output.as_ref(), b"world");
+    }
+
+    #[test]
+    fn codex_response_accumulates_streamed_function_calls() {
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"item-1\",\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"fixture.echo\",\"arguments\":\"{\\\"value\\\":\\\"streamed\\\"}\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded = decode_codex_response(Protocol::OpenAiResponses, &response).unwrap();
+        assert_eq!(decoded.output.as_ref(), b"");
+        assert_eq!(decoded.tool_calls.len(), 1);
+        assert_eq!(decoded.tool_calls[0].call_id, "call-1");
+        assert_eq!(decoded.tool_calls[0].callable_id.as_str(), "fixture.echo");
+        assert_eq!(
+            decoded.tool_calls[0].input,
+            PhenixValue::Map(BTreeMap::from([(
+                "value".to_owned(),
+                PhenixValue::String("streamed".to_owned())
+            )]))
         );
     }
 
