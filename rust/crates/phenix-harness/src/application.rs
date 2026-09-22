@@ -26,17 +26,16 @@ use phenix_application_interface::{
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
     HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
-    ModelToolTurn, PhenixSchema,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
-    PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
-    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    ModelToolTurn, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
+    PhenixSchema, PhenixValue, PluginId, Project, RoutingProfileId, RuntimeId, SessionId,
+    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, options_component_manifest, sdk_contribution,
-    session_service, workspace_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
-    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
-    SDK_PLUGIN,
+    session_service, workspace_service, AgentLoopCommand, AgentLoopResponse,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
@@ -2190,13 +2189,7 @@ fn normalize_model_tool_input(
         }
         (PhenixSchema::F64, PhenixValue::I64(value)) => PhenixValue::F64(value as f64),
         (PhenixSchema::F64, PhenixValue::U64(value)) => PhenixValue::F64(value as f64),
-        (_, value) => {
-            return Err(format!(
-                "expected {}, got {}",
-                schema.kind(),
-                value.kind()
-            ))
-        }
+        (_, value) => return Err(format!("expected {}, got {}", schema.kind(), value.kind())),
     };
 
     schema
@@ -2499,8 +2492,7 @@ mod tests {
         };
         let call = normalize_model_tool_call(&tools, &call).unwrap();
         assert!(matches!(call.input, PhenixValue::Table(_)));
-        let change =
-            execute_runtime_model_tool_call(&worker.harness, &worker.authority, &call);
+        let change = execute_runtime_model_tool_call(&worker.harness, &worker.authority, &call);
         let ExecutionChange::ToolResult { call_id, output } = change else {
             panic!("default bash tool must execute through the workspace provider");
         };
