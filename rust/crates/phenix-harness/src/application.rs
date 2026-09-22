@@ -25,14 +25,15 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
-    HasPhenixSchema, LocalPersistence, ModelToolDescriptor, ModelToolResult, ModelToolTurn,
+    HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
+    ModelToolTurn, PhenixSchema,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixValue,
     PluginId, Project, RoutingProfileId, RuntimeId, SessionId, SharedCapabilityRegistry,
     SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_service, execution_review_service, options_component_manifest, sdk_contribution,
-    session_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
+    session_service, workspace_service, AgentLoopCommand, AgentLoopResponse, ExecutionReviewCommand,
     ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
     SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
     SDK_PLUGIN,
@@ -45,7 +46,7 @@ use phenix_sdk::{
     ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
-    RoutingProfile,
+    RoutingProfile, WorkspaceCommand, WorkspaceResponse,
 };
 use std::{
     collections::BTreeMap,
@@ -1694,7 +1695,7 @@ fn start_prompt(
             return;
         }
     };
-    let tools = match model_tool_surface(service, &request.session_id, Vec::new()) {
+    let tools = match model_tool_surface(service, &request.session_id, runtime_model_tools()) {
         Ok(tools) => tools,
         Err(error) => {
             invocation.respond(Err(error));
@@ -2042,13 +2043,19 @@ fn run_agent_execution(
                     input: call.input.clone(),
                 },
             )?;
-            let change = execute_admitted_client_tool_call(
-                &service,
-                &session_id,
-                &execution_id,
-                call.clone(),
-                |request| invoke_permission_handler(&service, permission_handler.as_ref(), request),
-            );
+            let change = if is_runtime_model_tool(&call.callable_id) {
+                execute_runtime_model_tool_call(&harness, &authority, call)
+            } else {
+                execute_admitted_client_tool_call(
+                    &service,
+                    &session_id,
+                    &execution_id,
+                    call.clone(),
+                    |request| {
+                        invoke_permission_handler(&service, permission_handler.as_ref(), request)
+                    },
+                )
+            };
             let result = match &change {
                 ExecutionChange::ToolResult { call_id, output } => ModelToolResult {
                     call_id: call_id.clone(),
@@ -2087,6 +2094,82 @@ fn run_agent_execution(
     Err(ApplicationError::Conflict {
         message: "model tool turn limit exceeded".to_owned(),
     })
+}
+
+fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
+    vec![ModelToolDescriptor {
+        id: CallableId::parse("bash").expect("static bash callable id is valid"),
+        description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
+        input_schema: PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("command").expect("static bash field is valid"),
+            PhenixSchema::String,
+        )])),
+        output_schema: <WorkspaceResponse as ValueCodec>::phenix_type(),
+    }]
+}
+
+fn is_runtime_model_tool(callable_id: &CallableId) -> bool {
+    callable_id.as_str() == "bash"
+}
+
+fn execute_runtime_model_tool_call(
+    harness: &Arc<Mutex<PhenixHarness>>,
+    authority: &Authority,
+    call: &ModelToolCall,
+) -> ExecutionChange {
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        let PhenixValue::Table(fields) = &call.input else {
+            return Err(ApplicationError::InvalidInput {
+                message: "bash tool input must be an object with a command field".to_owned(),
+            });
+        };
+        let command = match fields.get("command") {
+            Some(PhenixValue::String(command)) if !command.trim().is_empty() => command.clone(),
+            Some(_) => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "bash tool command must be a non-empty string".to_owned(),
+                })
+            }
+            None => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "bash tool input is missing command".to_owned(),
+                })
+            }
+        };
+        let command = WorkspaceCommand::Shell { command };
+        let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = harness
+            .lock()
+            .invoke(&workspace_service(), &encoded, authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let value: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        let response = WorkspaceResponse::try_from(Project(&value)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })?;
+        Ok(response.to_value())
+    })();
+
+    match result {
+        Ok(output) => ExecutionChange::ToolResult {
+            call_id: call.call_id.clone(),
+            output,
+        },
+        Err(error) => ExecutionChange::ToolFailed {
+            call_id: call.call_id.clone(),
+            error,
+        },
+    }
 }
 
 fn send_execution_progress(
@@ -2256,6 +2339,45 @@ mod tests {
             model: phenix_core::ModelId::parse(model).unwrap(),
             options: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn default_runtime_exposes_backend_neutral_bash_tool() {
+        let tools = runtime_model_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id.as_str(), "bash");
+        assert_eq!(
+            tools[0].input_schema,
+            PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixSchema::String,
+            )]))
+        );
+
+        let worker = application_worker();
+        let call = ModelToolCall {
+            call_id: "call-1".into(),
+            callable_id: CallableId::parse("bash").unwrap(),
+            input: PhenixValue::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixValue::String("printf phenix-runtime-bash".into()),
+            )])),
+        };
+        let change =
+            execute_runtime_model_tool_call(&worker.harness, &worker.authority, &call);
+        let ExecutionChange::ToolResult { call_id, output } = change else {
+            panic!("default bash tool must execute through the workspace provider");
+        };
+        assert_eq!(call_id, "call-1");
+        let response = WorkspaceResponse::from_value(&output).unwrap();
+        assert!(matches!(
+            response,
+            WorkspaceResponse::Process {
+                exit_code: 0,
+                ref stdout,
+                ref stderr,
+            } if stdout == "phenix-runtime-bash" && stderr.is_empty()
+        ));
     }
 
     #[test]
