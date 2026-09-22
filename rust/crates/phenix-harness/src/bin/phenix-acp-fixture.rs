@@ -68,6 +68,71 @@ impl PluginInstance for FixtureProvider {
                 ));
             }
         }
+        if let Ok(expected_tool) = env::var("PHENIX_FIXTURE_EXPECT_TOOL") {
+            if !expected_tool.is_empty()
+                && !request
+                    .tools
+                    .iter()
+                    .any(|tool| tool.id.as_str() == expected_tool)
+            {
+                return Err(format!(
+                    "fixture model surface did not contain expected tool {expected_tool:?}"
+                ));
+            }
+        }
+
+        if let Ok(tool_id) = env::var("PHENIX_FIXTURE_CALL_TOOL") {
+            if !tool_id.is_empty() && request.continuation.is_empty() {
+                let callable_id =
+                    CallableId::parse(&tool_id).map_err(|error| error.to_string())?;
+                let command = env::var("PHENIX_FIXTURE_TOOL_COMMAND")
+                    .unwrap_or_else(|_| "printf PHENIX_FIXTURE_TOOL".to_owned());
+                return context
+                    .kernel
+                    .encode_value(&ModelInferenceResponse {
+                        output: Bytes::new(Vec::new()),
+                        provider_metadata: BTreeMap::new(),
+                        tool_calls: vec![ModelToolCall {
+                            call_id: "fixture-tool-call".to_owned(),
+                            callable_id,
+                            // Match real JSON provider decoding: JSON objects become maps.
+                            input: PhenixValue::Map(BTreeMap::from([(
+                                "command".to_owned(),
+                                PhenixValue::String(command),
+                            )])),
+                        }],
+                    })
+                    .map_err(|error| error.to_string());
+            }
+            if !tool_id.is_empty() {
+                let result = request
+                    .continuation
+                    .last()
+                    .and_then(|turn| turn.tool_results.last())
+                    .ok_or_else(|| "fixture expected a completed tool result".to_owned())?;
+                if result.callable_id.as_str() != tool_id || result.is_error {
+                    return Err(format!(
+                        "fixture tool call did not complete successfully: {result:?}"
+                    ));
+                }
+                if let Ok(expected_output) = env::var("PHENIX_FIXTURE_EXPECT_TOOL_OUTPUT") {
+                    let response = phenix_plugin_catalog::WorkspaceResponse::from_value(
+                        &result.output,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let phenix_plugin_catalog::WorkspaceResponse::Process { stdout, .. } = response
+                    else {
+                        return Err("fixture tool result was not a workspace process response".into());
+                    };
+                    if stdout != expected_output {
+                        return Err(format!(
+                            "fixture tool output mismatch: expected {expected_output:?}, got {stdout:?}"
+                        ));
+                    }
+                }
+            }
+        }
+
         let response = env::var("PHENIX_FIXTURE_RESPONSE")
             .unwrap_or_else(|_| "phenix deterministic fixture response".to_owned());
         context
