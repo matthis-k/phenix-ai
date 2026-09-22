@@ -1,12 +1,11 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    model_inference_service, Authority, Bytes, CapabilityGenerationId, ComponentExport,
-    CallableId, ComponentId, ComponentInterface, ComponentManifest, LocalPersistence, ModelId,
+    model_inference_service, Authority, Bytes, CallableId, CapabilityGenerationId, ComponentExport,
+    ComponentId, ComponentInterface, ComponentManifest, LocalPersistence, ModelId,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
-    PhenixValue,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_harness::{
     application::serve_configured_application, default_suite_authority, HarnessBuilder,
@@ -84,8 +83,7 @@ impl PluginInstance for FixtureProvider {
 
         if let Ok(tool_id) = env::var("PHENIX_FIXTURE_CALL_TOOL") {
             if !tool_id.is_empty() && request.continuation.is_empty() {
-                let callable_id =
-                    CallableId::parse(&tool_id).map_err(|error| error.to_string())?;
+                let callable_id = CallableId::parse(&tool_id).map_err(|error| error.to_string())?;
                 let command = env::var("PHENIX_FIXTURE_TOOL_COMMAND")
                     .unwrap_or_else(|_| "printf PHENIX_FIXTURE_TOOL".to_owned());
                 return context

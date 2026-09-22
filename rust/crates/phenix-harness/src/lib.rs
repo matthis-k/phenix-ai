@@ -1,9 +1,9 @@
 use phenix_core::{
     Authority, CallableId, CapabilityId, ComponentManifest, ConfigContribution,
     DurableSchemaRegistration, GraphGenerationId, Kernel, KernelError, LayerPolicy, ModelToolCall,
-    ModelToolDescriptor, PersistenceBackend, PhenixValue, PluginExecution, PluginId, PluginInstance,
-    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ResolvedHarnessActivationError,
-    ResolvedHarnessError, ServiceId,
+    ModelToolDescriptor, PersistenceBackend, PhenixValue, PluginExecution, PluginId,
+    PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
+    ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest, agent_loop_factory,
