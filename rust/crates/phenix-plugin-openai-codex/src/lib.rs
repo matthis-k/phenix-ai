@@ -293,7 +293,12 @@ fn decode_codex_response(
         })?;
         match event.get("type").and_then(Value::as_str) {
             Some("response.output_item.done") => {
-                if let Some(item) = event.get("item") {
+                if let Some(item) = event.get("item")
+                    && matches!(
+                        item.get("type").and_then(Value::as_str),
+                        Some("message" | "function_call")
+                    )
+                {
                     output_items.push(item.clone());
                 }
             }
@@ -1336,6 +1341,27 @@ mod tests {
             decoded.provider_metadata["id"],
             PhenixValue::String("response-1".to_owned())
         );
+    }
+
+    #[test]
+    fn codex_response_ignores_reasoning_output_items() {
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"reasoning-1\",\"type\":\"reasoning\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"private reasoning\"}]}}\n\n",
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"public answer\"}]}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded = decode_codex_response(Protocol::OpenAiResponses, &response).unwrap();
+        assert_eq!(decoded.output.as_ref(), b"public answer");
     }
 
     #[test]
