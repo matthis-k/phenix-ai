@@ -2482,7 +2482,7 @@ mod tests {
         let call = ModelToolCall {
             call_id: "call-1".into(),
             callable_id: CallableId::parse("bash").unwrap(),
-            // Provider JSON objects lower to dynamic maps. The application owns
+            // Provider JSON objects decode to dynamic maps. The application owns
             // the semantic tool target, so it projects that map through the
             // declared tool schema before dispatching the runtime callable.
             input: PhenixValue::Map(BTreeMap::from([(
