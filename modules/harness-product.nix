@@ -18,6 +18,8 @@
         ];
         doCheck = false;
 
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+
         installPhase = ''
           runHook preInstall
           mkdir -p "$out/bin"
@@ -26,6 +28,11 @@
           cp "$harness_binary" "$out/bin/phenix-harness"
           ln -s phenix-harness "$out/bin/phenix"
           runHook postInstall
+        '';
+
+        postFixup = ''
+          wrapProgram "$out/bin/phenix-harness" \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bash ]}
         '';
       };
 
