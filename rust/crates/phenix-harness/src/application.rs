@@ -2043,18 +2043,23 @@ fn run_agent_execution(
                     input: call.input.clone(),
                 },
             )?;
-            let change = if is_runtime_model_tool(&call.callable_id) {
-                execute_runtime_model_tool_call(&harness, &authority, call)
-            } else {
-                execute_admitted_client_tool_call(
+            let change = match project_model_tool_call(&tools, call) {
+                Ok(call) if is_runtime_model_tool(&call.callable_id) => {
+                    execute_runtime_model_tool_call(&harness, &authority, &call)
+                }
+                Ok(call) => execute_admitted_client_tool_call(
                     &service,
                     &session_id,
                     &execution_id,
-                    call.clone(),
+                    call,
                     |request| {
                         invoke_permission_handler(&service, permission_handler.as_ref(), request)
                     },
-                )
+                ),
+                Err(error) => ExecutionChange::ToolFailed {
+                    call_id: call.call_id.clone(),
+                    error,
+                },
             };
             let result = match &change {
                 ExecutionChange::ToolResult { call_id, output } => ModelToolResult {
@@ -2093,6 +2098,35 @@ fn run_agent_execution(
 
     Err(ApplicationError::Conflict {
         message: "model tool turn limit exceeded".to_owned(),
+    })
+}
+
+fn project_model_tool_call(
+    tools: &[ModelToolDescriptor],
+    call: &phenix_core::ModelToolCall,
+) -> Result<phenix_core::ModelToolCall, ApplicationError> {
+    let descriptor = tools
+        .iter()
+        .find(|tool| tool.id == call.callable_id)
+        .ok_or_else(|| ApplicationError::InvalidInput {
+            message: format!(
+                "model requested unavailable tool {}",
+                call.callable_id
+            ),
+        })?;
+    let input = descriptor
+        .input_schema
+        .project_value(call.input.clone())
+        .map_err(|error| ApplicationError::SchemaMismatch {
+            message: format!(
+                "model tool {} input does not match its declared schema: {error}",
+                call.callable_id
+            ),
+        })?;
+    Ok(phenix_core::ModelToolCall {
+        call_id: call.call_id.clone(),
+        callable_id: call.callable_id.clone(),
+        input,
     })
 }
 
@@ -2339,6 +2373,35 @@ mod tests {
             model: phenix_core::ModelId::parse(model).unwrap(),
             options: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn model_tool_call_projects_provider_json_into_declared_schema() {
+        let tools = runtime_model_tools();
+        let call = phenix_core::ModelToolCall {
+            call_id: "provider-call".into(),
+            callable_id: CallableId::parse("bash").unwrap(),
+            input: PhenixValue::Map(BTreeMap::from([(
+                "command".to_owned(),
+                PhenixValue::String("printf provider-shape".into()),
+            )])),
+        };
+
+        let projected = project_model_tool_call(&tools, &call).unwrap();
+        assert_eq!(
+            projected.input,
+            PhenixValue::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixValue::String("printf provider-shape".into()),
+            )]))
+        );
+        assert_eq!(
+            call.input,
+            PhenixValue::Map(BTreeMap::from([(
+                "command".to_owned(),
+                PhenixValue::String("printf provider-shape".into()),
+            )]))
+        );
     }
 
     #[test]
