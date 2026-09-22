@@ -40,6 +40,9 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER: &str = "https://auth.openai.com";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const RESPONSES_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/";
+// ChatGPT gates newer Codex models on this client compatibility header. Keep it
+// distinct from the Phenix crate version and advance it only with verified wire parity.
+const CODEX_COMPAT_VERSION: &str = "0.156.0";
 const CREDENTIAL_FILE_ENV: &str = "PHENIX_CREDENTIAL_FILE";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
@@ -212,6 +215,9 @@ fn codex_request(
     outgoing
         .headers
         .insert("accept".to_owned(), "text/event-stream".to_owned());
+    outgoing
+        .headers
+        .insert("version".to_owned(), CODEX_COMPAT_VERSION.to_owned());
     Ok(outgoing)
 }
 
@@ -380,9 +386,6 @@ impl OpenAiCodexPlugin {
         outgoing
             .headers
             .insert("originator".to_owned(), "phenix".to_owned());
-        outgoing
-            .headers
-            .insert("version".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
 
         let client = self.client()?.clone();
         self.runtime()?.block_on(async move {
@@ -1222,6 +1225,10 @@ mod tests {
         assert_eq!(
             request.headers.get("accept").map(String::as_str),
             Some("text/event-stream")
+        );
+        assert_eq!(
+            request.headers.get("version").map(String::as_str),
+            Some(CODEX_COMPAT_VERSION)
         );
         assert!(body.get("backend").is_none());
         assert!(body.get("inference").is_none());
