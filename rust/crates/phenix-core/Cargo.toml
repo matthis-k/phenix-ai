@@ -9,6 +9,7 @@ autotests = false
 role = "passive-library"
 
 [dependencies]
+base64.workspace = true
 getrandom.workspace = true
 parking_lot.workspace = true
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
