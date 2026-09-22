@@ -2104,7 +2104,7 @@ fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
             Key::parse("command").expect("static bash field is valid"),
             PhenixSchema::String,
         )])),
-        output_schema: WorkspaceResponse::phenix_type(),
+        output_schema: <WorkspaceResponse as ValueCodec>::phenix_type(),
     }]
 }
 
