@@ -293,13 +293,13 @@ fn decode_codex_response(
         })?;
         match event.get("type").and_then(Value::as_str) {
             Some("response.output_item.done") => {
-                if let Some(item) = event.get("item")
-                    && matches!(
+                if let Some(item) = event.get("item") {
+                    if matches!(
                         item.get("type").and_then(Value::as_str),
                         Some("message" | "function_call")
-                    )
-                {
-                    output_items.push(item.clone());
+                    ) {
+                        output_items.push(item.clone());
+                    }
                 }
             }
             Some("response.output_text.delta") => {
