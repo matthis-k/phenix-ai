@@ -58,7 +58,16 @@
           wrapProgram "$out/bin/phenix-acp" \
             --set PHENIX_DEFAULT_CONFIG_DIR ${pkgs.lib.escapeShellArg "${phenixHarnessResources}/share/phenix"} \
             --set PHENIX_CA_BUNDLE ${pkgs.lib.escapeShellArg "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"} \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bash pkgs.coreutils pkgs.git pkgs.gnugrep pkgs.findutils pkgs.gnused ]}
+            --prefix PATH : ${
+              pkgs.lib.makeBinPath [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.git
+                pkgs.gnugrep
+                pkgs.findutils
+                pkgs.gnused
+              ]
+            }
         '';
       };
 
