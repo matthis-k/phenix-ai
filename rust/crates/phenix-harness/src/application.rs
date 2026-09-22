@@ -1694,7 +1694,8 @@ fn start_prompt(
             return;
         }
     };
-    let tools = match model_tool_surface(service, &request.session_id, Vec::new()) {
+    let runtime_tools = worker.harness.lock().runtime_model_tools();
+    let tools = match model_tool_surface(service, &request.session_id, runtime_tools) {
         Ok(tools) => tools,
         Err(error) => {
             invocation.respond(Err(error));
@@ -2042,13 +2043,29 @@ fn run_agent_execution(
                     input: call.input.clone(),
                 },
             )?;
-            let change = execute_admitted_client_tool_call(
-                &service,
-                &session_id,
-                &execution_id,
-                call.clone(),
-                |request| invoke_permission_handler(&service, permission_handler.as_ref(), request),
-            );
+            let runtime_result = {
+                let mut runtime = harness.lock();
+                runtime.invoke_runtime_model_tool(&authority, call)
+            };
+            let change = match runtime_result {
+                Some(Ok(output)) => ExecutionChange::ToolResult {
+                    call_id: call.call_id.clone(),
+                    output,
+                },
+                Some(Err(error)) => ExecutionChange::ToolFailed {
+                    call_id: call.call_id.clone(),
+                    error,
+                },
+                None => execute_admitted_client_tool_call(
+                    &service,
+                    &session_id,
+                    &execution_id,
+                    call.clone(),
+                    |request| {
+                        invoke_permission_handler(&service, permission_handler.as_ref(), request)
+                    },
+                ),
+            };
             let result = match &change {
                 ExecutionChange::ToolResult { call_id, output } => ModelToolResult {
                     call_id: call_id.clone(),
@@ -2069,8 +2086,7 @@ fn run_agent_execution(
                 }
                 _ => {
                     return Err(ApplicationError::InvalidResponse {
-                        message: "client tool executor returned a non-terminal tool change"
-                            .to_owned(),
+                        message: "tool executor returned a non-terminal tool change".to_owned(),
                     });
                 }
             };
