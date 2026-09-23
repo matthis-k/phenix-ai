@@ -1,14 +1,18 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, agent_loop_service, execution_component_manifest, execution_factory,
-    execution_manifest, AgentLoopCommand, AgentLoopResponse, AgentLoopUsage,
-    ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
+    agent_tool_execution_service, execution_component_manifest, execution_factory,
+    execution_manifest, AgentLoopCommand, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
+    AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
+    AgentToolExecutionResponse, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 use phenix_core::{
-    Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
-    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
@@ -18,10 +22,18 @@ use phenix_sdk::{
     RemainingBudget, StepAttemptRecord, StepRunnerResponse, StepSettlementBasis, TaskRequirements,
     UsageAttemptKind, UsageAttribution, UsagePlanningInput, UsagePolicy,
 };
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    },
+};
 
 const INVOCATION_PROVIDER: &str = "fixture.agent-loop-invocation";
 const INVOCATION_PROVIDER_COMPONENT: &str = "fixture.agent-loop-invocation";
+const TOOL_ADAPTER: &str = "fixture.agent-loop-tools";
+const TOOL_ADAPTER_COMPONENT: &str = "fixture.agent-loop-tools";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
@@ -54,7 +66,9 @@ fn invocation_provider_context<'host, 'runtime>(
     )
 }
 
-struct InvocationProvider;
+struct InvocationProvider {
+    calls: u32,
+}
 
 impl PluginInstance for InvocationProvider {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
@@ -70,6 +84,7 @@ impl PluginInstance for InvocationProvider {
         if service != &default_invocation_service() {
             return Err(format!("unsupported default invocation service: {service}"));
         }
+        self.calls += 1;
         let context = invocation_provider_context(host);
         let DefaultInvocationCommand::Invoke { request } = context
             .kernel
@@ -87,16 +102,6 @@ impl PluginInstance for InvocationProvider {
         if request.input != Bytes::new(b"prompt".to_vec()) {
             return Err("agent loop changed invocation input".into());
         }
-        let tool_calls = request
-            .tools
-            .first()
-            .map(|tool| ModelToolCall {
-                call_id: "fixture-call".into(),
-                callable_id: tool.id.clone(),
-                input: PhenixValue::String("fixture-input".into()),
-            })
-            .into_iter()
-            .collect();
 
         let configuration: ExecutionConfigurationResponse = context
             .sdk
@@ -107,11 +112,60 @@ impl PluginInstance for InvocationProvider {
             return Err("execution back-edge returned a non-agent-list response".into());
         }
 
+        let tool_calls = if let Some(tool) = request.tools.first() {
+            match tool.id.as_str() {
+                "fixture.many" if request.continuation.is_empty() => (0..11)
+                    .map(|index| ModelToolCall {
+                        call_id: format!("fixture-call-{index}"),
+                        callable_id: tool.id.clone(),
+                        input: PhenixValue::String("fixture-input".into()),
+                    })
+                    .collect(),
+                "fixture.loop" => vec![ModelToolCall {
+                    call_id: format!("fixture-call-{}", self.calls),
+                    callable_id: tool.id.clone(),
+                    input: PhenixValue::String("fixture-input".into()),
+                }],
+                _ if request.continuation.is_empty() => vec![ModelToolCall {
+                    call_id: "fixture-call-1".into(),
+                    callable_id: tool.id.clone(),
+                    input: PhenixValue::String("fixture-input".into()),
+                }],
+                _ => {
+                    let turn = request
+                        .continuation
+                        .last()
+                        .ok_or_else(|| "agent loop lost continuation".to_owned())?;
+                    if turn.assistant_output != Bytes::new(b"provider-output".to_vec())
+                        || turn.tool_calls.len() != 1
+                        || turn.tool_results
+                            != vec![ModelToolResult {
+                                call_id: "fixture-call-1".into(),
+                                callable_id: tool.id.clone(),
+                                output: PhenixValue::String("fixture-result".into()),
+                                is_error: false,
+                            }]
+                    {
+                        return Err("agent loop changed typed continuation".into());
+                    }
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
         context
             .kernel
             .encode_value(&StepRunnerResponse::Completed {
                 attempt: fixture_attempt(),
-                output: Bytes::new(b"provider-output".to_vec()),
+                output: Bytes::new(
+                    if request.continuation.is_empty() {
+                        b"provider-output".to_vec()
+                    } else {
+                        b"provider-output-2".to_vec()
+                    },
+                ),
                 tool_calls,
                 settled: BudgetActual {
                     fresh_input_tokens: 1,
@@ -167,6 +221,114 @@ fn provider_component() -> ComponentManifest {
             priority: 200,
             required_authority: Authority::default(),
         }],
+        maximum_authority: regression_authority(),
+    }
+}
+
+struct ToolAdapter {
+    executions: Arc<AtomicU32>,
+    progress: Arc<Mutex<Vec<String>>>,
+}
+
+impl PluginInstance for ToolAdapter {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        if service == &agent_tool_execution_service() {
+            let value: PhenixValue = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let request = AgentToolExecutionRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            return serde_json::to_vec(&PhenixValue::from(
+                &AgentToolExecutionResponse::Completed {
+                    result: ModelToolResult {
+                        call_id: request.call.call_id,
+                        callable_id: request.call.callable_id,
+                        output: PhenixValue::String("fixture-result".into()),
+                        is_error: false,
+                    },
+                },
+            ))
+            .map_err(|error| error.to_string());
+        }
+        if service == &agent_loop_progress_service() {
+            let value: PhenixValue = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let record =
+                AgentLoopProgressRecord::try_from(Project(&value)).map_err(|e| e.to_string())?;
+            let entry = match record.progress {
+                AgentLoopProgress::ToolCall { call } => format!("call:{}", call.call_id),
+                AgentLoopProgress::ToolResult { result } => {
+                    format!("result:{}", result.call_id)
+                }
+            };
+            self.progress.lock().unwrap().push(entry);
+            return serde_json::to_vec(&PhenixValue::from(&AgentLoopProgressResponse::Recorded))
+                .map_err(|error| error.to_string());
+        }
+        Err(format!("unsupported fixture tool adapter service: {service}"))
+    }
+}
+
+fn tool_adapter_id() -> PluginId {
+    PluginId::parse(TOOL_ADAPTER).unwrap()
+}
+
+fn tool_adapter_component_id() -> ComponentId {
+    ComponentId::parse(TOOL_ADAPTER_COMPONENT).unwrap()
+}
+
+fn tool_adapter_manifest() -> PluginManifest {
+    PluginManifest {
+        id: tool_adapter_id(),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: agent_tool_execution_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: agent_loop_progress_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
+        resource_namespaces: Vec::new(),
+        maximum_authority: regression_authority(),
+    }
+}
+
+fn tool_adapter_component() -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: tool_adapter_component_id(),
+        owner: tool_adapter_id(),
+        imports: Vec::new(),
+        exports: vec![
+            ComponentExport {
+                interface: AgentToolExecutionInterface::interface_id(),
+                schema: AgentToolExecutionInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: AgentLoopProgressInterface::interface_id(),
+                schema: AgentLoopProgressInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+        ],
         maximum_authority: regression_authority(),
     }
 }
@@ -236,15 +398,18 @@ fn fixture_attempt() -> StepAttemptRecord {
     attempt
 }
 
+
 fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     let authority = regression_authority();
     let execution = execution_manifest(authority.clone());
     let agent_loop = agent_loop_manifest(authority.clone());
+    let tool_adapter = tool_adapter_manifest();
     let ceiling = execution.maximum_authority.clone();
-    let mut plugins = vec![execution, agent_loop];
+    let mut plugins = vec![execution, agent_loop, tool_adapter];
     let mut components = vec![
         execution_component_manifest(authority.clone()),
         agent_loop_component_manifest(authority),
+        tool_adapter_component(),
     ];
     if with_provider {
         plugins.push(provider_manifest());
@@ -253,10 +418,19 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     ResolvedHarness::resolve(plugins, components, [], &ceiling).unwrap()
 }
 
-fn kernel(with_provider: bool) -> (Kernel, PluginId) {
+fn kernel(
+    with_provider: bool,
+) -> (
+    Kernel,
+    PluginId,
+    Arc<AtomicU32>,
+    Arc<Mutex<Vec<String>>>,
+) {
     let resolved = resolved_harness(with_provider);
     let execution = execution_manifest(Authority::default()).id;
     let agent_loop = agent_loop_manifest(Authority::default()).id;
+    let executions = Arc::new(AtomicU32::new(0));
+    let progress = Arc::new(Mutex::new(Vec::new()));
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel
@@ -265,13 +439,23 @@ fn kernel(with_provider: bool) -> (Kernel, PluginId) {
     kernel
         .register_embedded_factory(agent_loop.clone(), agent_loop_factory)
         .unwrap();
+    let executions_for_factory = Arc::clone(&executions);
+    let progress_for_factory = Arc::clone(&progress);
+    kernel
+        .register_embedded_factory(tool_adapter_id(), move || {
+            Box::new(ToolAdapter {
+                executions: Arc::clone(&executions_for_factory),
+                progress: Arc::clone(&progress_for_factory),
+            })
+        })
+        .unwrap();
     if with_provider {
         kernel
-            .register_embedded_factory(provider_id(), || Box::new(InvocationProvider))
+            .register_embedded_factory(provider_id(), || Box::new(InvocationProvider { calls: 0 }))
             .unwrap();
     }
     kernel.activate_all().unwrap();
-    (kernel, agent_loop)
+    (kernel, agent_loop, executions, progress)
 }
 
 fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
@@ -282,15 +466,27 @@ fn command(tools: Vec<ModelToolDescriptor>) -> AgentLoopCommand {
         callable_id: None,
         input: Bytes::new(b"prompt".to_vec()),
         tools,
-        continuation: Vec::new(),
     }
 }
 
-fn invoke_agent_loop(kernel: &mut Kernel, agent_loop: &PluginId) -> Result<Vec<u8>, KernelError> {
+fn descriptor(id: &str) -> ModelToolDescriptor {
+    ModelToolDescriptor {
+        id: CallableId::parse(id).unwrap(),
+        description: "fixture tool".into(),
+        input_schema: PhenixSchema::Any,
+        output_schema: PhenixSchema::Any,
+    }
+}
+
+fn invoke_agent_loop(
+    kernel: &mut Kernel,
+    agent_loop: &PluginId,
+    command: AgentLoopCommand,
+) -> Result<Vec<u8>, KernelError> {
     kernel.invoke_component(
         &agent_loop_component_id(),
         &agent_loop_service(),
-        &serde_json::to_vec(&PhenixValue::from(&command(Vec::new()))).unwrap(),
+        &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
         &regression_authority(),
         agent_loop,
     )
@@ -306,8 +502,8 @@ fn agent_loop_plugin_is_distinct_from_execution_state_owner() {
 
 #[test]
 fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
-    let (mut kernel, agent_loop) = kernel(true);
-    let output = invoke_agent_loop(&mut kernel, &agent_loop).unwrap();
+    let (mut kernel, agent_loop, _, _) = kernel(true);
+    let output = invoke_agent_loop(&mut kernel, &agent_loop, command(Vec::new())).unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
 
@@ -315,7 +511,6 @@ fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
         response,
         AgentLoopResponse::Completed {
             output: Bytes::new(b"provider-output".to_vec()),
-            tool_calls: Vec::new(),
             usage: AgentLoopUsage {
                 model_calls: 1,
                 tool_calls: 0,
@@ -325,47 +520,96 @@ fn resolved_agent_loop_returns_central_invocation_output_with_usage() {
 }
 
 #[test]
-fn agent_loop_preserves_typed_invocation_tool_calls() {
-    let (mut kernel, agent_loop) = kernel(true);
-    let command = command(vec![ModelToolDescriptor {
-        id: phenix_core::CallableId::parse("fixture.client.echo").unwrap(),
-        description: "Echo fixture input".into(),
-        input_schema: PhenixSchema::Any,
-        output_schema: PhenixSchema::Any,
-    }]);
-    let output = kernel
-        .invoke_component(
-            &agent_loop_component_id(),
-            &agent_loop_service(),
-            &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-            &regression_authority(),
-            &agent_loop,
-        )
-        .unwrap();
+fn one_agent_call_owns_two_model_turns_and_typed_continuation() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.client.echo")]),
+    )
+    .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
 
     assert_eq!(
         response,
         AgentLoopResponse::Completed {
-            output: Bytes::new(b"provider-output".to_vec()),
-            tool_calls: vec![ModelToolCall {
-                call_id: "fixture-call".into(),
-                callable_id: phenix_core::CallableId::parse("fixture.client.echo").unwrap(),
-                input: PhenixValue::String("fixture-input".into()),
-            }],
+            output: Bytes::new(b"provider-output-2".to_vec()),
             usage: AgentLoopUsage {
-                model_calls: 1,
+                model_calls: 2,
                 tool_calls: 1,
             },
         }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        progress.lock().unwrap().as_slice(),
+        ["call:fixture-call-1", "result:fixture-call-1"]
+    );
+}
+
+#[test]
+fn eleven_calls_fail_before_any_tool_executes() {
+    let (mut kernel, agent_loop, executions, _) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.many")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Failed {
+            failure: AgentLoopFailure::ToolCallLimitExceeded {
+                limit: DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+                actual: 11,
+            },
+            usage: AgentLoopUsage {
+                model_calls: 1,
+                tool_calls: 0,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn seventeenth_model_turn_fails_at_loop_boundary() {
+    let (mut kernel, agent_loop, executions, _) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.loop")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Failed {
+            failure: AgentLoopFailure::ModelTurnLimitExceeded {
+                limit: DEFAULT_MAX_MODEL_TURNS,
+            },
+            usage: AgentLoopUsage {
+                model_calls: DEFAULT_MAX_MODEL_TURNS,
+                tool_calls: DEFAULT_MAX_MODEL_TURNS,
+            },
+        }
+    );
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        DEFAULT_MAX_MODEL_TURNS
     );
 }
 
 #[test]
 fn agent_loop_without_default_invocation_fails_at_optional_import_boundary() {
-    let (mut kernel, agent_loop) = kernel(false);
-    match invoke_agent_loop(&mut kernel, &agent_loop).unwrap_err() {
+    let (mut kernel, agent_loop, _, _) = kernel(false);
+    match invoke_agent_loop(&mut kernel, &agent_loop, command(Vec::new())).unwrap_err() {
         KernelError::ServiceInvoke {
             plugin,
             service,
