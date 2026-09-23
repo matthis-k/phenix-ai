@@ -197,6 +197,7 @@ pub enum InvocationClockResponse {
 #[serde(rename_all = "snake_case")]
 pub enum StepSettlementBasis {
     ReservedMaximum,
+    ProviderReportedOutput,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]

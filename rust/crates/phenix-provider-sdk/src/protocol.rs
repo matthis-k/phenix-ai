@@ -2,7 +2,8 @@ use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimi
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use phenix_core::{
     CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, ModelToolTurn, PhenixSchema, PhenixValue, ValueCodec,
+    ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
+    ValueCodec,
 };
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
@@ -586,21 +587,91 @@ fn parse_arguments(
     Ok(value.into())
 }
 
+fn reported(value: Option<u64>) -> UsageQuantity {
+    value
+        .map(|value| UsageQuantity::Reported { value })
+        .unwrap_or_default()
+}
+
+fn openai_responses_usage(value: &Value) -> ModelTurnUsage {
+    let total_input = value.pointer("/usage/input_tokens").and_then(Value::as_u64);
+    let cache_read = value
+        .pointer("/usage/input_tokens_details/cached_tokens")
+        .and_then(Value::as_u64);
+    ModelTurnUsage {
+        fresh_input_tokens: reported(
+            total_input.map(|total| total.saturating_sub(cache_read.unwrap_or(0))),
+        ),
+        cache_read_tokens: reported(cache_read),
+        cache_write_tokens: UsageQuantity::Unavailable,
+        output_tokens: reported(value.pointer("/usage/output_tokens").and_then(Value::as_u64)),
+        reasoning_tokens: reported(
+            value
+                .pointer("/usage/output_tokens_details/reasoning_tokens")
+                .and_then(Value::as_u64),
+        ),
+    }
+}
+
+fn openai_chat_usage(value: &Value) -> ModelTurnUsage {
+    let total_input = value.pointer("/usage/prompt_tokens").and_then(Value::as_u64);
+    let cache_read = value
+        .pointer("/usage/prompt_tokens_details/cached_tokens")
+        .and_then(Value::as_u64);
+    ModelTurnUsage {
+        fresh_input_tokens: reported(
+            total_input.map(|total| total.saturating_sub(cache_read.unwrap_or(0))),
+        ),
+        cache_read_tokens: reported(cache_read),
+        cache_write_tokens: UsageQuantity::Unavailable,
+        output_tokens: reported(
+            value
+                .pointer("/usage/completion_tokens")
+                .and_then(Value::as_u64),
+        ),
+        reasoning_tokens: reported(
+            value
+                .pointer("/usage/completion_tokens_details/reasoning_tokens")
+                .and_then(Value::as_u64),
+        ),
+    }
+}
+
+fn anthropic_usage(value: &Value) -> ModelTurnUsage {
+    ModelTurnUsage {
+        fresh_input_tokens: reported(value.pointer("/usage/input_tokens").and_then(Value::as_u64)),
+        cache_read_tokens: reported(
+            value
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(Value::as_u64),
+        ),
+        cache_write_tokens: reported(
+            value
+                .pointer("/usage/cache_creation_input_tokens")
+                .and_then(Value::as_u64),
+        ),
+        output_tokens: reported(value.pointer("/usage/output_tokens").and_then(Value::as_u64)),
+        reasoning_tokens: UsageQuantity::Unavailable,
+    }
+}
+
 fn response_with_content(
     value: &Value,
     text: String,
     tool_calls: Vec<ModelToolCall>,
+    usage: ModelTurnUsage,
 ) -> ModelInferenceResponse {
     let mut provider_metadata = BTreeMap::new();
     if let Some(id) = value.get("id").cloned() {
         provider_metadata.insert("id".to_owned(), id.into());
     }
-    if let Some(usage) = value.get("usage").cloned() {
-        provider_metadata.insert("usage".to_owned(), usage.into());
+    if let Some(raw_usage) = value.get("usage").cloned() {
+        provider_metadata.insert("usage".to_owned(), raw_usage.into());
     }
     ModelInferenceResponse {
         output: text.into_bytes().into(),
         provider_metadata,
+        usage,
         tool_calls,
     }
 }
@@ -666,7 +737,12 @@ fn openai_responses_response(
                 .to_owned(),
         });
     }
-    Ok(response_with_content(&value, text, tool_calls))
+    Ok(response_with_content(
+        &value,
+        text,
+        tool_calls,
+        openai_responses_usage(&value),
+    ))
 }
 
 fn openai_chat_response(
@@ -733,7 +809,12 @@ fn openai_chat_response(
             message: "OpenAI chat payload contained neither content nor tool calls".to_owned(),
         });
     }
-    Ok(response_with_content(&value, text, tool_calls))
+    Ok(response_with_content(
+        &value,
+        text,
+        tool_calls,
+        openai_chat_usage(&value),
+    ))
 }
 
 fn anthropic_response(
@@ -785,7 +866,12 @@ fn anthropic_response(
                 .to_owned(),
         });
     }
-    Ok(response_with_content(&value, text, tool_calls))
+    Ok(response_with_content(
+        &value,
+        text,
+        tool_calls,
+        anthropic_usage(&value),
+    ))
 }
 
 pub fn normalize_http_error(response: &ProviderResponse) -> ProviderError {
@@ -941,6 +1027,8 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(decoded.output.as_ref(), b"world");
+        assert_eq!(decoded.usage.fresh_input_tokens.value(), Some(1));
+        assert_eq!(decoded.usage.output_tokens.value(), Some(1));
         assert_eq!(
             decoded.provider_metadata["id"],
             PhenixValue::String("response-1".into())
