@@ -1,4 +1,4 @@
-use crate::DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+use crate::DEFAULT_MAX_TOOL_CALLS_PER_TURN;
 use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -66,8 +66,8 @@ impl ToolScheduler {
 impl Default for ToolScheduler {
     fn default() -> Self {
         Self::new(
-            NonZeroUsize::new(DEFAULT_MAX_PARALLEL_TOOL_CALLS as usize)
-                .expect("default parallel tool-call limit is non-zero"),
+            NonZeroUsize::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN as usize)
+                .expect("default per-turn tool-call limit is non-zero"),
         )
     }
 }
