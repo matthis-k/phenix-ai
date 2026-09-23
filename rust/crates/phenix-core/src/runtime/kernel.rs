@@ -106,6 +106,9 @@ impl Kernel {
         self.provenance.snapshot()
     }
 
+    /// Replace the process-local destination for metadata-only runtime diagnostics.
+    ///
+    /// The sink is not part of semantic event delivery and cannot affect invocation outcomes.
     pub fn set_runtime_trace_sink(&mut self, sink: Arc<dyn RuntimeTraceSink>) {
         self.trace_sink = sink;
     }
