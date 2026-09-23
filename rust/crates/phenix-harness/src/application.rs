@@ -2625,7 +2625,7 @@ mod tests {
         Cancel, CloseSession, CreateSession, DiscoverAuthentication, ListSessions, Prompt,
         RenameSession, ResumeSession,
     };
-    use phenix_core::{Bytes, LocalPersistence, SessionId, ValueAddress};
+    use phenix_core::{Bytes, LocalPersistence, ModelToolTurn, SessionId, ValueAddress};
     use std::{
         fs,
         path::PathBuf,
@@ -2717,27 +2717,88 @@ mod tests {
         );
 
         let worker = application_worker();
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.application-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let session_id = SessionId::parse("session-1").unwrap();
+        let execution_id = "execution-1".to_owned();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (progress_sender, _progress_receiver) = mpsc::channel(4);
+        let adapter = {
+            let harness = worker.harness.lock();
+            harness.application_agent_tools().clone()
+        };
+        adapter
+            .register(
+                execution_id.clone(),
+                ApplicationAgentToolRun {
+                    service,
+                    session_id: session_id.clone(),
+                    permission_handler: None,
+                    cancellation,
+                    progress_sender,
+                },
+            )
+            .unwrap();
+
         let call = ModelToolCall {
             call_id: "call-1".into(),
             callable_id: CallableId::parse("bash").unwrap(),
-            // Provider JSON objects decode to dynamic maps. The application owns
-            // the semantic tool target, so it projects that map through the
-            // declared tool schema before dispatching the runtime callable.
-            input: PhenixValue::Map(BTreeMap::from([(
-                "command".to_owned(),
+            input: PhenixValue::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
                 PhenixValue::String("printf phenix-runtime-bash".into()),
             )])),
         };
-        let call = normalize_model_tool_call(&tools, &call).unwrap();
-        assert!(matches!(call.input, PhenixValue::Table(_)));
-        let change = execute_runtime_model_tool_call(&worker.harness, &worker.authority, &call);
-        let ExecutionChange::ToolResult { call_id, output } = change else {
-            panic!("default bash tool must execute through the workspace provider");
+        let request = AgentToolExecutionRequest {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id),
+            call: call.clone(),
         };
-        assert_eq!(call_id, "call-1");
-        let response = WorkspaceResponse::from_value(&output).unwrap();
+        let encoded = serde_json::to_vec(&PhenixValue::from(&request)).unwrap();
+        let output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &encoded,
+                &worker.authority,
+                None,
+            )
+            .unwrap();
+        adapter.remove(&execution_id);
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+        let AgentToolExecutionResponse::Completed { result } = response else {
+            panic!("default bash tool must complete through the application adapter");
+        };
+        assert_eq!(result.call_id, "call-1");
+        assert_eq!(result.callable_id.as_str(), "bash");
+        assert!(!result.is_error);
+        let workspace = WorkspaceResponse::from_value(&result.output).unwrap();
         assert!(matches!(
-            response,
+            workspace,
             WorkspaceResponse::Process {
                 exit_code: 0,
                 ref stdout,
@@ -2752,13 +2813,8 @@ mod tests {
             tools,
             continuation: vec![ModelToolTurn {
                 assistant_output: Bytes::new(Vec::new()),
-                tool_calls: vec![call.clone()],
-                tool_results: vec![ModelToolResult {
-                    call_id: call.call_id,
-                    callable_id: call.callable_id,
-                    output,
-                    is_error: false,
-                }],
+                tool_calls: vec![call],
+                tool_results: vec![result],
             }],
         };
         let encoded = phenix_provider_sdk::ProtocolAdapter::encode(
