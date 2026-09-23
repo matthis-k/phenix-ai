@@ -25,9 +25,9 @@ mod listener;
 mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
-mod trace;
 #[cfg(test)]
 mod tests;
+mod trace;
 
 pub use listener::PluginListener;
 pub use trace::{
