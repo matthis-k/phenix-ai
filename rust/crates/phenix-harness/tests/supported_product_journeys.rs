@@ -248,6 +248,7 @@ impl PluginInstance for ModelProvider {
                 "model".into(),
                 PhenixValue::String(request.model.as_str().to_owned()),
             )]),
+            usage: Default::default(),
             tool_calls: Vec::new(),
         };
         serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
