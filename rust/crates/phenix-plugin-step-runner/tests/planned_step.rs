@@ -1,6 +1,7 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, ComponentInterface, Kernel, KernelConfig, LocalPersistence,
-    ModelId, ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext,
+    Authority, CapabilityGenerationId, ComponentInterface, InvocationOutcome, Kernel, KernelConfig,
+    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
+    PhenixValue, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ValueError,
 };
@@ -59,6 +60,14 @@ impl PluginInstance for FixtureProvider {
             .map_err(|error| error.to_string())?;
         if request.input.as_ref() == b"provider-fails" {
             return Err("fixture provider failed after invocation".into());
+        }
+        if request.input.as_ref() == b"provider-unavailable" && request.model.as_str() == "small" {
+            let failure = ModelInferenceFailure::Unavailable {
+                message: "fixture provider is temporarily unavailable".into(),
+            };
+            let outcome =
+                InvocationOutcome::domain_error(PhenixValue::from(&failure)).into_transport_value();
+            return serde_json::to_vec(&outcome).map_err(|error| error.to_string());
         }
         context
             .kernel
@@ -539,6 +548,50 @@ mod failed_dispatch {
         assert_eq!(remaining.output_tokens, 872);
         assert_eq!(remaining.cost_microunits, Some(9_000));
         assert_eq!(remaining.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod automatic_dispatch_retry {
+    use super::*;
+
+    #[test]
+    fn retryable_provider_failure_uses_a_real_retry_attempt_and_next_candidate() {
+        let path = temp_db("automatic-dispatch-retry");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, true);
+
+        let mut request = request(1_000);
+        request.input = b"provider-unavailable".to_vec().into();
+        request.task.context.mandatory_input_tokens = 100;
+        request.task.context.reducible_input_tokens = 100;
+        request.context_candidates[0].estimated_tokens = 100;
+
+        let response: StepRunnerResponse = invoke(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run { request },
+        )
+        .unwrap();
+        let StepRunnerResponse::Completed { attempt, output, .. } = response;
+
+        assert_eq!(attempt.attribution.kind, UsageAttemptKind::Retry);
+        assert_eq!(
+            attempt.attribution.parent_attempt_id.as_deref(),
+            Some("attempt-1")
+        );
+        assert_eq!(
+            attempt.route.as_ref().unwrap().target.model.as_str(),
+            "large"
+        );
+        assert_eq!(output.as_ref(), b"provider-unavailable");
+
+        let first = lookup_attempt(&mut kernel, "attempt-1").expect("root attempt exists");
+        assert_eq!(first.phase, StepAttemptPhase::Settled);
+        assert_eq!(first.outcome, Some(AttemptOutcome::Failed));
+        assert_eq!(first.route.as_ref().unwrap().target.model.as_str(), "small");
+        assert_eq!(remaining(&mut kernel).attempts, 2);
         let _ = fs::remove_file(path);
     }
 }
