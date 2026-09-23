@@ -77,6 +77,10 @@ impl PluginInstance for FixtureProvider {
                     "model".into(),
                     serde_json::json!(request.model.as_str()).into(),
                 )]),
+                usage: phenix_core::ModelTurnUsage {
+                    output_tokens: phenix_core::UsageQuantity::Reported { value: 8 },
+                    ..Default::default()
+                },
                 tool_calls: Vec::new(),
             })
             .map_err(|error| error.to_string())
@@ -216,6 +220,10 @@ fn capabilities(target: ModelTarget, window: u64) -> EffectiveModelCapabilities 
 }
 
 fn setup_root(kernel: &mut Kernel) {
+    setup_root_with_output(kernel, 1_000);
+}
+
+fn setup_root_with_output(kernel: &mut Kernel, output_tokens: u64) {
     let _: ExecutionResponse = invoke(
         kernel,
         execution_service(),
@@ -233,7 +241,7 @@ fn setup_root(kernel: &mut Kernel) {
                 root_execution_id: "root".into(),
                 limits: phenix_sdk::RootBudgetLimits {
                     fresh_input_tokens: 4_000,
-                    output_tokens: 1_000,
+                    output_tokens,
                     cost_microunits: Some(10_000),
                     attempts: 4,
                 },
@@ -513,11 +521,45 @@ mod successful_lifecycle {
             "large"
         );
         assert_eq!(output.as_ref(), b"hello planned world");
-        assert_eq!(settlement_basis, StepSettlementBasis::ReservedMaximum);
+        assert_eq!(
+            settlement_basis,
+            StepSettlementBasis::ProviderReportedOutput
+        );
         assert_eq!(settled.fresh_input_tokens, 800);
-        assert_eq!(settled.output_tokens, 128);
+        assert_eq!(settled.output_tokens, 8);
         assert_eq!(settled.attempts, 1);
-        assert_eq!(remaining(&mut kernel).attempts, 3);
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.output_tokens, 992);
+        assert_eq!(remaining.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod reported_usage_budget_release {
+    use super::*;
+
+    #[test]
+    fn unused_output_reserve_is_released_between_model_turns() {
+        let path = temp_db("reported-usage-budget-release");
+        let mut kernel = kernel(&path);
+        setup_root_with_output(&mut kernel, 256);
+        setup_routing(&mut kernel, true, true);
+
+        for ordinal in 1..=3 {
+            let mut request = request(1_000);
+            request.attribution.attempt_id = format!("attempt-{ordinal}");
+            request.cache_epoch = ordinal;
+            invoke::<_, StepRunnerResponse>(
+                &mut kernel,
+                step_runner_service(),
+                &StepRunnerCommand::Run { request },
+            )
+            .unwrap();
+        }
+
+        let remaining = remaining(&mut kernel);
+        assert_eq!(remaining.output_tokens, 232);
+        assert_eq!(remaining.attempts, 1);
         let _ = fs::remove_file(path);
     }
 }
