@@ -604,7 +604,11 @@ fn openai_responses_usage(value: &Value) -> ModelTurnUsage {
         ),
         cache_read_tokens: reported(cache_read),
         cache_write_tokens: UsageQuantity::Unavailable,
-        output_tokens: reported(value.pointer("/usage/output_tokens").and_then(Value::as_u64)),
+        output_tokens: reported(
+            value
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64),
+        ),
         reasoning_tokens: reported(
             value
                 .pointer("/usage/output_tokens_details/reasoning_tokens")
@@ -614,7 +618,9 @@ fn openai_responses_usage(value: &Value) -> ModelTurnUsage {
 }
 
 fn openai_chat_usage(value: &Value) -> ModelTurnUsage {
-    let total_input = value.pointer("/usage/prompt_tokens").and_then(Value::as_u64);
+    let total_input = value
+        .pointer("/usage/prompt_tokens")
+        .and_then(Value::as_u64);
     let cache_read = value
         .pointer("/usage/prompt_tokens_details/cached_tokens")
         .and_then(Value::as_u64);
@@ -650,7 +656,11 @@ fn anthropic_usage(value: &Value) -> ModelTurnUsage {
                 .pointer("/usage/cache_creation_input_tokens")
                 .and_then(Value::as_u64),
         ),
-        output_tokens: reported(value.pointer("/usage/output_tokens").and_then(Value::as_u64)),
+        output_tokens: reported(
+            value
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64),
+        ),
         reasoning_tokens: UsageQuantity::Unavailable,
     }
 }

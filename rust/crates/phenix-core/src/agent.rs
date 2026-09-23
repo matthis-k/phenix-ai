@@ -11,19 +11,17 @@ pub const SKILL_SERVICE: &str = "phenix.skills@1";
 pub const CONTEXT_SERVICE: &str = "phenix.context@1";
 
 #[derive(
-    phenix_sdk_macros::PhenixValue,
-    Clone,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
+    phenix_sdk_macros::PhenixValue, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize,
 )]
 #[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UsageQuantity {
-    Reported { value: u64 },
-    Estimated { value: u64, basis: String },
+    Reported {
+        value: u64,
+    },
+    Estimated {
+        value: u64,
+        basis: String,
+    },
     #[default]
     Unavailable,
 }
@@ -39,14 +37,7 @@ impl UsageQuantity {
 }
 
 #[derive(
-    phenix_sdk_macros::PhenixValue,
-    Clone,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
+    phenix_sdk_macros::PhenixValue, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize,
 )]
 #[serde(deny_unknown_fields)]
 pub struct ModelTurnUsage {
