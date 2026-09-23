@@ -249,7 +249,7 @@ impl PluginInstance for ToolAdapter {
         &mut self,
         service: &ServiceId,
         input: &[u8],
-        host: &PluginHost<'_>,
+        _host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         if service == &agent_loop_control_service() {
             let value: PhenixValue = serde_json::from_slice(input).map_err(|e| e.to_string())?;
