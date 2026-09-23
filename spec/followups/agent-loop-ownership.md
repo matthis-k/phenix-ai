@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: validating
 source: kernel-runtime-mechanism-audit-2026-09-23
 base_sha: fb0a0e54e80d4f51edd15e641ed576931694a11b
 ---
