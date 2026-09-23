@@ -681,7 +681,7 @@ fn response_with_content(
     ModelInferenceResponse {
         output: text.into_bytes().into(),
         provider_metadata,
-        usage,
+        usage: Box::new(usage),
         tool_calls,
     }
 }

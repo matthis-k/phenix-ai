@@ -67,7 +67,7 @@ pub struct ModelInferenceResponse {
     pub output: Bytes,
     pub provider_metadata: BTreeMap<String, PhenixValue>,
     #[serde(default)]
-    pub usage: ModelTurnUsage,
+    pub usage: Box<ModelTurnUsage>,
     /// Structured tool calls emitted by the provider, in provider order.
     #[serde(default)]
     pub tool_calls: Vec<ModelToolCall>,

@@ -77,10 +77,10 @@ impl PluginInstance for FixtureProvider {
                     "model".into(),
                     serde_json::json!(request.model.as_str()).into(),
                 )]),
-                usage: phenix_core::ModelTurnUsage {
+                usage: Box::new(phenix_core::ModelTurnUsage {
                     output_tokens: phenix_core::UsageQuantity::Reported { value: 8 },
                     ..Default::default()
-                },
+                }),
                 tool_calls: Vec::new(),
             })
             .map_err(|error| error.to_string())
