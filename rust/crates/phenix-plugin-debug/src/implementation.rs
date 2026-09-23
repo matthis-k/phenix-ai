@@ -5,8 +5,8 @@ use crate::{
 use phenix_core::{
     Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GraphGenerationId,
     LogSink, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance,
-    PluginListener, PluginManifest, ResolvedListener, RuntimeTraceEvent, SdkClient,
-    ServiceContribution, ServiceId, StructuredLogger,
+    PluginListener, PluginManifest, ResolvedListener, RuntimeTraceBuffer, RuntimeTraceEvent,
+    RuntimeTraceSink, SdkClient, ServiceContribution, ServiceId, StructuredLogger,
 };
 use phenix_sdk::{
     ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent, ModelRoutingInterface,
@@ -23,7 +23,6 @@ use std::{
 
 pub const DEBUG_SERVICE: &str = "phenix.debug@1";
 pub const DEBUG_LOG_ENV: &str = "PHENIX_DEBUG_LOG";
-const RUNTIME_TRACE_LISTENER_METHOD: &str = "runtime_trace";
 const MODEL_DIAGNOSTIC_LISTENER_METHOD: &str = "model_diagnostic";
 static TRACE_LOGGER: OnceLock<Result<StructuredLogger, String>> = OnceLock::new();
 
@@ -107,36 +106,38 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> DebugContext<'
     )
 }
 
-struct RuntimeTraceLogger;
+pub struct DebugRuntimeTraceSink {
+    retained: RuntimeTraceBuffer,
+}
 
-impl PluginListener for RuntimeTraceLogger {
-    fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
-        match serde_json::from_slice::<RuntimeTraceEvent>(&event.payload) {
-            Ok(trace) => record_trace_detail(
-                "runtime_trace",
-                json!({
-                    "emitter": event.emitter.as_str(),
-                    "causality_id": event.causality_id,
-                    "event": event_name(&trace),
-                }),
-                json!({
-                    "emitter": event.emitter.as_str(),
-                    "causality_id": event.causality_id,
-                    "trace": trace,
-                }),
-            ),
-            Err(error) => record_trace_inline(
-                "runtime_trace_decode_failed",
-                json!({
-                    "emitter": event.emitter.as_str(),
-                    "causality_id": event.causality_id,
-                    "error": error.to_string(),
-                    "payload_bytes": event.payload.len(),
-                }),
-            ),
+impl Default for DebugRuntimeTraceSink {
+    fn default() -> Self {
+        Self {
+            retained: RuntimeTraceBuffer::default(),
         }
-        Ok(())
     }
+}
+
+impl RuntimeTraceSink for DebugRuntimeTraceSink {
+    fn record(&self, trace: RuntimeTraceEvent) {
+        self.retained.record(trace.clone());
+        record_trace_detail(
+            "runtime_trace",
+            json!({
+                "source": "kernel.runtime",
+                "event": event_name(&trace),
+            }),
+            json!({
+                "source": "kernel.runtime",
+                "trace": trace,
+            }),
+        );
+    }
+}
+
+#[must_use]
+pub fn debug_runtime_trace_sink() -> Arc<dyn RuntimeTraceSink> {
+    Arc::new(DebugRuntimeTraceSink::default())
 }
 
 struct ModelDiagnosticLogger;
@@ -210,7 +211,6 @@ impl PluginInstance for crate::Plugin {
         _generation: &GraphGenerationId,
     ) -> Option<Result<Arc<dyn PluginListener>, String>> {
         match listener.declaration.method.as_str() {
-            RUNTIME_TRACE_LISTENER_METHOD => Some(Ok(Arc::new(RuntimeTraceLogger))),
             MODEL_DIAGNOSTIC_LISTENER_METHOD => Some(Ok(Arc::new(ModelDiagnosticLogger))),
             _ => None,
         }
