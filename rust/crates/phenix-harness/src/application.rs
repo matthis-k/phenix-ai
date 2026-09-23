@@ -1808,8 +1808,7 @@ impl PluginInstance for ApplicationAgentToolPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let response =
-                record_application_agent_progress(&context, &self.registry, record)?;
+            let response = record_application_agent_progress(&context, &self.registry, record)?;
             return context
                 .kernel
                 .encode_value(&response)
@@ -1903,15 +1902,21 @@ fn record_application_agent_progress(
     }
 
     let event_permit = match &run.event_sender {
-        Some(sender) => Some(sender.clone().try_reserve_owned().map_err(|error| {
-            if error.is_full() {
-                ApplicationError::Conflict {
-                    message: "application event queue is full".to_owned(),
-                }
-            } else {
-                ApplicationError::Disconnected
-            }
-        }).map_err(|error| error.to_string())?),
+        Some(sender) => Some(
+            sender
+                .clone()
+                .try_reserve_owned()
+                .map_err(|error| {
+                    if error.is_full() {
+                        ApplicationError::Conflict {
+                            message: "application event queue is full".to_owned(),
+                        }
+                    } else {
+                        ApplicationError::Disconnected
+                    }
+                })
+                .map_err(|error| error.to_string())?,
+        ),
         None => None,
     };
 
