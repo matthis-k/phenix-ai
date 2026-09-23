@@ -136,15 +136,24 @@ impl PluginInstance for InvocationProvider {
                         .continuation
                         .last()
                         .ok_or_else(|| "agent loop lost continuation".to_owned())?;
+                    let expected_result = if tool.id.as_str() == "fixture.error" {
+                        ModelToolResult {
+                            call_id: "fixture-call-1".into(),
+                            callable_id: tool.id.clone(),
+                            output: PhenixValue::String("fixture-error".into()),
+                            is_error: true,
+                        }
+                    } else {
+                        ModelToolResult {
+                            call_id: "fixture-call-1".into(),
+                            callable_id: tool.id.clone(),
+                            output: PhenixValue::String("fixture-result".into()),
+                            is_error: false,
+                        }
+                    };
                     if turn.assistant_output != Bytes::new(b"provider-output".to_vec())
                         || turn.tool_calls.len() != 1
-                        || turn.tool_results
-                            != vec![ModelToolResult {
-                                call_id: "fixture-call-1".into(),
-                                callable_id: tool.id.clone(),
-                                output: PhenixValue::String("fixture-result".into()),
-                                is_error: false,
-                            }]
+                        || turn.tool_results != vec![expected_result]
                     {
                         return Err("agent loop changed typed continuation".into());
                     }
@@ -273,13 +282,21 @@ impl PluginInstance for ToolAdapter {
             if request.call.callable_id.as_str() == "fixture.cancel-between" {
                 self.cancel_on_next_control.store(true, Ordering::SeqCst);
             }
+            let is_error = request.call.callable_id.as_str() == "fixture.error";
             return serde_json::to_vec(&PhenixValue::from(
                 &AgentToolExecutionResponse::Completed {
                     result: ModelToolResult {
                         call_id: request.call.call_id,
                         callable_id: request.call.callable_id,
-                        output: PhenixValue::String("fixture-result".into()),
-                        is_error: false,
+                        output: PhenixValue::String(
+                            if is_error {
+                                "fixture-error"
+                            } else {
+                                "fixture-result"
+                            }
+                            .into(),
+                        ),
+                        is_error,
                     },
                 },
             ))
@@ -645,6 +662,35 @@ fn seventeenth_model_turn_fails_at_loop_boundary() {
     assert_eq!(
         executions.load(Ordering::SeqCst),
         DEFAULT_MAX_MODEL_TURNS
+    );
+}
+
+#[test]
+fn ordinary_tool_failure_is_continuation_not_run_failure() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.error")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Completed {
+            output: Bytes::new(b"provider-output-2".to_vec()),
+            usage: AgentLoopUsage {
+                model_calls: 2,
+                tool_calls: 1,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        progress.lock().unwrap().as_slice(),
+        ["call:fixture-call-1", "result:fixture-call-1"]
     );
 }
 
