@@ -64,7 +64,6 @@ pub enum ModelDispatchResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDispatchFailure {
-    pub decision: RouteDecision,
     pub failure: ModelInferenceFailure,
 }
 
