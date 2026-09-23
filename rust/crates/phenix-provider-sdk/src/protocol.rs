@@ -1,4 +1,5 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use phenix_core::{
     CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PhenixSchema, PhenixValue, ValueCodec,
@@ -261,9 +262,45 @@ fn encode_tools(
 }
 
 fn phenix_json(value: &PhenixValue) -> Result<Value, ProviderError> {
-    Value::from_value(value).map_err(|error| ProviderError::InvalidRequest {
-        message: format!("model tool value is not JSON-compatible: {error:?}"),
-    })
+    match value {
+        PhenixValue::Unit => Ok(Value::Null),
+        PhenixValue::Bool(value) => Ok(Value::Bool(*value)),
+        PhenixValue::I64(value) => Ok(Value::Number((*value).into())),
+        PhenixValue::U64(value) => Ok(Value::Number((*value).into())),
+        PhenixValue::F64(value) => serde_json::Number::from_f64(*value)
+            .map(Value::Number)
+            .ok_or_else(|| ProviderError::InvalidRequest {
+                message: "model tool value contains a non-finite float".to_owned(),
+            }),
+        PhenixValue::String(value) => Ok(Value::String(value.clone())),
+        PhenixValue::Bytes(value) => Ok(Value::String(BASE64_STANDARD.encode(value))),
+        PhenixValue::Option(None) => Ok(Value::Null),
+        PhenixValue::Option(Some(value)) => phenix_json(value),
+        PhenixValue::List(values) => values
+            .iter()
+            .map(phenix_json)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        PhenixValue::Map(values) => values
+            .iter()
+            .map(|(key, value)| phenix_json(value).map(|value| (key.clone(), value)))
+            .collect::<Result<Map<_, _>, _>>()
+            .map(Value::Object),
+        PhenixValue::Table(values) => values
+            .iter()
+            .map(|(key, value)| {
+                phenix_json(value).map(|value| (key.as_str().to_owned(), value))
+            })
+            .collect::<Result<Map<_, _>, _>>()
+            .map(Value::Object),
+        PhenixValue::Variant { tag, value } => Ok(serde_json::json!({
+            "tag": tag.as_str(),
+            "value": phenix_json(value)?,
+        })),
+        PhenixValue::Callable(_) | PhenixValue::Object(_) => Err(ProviderError::InvalidRequest {
+            message: "model tool value contains an opaque capability reference".to_owned(),
+        }),
+    }
 }
 
 fn tool_arguments(call: &ModelToolCall) -> Result<String, ProviderError> {
