@@ -1,12 +1,12 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
-    agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
+    agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
+    agent_loop_factory, agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, execution_component_manifest, execution_factory,
-    execution_manifest, AgentLoopCommand, AgentLoopFailure, AgentLoopProgress,
-    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
-    AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
-    AgentToolExecutionResponse, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    execution_manifest, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
+    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
     DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 use phenix_core::{
@@ -25,7 +25,7 @@ use phenix_sdk::{
 use std::{
     collections::BTreeSet,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
     },
 };
@@ -228,6 +228,7 @@ fn provider_component() -> ComponentManifest {
 struct ToolAdapter {
     executions: Arc<AtomicU32>,
     progress: Arc<Mutex<Vec<String>>>,
+    cancel_on_next_control: Arc<AtomicBool>,
 }
 
 impl PluginInstance for ToolAdapter {
@@ -241,11 +242,37 @@ impl PluginInstance for ToolAdapter {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
+        if service == &agent_loop_control_service() {
+            let value: PhenixValue = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let request =
+                AgentLoopControlRequest::try_from(Project(&value)).map_err(|e| e.to_string())?;
+            if request.execution_id != "execution-1"
+                || request.session_id.as_ref().map(SessionId::as_str) != Some("session-1")
+            {
+                return Err("agent loop changed control identity".into());
+            }
+            let response = if self.cancel_on_next_control.load(Ordering::SeqCst) {
+                AgentLoopControlResponse::Cancelled
+            } else {
+                AgentLoopControlResponse::Continue
+            };
+            return serde_json::to_vec(&PhenixValue::from(&response))
+                .map_err(|error| error.to_string());
+        }
         if service == &agent_tool_execution_service() {
             let value: PhenixValue = serde_json::from_slice(input).map_err(|e| e.to_string())?;
             let request = AgentToolExecutionRequest::try_from(Project(&value))
                 .map_err(|error| error.to_string())?;
             self.executions.fetch_add(1, Ordering::SeqCst);
+            if request.call.callable_id.as_str() == "fixture.cancel-during" {
+                return serde_json::to_vec(&PhenixValue::from(
+                    &AgentToolExecutionResponse::Cancelled,
+                ))
+                .map_err(|error| error.to_string());
+            }
+            if request.call.callable_id.as_str() == "fixture.cancel-between" {
+                self.cancel_on_next_control.store(true, Ordering::SeqCst);
+            }
             return serde_json::to_vec(&PhenixValue::from(
                 &AgentToolExecutionResponse::Completed {
                     result: ModelToolResult {
@@ -293,6 +320,12 @@ fn tool_adapter_manifest() -> PluginManifest {
         services: vec![
             ServiceContribution {
                 role: ServiceRole::Terminal,
+                service: agent_loop_control_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
                 service: agent_tool_execution_service(),
                 priority: 200,
                 required_authority: Authority::default(),
@@ -316,6 +349,12 @@ fn tool_adapter_component() -> ComponentManifest {
         owner: tool_adapter_id(),
         imports: Vec::new(),
         exports: vec![
+            ComponentExport {
+                interface: AgentLoopControlInterface::interface_id(),
+                schema: AgentLoopControlInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            },
             ComponentExport {
                 interface: AgentToolExecutionInterface::interface_id(),
                 schema: AgentToolExecutionInterface::schema(),
@@ -431,6 +470,7 @@ fn kernel(
     let agent_loop = agent_loop_manifest(Authority::default()).id;
     let executions = Arc::new(AtomicU32::new(0));
     let progress = Arc::new(Mutex::new(Vec::new()));
+    let cancel_on_next_control = Arc::new(AtomicBool::new(false));
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel
@@ -441,11 +481,13 @@ fn kernel(
         .unwrap();
     let executions_for_factory = Arc::clone(&executions);
     let progress_for_factory = Arc::clone(&progress);
+    let cancellation_for_factory = Arc::clone(&cancel_on_next_control);
     kernel
         .register_embedded_factory(tool_adapter_id(), move || {
             Box::new(ToolAdapter {
                 executions: Arc::clone(&executions_for_factory),
                 progress: Arc::clone(&progress_for_factory),
+                cancel_on_next_control: Arc::clone(&cancellation_for_factory),
             })
         })
         .unwrap();
@@ -604,6 +646,54 @@ fn seventeenth_model_turn_fails_at_loop_boundary() {
         executions.load(Ordering::SeqCst),
         DEFAULT_MAX_MODEL_TURNS
     );
+}
+
+#[test]
+fn cancellation_between_turns_stops_before_the_next_model_invocation() {
+    let (mut kernel, agent_loop, executions, _) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.cancel-between")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Cancelled {
+            usage: AgentLoopUsage {
+                model_calls: 1,
+                tool_calls: 1,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cancellation_during_a_tool_terminates_the_run() {
+    let (mut kernel, agent_loop, executions, _) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.cancel-during")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Cancelled {
+            usage: AgentLoopUsage {
+                model_calls: 1,
+                tool_calls: 0,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
 }
 
 #[test]
