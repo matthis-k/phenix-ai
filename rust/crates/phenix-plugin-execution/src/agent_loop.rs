@@ -1,6 +1,6 @@
 use crate::{
-    agent_loop_component_id, AgentLoopInterface, AgentLoopProgressInterface,
-    AgentToolExecutionInterface,
+    agent_loop_component_id, AgentLoopControlInterface, AgentLoopInterface,
+    AgentLoopProgressInterface, AgentToolExecutionInterface,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, ComponentInterface, Key, ModelToolCall, ModelToolDescriptor,
@@ -18,6 +18,7 @@ pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
 pub const AGENT_TOOL_EXECUTION_SERVICE: &str = "phenix.agent-tool-execution@1";
 pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
+pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
 pub const DEFAULT_MAX_MODEL_TURNS: u32 = 16;
 pub const DEFAULT_MAX_TOOL_CALLS_PER_TURN: u32 = 10;
 
@@ -106,6 +107,19 @@ pub enum AgentLoopResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+pub struct AgentLoopControlRequest {
+    pub execution_id: String,
+    pub session_id: Option<SessionId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AgentLoopControlResponse {
+    Continue,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct AgentToolExecutionRequest {
     pub execution_id: String,
     pub session_id: Option<SessionId>,
@@ -157,6 +171,12 @@ pub fn agent_loop_progress_service() -> ServiceId {
 }
 
 #[must_use]
+pub fn agent_loop_control_service() -> ServiceId {
+    ServiceId::parse(AGENT_LOOP_CONTROL_SERVICE)
+        .expect("static agent loop control service id is valid")
+}
+
+#[must_use]
 pub fn agent_loop_manifest(maximum_authority: Authority) -> PluginManifest {
     PluginManifest {
         id: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
@@ -186,6 +206,7 @@ pub fn agent_loop_factory_with_policy(policy: AgentLoopPolicy) -> Box<dyn Plugin
 
 struct AgentLoopSdk<'host, 'runtime> {
     invocation: SdkClient<'host, 'runtime, DefaultInvocationInterface>,
+    control: SdkClient<'host, 'runtime, AgentLoopControlInterface>,
     tools: SdkClient<'host, 'runtime, AgentToolExecutionInterface>,
     progress: SdkClient<'host, 'runtime, AgentLoopProgressInterface>,
 }
@@ -200,6 +221,7 @@ fn context<'host, 'runtime>(
         host,
         AgentLoopSdk {
             invocation: SdkClient::new(host, agent_loop_component_id()),
+            control: SdkClient::new(host, agent_loop_component_id()),
             tools: SdkClient::new(host, agent_loop_component_id()),
             progress: SdkClient::new(host, agent_loop_component_id()),
         },
@@ -289,6 +311,17 @@ fn run(
             .cancellation_token()
             .is_some_and(|token| token.is_cancelled())
         {
+            return Ok(AgentLoopResponse::Cancelled { usage });
+        }
+        let control: AgentLoopControlResponse = context
+            .sdk
+            .control
+            .invoke_projected(&AgentLoopControlRequest {
+                execution_id: execution_id.clone(),
+                session_id: session_id.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        if matches!(control, AgentLoopControlResponse::Cancelled) {
             return Ok(AgentLoopResponse::Cancelled { usage });
         }
 
