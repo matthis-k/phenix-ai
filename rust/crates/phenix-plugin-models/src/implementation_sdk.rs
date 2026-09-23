@@ -272,13 +272,10 @@ fn handle_dispatch(
                         reason: failure.message().to_owned(),
                     },
                 );
-                return Err(ModelDispatchFailure { decision, failure });
+                return Err(ModelDispatchFailure { failure });
             }
             let request = encode_request(context, &decision.target, input, tools, continuation)
-                .map_err(|failure| ModelDispatchFailure {
-                    decision: decision.clone(),
-                    failure,
-                })?;
+                .map_err(|failure| ModelDispatchFailure { failure })?;
             emit_diagnostic(
                 context,
                 ModelDiagnosticEvent::DispatchPrepared {
@@ -312,7 +309,7 @@ fn handle_dispatch(
                             reason: failure.message().to_owned(),
                         },
                     );
-                    return Err(ModelDispatchFailure { decision, failure });
+                    return Err(ModelDispatchFailure { failure });
                 }
             };
             emit_diagnostic(
