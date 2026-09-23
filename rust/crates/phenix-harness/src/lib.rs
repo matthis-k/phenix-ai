@@ -14,15 +14,15 @@ use phenix_plugin_catalog::{
     cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
     context_component_manifest, context_factory, context_manifest, debug_component_manifest,
     debug_factory, debug_manifest, debug_runtime_trace_sink, execution_component_manifest,
-    execution_factory,
-    execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
-    frontend_factory, frontend_manifest, helper_invocation_component_manifest,
-    hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
-    job_manifest, language_component_manifest, language_factory, language_manifest,
-    memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
-    model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
-    openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
-    options_manifest, planning_component_manifest, planning_factory, planning_manifest,
+    execution_factory, execution_manifest, first_party_durable_schema_registrations,
+    frontend_component_manifest, frontend_factory, frontend_manifest,
+    helper_invocation_component_manifest, hook_component_manifest, hook_factory, hook_manifest,
+    job_component_manifest, job_factory, job_manifest, language_component_manifest,
+    language_factory, language_manifest, memory_component_manifest, memory_factory,
+    memory_manifest, model_routing_component_manifest, model_routing_factory,
+    model_routing_manifest, openai_codex_component_manifest, openai_codex_factory,
+    openai_codex_manifest, options_component_manifest, options_factory, options_manifest,
+    planning_component_manifest, planning_factory, planning_manifest,
     repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
     sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
@@ -432,7 +432,10 @@ impl HarnessBuilder {
         create_kernel: impl FnOnce(&ResolvedHarness) -> Result<Kernel, HarnessBuildError>,
     ) -> Result<PhenixHarness, HarnessBuildError> {
         let debug_id = debug_manifest(self.component_authority.clone()).id;
-        let debug_enabled = self.manifests.iter().any(|manifest| manifest.id == debug_id);
+        let debug_enabled = self
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id == debug_id);
         let resolved = ResolvedHarness::resolve_with_durable_schemas_and_layer_policies(
             self.manifests.clone(),
             self.components,

@@ -42,8 +42,7 @@ pub use phenix_plugin_context::{
 pub use phenix_plugin_debug::{
     debug_component_id, debug_component_manifest, debug_factory, debug_manifest,
     debug_runtime_trace_sink, debug_service, DebugCommand, DebugInterface, DebugResponse,
-    DiagnosticEntry, DiagnosticSnapshot,
-    DEBUG_SERVICE,
+    DiagnosticEntry, DiagnosticSnapshot, DEBUG_SERVICE,
 };
 pub use phenix_plugin_execution::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_factory,

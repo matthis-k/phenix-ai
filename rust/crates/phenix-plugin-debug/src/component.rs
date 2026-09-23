@@ -1,8 +1,8 @@
 use crate::{debug_manifest, DEBUG_SERVICE};
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentListener,
-    ComponentManifest, EventFailurePolicy, HasPhenixSchema, InterfaceId, InterfaceSchema,
-    ListenerProjection, PhenixSchema, PhenixValue, SubscriptionId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentListener, ComponentManifest, EventFailurePolicy, HasPhenixSchema, InterfaceId,
+    InterfaceSchema, ListenerProjection, PhenixSchema, PhenixValue, SubscriptionId,
 };
 use phenix_sdk::{
     model_diagnostic_event_type, ContextInterface, FrontendInterface, JobInterface,
@@ -75,20 +75,18 @@ fn optional_import<Request: HasPhenixSchema>(
 pub fn debug_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let authority = debug_manifest(maximum_authority).maximum_authority;
     ComponentManifest {
-        listeners: vec![
-            ComponentListener {
-                id: SubscriptionId::parse("phenix.debug/listener/model-diagnostic")
-                    .expect("static model diagnostic listener id is valid"),
-                event: model_diagnostic_event_type(),
-                event_version: MODEL_DIAGNOSTIC_EVENT_VERSION,
-                method: "model_diagnostic".into(),
-                payload_schema: PhenixSchema::Any,
-                projection: ListenerProjection::Exact,
-                dependencies: Vec::new(),
-                failure_policy: EventFailurePolicy::Warn,
-                required_authority: Authority::default(),
-            },
-        ],
+        listeners: vec![ComponentListener {
+            id: SubscriptionId::parse("phenix.debug/listener/model-diagnostic")
+                .expect("static model diagnostic listener id is valid"),
+            event: model_diagnostic_event_type(),
+            event_version: MODEL_DIAGNOSTIC_EVENT_VERSION,
+            method: "model_diagnostic".into(),
+            payload_schema: PhenixSchema::Any,
+            projection: ListenerProjection::Exact,
+            dependencies: Vec::new(),
+            failure_policy: EventFailurePolicy::Warn,
+            required_authority: Authority::default(),
+        }],
         id: debug_component_id(),
         owner: crate::Plugin::plugin_id(),
         imports: vec![
