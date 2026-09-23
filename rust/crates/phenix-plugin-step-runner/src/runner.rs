@@ -857,41 +857,52 @@ fn resolve_model_route(
     route_policy: phenix_sdk::RouteSelectionPolicy,
 ) -> Result<ModelResponse, String> {
     if attribution.kind == UsageAttemptKind::Retry {
-        let parent_attempt_id = attribution
-            .parent_attempt_id
-            .as_ref()
-            .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
-        let parent: StepAttemptResponse = context
+        let listed_attempts: StepAttemptResponse = context
             .sdk
             .attempts
-            .invoke_projected(&StepAttemptCommand::Get {
-                attempt_id: parent_attempt_id.clone(),
+            .invoke_projected(&StepAttemptCommand::ListRoot {
+                root_execution_id: attribution.root_execution_id.clone(),
             })
             .map_err(|error| error.to_string())?;
-        let StepAttemptResponse::AttemptLookup {
-            attempt: Some(parent),
-        } = parent
-        else {
-            return Err(format!("unknown planned retry parent: {parent_attempt_id}"));
+        let StepAttemptResponse::Attempts { attempts } = listed_attempts else {
+            return Err("step attempt service returned a non-list response".into());
         };
+        let attempts = attempts
+            .into_iter()
+            .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
+            .collect::<BTreeMap<_, _>>();
 
-        if let Some(previous) = parent.route {
-            let listed: ModelResponse = context
-                .sdk
-                .routing
-                .invoke_projected(&ModelCommand::ListCandidates {
-                    profile_id: profile_id.clone(),
-                    callable_id: callable_id.clone(),
-                })
-                .map_err(|error| error.to_string())?;
-            let ModelResponse::Candidates { mut candidates } = listed else {
-                return Err("model routing returned a non-candidate response".into());
-            };
-            candidates.retain(|candidate| candidate.ordinal > previous.candidate_ordinal);
-            if !candidates.is_empty() {
-                if let Ok(selection) = select_route(&candidates, &plan.routing, &route_policy) {
-                    return Ok(ModelResponse::Decision { selection });
-                }
+        let mut tried_ordinals = BTreeSet::new();
+        let mut current = attribution.parent_attempt_id.clone();
+        let mut seen = BTreeSet::new();
+        while let Some(attempt_id) = current {
+            if !seen.insert(attempt_id.clone()) {
+                return Err("planned retry lineage contains a cycle".into());
+            }
+            let attempt = attempts
+                .get(&attempt_id)
+                .ok_or_else(|| format!("unknown planned retry ancestor: {attempt_id}"))?;
+            if let Some(route) = &attempt.route {
+                tried_ordinals.insert(route.candidate_ordinal);
+            }
+            current = attempt.attribution.parent_attempt_id.clone();
+        }
+
+        let listed: ModelResponse = context
+            .sdk
+            .routing
+            .invoke_projected(&ModelCommand::ListCandidates {
+                profile_id: profile_id.clone(),
+                callable_id: callable_id.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        let ModelResponse::Candidates { mut candidates } = listed else {
+            return Err("model routing returned a non-candidate response".into());
+        };
+        candidates.retain(|candidate| !tried_ordinals.contains(&candidate.ordinal));
+        if !candidates.is_empty() {
+            if let Ok(selection) = select_route(&candidates, &plan.routing, &route_policy) {
+                return Ok(ModelResponse::Decision { selection });
             }
         }
     }
