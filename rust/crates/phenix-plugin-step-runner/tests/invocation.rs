@@ -1,6 +1,7 @@
 use phenix_core::{
     Authority, CapabilityGenerationId, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, Kernel, KernelConfig, LocalPersistence, ModelId, ModelInferenceRequest,
+    ComponentManifest, ContextResourceId, InvocationOutcome, Kernel, KernelConfig,
+    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
     ServiceContribution, ServiceId, ServiceRole, ValueError,
@@ -17,16 +18,17 @@ use phenix_plugin_step_runner::{
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
 };
 use phenix_sdk::{
-    default_invocation_service, execution_resource_service, execution_service,
+    context_service, default_invocation_service, execution_resource_service, execution_service,
     invocation_clock_service, invocation_defaults_service, invocation_service,
-    step_attempt_service, CapacityKnowledge, ContextControl, DefaultInvocationCommand,
-    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
-    ExecutionResourceCommand, ExecutionResourceResponse, InvocationClockInterface,
-    InvocationClockResponse, InvocationCommand, InvocationDefaultsInterface,
-    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
-    ModelCommand, ModelLimits, ModelResponse, ModelTarget, RouteSelectionPolicy,
+    step_attempt_service, AttemptOutcome, CapacityKnowledge, ContextCommand, ContextControl,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextScope, DefaultInvocationCommand, DelegationResourcePolicy, EffectiveModelCapabilities,
+    ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
+    InvocationClockInterface, InvocationClockResponse, InvocationCommand,
+    InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationIntent, InvocationParams,
+    InvocationRequest, ModelCommand, ModelLimits, ModelResponse, ModelTarget, RouteSelectionPolicy,
     RoutingEstimateMode, RoutingProfile, StepAttemptCommand, StepAttemptResponse,
-    StepRunnerResponse, UsagePolicy,
+    StepRunnerResponse, UsageAttemptKind, UsagePolicy,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -62,6 +64,21 @@ impl PluginInstance for FixtureProvider {
                 input,
             )
             .map_err(|error| error.to_string())?;
+        if request
+            .input
+            .as_ref()
+            .windows(b"overflow-only-context".len())
+            .any(|window| window == b"overflow-only-context")
+        {
+            let failure = ModelInferenceFailure::ContextLimit {
+                message: "fixture context limit".into(),
+            };
+            return serde_json::to_vec(
+                &InvocationOutcome::domain_error(PhenixValue::from(&failure))
+                    .into_transport_value(),
+            )
+            .map_err(|error| error.to_string());
+        }
         context
             .kernel
             .encode_value(&ModelInferenceResponse {
@@ -345,6 +362,36 @@ fn setup(kernel: &mut Kernel) {
     );
 }
 
+fn load_optional_overflow_context(kernel: &mut Kernel) {
+    let resource_id = ContextResourceId::parse("overflow-doc").unwrap();
+    let registered: ContextResponse = invoke(
+        kernel,
+        context_service(),
+        &ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: ContextResourceKind::ProjectDocument,
+            source: "overflow.md".into(),
+            scope: ContextScope::Workspace,
+            content: b"overflow-only-context".to_vec().into(),
+        },
+    );
+    let ContextResponse::Registered { resource } = registered else {
+        panic!("expected registered context resource");
+    };
+    let _: ContextResponse = invoke(
+        kernel,
+        context_service(),
+        &ContextCommand::Load {
+            execution_id: "root".into(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: ContextInjectionRequester::ContextPolicy,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: "context-overflow regression".into(),
+        },
+    );
+}
+
 fn request() -> InvocationRequest {
     InvocationRequest {
         execution_id: "root".into(),
@@ -431,6 +478,56 @@ fn direct_invocation_needs_clock_but_no_defaults_provider() {
         panic!("expected attempt list");
     };
     assert_eq!(attempts.len(), 1);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn context_limit_prunes_reducible_context_and_retries_same_target() {
+    let path = temp_db("context-limit-retry");
+    let mut kernel = kernel(&path, false);
+    setup(&mut kernel);
+    load_optional_overflow_context(&mut kernel);
+
+    let mut params = params("context-limit-policy");
+    params.policy.max_retries = 1;
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        invocation_service(),
+        &InvocationCommand::Invoke {
+            request: request(),
+            params,
+        },
+    );
+    let StepRunnerResponse::Completed {
+        attempt, output, ..
+    } = response;
+    assert_eq!(attempt.attribution.kind, UsageAttemptKind::Retry);
+    assert_eq!(
+        attempt.route.as_ref().unwrap().target.model.as_str(),
+        "fixture-model"
+    );
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(!text.contains("overflow-only-context"));
+    assert!(text.contains("overflow-doc@"));
+
+    let attempts: StepAttemptResponse = invoke(
+        &mut kernel,
+        step_attempt_service(),
+        &StepAttemptCommand::ListRoot {
+            root_execution_id: "root".into(),
+        },
+    );
+    let StepAttemptResponse::Attempts { attempts } = attempts else {
+        panic!("expected attempt list");
+    };
+    assert_eq!(attempts.len(), 2);
+    let root = attempts
+        .iter()
+        .find(|attempt| attempt.attribution.kind == UsageAttemptKind::Root)
+        .unwrap();
+    assert_eq!(root.outcome, Some(AttemptOutcome::Failed));
+    assert_eq!(attempt.outcome, Some(AttemptOutcome::Succeeded));
+
     let _ = fs::remove_file(path);
 }
 

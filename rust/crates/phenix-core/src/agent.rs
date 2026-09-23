@@ -33,6 +33,69 @@ pub struct ModelInferenceResponse {
     pub tool_calls: Vec<ModelToolCall>,
 }
 
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelInferenceFailure {
+    Authentication {
+        message: String,
+    },
+    Permission {
+        message: String,
+    },
+    NotFound {
+        message: String,
+    },
+    RateLimited {
+        message: String,
+        retry_after_ms: Option<u64>,
+    },
+    ContextLimit {
+        message: String,
+    },
+    InvalidRequest {
+        message: String,
+    },
+    Unavailable {
+        message: String,
+    },
+    Transport {
+        message: String,
+    },
+    Protocol {
+        message: String,
+    },
+}
+
+impl ModelInferenceFailure {
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::Unavailable { .. } | Self::Transport { .. }
+        )
+    }
+
+    #[must_use]
+    pub const fn requires_context_recovery(&self) -> bool {
+        matches!(self, Self::ContextLimit { .. })
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Authentication { message }
+            | Self::Permission { message }
+            | Self::NotFound { message }
+            | Self::ContextLimit { message }
+            | Self::InvalidRequest { message }
+            | Self::Unavailable { message }
+            | Self::Transport { message }
+            | Self::Protocol { message }
+            | Self::RateLimited { message, .. } => message,
+        }
+    }
+}
+
 /// Backend-neutral metadata presented to a model for one ordinary callable.
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ModelToolDescriptor {
@@ -78,7 +141,11 @@ impl ComponentInterface for ModelInferenceInterface {
     }
 
     fn schema() -> crate::InterfaceSchema {
-        crate::InterfaceSchema::of::<ModelInferenceRequest, ModelInferenceResponse>()
+        crate::InterfaceSchema::fallible_of::<
+            ModelInferenceRequest,
+            ModelInferenceResponse,
+            ModelInferenceFailure,
+        >()
     }
 }
 

@@ -1,6 +1,7 @@
 use super::*;
 use phenix_core::{
-    CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixValue, Project,
+    CapabilityGenerationId, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
+    PhenixValue, Project,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities,
@@ -173,10 +174,10 @@ fn invoke_routing(kernel: &mut Kernel, command: ModelCommand) -> Result<ModelRes
     ModelResponse::try_from(Project(&output)).map_err(|error| error.to_string())
 }
 
-fn invoke_dispatch(
+fn invoke_dispatch_outcome(
     kernel: &mut Kernel,
     command: ModelDispatchCommand,
-) -> Result<ModelDispatchResponse, String> {
+) -> Result<InvocationOutcome, String> {
     let output = kernel
         .invoke(
             &model_dispatch_service(),
@@ -186,7 +187,35 @@ fn invoke_dispatch(
         )
         .map_err(|error| error.to_string())?;
     let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
-    ModelDispatchResponse::try_from(Project(&output)).map_err(|error| error.to_string())
+    Ok(InvocationOutcome::from_transport_value(output))
+}
+
+fn invoke_dispatch(
+    kernel: &mut Kernel,
+    command: ModelDispatchCommand,
+) -> Result<ModelDispatchResponse, String> {
+    match invoke_dispatch_outcome(kernel, command)? {
+        InvocationOutcome::Success(output) => {
+            ModelDispatchResponse::try_from(Project(&output)).map_err(|error| error.to_string())
+        }
+        InvocationOutcome::DomainError(output) => {
+            let failure = ModelDispatchFailure::try_from(Project(&output))
+                .map_err(|error| error.to_string())?;
+            Err(failure.failure.message().to_owned())
+        }
+    }
+}
+
+fn dispatch_failure(
+    kernel: &mut Kernel,
+    command: ModelDispatchCommand,
+) -> Result<ModelDispatchFailure, String> {
+    match invoke_dispatch_outcome(kernel, command)? {
+        InvocationOutcome::Success(_) => Err("expected model dispatch domain failure".into()),
+        InvocationOutcome::DomainError(output) => {
+            ModelDispatchFailure::try_from(Project(&output)).map_err(|error| error.to_string())
+        }
+    }
 }
 
 mod profile_store {
@@ -490,8 +519,21 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let error = prepare(&mut kernel, decision, b"must-not-run").unwrap_err();
-        assert!(error.contains("StaleCapabilityGeneration"));
+        let failure = dispatch_failure(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision,
+                input: b"must-not-run".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            failure.failure,
+            ModelInferenceFailure::InvalidRequest { ref message }
+                if message.contains("StaleCapabilityGeneration")
+        ));
         let _ = fs::remove_file(path);
     }
 
@@ -507,13 +549,21 @@ mod resolved_dispatch {
             },
         )
         .unwrap();
-        let error = prepare(
+        let failure = dispatch_failure(
             &mut kernel,
-            decision(target, "generation-1"),
-            b"must-not-run",
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision(target, "generation-1"),
+                input: b"must-not-run".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
         )
-        .unwrap_err();
-        assert!(error.contains("authentication required"));
+        .unwrap();
+        assert!(matches!(
+            failure.failure,
+            ModelInferenceFailure::Authentication { ref message }
+                if message.contains("authentication required")
+        ));
         let _ = fs::remove_file(path);
     }
 

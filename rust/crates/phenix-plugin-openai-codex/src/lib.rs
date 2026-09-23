@@ -9,11 +9,11 @@ use phenix_core::{
     PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_provider_sdk::{
-    normalize_http_error, provider_auth_service, provider_http_client_builder, AuthDescriptor,
-    AuthKind, Endpoint, HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand,
-    ProviderAuthInterface, ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult,
-    ProviderError, ProviderRequest, ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY,
-    SECRETS_MANAGE_CAPABILITY,
+    encode_model_inference_outcome, normalize_http_error, provider_auth_service,
+    provider_http_client_builder, AuthDescriptor, AuthKind, Endpoint, HttpMethod, Protocol,
+    ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
+    ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderRequest,
+    ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY, SECRETS_MANAGE_CAPABILITY,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
@@ -621,16 +621,7 @@ impl PluginInstance for OpenAiCodexPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            return self
-                .invoke_model(request)
-                .and_then(|response| {
-                    context.kernel.encode_value(&response).map_err(|error| {
-                        ProviderError::Protocol {
-                            message: error.to_string(),
-                        }
-                    })
-                })
-                .map_err(|error| error.to_wire());
+            return encode_model_inference_outcome(self.invoke_model(request));
         }
 
         if service == &provider_auth_service() {

@@ -1,8 +1,8 @@
 use crate::{
-    normalize_http_error, provider_auth_service, provider_http_client_builder, ApiTokenScheme,
-    ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand,
-    ProviderAuthResponse, ProviderError, ProviderRequest, ProviderResponse, ProviderSpec,
-    RateLimits, Token,
+    encode_model_inference_outcome, normalize_http_error, provider_auth_service,
+    provider_http_client_builder, ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore,
+    HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderRequest,
+    ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
     model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
@@ -252,16 +252,7 @@ impl PluginInstance for ProviderPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            return self
-                .invoke_model(request)
-                .and_then(|response| {
-                    context.kernel.encode_value(&response).map_err(|error| {
-                        ProviderError::Protocol {
-                            message: error.to_string(),
-                        }
-                    })
-                })
-                .map_err(|error| error.to_wire());
+            return encode_model_inference_outcome(self.invoke_model(request));
         }
         if service == &provider_auth_service() {
             let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;

@@ -8,6 +8,7 @@ publish = false
 role = "passive-library"
 
 [dependencies]
+base64.workspace = true
 phenix-core = { path = "../phenix-core" }
 reqwest.workspace = true
 serde.workspace = true

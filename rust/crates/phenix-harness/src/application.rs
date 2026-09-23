@@ -2506,6 +2506,40 @@ mod tests {
                 ref stderr,
             } if stdout == "phenix-runtime-bash" && stderr.is_empty()
         ));
+
+        let request = phenix_core::ModelInferenceRequest {
+            model: phenix_core::ModelId::parse("gpt-fixture").unwrap(),
+            input: Bytes::new(b"run the command".to_vec()),
+            options: BTreeMap::new(),
+            tools,
+            continuation: vec![ModelToolTurn {
+                assistant_output: Bytes::new(Vec::new()),
+                tool_calls: vec![call.clone()],
+                tool_results: vec![ModelToolResult {
+                    call_id: call.call_id,
+                    callable_id: call.callable_id,
+                    output,
+                    is_error: false,
+                }],
+            }],
+        };
+        let encoded = phenix_provider_sdk::ProtocolAdapter::encode(
+            &phenix_provider_sdk::Protocol::OpenAiResponses,
+            &phenix_provider_sdk::Endpoint::parse("https://example.com/v1").unwrap(),
+            &request,
+        )
+        .expect("typed Bash result must serialize into the next model request");
+        let body: serde_json::Value = serde_json::from_slice(&encoded.body).unwrap();
+        let outputs = body["input"].as_array().unwrap();
+        let tool_output = outputs
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("continuation contains the Bash result");
+        let output: serde_json::Value =
+            serde_json::from_str(tool_output["output"].as_str().unwrap()).unwrap();
+        assert_eq!(output["tag"], "Process");
+        assert_eq!(output["value"]["exit_code"], 0);
+        assert_eq!(output["value"]["stdout"], "phenix-runtime-bash");
     }
 
     #[test]
