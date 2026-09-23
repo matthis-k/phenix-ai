@@ -388,8 +388,12 @@ fn runtime_trace_reports_service_chain_without_request_payload() {
         b"layer:terminal:secret-marker"
     );
 
-    let trace = traces
-        .snapshot()
+    let recorded = traces.snapshot();
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::PolicyStage { policy, .. } if policy == "kernel.service_chain"
+    )));
+    let trace = recorded
         .into_iter()
         .find(|trace| matches!(trace, RuntimeTraceEvent::ServiceInvocation { .. }))
         .expect("service invocation trace should be recorded");
