@@ -203,7 +203,7 @@ impl DelegatedTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{ArtifactRevision, CapabilityGenerationId, ModelId, PluginId};
     use phenix_sdk::{
         BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate,
     };
@@ -215,7 +215,7 @@ mod tests {
 
     fn binding(authority: ExecutionAuthority) -> DelegationTaskBinding {
         DelegationTaskBinding {
-            contract_fingerprint: "sha256:contract".into(),
+            contract_revision: ArtifactRevision::from_content(b"contract"),
             parent_policy_revision: "policy-1".into(),
             resources: DelegatedWorkResources {
                 target: RouteDecision {

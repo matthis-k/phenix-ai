@@ -148,3 +148,47 @@ fn contract_requires_acceptance_criteria() {
 
     assert_eq!(error, DelegationContractError::NoAcceptanceCriteria);
 }
+
+#[test]
+fn contract_revision_is_stable_across_component_input_order() {
+    let left = DelegationContract::new(
+        text("Add cancellable bridge execution"),
+        [bridge_component(), backend_component()],
+        acceptance(),
+        vec![],
+    )
+    .unwrap();
+    let right = DelegationContract::new(
+        text("Add cancellable bridge execution"),
+        [backend_component(), bridge_component()],
+        acceptance(),
+        vec![],
+    )
+    .unwrap();
+
+    assert_eq!(left.revision(), right.revision());
+    assert!(left.revision().as_ref().starts_with("sha256:"));
+}
+
+#[test]
+fn contract_revision_changes_with_semantics() {
+    let left = DelegationContract::new(
+        text("Add cancellable bridge execution"),
+        [bridge_component(), backend_component()],
+        acceptance(),
+        vec![],
+    )
+    .unwrap();
+
+    let mut changed_backend = backend_component();
+    changed_backend.responsibility = text("Execute provider requests with retries");
+    let right = DelegationContract::new(
+        text("Add cancellable bridge execution"),
+        [bridge_component(), changed_backend],
+        acceptance(),
+        vec![],
+    )
+    .unwrap();
+
+    assert_ne!(left.revision(), right.revision());
+}

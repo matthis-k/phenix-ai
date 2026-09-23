@@ -1,3 +1,4 @@
+use crate::{PhenixValue, Type, TypeKind, ValueCodec, ValueError};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -69,6 +70,30 @@ impl TryFrom<String> for ArtifactRevision {
     }
 }
 
+impl ValueCodec for ArtifactRevision {
+    fn phenix_type() -> Type {
+        Type::String
+    }
+
+    fn to_value(&self) -> PhenixValue {
+        PhenixValue::String(self.0.clone())
+    }
+
+    fn from_value(value: &PhenixValue) -> Result<Self, ValueError> {
+        match value {
+            PhenixValue::String(value) => {
+                value.parse().map_err(|error: ArtifactRevisionParseError| {
+                    ValueError::InvalidValue(error.to_string())
+                })
+            }
+            _ => Err(ValueError::TypeMismatch {
+                expected: TypeKind::String,
+                actual: value.kind(),
+            }),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for ArtifactRevision {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -93,6 +118,18 @@ mod tests {
             "sha256:f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
         );
         assert_eq!(revision.to_string().parse(), Ok(revision));
+    }
+
+    #[test]
+    fn structural_value_round_trip_preserves_revision_validation() {
+        let revision = ArtifactRevision::from_content(b"fixture");
+        let value = revision.to_value();
+
+        assert_eq!(ArtifactRevision::from_value(&value), Ok(revision));
+        assert!(
+            ArtifactRevision::from_value(&PhenixValue::String("sha256:not-a-digest".into()))
+                .is_err()
+        );
     }
 
     #[test]
