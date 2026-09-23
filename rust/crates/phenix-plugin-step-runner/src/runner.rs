@@ -13,7 +13,7 @@ use phenix_sdk::{
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ModelCommand, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
     ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest,
-    ProjectionRevision, StepAttemptCommand, StepAttemptInterface, StepAttemptRecord,
+    ProjectionRevision, RouteSelection, StepAttemptCommand, StepAttemptInterface, StepAttemptRecord,
     StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface, StepRunnerResponse,
     StepSettlementBasis, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
     UsageAttemptKind, UsageAttribution, UsagePlanningInput,
@@ -191,9 +191,23 @@ impl PluginInstance for StepRunnerPlugin {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetryRouteStrategy {
+    PreferFallback,
+    PreserveParent,
+}
+
 fn run(
     context: &StepRunnerContext<'_, '_>,
     request: PlannedStepRequest,
+) -> Result<StepRunnerResponse, String> {
+    run_with_retry_route(context, request, RetryRouteStrategy::PreferFallback)
+}
+
+fn run_with_retry_route(
+    context: &StepRunnerContext<'_, '_>,
+    request: PlannedStepRequest,
+    retry_route_strategy: RetryRouteStrategy,
 ) -> Result<StepRunnerResponse, String> {
     let retry_template = request.clone();
     let PlannedStepRequest {
@@ -467,6 +481,7 @@ fn run(
         callable_id,
         &plan,
         route_policy,
+        retry_route_strategy,
     ) {
         Ok(response) => response,
         Err(error) => {
@@ -776,6 +791,29 @@ fn run(
                 &reservation_id,
                 AttemptOutcome::Failed,
             )?;
+            if failure.requires_context_recovery()
+                && retry_template.task.context.reducible_input_tokens > 0
+                && retry_available(context, &attribution, &plan)?
+            {
+                let mut recovery_request = retry_template;
+                recovery_request.task.context.reducible_input_tokens = 0;
+                trace_policy_stage(
+                    context,
+                    "context_overflow_recovery",
+                    "allowed",
+                    Some(&plan.policy_revision),
+                    Some(format!(
+                        "retrying candidate {} with reducible context pruned",
+                        decision.candidate_ordinal
+                    )),
+                );
+                return retry_step(
+                    context,
+                    recovery_request,
+                    &attribution,
+                    RetryRouteStrategy::PreserveParent,
+                );
+            }
             if failure.retryable() && retry_available(context, &attribution, &plan)? {
                 trace_policy_stage(
                     context,
@@ -787,7 +825,12 @@ fn run(
                         failure.failure, decision.candidate_ordinal
                     )),
                 );
-                return retry_step(context, retry_template, &attribution);
+                return retry_step(
+                    context,
+                    retry_template,
+                    &attribution,
+                    RetryRouteStrategy::PreferFallback,
+                );
             }
             return Err(format!(
                 "prepared model dispatch failed: {}",
@@ -855,6 +898,7 @@ fn resolve_model_route(
     callable_id: Option<phenix_core::CallableId>,
     plan: &StepPlan,
     route_policy: phenix_sdk::RouteSelectionPolicy,
+    retry_route_strategy: RetryRouteStrategy,
 ) -> Result<ModelResponse, String> {
     if attribution.kind == UsageAttemptKind::Retry {
         let listed_attempts: StepAttemptResponse = context
@@ -871,6 +915,26 @@ fn resolve_model_route(
             .into_iter()
             .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
             .collect::<BTreeMap<_, _>>();
+
+        if retry_route_strategy == RetryRouteStrategy::PreserveParent {
+            let parent_attempt_id = attribution
+                .parent_attempt_id
+                .as_ref()
+                .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
+            let parent = attempts
+                .get(parent_attempt_id)
+                .ok_or_else(|| format!("unknown planned retry parent: {parent_attempt_id}"))?;
+            let decision = parent
+                .route
+                .clone()
+                .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
+            return Ok(ModelResponse::Decision {
+                selection: RouteSelection {
+                    decision,
+                    rejected: Vec::new(),
+                },
+            });
+        }
 
         let mut tried_ordinals = BTreeSet::new();
         let mut current = attribution.parent_attempt_id.clone();
@@ -970,6 +1034,7 @@ fn retry_step(
     context: &StepRunnerContext<'_, '_>,
     mut request: PlannedStepRequest,
     parent: &UsageAttribution,
+    retry_route_strategy: RetryRouteStrategy,
 ) -> Result<StepRunnerResponse, String> {
     let allocated: StepAttemptResponse = context
         .sdk
@@ -986,7 +1051,7 @@ fn retry_step(
         return Err("step attempt service returned a non-attribution retry allocation".into());
     };
     request.attribution = attribution;
-    run(context, request)
+    run_with_retry_route(context, request, retry_route_strategy)
 }
 
 fn is_supported_attempt_kind(kind: UsageAttemptKind) -> bool {
