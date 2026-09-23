@@ -841,8 +841,8 @@ impl ApplicationWorker {
             match self.invoke_execution_resource(ExecutionResourceCommand::RegisterRootBudget {
                 ledger: RootBudgetLedger {
                     root_execution_id: execution_id.clone(),
-                    // Default roots have no cumulative token or turn ceiling. Individual
-                    // invocations remain bounded by UsagePolicy and the selected model.
+                    // Default roots have no cumulative lifetime token or turn ceiling.
+                    // Individual invocations remain bounded by UsagePolicy and the selected model.
                     limits: RootBudgetLimits {
                         fresh_input_tokens: u64::MAX,
                         output_tokens: u64::MAX,
