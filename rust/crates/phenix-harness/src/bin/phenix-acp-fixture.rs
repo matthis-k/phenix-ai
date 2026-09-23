@@ -75,6 +75,7 @@ impl PluginInstance for FixtureProvider {
             .encode_value(&ModelInferenceResponse {
                 output: Bytes::new(response.into_bytes()),
                 provider_metadata: BTreeMap::new(),
+                usage: Default::default(),
                 tool_calls: Vec::new(),
             })
             .map_err(|error| error.to_string())

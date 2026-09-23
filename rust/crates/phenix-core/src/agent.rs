@@ -10,6 +10,44 @@ pub const TOOL_SERVICE: &str = "phenix.tools@1";
 pub const SKILL_SERVICE: &str = "phenix.skills@1";
 pub const CONTEXT_SERVICE: &str = "phenix.context@1";
 
+#[derive(
+    phenix_sdk_macros::PhenixValue, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize,
+)]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UsageQuantity {
+    Reported {
+        value: u64,
+    },
+    Estimated {
+        value: u64,
+        basis: String,
+    },
+    #[default]
+    Unavailable,
+}
+
+impl UsageQuantity {
+    #[must_use]
+    pub const fn value(&self) -> Option<u64> {
+        match self {
+            Self::Reported { value } | Self::Estimated { value, .. } => Some(*value),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+#[derive(
+    phenix_sdk_macros::PhenixValue, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTurnUsage {
+    pub fresh_input_tokens: UsageQuantity,
+    pub cache_read_tokens: UsageQuantity,
+    pub cache_write_tokens: UsageQuantity,
+    pub output_tokens: UsageQuantity,
+    pub reasoning_tokens: UsageQuantity,
+}
+
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelInferenceRequest {
     pub model: ModelId,
@@ -28,6 +66,8 @@ pub struct ModelInferenceRequest {
 pub struct ModelInferenceResponse {
     pub output: Bytes,
     pub provider_metadata: BTreeMap<String, PhenixValue>,
+    #[serde(default)]
+    pub usage: Box<ModelTurnUsage>,
     /// Structured tool calls emitted by the provider, in provider order.
     #[serde(default)]
     pub tool_calls: Vec<ModelToolCall>,

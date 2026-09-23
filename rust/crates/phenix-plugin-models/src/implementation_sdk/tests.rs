@@ -51,6 +51,7 @@ impl PluginInstance for PlainProvider {
                     serde_json::json!(request.model.as_str()).into(),
                 ),
             ]),
+            usage: Default::default(),
             tool_calls: Vec::new(),
         };
         context

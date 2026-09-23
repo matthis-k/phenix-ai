@@ -872,7 +872,7 @@ fn run_with_retry_route(
         return Err("model dispatch returned preflight readiness after dispatch".into());
     };
 
-    let settled = conservative_actual(&plan);
+    let (settled, settlement_basis) = successful_actual(&plan, &response.usage);
     let attempt = settle_step(
         context,
         &attribution.root_execution_id,
@@ -887,7 +887,7 @@ fn run_with_retry_route(
         output: response.output,
         tool_calls: response.tool_calls,
         settled,
-        settlement_basis: StepSettlementBasis::ReservedMaximum,
+        settlement_basis,
     })
 }
 
@@ -1309,6 +1309,30 @@ fn settle_after_dispatch(
         outcome,
     )
     .map(|_| ())
+}
+
+fn successful_actual(
+    plan: &StepPlan,
+    usage: &phenix_core::ModelTurnUsage,
+) -> (BudgetActual, StepSettlementBasis) {
+    let output_tokens = match &usage.output_tokens {
+        phenix_core::UsageQuantity::Reported { value } => *value,
+        phenix_core::UsageQuantity::Estimated { .. } | phenix_core::UsageQuantity::Unavailable => {
+            return (
+                conservative_actual(plan),
+                StepSettlementBasis::ReservedMaximum,
+            );
+        }
+    };
+    (
+        BudgetActual {
+            fresh_input_tokens: plan.reservation.input_tokens,
+            output_tokens,
+            cost_microunits: plan.reservation.cost_microunits,
+            attempts: 1,
+        },
+        StepSettlementBasis::ProviderReportedOutput,
+    )
 }
 
 fn conservative_actual(plan: &StepPlan) -> BudgetActual {

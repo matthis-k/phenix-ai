@@ -1,45 +1,8 @@
 use super::models::ModelTarget;
 use phenix_core::CapabilityGenerationId;
+pub use phenix_core::{ModelTurnUsage, UsageQuantity};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-
-#[derive(
-    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
-)]
-#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
-pub enum UsageQuantity {
-    Reported {
-        value: u64,
-    },
-    Estimated {
-        value: u64,
-        basis: String,
-    },
-    #[default]
-    Unavailable,
-}
-
-impl UsageQuantity {
-    #[must_use]
-    pub const fn value(&self) -> Option<u64> {
-        match self {
-            Self::Reported { value } | Self::Estimated { value, .. } => Some(*value),
-            Self::Unavailable => None,
-        }
-    }
-}
-
-#[derive(
-    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ModelTurnUsage {
-    pub fresh_input_tokens: UsageQuantity,
-    pub cache_read_tokens: UsageQuantity,
-    pub cache_write_tokens: UsageQuantity,
-    pub output_tokens: UsageQuantity,
-    pub reasoning_tokens: UsageQuantity,
-}
 
 #[derive(
     Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,

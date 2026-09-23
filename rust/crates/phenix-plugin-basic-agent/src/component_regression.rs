@@ -64,6 +64,7 @@ impl PluginInstance for Replacement {
                 "provider".into(),
                 serde_json::json!("fixture.replacement").into(),
             )]),
+            usage: Default::default(),
             tool_calls: Vec::new(),
         }))
         .map_err(|error| error.to_string())
