@@ -1,13 +1,13 @@
 use crate::{
-    normalize_http_error, provider_auth_service, provider_http_client_builder, ApiTokenScheme,
+    encode_model_inference_outcome, normalize_http_error, provider_auth_service,
+    provider_http_client_builder, ApiTokenScheme,
     ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand,
     ProviderAuthResponse, ProviderError, ProviderRequest, ProviderResponse, ProviderSpec,
     RateLimits, Token,
 };
 use phenix_core::{
-    model_inference_service, ComponentInterface, InvocationOutcome, ModelInferenceInterface,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginHost,
-    PluginInstance, ServiceId,
+    model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
+    ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use std::{
@@ -253,14 +253,7 @@ impl PluginInstance for ProviderPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let outcome = match self.invoke_model(request) {
-                Ok(response) => InvocationOutcome::success(PhenixValue::from(&response)),
-                Err(error) => {
-                    InvocationOutcome::domain_error(PhenixValue::from(&error.inference_failure()))
-                }
-            };
-            return serde_json::to_vec(&outcome.into_transport_value())
-                .map_err(|error| format!("cannot encode model inference outcome: {error}"));
+            return encode_model_inference_outcome(self.invoke_model(request));
         }
         if service == &provider_auth_service() {
             let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;
