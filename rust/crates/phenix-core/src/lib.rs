@@ -130,10 +130,9 @@ pub use contract::{
     ValueMatch,
 };
 pub use events::{
-    runtime_trace_event_type, EventAdmissionReceipt, EventBus, EventDeliveryCancellation,
-    EventDeliveryStatus, EventDispatchReport, EventEnvelope, EventError, EventFailurePolicy,
-    EventHandler, EventSubscription, KernelEvent, RuntimeTraceEvent, RuntimeTraceParticipant,
-    SubscriptionSpec, RUNTIME_TRACE_EVENT, RUNTIME_TRACE_EVENT_VERSION,
+    EventAdmissionReceipt, EventBus, EventDeliveryCancellation, EventDeliveryStatus,
+    EventDispatchReport, EventEnvelope, EventError, EventFailurePolicy, EventHandler,
+    EventSubscription, KernelEvent, SubscriptionSpec,
 };
 pub use frontend_metadata::FrontendMetadataResolutionError;
 pub use identity::{
@@ -218,9 +217,11 @@ pub use registry::{
 pub use resolver::{GraphGenerationId, ResolvedHarness, ResolvedHarnessError};
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeProvider, PluginState, ProviderEndpointProvenance, RuntimePluginCandidate,
-    ServiceInvocationProvenance, ServiceParticipantOutcome, ServiceParticipantProvenance,
-    SharedPluginInvocation,
+    PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
+    RuntimePluginCandidate, RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant,
+    RuntimeTraceSink, ServiceInvocationProvenance, ServiceParticipantOutcome,
+    ServiceParticipantProvenance, SharedPluginInvocation, DEFAULT_PROVENANCE_CAPACITY,
+    DEFAULT_RUNTIME_TRACE_CAPACITY,
 };
 pub use sdk::{
     observable_delivery_schema, ResolvedSdkContributions, SdkContribution, SdkObservableResource,
