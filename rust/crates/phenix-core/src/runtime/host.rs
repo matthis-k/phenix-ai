@@ -23,6 +23,11 @@ impl<'a> PluginHost<'a> {
         self.call_cancellation.as_ref()
     }
 
+    #[doc(hidden)]
+    pub fn record_runtime_trace(&self, event: RuntimeTraceEvent) {
+        trace::record_runtime_trace(self.trace_sink, event);
+    }
+
     pub fn invoke_import<I: ComponentInterface>(
         &self,
         component: &ComponentId,
