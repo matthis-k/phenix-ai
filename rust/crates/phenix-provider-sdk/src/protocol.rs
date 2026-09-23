@@ -1131,6 +1131,74 @@ mod tests {
     }
 
     #[test]
+    fn model_tool_results_project_structural_values_before_provider_encoding() {
+        let result = ModelToolResult {
+            call_id: "call-1".to_owned(),
+            callable_id: CallableId::parse("fixture.echo").unwrap(),
+            output: PhenixValue::Variant {
+                tag: Key::parse("process").unwrap(),
+                value: Box::new(PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("exit_code").unwrap(),
+                        PhenixValue::I64(0),
+                    ),
+                    (
+                        Key::parse("stdout").unwrap(),
+                        PhenixValue::String("ok".to_owned()),
+                    ),
+                    (
+                        Key::parse("payload").unwrap(),
+                        PhenixValue::Option(Some(Box::new(PhenixValue::Bytes(vec![1, 2, 3])))),
+                    ),
+                ]))),
+            },
+            is_error: false,
+        };
+
+        let encoded: Value = serde_json::from_str(&tool_output(&result).unwrap()).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "tag": "process",
+                "value": {
+                    "exit_code": 0,
+                    "stdout": "ok",
+                    "payload": "AQID"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn model_tool_errors_use_the_same_structural_projection() {
+        let result = ModelToolResult {
+            call_id: "call-1".to_owned(),
+            callable_id: CallableId::parse("fixture.echo").unwrap(),
+            output: PhenixValue::Variant {
+                tag: Key::parse("invalid_input").unwrap(),
+                value: Box::new(PhenixValue::Table(BTreeMap::from([(
+                    Key::parse("message").unwrap(),
+                    PhenixValue::String("missing command".to_owned()),
+                )]))),
+            },
+            is_error: true,
+        };
+
+        let encoded: Value = serde_json::from_str(&tool_output(&result).unwrap()).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "error": {
+                    "tag": "invalid_input",
+                    "value": {
+                        "message": "missing command"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
     fn non_json_options_stop_at_protocol_adapter() {
         let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
         let mut request = request();
