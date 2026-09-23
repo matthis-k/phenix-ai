@@ -12,8 +12,9 @@ pub use types::*;
 
 use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
-    ComponentInterface, ComponentManifest, InterfaceId, ModelInferenceInterface, PluginExecution,
-    PluginId, PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelInferenceInterface,
+    ModelInferenceResponse, PhenixValue, PluginExecution, PluginId, PluginInstance, PluginManifest,
+    ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -22,6 +23,19 @@ pub const PROVIDER_AUTH_SERVICE: &str = "phenix.providers.auth@1";
 pub const NETWORK_HTTP_CAPABILITY: &str = "network.http";
 pub const SECRETS_MANAGE_CAPABILITY: &str = "secrets.manage";
 pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
+
+pub fn encode_model_inference_outcome(
+    result: Result<ModelInferenceResponse, ProviderError>,
+) -> Result<Vec<u8>, String> {
+    let outcome = match result {
+        Ok(response) => InvocationOutcome::success(PhenixValue::from(&response)),
+        Err(error) => {
+            InvocationOutcome::domain_error(PhenixValue::from(&error.inference_failure()))
+        }
+    };
+    serde_json::to_vec(&outcome.into_transport_value())
+        .map_err(|error| format!("cannot encode model inference outcome: {error}"))
+}
 
 /// Configure provider HTTP clients with an explicit CA bundle when the product
 /// supplies one. This avoids relying on a host certificate store in pure
