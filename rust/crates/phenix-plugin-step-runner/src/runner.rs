@@ -1315,11 +1315,14 @@ fn successful_actual(
     plan: &StepPlan,
     usage: &phenix_core::ModelTurnUsage,
 ) -> (BudgetActual, StepSettlementBasis) {
-    let Some(output_tokens) = usage.output_tokens.value() else {
-        return (
-            conservative_actual(plan),
-            StepSettlementBasis::ReservedMaximum,
-        );
+    let output_tokens = match &usage.output_tokens {
+        phenix_core::UsageQuantity::Reported { value } => *value,
+        phenix_core::UsageQuantity::Estimated { .. } | phenix_core::UsageQuantity::Unavailable => {
+            return (
+                conservative_actual(plan),
+                StepSettlementBasis::ReservedMaximum,
+            );
+        }
     };
     (
         BudgetActual {

@@ -494,7 +494,7 @@ mod successful_lifecycle {
     use super::*;
 
     #[test]
-    fn smart_fallback_dispatches_and_settles_conservatively() {
+    fn smart_fallback_dispatches_and_settles_reported_output() {
         let path = temp_db("success");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
