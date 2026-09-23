@@ -1593,21 +1593,10 @@ struct ActiveExecution {
     prompt: ApplicationInvocation,
 }
 
-struct ExecutionProgress {
-    session_id: SessionId,
-    execution_id: String,
-    change: ExecutionChange,
-}
-
 struct ExecutionCompletion {
     session_id: SessionId,
     execution_id: String,
     result: Result<String, ApplicationError>,
-}
-
-enum ExecutionWorkerEvent {
-    Progress(ExecutionProgress),
-    Complete(ExecutionCompletion),
 }
 
 #[derive(Clone)]
@@ -1616,7 +1605,7 @@ struct ApplicationAgentToolRun {
     session_id: SessionId,
     permission_handler: Option<PermissionHandlerRef>,
     cancellation: Arc<AtomicBool>,
-    progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
+    event_sender: Option<mpsc::Sender<ApplicationEvent>>,
 }
 
 #[derive(Clone, Default)]
@@ -1700,12 +1689,20 @@ pub(crate) fn application_agent_tool_component_manifest(
         id: application_agent_tool_component_id(),
         owner: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
-        imports: vec![ComponentImport {
-            interface: WorkspaceInterface::interface_id(),
-            schema: WorkspaceInterface::schema(),
-            required: false,
-            authority: maximum_authority.clone(),
-        }],
+        imports: vec![
+            ComponentImport {
+                interface: WorkspaceInterface::interface_id(),
+                schema: WorkspaceInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
+            ComponentImport {
+                interface: SessionInterface::interface_id(),
+                schema: SessionInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
+        ],
         exports: vec![
             ComponentExport {
                 interface: AgentLoopControlInterface::interface_id(),
@@ -1739,6 +1736,7 @@ pub(crate) fn application_agent_tool_factory(
 
 struct ApplicationAgentToolSdk<'host, 'runtime> {
     workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
+    sessions: SdkClient<'host, 'runtime, SessionInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -1751,6 +1749,7 @@ fn application_agent_tool_context<'host, 'runtime>(
         host,
         ApplicationAgentToolSdk {
             workspace: SdkClient::new(host, application_agent_tool_component_id()),
+            sessions: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -1809,7 +1808,8 @@ impl PluginInstance for ApplicationAgentToolPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let response = record_application_agent_progress(&self.registry, record)?;
+            let response =
+                record_application_agent_progress(&context, &self.registry, record)?;
             return context
                 .kernel
                 .encode_value(&response)
@@ -1893,6 +1893,7 @@ fn execute_application_agent_tool(
 }
 
 fn record_application_agent_progress(
+    context: &ApplicationAgentToolContext<'_, '_>,
     registry: &ApplicationAgentToolRegistry,
     record: AgentLoopProgressRecord,
 ) -> Result<AgentLoopProgressResponse, String> {
@@ -1900,6 +1901,20 @@ fn record_application_agent_progress(
     if record.session_id.as_ref() != Some(&run.session_id) {
         return Err("agent progress session identity changed".into());
     }
+
+    let event_permit = match &run.event_sender {
+        Some(sender) => Some(sender.clone().try_reserve_owned().map_err(|error| {
+            if error.is_full() {
+                ApplicationError::Conflict {
+                    message: "application event queue is full".to_owned(),
+                }
+            } else {
+                ApplicationError::Disconnected
+            }
+        }).map_err(|error| error.to_string())?),
+        None => None,
+    };
+
     let change = match record.progress {
         AgentLoopProgress::ToolCall { call } => ExecutionChange::ToolCall {
             call_id: call.call_id,
@@ -1927,17 +1942,38 @@ fn record_application_agent_progress(
             }
         }
     };
-    send_execution_progress(
-        &run.progress_sender,
-        &run.session_id,
-        &record.execution_id,
-        change,
-    )
-    .map_err(|error| error.to_string())?;
+    let session_change = SessionChange::Execution {
+        execution_id: record.execution_id,
+        update: change,
+    };
+    let response: SessionResponse = context
+        .sdk
+        .sessions
+        .invoke_projected(&SessionCommand::AppendJournal {
+            id: run.session_id.clone(),
+            entry: session_change_journal(&session_change),
+        })
+        .map_err(|error| error.to_string())?;
+    let SessionResponse::JournalAppended { entry } = response else {
+        return Err(format!(
+            "agent progress append returned unexpected session response: {response:?}"
+        ));
+    };
+    let update =
+        session_update_from_journal(&run.session_id, entry).map_err(|error| error.to_string())?;
+
+    if let Some(permit) = event_permit {
+        permit.send(ApplicationEvent {
+            event: ContractId::parse("phenix.application.session-update@1")
+                .expect("static session update event id is valid"),
+            payload: update.to_value(),
+        });
+    }
+
     Ok(AgentLoopProgressResponse::Recorded)
 }
 
-async fn serve_application_worker(
+fn serve_application_worker(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
@@ -1976,16 +2012,9 @@ async fn serve_application_worker(
                 };
                 invocation.respond(result);
             }
-            event = execution_events.recv(), if !active.is_empty() => {
-                if let Some(event) = event {
-                    match event {
-                        ExecutionWorkerEvent::Progress(progress) => {
-                            handle_execution_progress(&mut worker, &mut active, progress);
-                        }
-                        ExecutionWorkerEvent::Complete(completion) => {
-                            finish_prompt(&mut worker, &mut active, completion);
-                        }
-                    }
+            completion = execution_completions.recv(), if !active.is_empty() => {
+                if let Some(completion) = completion {
+                    finish_prompt(&mut worker, &mut active, completion);
                 }
             }
         }
@@ -2004,7 +2033,7 @@ async fn serve_application_worker(
 fn start_prompt(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
-    execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
+    execution_sender: &mpsc::Sender<ExecutionCompletion>,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
@@ -2083,9 +2112,9 @@ fn start_prompt(
     let execution_id = prompt.execution_id;
     let runtime_execution_id = execution_id.clone();
     let sender = execution_sender.clone();
+    let event_sender = worker.event_sender.clone();
     tokio::spawn(async move {
         let blocking_cancellation = Arc::clone(&cancellation);
-        let progress_sender = sender.clone();
         let execution_session = session_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             run_agent_execution(
@@ -2098,9 +2127,9 @@ fn start_prompt(
                     input: model_input,
                     tools,
                     permission_handler,
+                    event_sender,
                 },
                 blocking_cancellation,
-                progress_sender,
             )
         })
         .await
@@ -2109,11 +2138,11 @@ fn start_prompt(
         })
         .and_then(|result| result);
         let _ = sender
-            .send(ExecutionWorkerEvent::Complete(ExecutionCompletion {
+            .send(ExecutionCompletion {
                 session_id,
                 execution_id,
                 result,
-            }))
+            })
             .await;
     });
 }
@@ -2150,32 +2179,6 @@ fn cancel_prompt(
         }
     }
     invocation.respond(acknowledgement.map(|value| value.to_value()));
-}
-
-fn handle_execution_progress(
-    worker: &mut ApplicationWorker,
-    active: &mut BTreeMap<String, ActiveExecution>,
-    progress: ExecutionProgress,
-) {
-    let key = progress.session_id.as_str().to_owned();
-    let Some(execution) = active.get(&key) else {
-        return;
-    };
-    if execution.execution_id != progress.execution_id {
-        return;
-    }
-    if let Err(error) = worker.append_execution_change(
-        &progress.session_id,
-        &progress.execution_id,
-        progress.change,
-    ) {
-        let Some(execution) = active.remove(&key) else {
-            return;
-        };
-        execution.cancellation.store(true, Ordering::Release);
-        let _ = worker.finish_root_execution(&execution.execution_id, false);
-        execution.prompt.respond(Err(error));
-    }
 }
 
 fn finish_prompt(
@@ -2362,6 +2365,7 @@ struct AgentExecutionContext {
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
     permission_handler: Option<PermissionHandlerRef>,
+    event_sender: Option<mpsc::Sender<ApplicationEvent>>,
 }
 
 fn run_agent_execution(
@@ -2370,7 +2374,6 @@ fn run_agent_execution(
     service: SdkApplicationService,
     context: AgentExecutionContext,
     cancellation: Arc<AtomicBool>,
-    progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
 ) -> Result<String, ApplicationError> {
     let AgentExecutionContext {
         session_id,
@@ -2378,6 +2381,7 @@ fn run_agent_execution(
         input,
         tools,
         permission_handler,
+        event_sender,
     } = context;
     let callable_id =
         CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| ApplicationError::Failed {
@@ -2399,7 +2403,7 @@ fn run_agent_execution(
             session_id: session_id.clone(),
             permission_handler,
             cancellation: Arc::clone(&cancellation),
-            progress_sender,
+            event_sender,
         },
     )?;
 
@@ -2529,21 +2533,6 @@ fn execute_runtime_model_tool_call(
             error,
         },
     }
-}
-
-fn send_execution_progress(
-    sender: &mpsc::Sender<ExecutionWorkerEvent>,
-    session_id: &SessionId,
-    execution_id: &str,
-    change: ExecutionChange,
-) -> Result<(), ApplicationError> {
-    sender
-        .blocking_send(ExecutionWorkerEvent::Progress(ExecutionProgress {
-            session_id: session_id.clone(),
-            execution_id: execution_id.to_owned(),
-            change,
-        }))
-        .map_err(|_| ApplicationError::Disconnected)
 }
 
 fn invoke_permission_handler(
@@ -2755,7 +2744,7 @@ mod tests {
                     session_id: session_id.clone(),
                     permission_handler: None,
                     cancellation,
-                    progress_sender,
+                    event_sender: None,
                 },
             )
             .unwrap();
