@@ -1,3 +1,4 @@
+use phenix_core::ModelInferenceFailure;
 use reqwest::header::{HeaderName as ReqwestHeaderName, HeaderValue};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -597,6 +598,40 @@ pub enum ProviderError {
 }
 
 impl ProviderError {
+    #[must_use]
+    pub fn inference_failure(&self) -> ModelInferenceFailure {
+        match self {
+            Self::Authentication { message } => ModelInferenceFailure::Authentication {
+                message: message.clone(),
+            },
+            Self::Permission { message } => ModelInferenceFailure::Permission {
+                message: message.clone(),
+            },
+            Self::NotFound { message } => ModelInferenceFailure::NotFound {
+                message: message.clone(),
+            },
+            Self::RateLimited { message, limits } => ModelInferenceFailure::RateLimited {
+                message: message.clone(),
+                retry_after_ms: limits.retry_after.map(|duration| duration.0),
+            },
+            Self::ContextLimit { message } => ModelInferenceFailure::ContextLimit {
+                message: message.clone(),
+            },
+            Self::InvalidRequest { message } => ModelInferenceFailure::InvalidRequest {
+                message: message.clone(),
+            },
+            Self::Unavailable { message } => ModelInferenceFailure::Unavailable {
+                message: message.clone(),
+            },
+            Self::Transport { message } => ModelInferenceFailure::Transport {
+                message: message.clone(),
+            },
+            Self::Protocol { message } => ModelInferenceFailure::Protocol {
+                message: message.clone(),
+            },
+        }
+    }
+
     pub fn to_wire(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| self.to_string())
     }
