@@ -12,7 +12,8 @@ pub(super) struct StopView<'a> {
     pub(super) events: &'a EventBus,
     pub(super) tasks: &'a TaskRuntime,
     pub(super) persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
-    pub(super) provenance: &'a Mutex<Vec<ServiceInvocationProvenance>>,
+    pub(super) trace_sink: &'a dyn RuntimeTraceSink,
+    pub(super) provenance: &'a ProvenanceBuffer,
 }
 
 impl StopView<'_> {
@@ -38,6 +39,7 @@ impl StopView<'_> {
             tasks: self.tasks,
             persistence: self.persistence,
             prepared_mutations: &prepared_mutations,
+            trace_sink: self.trace_sink,
             provenance: self.provenance,
             continuation: None,
             active_services: BTreeSet::new(),
@@ -151,6 +153,7 @@ impl Kernel {
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
                                 prepared_mutations: &prepared_mutations,
+                                trace_sink: &self.trace_sink,
                                 provenance: &self.provenance,
                                 continuation: None,
                                 active_services: BTreeSet::new(),
@@ -212,6 +215,7 @@ impl Kernel {
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
+                                trace_sink: &self.trace_sink,
                                 provenance: &self.provenance,
                             },
                         );
@@ -237,6 +241,7 @@ impl Kernel {
                         tasks: &self.tasks,
                         persistence: &self.persistence,
                         prepared_mutations: &prepared_mutations,
+                        trace_sink: &self.trace_sink,
                         provenance: &self.provenance,
                         continuation: None,
                         active_services: BTreeSet::new(),
@@ -265,6 +270,7 @@ impl Kernel {
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
+                                trace_sink: &self.trace_sink,
                                 provenance: &self.provenance,
                             },
                         );
@@ -289,6 +295,7 @@ impl Kernel {
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
+            trace_sink: &self.trace_sink,
             provenance: &self.provenance,
         }) {
             Ok(subscriptions) => subscriptions,
@@ -304,6 +311,7 @@ impl Kernel {
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
+                        trace_sink: &self.trace_sink,
                         provenance: &self.provenance,
                     },
                 );
@@ -349,6 +357,7 @@ impl Kernel {
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
+            trace_sink: &self.trace_sink,
             provenance: &self.provenance,
         };
         for (plugin, instance) in retired {
