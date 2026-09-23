@@ -1934,12 +1934,13 @@ fn model_input_from_session(
     current: &[Content],
 ) -> Result<Bytes, ApplicationError> {
     let current = validated_model_text(current)?;
-    let projection = state
-        .sessions
-        .get(session_id.as_str())
-        .ok_or_else(|| ApplicationError::NotFound {
-            resource: format!("session {session_id}"),
-        })?;
+    let projection =
+        state
+            .sessions
+            .get(session_id.as_str())
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: format!("session {session_id}"),
+            })?;
     let messages = projection.updates.iter().filter_map(|update| {
         if let SessionChange::Message { message } = &update.update {
             Some(message)
