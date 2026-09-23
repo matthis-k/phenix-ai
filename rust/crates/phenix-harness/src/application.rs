@@ -34,11 +34,13 @@ use phenix_core::{
     ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
-    execution_review_service, options_component_manifest, sdk_contribution, session_service,
-    AgentLoopCommand, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
-    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
-    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
+    agent_tool_execution_service, execution_review_service, options_component_manifest,
+    sdk_contribution, session_service, AgentLoopCommand, AgentLoopControlInterface,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
+    AgentLoopResponse, AgentToolExecutionInterface, AgentToolExecutionRequest,
+    AgentToolExecutionResponse,
     ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
     SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
     SessionTransition, SDK_PLUGIN,
@@ -1663,6 +1665,12 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
         services: vec![
             ServiceContribution {
                 role: ServiceRole::Terminal,
+                service: agent_loop_control_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
                 service: agent_tool_execution_service(),
                 priority: 100,
                 required_authority: Authority::default(),
@@ -1700,6 +1708,12 @@ pub(crate) fn application_agent_tool_component_manifest(
             authority: maximum_authority.clone(),
         }],
         exports: vec![
+            ComponentExport {
+                interface: AgentLoopControlInterface::interface_id(),
+                schema: AgentLoopControlInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
             ComponentExport {
                 interface: AgentToolExecutionInterface::interface_id(),
                 schema: AgentToolExecutionInterface::schema(),
@@ -1760,6 +1774,20 @@ impl PluginInstance for ApplicationAgentToolPlugin {
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         let context = application_agent_tool_context(host);
+        if service == &agent_loop_control_service() {
+            let request = context
+                .kernel
+                .decode_projected::<AgentLoopControlRequest>(
+                    &AgentLoopControlInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = check_application_agent_control(&self.registry, request)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
         if service == &agent_tool_execution_service() {
             let request = context
                 .kernel
@@ -1789,6 +1817,21 @@ impl PluginInstance for ApplicationAgentToolPlugin {
                 .map_err(|error| error.to_string());
         }
         Err(format!("unsupported application agent tool service: {service}"))
+    }
+}
+
+fn check_application_agent_control(
+    registry: &ApplicationAgentToolRegistry,
+    request: AgentLoopControlRequest,
+) -> Result<AgentLoopControlResponse, String> {
+    let run = registry.get(&request.execution_id)?;
+    if request.session_id.as_ref() != Some(&run.session_id) {
+        return Err("agent loop control session identity changed".into());
+    }
+    if run.cancellation.load(Ordering::Acquire) {
+        Ok(AgentLoopControlResponse::Cancelled)
+    } else {
+        Ok(AgentLoopControlResponse::Continue)
     }
 }
 
