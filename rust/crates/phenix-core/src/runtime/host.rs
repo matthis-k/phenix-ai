@@ -88,6 +88,7 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
                 &service,
@@ -136,6 +137,7 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
                 service,
@@ -177,6 +179,7 @@ impl<'a> PluginHost<'a> {
                 tasks: self.tasks,
                 persistence: self.persistence,
                 prepared_mutations: self.prepared_mutations,
+                trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
             &continuation.chain,
@@ -552,22 +555,15 @@ impl<'a> PluginHost<'a> {
         outcome: &str,
         error: Option<String>,
     ) {
-        let trace = crate::RuntimeTraceEvent::DataMutation {
-            resource,
-            stage: stage.to_owned(),
-            operation_count,
-            outcome: outcome.to_owned(),
-            error,
-        };
-        let Ok(payload) = serde_json::to_vec(&trace) else {
-            return;
-        };
-        let _ = self.dispatch_event(
-            crate::runtime_trace_event_type(),
-            crate::RUNTIME_TRACE_EVENT_VERSION,
-            0,
-            0,
-            payload,
+        trace::record_runtime_trace(
+            self.trace_sink,
+            RuntimeTraceEvent::DataMutation {
+                resource,
+                stage: stage.to_owned(),
+                operation_count,
+                outcome: outcome.to_owned(),
+                error,
+            },
         );
     }
 
