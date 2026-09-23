@@ -683,7 +683,12 @@ fn run(
                         "resolved model preflight failed: {}",
                         failure.failure.message()
                     ),
-                    error => format!("resolved model preflight failed: {error}"),
+                    CallError::Runtime(error) => {
+                        format!("resolved model preflight runtime failure: {error}")
+                    }
+                    CallError::Conversion(error) => {
+                        format!("resolved model preflight conversion failure: {error}")
+                    }
                 };
                 trace_policy_stage(
                     context,
@@ -789,7 +794,7 @@ fn run(
                 failure.failure.message()
             ));
         }
-        Err(error) => {
+        Err(CallError::Runtime(error)) => {
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -798,7 +803,18 @@ fn run(
                 &reservation_id,
                 AttemptOutcome::Failed,
             )?;
-            return Err(format!("prepared model dispatch failed: {error}"));
+            return Err(format!("prepared model dispatch runtime failure: {error}"));
+        }
+        Err(CallError::Conversion(error)) => {
+            settle_after_dispatch(
+                context,
+                &attribution.root_execution_id,
+                &attribution.attempt_id,
+                &plan,
+                &reservation_id,
+                AttemptOutcome::Failed,
+            )?;
+            return Err(format!("prepared model dispatch conversion failure: {error}"));
         }
     };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
