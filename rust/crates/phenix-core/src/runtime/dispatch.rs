@@ -10,29 +10,17 @@ fn emit_policy_stage(
     revision: Option<String>,
     reason: Option<String>,
 ) {
-    let trace = crate::RuntimeTraceEvent::PolicyStage {
-        policy: policy.to_owned(),
-        stage: stage.to_owned(),
-        outcome: outcome.to_owned(),
-        subject,
-        revision,
-        reason,
-    };
-    let Ok(payload) = serde_json::to_vec(&trace) else {
-        return;
-    };
-    let event = EventEnvelope {
-        event_type: crate::runtime_trace_event_type(),
-        version: crate::RUNTIME_TRACE_EVENT_VERSION,
-        emitter: PluginId::parse("kernel.runtime").expect("static runtime trace emitter is valid"),
-        causality_id: 0,
-        kernel_policy_revision: 0,
-        payload,
-    };
-    let _ =
-        runtime
-            .events
-            .admit_in_generation(&event, &Authority::default(), runtime.graph_generation);
+    trace::record_runtime_trace(
+        runtime.trace_sink,
+        RuntimeTraceEvent::PolicyStage {
+            policy: policy.to_owned(),
+            stage: stage.to_owned(),
+            outcome: outcome.to_owned(),
+            subject,
+            revision,
+            reason,
+        },
+    );
 }
 
 fn prepare_active_chain(
@@ -209,11 +197,7 @@ pub(super) fn invoke_component_service_with(
         .expect("service invocation trace mutex poisoned")
         .clone()
         .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed.clone());
+    runtime.provenance.record(completed.clone());
     emit_runtime_trace(runtime, &completed, input.len(), &result);
     result
 }
@@ -286,11 +270,7 @@ pub(super) fn invoke_service_with(
         .expect("service invocation trace mutex poisoned")
         .clone()
         .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed.clone());
+    runtime.provenance.record(completed.clone());
     emit_runtime_trace(runtime, &completed, input.len(), &result);
     result
 }
@@ -395,6 +375,7 @@ pub(super) fn invoke_resolved_chain_with(
         tasks: runtime.tasks,
         persistence: runtime.persistence,
         prepared_mutations: runtime.prepared_mutations,
+        trace_sink: runtime.trace_sink,
         provenance: runtime.provenance,
         continuation,
         active_services: guards.active_services.clone(),
@@ -550,47 +531,35 @@ fn emit_runtime_trace(
     input_bytes: usize,
     result: &Result<Vec<u8>, KernelError>,
 ) {
-    let trace = crate::RuntimeTraceEvent::ServiceInvocation {
-        service: provenance.service.as_str().to_owned(),
-        input_bytes,
-        output_bytes: result.as_ref().ok().map(Vec::len),
-        success: result.is_ok(),
-        error: result.as_ref().err().map(ToString::to_string),
-        terminal_reached: provenance.terminal_reached,
-        participants: provenance
-            .participants
-            .iter()
-            .map(|participant| crate::RuntimeTraceParticipant {
-                plugin: participant.plugin.as_str().to_owned(),
-                role: match participant.role {
-                    ServiceRole::Terminal => "terminal",
-                    ServiceRole::Layer => "layer",
-                }
-                .to_owned(),
-                outcome: match participant.outcome {
-                    ServiceParticipantOutcome::Handled => "handled",
-                    ServiceParticipantOutcome::Delegated => "delegated",
-                    ServiceParticipantOutcome::Denied => "denied",
-                    ServiceParticipantOutcome::Failed => "failed",
-                    ServiceParticipantOutcome::Succeeded => "succeeded",
-                }
-                .to_owned(),
-            })
-            .collect(),
-    };
-    let Ok(payload) = serde_json::to_vec(&trace) else {
-        return;
-    };
-    let event = EventEnvelope {
-        event_type: crate::runtime_trace_event_type(),
-        version: crate::RUNTIME_TRACE_EVENT_VERSION,
-        emitter: PluginId::parse("kernel.runtime").expect("static runtime trace emitter is valid"),
-        causality_id: 0,
-        kernel_policy_revision: 0,
-        payload,
-    };
-    let _ =
-        runtime
-            .events
-            .admit_in_generation(&event, &Authority::default(), runtime.graph_generation);
+    trace::record_runtime_trace(
+        runtime.trace_sink,
+        RuntimeTraceEvent::ServiceInvocation {
+            service: provenance.service.as_str().to_owned(),
+            input_bytes,
+            output_bytes: result.as_ref().ok().map(Vec::len),
+            success: result.is_ok(),
+            error: result.as_ref().err().map(ToString::to_string),
+            terminal_reached: provenance.terminal_reached,
+            participants: provenance
+                .participants
+                .iter()
+                .map(|participant| RuntimeTraceParticipant {
+                    plugin: participant.plugin.as_str().to_owned(),
+                    role: match participant.role {
+                        ServiceRole::Terminal => "terminal",
+                        ServiceRole::Layer => "layer",
+                    }
+                    .to_owned(),
+                    outcome: match participant.outcome {
+                        ServiceParticipantOutcome::Handled => "handled",
+                        ServiceParticipantOutcome::Delegated => "delegated",
+                        ServiceParticipantOutcome::Denied => "denied",
+                        ServiceParticipantOutcome::Failed => "failed",
+                        ServiceParticipantOutcome::Succeeded => "succeeded",
+                    }
+                    .to_owned(),
+                })
+                .collect(),
+        },
+    );
 }
