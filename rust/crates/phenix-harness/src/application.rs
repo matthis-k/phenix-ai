@@ -1689,6 +1689,10 @@ fn start_prompt(
         }));
         return;
     }
+    if let Err(error) = ensure_session_projection(worker, &request.session_id) {
+        invocation.respond(Err(error));
+        return;
+    }
     let model_input = match model_input_from_session(
         worker.projection().state(),
         &request.session_id,
@@ -1926,6 +1930,26 @@ fn complete_prompt_output(
         execution_id: execution_id.to_owned(),
         stop_reason: StopReason::EndTurn,
     })
+}
+
+fn ensure_session_projection(
+    worker: &mut ApplicationWorker,
+    session_id: &SessionId,
+) -> Result<(), ApplicationError> {
+    if worker
+        .projection()
+        .state()
+        .sessions
+        .contains_key(session_id.as_str())
+    {
+        return Ok(());
+    }
+    worker
+        .resume_session(SessionResumeInput {
+            session_id: session_id.clone(),
+            after_sequence: None,
+        })
+        .map(|_| ())
 }
 
 fn model_input_from_session(
@@ -3288,6 +3312,64 @@ mod tests {
         .unwrap();
 
         assert_eq!(input.as_ref(), b"first question");
+    }
+
+    #[test]
+    fn async_model_input_rehydrates_durable_history_after_restart() {
+        let path = temp_db("application-session-memory");
+        let session_id;
+        {
+            let mut worker = persistent_application_worker(&path);
+            let created = invoke_operation::<CreateSession>(
+                &mut worker,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
+                },
+            )
+            .unwrap();
+            session_id = created.session_id.clone();
+            let record = worker.session_record(&session_id).unwrap().unwrap();
+            for (role, text) in [
+                (MessageRole::User, "remember alpha"),
+                (MessageRole::Assistant, "alpha is remembered"),
+            ] {
+                worker
+                    .append_session_change(
+                        &record,
+                        SessionChange::Message {
+                            message: Message {
+                                role,
+                                content: vec![Content::Text { text: text.into() }],
+                            },
+                        },
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut worker = persistent_application_worker(&path);
+        assert!(!worker
+            .projection()
+            .state()
+            .sessions
+            .contains_key(session_id.as_str()));
+        ensure_session_projection(&mut worker, &session_id).unwrap();
+        let input = model_input_from_session(
+            worker.projection().state(),
+            &session_id,
+            &[Content::Text {
+                text: "what did I ask you to remember?".into(),
+            }],
+        )
+        .unwrap();
+        let input = String::from_utf8(input.as_ref().to_vec()).unwrap();
+
+        assert!(input.contains("--- user ---\nremember alpha"));
+        assert!(input.contains("--- assistant ---\nalpha is remembered"));
+        assert!(input.ends_with("what did I ask you to remember?"));
+        drop(worker);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
