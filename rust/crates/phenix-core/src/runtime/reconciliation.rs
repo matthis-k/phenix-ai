@@ -153,7 +153,7 @@ impl Kernel {
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
                                 prepared_mutations: &prepared_mutations,
-                                trace_sink: &self.trace_sink,
+                                trace_sink: self.trace_sink.as_ref(),
                                 provenance: &self.provenance,
                                 continuation: None,
                                 active_services: BTreeSet::new(),
@@ -215,7 +215,7 @@ impl Kernel {
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
-                                trace_sink: &self.trace_sink,
+                                trace_sink: self.trace_sink.as_ref(),
                                 provenance: &self.provenance,
                             },
                         );
@@ -241,7 +241,7 @@ impl Kernel {
                         tasks: &self.tasks,
                         persistence: &self.persistence,
                         prepared_mutations: &prepared_mutations,
-                        trace_sink: &self.trace_sink,
+                        trace_sink: self.trace_sink.as_ref(),
                         provenance: &self.provenance,
                         continuation: None,
                         active_services: BTreeSet::new(),
@@ -270,7 +270,7 @@ impl Kernel {
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
-                                trace_sink: &self.trace_sink,
+                                trace_sink: self.trace_sink.as_ref(),
                                 provenance: &self.provenance,
                             },
                         );
@@ -311,7 +311,7 @@ impl Kernel {
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
-                        trace_sink: &self.trace_sink,
+                        trace_sink: self.trace_sink.as_ref(),
                         provenance: &self.provenance,
                     },
                 );
@@ -357,7 +357,7 @@ impl Kernel {
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
-            trace_sink: &self.trace_sink,
+            trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
         for (plugin, instance) in retired {
