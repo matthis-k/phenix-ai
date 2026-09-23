@@ -24,15 +24,21 @@ use phenix_application_interface::{
     ResumeSession, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ContractId,
+    Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ComponentExport,
+    ComponentId, ComponentImport, ComponentInterface, ComponentManifest, ContractId,
     HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
-    ModelToolTurn, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
-    PhenixSchema, PhenixValue, PluginId, Project, RoutingProfileId, RuntimeId, SessionId,
-    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId,
+    ServiceRole, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId,
+    ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_service, execution_review_service, options_component_manifest, sdk_contribution,
-    session_service, workspace_service, AgentLoopCommand, AgentLoopResponse,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+    execution_review_service, options_component_manifest, sdk_contribution, session_service,
+    AgentLoopCommand, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
     ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
     SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
     SessionTransition, SDK_PLUGIN,
@@ -45,7 +51,7 @@ use phenix_sdk::{
     ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
-    RoutingProfile, WorkspaceCommand, WorkspaceResponse,
+    RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
 use std::{
     collections::BTreeMap,
@@ -64,6 +70,8 @@ pub const APPLICATION_EVENT_CAPACITY: usize = 256;
 const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
+const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
+const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
 
 #[must_use]
 pub fn session_projection_value_id() -> ValueId {
@@ -1601,6 +1609,294 @@ enum ExecutionWorkerEvent {
     Complete(ExecutionCompletion),
 }
 
+#[derive(Clone)]
+struct ApplicationAgentToolRun {
+    service: SdkApplicationService,
+    session_id: SessionId,
+    permission_handler: Option<PermissionHandlerRef>,
+    cancellation: Arc<AtomicBool>,
+    progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ApplicationAgentToolRegistry(
+    Arc<Mutex<BTreeMap<String, ApplicationAgentToolRun>>>,
+);
+
+impl ApplicationAgentToolRegistry {
+    fn register(
+        &self,
+        execution_id: String,
+        run: ApplicationAgentToolRun,
+    ) -> Result<(), ApplicationError> {
+        let mut runs = self.0.lock();
+        if runs.contains_key(&execution_id) {
+            return Err(ApplicationError::Conflict {
+                message: format!("agent tool adapter already has execution {execution_id}"),
+            });
+        }
+        runs.insert(execution_id, run);
+        Ok(())
+    }
+
+    fn remove(&self, execution_id: &str) {
+        self.0.lock().remove(execution_id);
+    }
+
+    fn get(&self, execution_id: &str) -> Result<ApplicationAgentToolRun, String> {
+        self.0
+            .lock()
+            .get(execution_id)
+            .cloned()
+            .ok_or_else(|| format!("agent tool adapter has no execution {execution_id}"))
+    }
+}
+
+#[must_use]
+pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginManifest {
+    PluginManifest {
+        id: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
+            .expect("static application agent tool plugin id is valid"),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: agent_tool_execution_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: agent_loop_progress_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+        ],
+        resource_namespaces: Vec::new(),
+        maximum_authority,
+    }
+}
+
+fn application_agent_tool_component_id() -> ComponentId {
+    ComponentId::parse(APPLICATION_AGENT_TOOL_COMPONENT)
+        .expect("static application agent tool component id is valid")
+}
+
+#[must_use]
+pub(crate) fn application_agent_tool_component_manifest(
+    maximum_authority: Authority,
+) -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: application_agent_tool_component_id(),
+        owner: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
+            .expect("static application agent tool plugin id is valid"),
+        imports: vec![ComponentImport {
+            interface: WorkspaceInterface::interface_id(),
+            schema: WorkspaceInterface::schema(),
+            required: false,
+            authority: maximum_authority.clone(),
+        }],
+        exports: vec![
+            ComponentExport {
+                interface: AgentToolExecutionInterface::interface_id(),
+                schema: AgentToolExecutionInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: AgentLoopProgressInterface::interface_id(),
+                schema: AgentLoopProgressInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+        ],
+        maximum_authority,
+    }
+}
+
+#[must_use]
+pub(crate) fn application_agent_tool_factory(
+    registry: ApplicationAgentToolRegistry,
+) -> Box<dyn PluginInstance> {
+    Box::new(ApplicationAgentToolPlugin { registry })
+}
+
+struct ApplicationAgentToolSdk<'host, 'runtime> {
+    workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
+}
+
+type ApplicationAgentToolContext<'host, 'runtime> =
+    PluginContext<'host, 'runtime, ApplicationAgentToolSdk<'host, 'runtime>>;
+
+fn application_agent_tool_context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> ApplicationAgentToolContext<'host, 'runtime> {
+    PluginContext::new(
+        host,
+        ApplicationAgentToolSdk {
+            workspace: SdkClient::new(host, application_agent_tool_component_id()),
+        },
+        (),
+        (),
+    )
+}
+
+struct ApplicationAgentToolPlugin {
+    registry: ApplicationAgentToolRegistry,
+}
+
+impl PluginInstance for ApplicationAgentToolPlugin {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        let context = application_agent_tool_context(host);
+        if service == &agent_tool_execution_service() {
+            let request = context
+                .kernel
+                .decode_projected::<AgentToolExecutionRequest>(
+                    &AgentToolExecutionInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = execute_application_agent_tool(&context, &self.registry, request)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service == &agent_loop_progress_service() {
+            let record = context
+                .kernel
+                .decode_projected::<AgentLoopProgressRecord>(
+                    &AgentLoopProgressInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = record_application_agent_progress(&self.registry, record)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        Err(format!("unsupported application agent tool service: {service}"))
+    }
+}
+
+fn execute_application_agent_tool(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    registry: &ApplicationAgentToolRegistry,
+    request: AgentToolExecutionRequest,
+) -> Result<AgentToolExecutionResponse, String> {
+    let run = registry.get(&request.execution_id)?;
+    if request.session_id.as_ref() != Some(&run.session_id) {
+        return Err("agent tool execution session identity changed".into());
+    }
+    if run.cancellation.load(Ordering::Acquire) {
+        return Ok(AgentToolExecutionResponse::Cancelled);
+    }
+
+    let call = request.call;
+    let change = if is_runtime_model_tool(&call.callable_id) {
+        execute_runtime_model_tool_call(&context.sdk.workspace, &call)
+    } else {
+        execute_admitted_client_tool_call(
+            &run.service,
+            &run.session_id,
+            &request.execution_id,
+            call.clone(),
+            |request| {
+                invoke_permission_handler(
+                    &run.service,
+                    run.permission_handler.as_ref(),
+                    request,
+                )
+            },
+        )
+    };
+
+    if run.cancellation.load(Ordering::Acquire) {
+        return Ok(AgentToolExecutionResponse::Cancelled);
+    }
+
+    let result = match change {
+        ExecutionChange::ToolResult { call_id, output } => ModelToolResult {
+            call_id,
+            callable_id: call.callable_id,
+            output,
+            is_error: false,
+        },
+        ExecutionChange::ToolFailed { call_id, error } => {
+            if matches!(error, ApplicationError::Cancelled) {
+                return Ok(AgentToolExecutionResponse::Cancelled);
+            }
+            ModelToolResult {
+                call_id,
+                callable_id: call.callable_id,
+                output: error.to_value(),
+                is_error: true,
+            }
+        }
+        _ => return Err("tool executor returned a non-terminal tool change".into()),
+    };
+
+    Ok(AgentToolExecutionResponse::Completed { result })
+}
+
+fn record_application_agent_progress(
+    registry: &ApplicationAgentToolRegistry,
+    record: AgentLoopProgressRecord,
+) -> Result<AgentLoopProgressResponse, String> {
+    let run = registry.get(&record.execution_id)?;
+    if record.session_id.as_ref() != Some(&run.session_id) {
+        return Err("agent progress session identity changed".into());
+    }
+    let change = match record.progress {
+        AgentLoopProgress::ToolCall { call } => ExecutionChange::ToolCall {
+            call_id: call.call_id,
+            callable_id: call.callable_id,
+            input: call.input,
+        },
+        AgentLoopProgress::ToolResult { result } if !result.is_error => {
+            ExecutionChange::ToolResult {
+                call_id: result.call_id,
+                output: result.output,
+            }
+        }
+        AgentLoopProgress::ToolResult { result } => {
+            let error = ApplicationError::from_value(&result.output).unwrap_or_else(|decode| {
+                ApplicationError::Failed {
+                    message: format!(
+                        "tool {} failed with a non-application error payload: {decode}",
+                        result.callable_id
+                    ),
+                }
+            });
+            ExecutionChange::ToolFailed {
+                call_id: result.call_id,
+                error,
+            }
+        }
+    };
+    send_execution_progress(
+        &run.progress_sender,
+        &run.session_id,
+        &record.execution_id,
+        change,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(AgentLoopProgressResponse::Recorded)
+}
+
 async fn serve_application_worker(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
@@ -2047,23 +2343,34 @@ fn run_agent_execution(
         CallableId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| ApplicationError::Failed {
             message: format!("invalid application agent id: {error}"),
         })?;
-    let mut continuation = Vec::<ModelToolTurn>::new();
 
-    // The root execution budget also caps provider attempts at 16. Keep the
-    // application loop bounded explicitly so a backend cannot evade that
-    // invariant by repeatedly returning tool calls without terminal output.
-    for _ in 0..16 {
-        if cancellation.load(Ordering::Acquire) {
-            return Err(ApplicationError::Cancelled);
-        }
+    if cancellation.load(Ordering::Acquire) {
+        return Err(ApplicationError::Cancelled);
+    }
+
+    let adapter = {
+        let harness = harness.lock();
+        harness.application_agent_tools().clone()
+    };
+    adapter.register(
+        execution_id.clone(),
+        ApplicationAgentToolRun {
+            service,
+            session_id: session_id.clone(),
+            permission_handler,
+            cancellation: Arc::clone(&cancellation),
+            progress_sender,
+        },
+    )?;
+
+    let result = (|| {
         let command = AgentLoopCommand::Run {
             execution_id: execution_id.clone(),
-            session_id: Some(session_id.clone()),
+            session_id: Some(session_id),
             parent_attempt_id: None,
-            callable_id: Some(callable_id.clone()),
-            input: input.clone(),
-            tools: tools.clone(),
-            continuation: continuation.clone(),
+            callable_id: Some(callable_id),
+            input,
+            tools,
         };
         let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
             ApplicationError::InvalidInput {
@@ -2088,216 +2395,39 @@ fn run_agent_execution(
                 message: error.to_string(),
             }
         })?;
-        let AgentLoopResponse::Completed {
-            output, tool_calls, ..
-        } = response;
-        if tool_calls.is_empty() {
-            return String::from_utf8(output.as_ref().to_vec()).map_err(|error| {
-                ApplicationError::InvalidResponse {
-                    message: format!("agent output is not UTF-8: {error}"),
-                }
-            });
-        }
-        if tool_calls.len() > 10 {
-            return Err(ApplicationError::Conflict {
-                message: format!(
-                    "agent returned {} tool calls; the per-turn limit is 10",
-                    tool_calls.len()
-                ),
-            });
-        }
-
-        let mut tool_results = Vec::with_capacity(tool_calls.len());
-        for call in &tool_calls {
-            if cancellation.load(Ordering::Acquire) {
-                return Err(ApplicationError::Cancelled);
-            }
-            send_execution_progress(
-                &progress_sender,
-                &session_id,
-                &execution_id,
-                ExecutionChange::ToolCall {
-                    call_id: call.call_id.clone(),
-                    callable_id: call.callable_id.clone(),
-                    input: call.input.clone(),
-                },
-            )?;
-            let change = match normalize_model_tool_call(&tools, call) {
-                Ok(dispatch_call) => {
-                    if is_runtime_model_tool(&dispatch_call.callable_id) {
-                        execute_runtime_model_tool_call(&harness, &authority, &dispatch_call)
-                    } else {
-                        execute_admitted_client_tool_call(
-                            &service,
-                            &session_id,
-                            &execution_id,
-                            dispatch_call,
-                            |request| {
-                                invoke_permission_handler(
-                                    &service,
-                                    permission_handler.as_ref(),
-                                    request,
-                                )
-                            },
-                        )
+        match response {
+            AgentLoopResponse::Completed { output, .. } => {
+                String::from_utf8(output.as_ref().to_vec()).map_err(|error| {
+                    ApplicationError::InvalidResponse {
+                        message: format!("agent output is not UTF-8: {error}"),
                     }
-                }
-                Err(error) => ExecutionChange::ToolFailed {
-                    call_id: call.call_id.clone(),
-                    error,
-                },
-            };
-            let result = match &change {
-                ExecutionChange::ToolResult { call_id, output } => ModelToolResult {
-                    call_id: call_id.clone(),
-                    callable_id: call.callable_id.clone(),
-                    output: output.clone(),
-                    is_error: false,
-                },
-                ExecutionChange::ToolFailed { call_id, error } => {
-                    if matches!(error, ApplicationError::Cancelled) {
-                        return Err(ApplicationError::Cancelled);
-                    }
-                    ModelToolResult {
-                        call_id: call_id.clone(),
-                        callable_id: call.callable_id.clone(),
-                        output: error.to_value(),
-                        is_error: true,
-                    }
-                }
-                _ => {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: "client tool executor returned a non-terminal tool change"
-                            .to_owned(),
-                    });
-                }
-            };
-            send_execution_progress(&progress_sender, &session_id, &execution_id, change)?;
-            tool_results.push(result);
-        }
-        continuation.push(ModelToolTurn {
-            assistant_output: output,
-            tool_calls,
-            tool_results,
-        });
-    }
-
-    Err(ApplicationError::Conflict {
-        message: "model tool turn limit exceeded".to_owned(),
-    })
-}
-
-fn normalize_model_tool_call(
-    tools: &[ModelToolDescriptor],
-    call: &ModelToolCall,
-) -> Result<ModelToolCall, ApplicationError> {
-    let descriptor = tools
-        .iter()
-        .find(|tool| tool.id == call.callable_id)
-        .ok_or_else(|| ApplicationError::InvalidInput {
-            message: format!("model requested unavailable tool {}", call.callable_id),
-        })?;
-    let input = normalize_model_tool_input(&descriptor.input_schema, call.input.clone()).map_err(
-        |message| ApplicationError::InvalidInput {
-            message: format!("invalid input for tool {}: {message}", call.callable_id),
-        },
-    )?;
-    Ok(ModelToolCall {
-        call_id: call.call_id.clone(),
-        callable_id: call.callable_id.clone(),
-        input,
-    })
-}
-
-fn normalize_model_tool_input(
-    schema: &PhenixSchema,
-    value: PhenixValue,
-) -> Result<PhenixValue, String> {
-    if schema.parse(&value).is_ok() {
-        return Ok(value);
-    }
-
-    let normalized = match (schema, value) {
-        (PhenixSchema::Table(fields), PhenixValue::Map(values)) => {
-            normalize_model_tool_table(fields, values)?
-        }
-        (PhenixSchema::Table(fields), PhenixValue::Table(values)) => {
-            let values = values
-                .into_iter()
-                .map(|(key, value)| (key.as_str().to_owned(), value))
-                .collect();
-            normalize_model_tool_table(fields, values)?
-        }
-        (PhenixSchema::List(item), PhenixValue::List(values)) => PhenixValue::List(
-            values
-                .into_iter()
-                .map(|value| normalize_model_tool_input(item, value))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        (PhenixSchema::Array { item, len }, PhenixValue::List(values)) => {
-            if values.len() != *len {
-                return Err(format!("expected {len} values, got {}", values.len()));
-            }
-            PhenixValue::List(
-                values
-                    .into_iter()
-                    .map(|value| normalize_model_tool_input(item, value))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        }
-        (PhenixSchema::Map(item), PhenixValue::Map(values)) => PhenixValue::Map(
-            values
-                .into_iter()
-                .map(|(key, value)| {
-                    normalize_model_tool_input(item, value).map(|value| (key, value))
                 })
-                .collect::<Result<BTreeMap<_, _>, _>>()?,
-        ),
-        (PhenixSchema::Option(_), PhenixValue::Unit) => PhenixValue::Option(None),
-        (PhenixSchema::Option(item), PhenixValue::Option(Some(value))) => {
-            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, *value)?)))
+            }
+            AgentLoopResponse::Cancelled { .. } => Err(ApplicationError::Cancelled),
+            AgentLoopResponse::Failed { failure, .. } => match failure {
+                AgentLoopFailure::ModelTurnLimitExceeded { limit } => {
+                    Err(ApplicationError::Conflict {
+                        message: format!("model tool turn limit exceeded ({limit})"),
+                    })
+                }
+                AgentLoopFailure::ToolCallLimitExceeded { limit, actual } => {
+                    Err(ApplicationError::Conflict {
+                        message: format!(
+                            "agent returned {actual} tool calls; the per-turn limit is {limit}"
+                        ),
+                    })
+                }
+                AgentLoopFailure::InvalidToolCall { call_id, message } => {
+                    Err(ApplicationError::InvalidInput {
+                        message: format!("invalid model tool call {call_id}: {message}"),
+                    })
+                }
+            },
         }
-        (PhenixSchema::Option(_), PhenixValue::Option(None)) => PhenixValue::Option(None),
-        (PhenixSchema::Option(item), value) => {
-            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, value)?)))
-        }
-        (PhenixSchema::I64, PhenixValue::U64(value)) if value <= i64::MAX as u64 => {
-            PhenixValue::I64(value as i64)
-        }
-        (PhenixSchema::U64, PhenixValue::I64(value)) if value >= 0 => {
-            PhenixValue::U64(value as u64)
-        }
-        (PhenixSchema::F64, PhenixValue::I64(value)) => PhenixValue::F64(value as f64),
-        (PhenixSchema::F64, PhenixValue::U64(value)) => PhenixValue::F64(value as f64),
-        (_, value) => return Err(format!("expected {}, got {}", schema.kind(), value.kind())),
-    };
+    })();
 
-    schema
-        .parse(&normalized)
-        .map_err(|error| format!("{error:?}"))?;
-    Ok(normalized)
-}
-
-fn normalize_model_tool_table(
-    fields: &BTreeMap<Key, PhenixSchema>,
-    values: BTreeMap<String, PhenixValue>,
-) -> Result<PhenixValue, String> {
-    if let Some(key) = values.keys().find(|key| !fields.contains_key(key.as_str())) {
-        return Err(format!("unexpected field {key}"));
-    }
-
-    let mut normalized = BTreeMap::new();
-    for (key, field_schema) in fields {
-        let value = values
-            .get(key.as_str())
-            .cloned()
-            .ok_or_else(|| format!("missing field {key}"))?;
-        normalized.insert(
-            key.clone(),
-            normalize_model_tool_input(field_schema, value)?,
-        );
-    }
-    Ok(PhenixValue::Table(normalized))
+    adapter.remove(&execution_id);
+    result
 }
 
 fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
@@ -2317,8 +2447,7 @@ fn is_runtime_model_tool(callable_id: &CallableId) -> bool {
 }
 
 fn execute_runtime_model_tool_call(
-    harness: &Arc<Mutex<PhenixHarness>>,
-    authority: &Authority,
+    workspace: &SdkClient<'_, '_, WorkspaceInterface>,
     call: &ModelToolCall,
 ) -> ExecutionChange {
     let result = (|| -> Result<PhenixValue, ApplicationError> {
@@ -2340,27 +2469,13 @@ fn execute_runtime_model_tool_call(
                 })
             }
         };
-        let command = WorkspaceCommand::Shell { command };
-        let encoded = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = harness
-            .lock()
-            .invoke(&workspace_service(), &encoded, authority, None)
+        let response = workspace
+            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Shell {
+                command,
+            })
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
-        let value: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        let response = WorkspaceResponse::try_from(Project(&value)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })?;
         Ok(response.to_value())
     })();
 
