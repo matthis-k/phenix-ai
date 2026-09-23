@@ -1689,7 +1689,11 @@ fn start_prompt(
         }));
         return;
     }
-    let model_input = match model_input_from_content(&request.content) {
+    let model_input = match model_input_from_session(
+        worker.projection().state(),
+        &request.session_id,
+        &request.content,
+    ) {
         Ok(input) => input,
         Err(error) => {
             invocation.respond(Err(error));
@@ -1924,7 +1928,46 @@ fn complete_prompt_output(
     })
 }
 
-fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
+fn model_input_from_session(
+    state: &SessionProjectionState,
+    session_id: &SessionId,
+    current: &[Content],
+) -> Result<Bytes, ApplicationError> {
+    let current = validated_model_text(current)?;
+    let projection = state
+        .sessions
+        .get(session_id.as_str())
+        .ok_or_else(|| ApplicationError::NotFound {
+            resource: format!("session {session_id}"),
+        })?;
+    let messages = projection.updates.iter().filter_map(|update| {
+        if let SessionChange::Message { message } = &update.update {
+            Some(message)
+        } else {
+            None
+        }
+    });
+
+    let mut messages = messages.peekable();
+    if messages.peek().is_none() {
+        return Ok(Bytes::new(current.into_bytes()));
+    }
+
+    let mut transcript = String::from("--- phenix session-history ---\n");
+    for message in messages {
+        transcript.push_str(match &message.role {
+            MessageRole::User => "--- user ---\n",
+            MessageRole::Assistant => "--- assistant ---\n",
+        });
+        transcript.push_str(&model_text_from_content(&message.content)?);
+        transcript.push('\n');
+    }
+    transcript.push_str("--- phenix current-user ---\n");
+    transcript.push_str(&current);
+    Ok(Bytes::new(transcript.into_bytes()))
+}
+
+fn model_text_from_content(content: &[Content]) -> Result<String, ApplicationError> {
     let mut text = String::new();
     for part in content {
         let Content::Text { text: part } = part else {
@@ -1934,12 +1977,21 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
         };
         text.push_str(part);
     }
+    Ok(text)
+}
+
+fn validated_model_text(content: &[Content]) -> Result<String, ApplicationError> {
+    let text = model_text_from_content(content)?;
     if text.trim().is_empty() {
         return Err(ApplicationError::InvalidInput {
             message: "prompt text must not be empty".to_owned(),
         });
     }
-    Ok(Bytes::new(text.into_bytes()))
+    Ok(text)
+}
+
+fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
+    validated_model_text(content).map(|text| Bytes::new(text.into_bytes()))
 }
 
 struct AgentExecutionContext {
@@ -3215,6 +3267,86 @@ mod tests {
         }])
         .unwrap_err();
         assert!(matches!(error, ApplicationError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn async_model_input_keeps_the_first_session_turn_unwrapped() {
+        let mut reducer = SessionProjectionReducer::new();
+        let session = session("session-1", None);
+        let session_id = session.session_id.clone();
+        reducer.insert_created(session);
+
+        let input = model_input_from_session(
+            reducer.state(),
+            &session_id,
+            &[Content::Text {
+                text: "first question".into(),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(input.as_ref(), b"first question");
+    }
+
+    #[test]
+    fn async_model_input_replays_all_prior_session_messages() {
+        let mut reducer = SessionProjectionReducer::new();
+        let session = session("session-1", None);
+        let session_id = session.session_id.clone();
+        reducer.insert_created(session);
+
+        for (sequence, role, text) in [
+            (1, MessageRole::User, "whats the memory of this conversation you have?"),
+            (
+                2,
+                MessageRole::Assistant,
+                "I can see the messages in this current conversation.",
+            ),
+            (3, MessageRole::User, "is that the entire chat?"),
+            (
+                4,
+                MessageRole::Assistant,
+                "I can only see the messages in this current conversation.",
+            ),
+        ] {
+            reducer
+                .apply_update(SessionUpdate {
+                    session_id: session_id.clone(),
+                    sequence,
+                    update: SessionChange::Message {
+                        message: Message {
+                            role,
+                            content: vec![Content::Text { text: text.into() }],
+                        },
+                    },
+                })
+                .unwrap();
+        }
+
+        let input = model_input_from_session(
+            reducer.state(),
+            &session_id,
+            &[Content::Text {
+                text: "what question?".into(),
+            }],
+        )
+        .unwrap();
+        let input = String::from_utf8(input.as_ref().to_vec()).unwrap();
+
+        assert_eq!(
+            input,
+            "--- phenix session-history ---\n\
+--- user ---\n\
+whats the memory of this conversation you have?\n\
+--- assistant ---\n\
+I can see the messages in this current conversation.\n\
+--- user ---\n\
+is that the entire chat?\n\
+--- assistant ---\n\
+I can only see the messages in this current conversation.\n\
+--- phenix current-user ---\n\
+what question?"
+        );
     }
 
     #[test]
