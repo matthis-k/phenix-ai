@@ -144,9 +144,7 @@ impl HarnessBuilder {
         let application_agent_tools = builder.application_agent_tools.clone();
         builder.add_embedded(
             application::application_agent_tool_manifest(authority.clone()),
-            move || {
-                application::application_agent_tool_factory(application_agent_tools.clone())
-            },
+            move || application::application_agent_tool_factory(application_agent_tools.clone()),
         )?;
         builder.add_embedded(language_manifest(), language_factory)?;
         builder.add_embedded(memory_manifest(), memory_factory)?;
@@ -299,9 +297,7 @@ impl HarnessBuilder {
                 .add_embedded(
                     application::application_agent_tool_manifest(authority.clone()),
                     move || {
-                        application::application_agent_tool_factory(
-                            application_agent_tools.clone(),
-                        )
+                        application::application_agent_tool_factory(application_agent_tools.clone())
                     },
                 )
                 .map_err(|error| error.to_string())?;

@@ -30,10 +30,7 @@ pub struct AgentLoopPolicy {
 
 impl AgentLoopPolicy {
     #[must_use]
-    pub const fn new(
-        max_model_turns: NonZeroU32,
-        max_tool_calls_per_turn: NonZeroU32,
-    ) -> Self {
+    pub const fn new(max_model_turns: NonZeroU32, max_tool_calls_per_turn: NonZeroU32) -> Self {
         Self {
             max_model_turns,
             max_tool_calls_per_turn,
@@ -54,8 +51,7 @@ impl AgentLoopPolicy {
 impl Default for AgentLoopPolicy {
     fn default() -> Self {
         Self::new(
-            NonZeroU32::new(DEFAULT_MAX_MODEL_TURNS)
-                .expect("default model-turn limit is non-zero"),
+            NonZeroU32::new(DEFAULT_MAX_MODEL_TURNS).expect("default model-turn limit is non-zero"),
             NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN)
                 .expect("default per-turn tool-call limit is non-zero"),
         )

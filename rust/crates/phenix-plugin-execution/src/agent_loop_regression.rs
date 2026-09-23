@@ -6,15 +6,16 @@ use crate::{
     execution_manifest, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
     AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
     AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage,
-    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
-    DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse, DEFAULT_MAX_MODEL_TURNS,
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole, SessionId,
+    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
+    SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -168,13 +169,11 @@ impl PluginInstance for InvocationProvider {
             .kernel
             .encode_value(&StepRunnerResponse::Completed {
                 attempt: fixture_attempt(),
-                output: Bytes::new(
-                    if request.continuation.is_empty() {
-                        b"provider-output".to_vec()
-                    } else {
-                        b"provider-output-2".to_vec()
-                    },
-                ),
+                output: Bytes::new(if request.continuation.is_empty() {
+                    b"provider-output".to_vec()
+                } else {
+                    b"provider-output-2".to_vec()
+                }),
                 tool_calls,
                 settled: BudgetActual {
                     fresh_input_tokens: 1,
@@ -316,7 +315,9 @@ impl PluginInstance for ToolAdapter {
             return serde_json::to_vec(&PhenixValue::from(&AgentLoopProgressResponse::Recorded))
                 .map_err(|error| error.to_string());
         }
-        Err(format!("unsupported fixture tool adapter service: {service}"))
+        Err(format!(
+            "unsupported fixture tool adapter service: {service}"
+        ))
     }
 }
 
@@ -454,7 +455,6 @@ fn fixture_attempt() -> StepAttemptRecord {
     attempt
 }
 
-
 fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     let authority = regression_authority();
     let execution = execution_manifest(authority.clone());
@@ -474,14 +474,7 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
     ResolvedHarness::resolve(plugins, components, [], &ceiling).unwrap()
 }
 
-fn kernel(
-    with_provider: bool,
-) -> (
-    Kernel,
-    PluginId,
-    Arc<AtomicU32>,
-    Arc<Mutex<Vec<String>>>,
-) {
+fn kernel(with_provider: bool) -> (Kernel, PluginId, Arc<AtomicU32>, Arc<Mutex<Vec<String>>>) {
     let resolved = resolved_harness(with_provider);
     let execution = execution_manifest(Authority::default()).id;
     let agent_loop = agent_loop_manifest(Authority::default()).id;
@@ -659,10 +652,7 @@ fn seventeenth_model_turn_fails_at_loop_boundary() {
             },
         }
     );
-    assert_eq!(
-        executions.load(Ordering::SeqCst),
-        DEFAULT_MAX_MODEL_TURNS
-    );
+    assert_eq!(executions.load(Ordering::SeqCst), DEFAULT_MAX_MODEL_TURNS);
 }
 
 #[test]

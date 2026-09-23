@@ -29,9 +29,9 @@ use phenix_core::{
     HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
     PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId,
-    ServiceRole, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId,
-    ValuePath,
+    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
+    ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
+    ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
@@ -40,10 +40,9 @@ use phenix_plugin_catalog::{
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
     AgentLoopResponse, AgentToolExecutionInterface, AgentToolExecutionRequest,
-    AgentToolExecutionResponse,
-    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, SDK_PLUGIN,
+    AgentToolExecutionResponse, ExecutionReviewCommand, ExecutionReviewResponse,
+    OptionStartupPrecedence, SessionCommand, SessionJournalDraft, SessionJournalEntry,
+    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
@@ -1816,7 +1815,9 @@ impl PluginInstance for ApplicationAgentToolPlugin {
                 .encode_value(&response)
                 .map_err(|error| error.to_string());
         }
-        Err(format!("unsupported application agent tool service: {service}"))
+        Err(format!(
+            "unsupported application agent tool service: {service}"
+        ))
     }
 }
 
@@ -1858,11 +1859,7 @@ fn execute_application_agent_tool(
             &request.execution_id,
             call.clone(),
             |request| {
-                invoke_permission_handler(
-                    &run.service,
-                    run.permission_handler.as_ref(),
-                    request,
-                )
+                invoke_permission_handler(&run.service, run.permission_handler.as_ref(), request)
             },
         )
     };
