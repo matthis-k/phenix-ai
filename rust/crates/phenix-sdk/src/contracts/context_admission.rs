@@ -129,10 +129,17 @@ impl ContextAdmissionRequest {
         });
 
         let budget = self.step_plan.context.total_input_tokens();
+        // Budget the same canonical content exactly once. The admission loop below
+        // performs this deduplication, so counting duplicate mandatory candidates here
+        // would reject a projection that can be admitted without duplicating prompt bytes.
+        let mut mandatory_identities = BTreeSet::new();
         let mandatory_tokens = self
             .candidates
             .iter()
-            .filter(|candidate| candidate.mandatory)
+            .filter(|candidate| {
+                candidate.mandatory
+                    && mandatory_identities.insert(candidate.content_identity.clone())
+            })
             .fold(0_u64, |total, candidate| {
                 total.saturating_add(candidate.estimated_tokens)
             });
@@ -279,6 +286,25 @@ mod tests {
         assert_eq!(result.used_input_tokens, 60);
         assert_eq!(result.admitted[0].id, "required");
         assert_eq!(result.admitted[1].form, ContextProjectionForm::Omitted);
+    }
+
+    #[test]
+    fn duplicate_mandatory_content_does_not_exhaust_the_budget() {
+        let first = candidate("same", 20, true);
+        let mut duplicate = candidate("alias", 20, true);
+        duplicate.content_identity = first.content_identity.clone();
+        let result = ContextAdmissionRequest {
+            execution_id: "e1".into(),
+            step_plan: plan(20),
+            candidates: vec![first, duplicate],
+            cache_epoch: 1,
+        }
+        .admit()
+        .unwrap();
+
+        assert_eq!(result.used_input_tokens, 20);
+        assert_eq!(result.deduplicated_items, 1);
+        assert_eq!(result.admitted.len(), 1);
     }
 
     #[test]
