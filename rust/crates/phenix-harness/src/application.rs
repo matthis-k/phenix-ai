@@ -1990,6 +1990,7 @@ fn validated_model_text(content: &[Content]) -> Result<String, ApplicationError>
     Ok(text)
 }
 
+#[cfg(test)]
 fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
     validated_model_text(content).map(|text| Bytes::new(text.into_bytes()))
 }
@@ -3296,7 +3297,11 @@ mod tests {
         reducer.insert_created(session);
 
         for (sequence, role, text) in [
-            (1, MessageRole::User, "whats the memory of this conversation you have?"),
+            (
+                1,
+                MessageRole::User,
+                "whats the memory of this conversation you have?",
+            ),
             (
                 2,
                 MessageRole::Assistant,
