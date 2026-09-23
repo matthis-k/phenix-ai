@@ -96,7 +96,8 @@ pub use agent::{
     context_service, model_inference_service, skill_service, tool_service, ContextCommand,
     ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextResponse, ContextScope,
     ModelInferenceFailure, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
-    ModelToolCall, ModelToolDescriptor, ModelToolResult, ModelToolTurn, SkillCommand,
+    ModelToolCall, ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SkillCommand,
+    UsageQuantity,
     SkillDefinition, SkillResponse, ToolCommand, ToolDefinition, ToolResponse, CONTEXT_SERVICE,
     MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
 };
