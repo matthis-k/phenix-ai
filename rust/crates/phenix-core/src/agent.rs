@@ -33,29 +33,37 @@ pub struct ModelInferenceResponse {
     pub tool_calls: Vec<ModelToolCall>,
 }
 
-#[derive(
-    phenix_sdk_macros::PhenixValue,
-    Clone,
-    Debug,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
-)]
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelInferenceFailure {
-    Authentication { message: String },
-    Permission { message: String },
-    NotFound { message: String },
+    Authentication {
+        message: String,
+    },
+    Permission {
+        message: String,
+    },
+    NotFound {
+        message: String,
+    },
     RateLimited {
         message: String,
         retry_after_ms: Option<u64>,
     },
-    ContextLimit { message: String },
-    InvalidRequest { message: String },
-    Unavailable { message: String },
-    Transport { message: String },
-    Protocol { message: String },
+    ContextLimit {
+        message: String,
+    },
+    InvalidRequest {
+        message: String,
+    },
+    Unavailable {
+        message: String,
+    },
+    Transport {
+        message: String,
+    },
+    Protocol {
+        message: String,
+    },
 }
 
 impl ModelInferenceFailure {

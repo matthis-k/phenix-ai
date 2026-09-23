@@ -11,9 +11,9 @@ use phenix_core::{
 pub use phenix_sdk::{
     model_diagnostic_event_type, model_dispatch_service, model_routing_service, ModelCommand,
     ModelDiagnosticEvent, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
-    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
-    RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
-    MODEL_ROUTING_SERVICE,
+    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch,
+    RoutingProfile, RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION,
+    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -272,10 +272,7 @@ fn handle_dispatch(
                         reason: failure.message().to_owned(),
                     },
                 );
-                return Err(ModelDispatchFailure {
-                    decision,
-                    failure,
-                });
+                return Err(ModelDispatchFailure { decision, failure });
             }
             let request = encode_request(context, &decision.target, input, tools, continuation)
                 .map_err(|failure| ModelDispatchFailure {

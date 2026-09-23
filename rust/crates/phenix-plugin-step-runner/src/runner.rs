@@ -12,11 +12,11 @@ use phenix_sdk::{
     ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ModelCommand, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
-    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision,
-    StepAttemptCommand, StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan,
-    StepRunnerCommand, StepRunnerInterface, StepRunnerResponse, StepSettlementBasis,
-    StepTransactionCommand, StepTransactionInterface, StepTransactionResponse, UsageAttemptKind,
-    UsageAttribution, UsagePlanningInput,
+    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest,
+    ProjectionRevision, StepAttemptCommand, StepAttemptInterface, StepAttemptRecord,
+    StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface, StepRunnerResponse,
+    StepSettlementBasis, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
+    UsageAttemptKind, UsageAttribution, UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -889,9 +889,7 @@ fn resolve_model_route(
             };
             candidates.retain(|candidate| candidate.ordinal > previous.candidate_ordinal);
             if !candidates.is_empty() {
-                if let Ok(selection) =
-                    select_route(&candidates, &plan.routing, &route_policy)
-                {
+                if let Ok(selection) = select_route(&candidates, &plan.routing, &route_policy) {
                     return Ok(ModelResponse::Decision { selection });
                 }
             }

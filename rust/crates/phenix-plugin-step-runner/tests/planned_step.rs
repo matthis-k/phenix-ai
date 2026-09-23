@@ -1,9 +1,9 @@
 use phenix_core::{
     Authority, CapabilityGenerationId, ComponentInterface, InvocationOutcome, Kernel, KernelConfig,
-    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
-    PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId, ValueError,
+    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
+    ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
+    ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -574,7 +574,9 @@ mod automatic_dispatch_retry {
             &StepRunnerCommand::Run { request },
         )
         .unwrap();
-        let StepRunnerResponse::Completed { attempt, output, .. } = response;
+        let StepRunnerResponse::Completed {
+            attempt, output, ..
+        } = response;
 
         assert_eq!(attempt.attribution.kind, UsageAttemptKind::Retry);
         assert_eq!(

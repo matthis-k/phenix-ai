@@ -288,9 +288,7 @@ fn phenix_json(value: &PhenixValue) -> Result<Value, ProviderError> {
             .map(Value::Object),
         PhenixValue::Table(values) => values
             .iter()
-            .map(|(key, value)| {
-                phenix_json(value).map(|value| (key.as_str().to_owned(), value))
-            })
+            .map(|(key, value)| phenix_json(value).map(|value| (key.as_str().to_owned(), value)))
             .collect::<Result<Map<_, _>, _>>()
             .map(Value::Object),
         PhenixValue::Variant { tag, value } => Ok(serde_json::json!({
@@ -1138,10 +1136,7 @@ mod tests {
             output: PhenixValue::Variant {
                 tag: Key::parse("process").unwrap(),
                 value: Box::new(PhenixValue::Table(BTreeMap::from([
-                    (
-                        Key::parse("exit_code").unwrap(),
-                        PhenixValue::I64(0),
-                    ),
+                    (Key::parse("exit_code").unwrap(), PhenixValue::I64(0)),
                     (
                         Key::parse("stdout").unwrap(),
                         PhenixValue::String("ok".to_owned()),
