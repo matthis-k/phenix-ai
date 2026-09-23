@@ -33,7 +33,7 @@ service invocation
   -> clone whole Vec from Kernel::service_invocation_provenance
 ```
 
-No first-party code subscribes to `kernel.runtime.trace` at the audited head. The trace event is runtime metadata, not domain communication.
+`phenix-plugin-debug` currently subscribes to `kernel.runtime.trace` to persist diagnostic logs, and `phenix-plugin-step-runner` emits policy stages through the same EventBus route. Both are first-party diagnostic consumers/producers rather than semantic event traffic. This PR migrates Step Runner to direct sink recording and installs the Debug logger as a `RuntimeTraceSink` when the debug plugin is part of the harness.
 
 ## Target ownership
 
@@ -118,6 +118,11 @@ Primary files:
 - `rust/crates/phenix-core/src/runtime.rs`
 - `rust/crates/phenix-core/src/runtime/kernel.rs`
 - `rust/crates/phenix-core/src/events.rs`
+- `rust/crates/phenix-plugin-step-runner/src/runner.rs`
+- `rust/crates/phenix-plugin-debug/src/component.rs`
+- `rust/crates/phenix-plugin-debug/src/implementation.rs`
+- `rust/crates/phenix-plugin-catalog/src/lib.rs`
+- `rust/crates/phenix-harness/src/lib.rs`
 
 Suggested new module:
 
@@ -131,8 +136,10 @@ Mechanical sequence:
 4. Replace `Mutex<Vec<ServiceInvocationProvenance>>` with `ProvenanceBuffer`.
 5. Keep the public provenance snapshot method and existing provenance fields.
 6. Remove runtime trace serialization and `EventBus::admit_in_generation` calls from runtime tracing.
-7. Remove `RUNTIME_TRACE_EVENT`, `RUNTIME_TRACE_EVENT_VERSION`, and `runtime_trace_event_type` if no supported consumer remains.
-8. Remove imports and tests that only existed for the EventBus trace route.
+7. Route Step Runner policy stages through `KernelAccess::record_runtime_trace` instead of `dispatch_event`.
+8. Replace the Debug plugin's runtime-trace `ComponentListener` with a direct `RuntimeTraceSink`; the harness installs that sink whenever `phenix.debug` is selected.
+9. Remove `RUNTIME_TRACE_EVENT`, `RUNTIME_TRACE_EVENT_VERSION`, and `runtime_trace_event_type`.
+10. Remove imports and tests that only existed for the EventBus trace route.
 
 ## Invariants to preserve
 
@@ -155,6 +162,8 @@ Add focused tests for:
 - provenance capacity 2 retains the newest two invocations
 - `Kernel::service_invocation_provenance()` returns retained order
 - semantic EventBus delivery still uses #495 behavior
+- Step Runner policy diagnostics reach the direct sink without EventBus serialization
+- the Debug component no longer declares a runtime-trace listener while Debug logging remains installed through the sink path
 - runtime trace records do not include request or response bytes
 
 Update existing service-layer and provider-fallback regressions to read provenance from the bounded buffer through the existing kernel accessor.
@@ -191,7 +200,7 @@ ServiceInvocationProvenance -> ProvenanceBuffer
 - [ ] Provenance storage has an explicit non-zero bound and deterministic eviction.
 - [ ] Existing provider selection and authority provenance fields remain available.
 - [ ] EventBus semantic event tests keep their current behavior.
-- [ ] No compatibility publisher keeps `kernel.runtime.trace` alive beside the new sink.
+- [ ] No compatibility publisher, listener, event constant, or Step Runner emitter keeps `kernel.runtime.trace` alive beside the new sink.
 - [ ] Source, Rust, Clippy, Product, Integration, Docs, and Maintenance checks pass at exact head.
 
 ## Follow-up relation
