@@ -10,11 +10,10 @@ use phenix_core::{
 };
 use phenix_provider_sdk::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, AuthDescriptor,
-    AuthKind, Endpoint, HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand,
-    ProviderAuthInterface, ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult,
-    ProviderError, ProviderRequest, ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY,
-    SECRETS_MANAGE_CAPABILITY,
+    provider_http_client_builder, AuthDescriptor, AuthKind, Endpoint, HttpMethod, Protocol,
+    ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
+    ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderRequest,
+    ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY, SECRETS_MANAGE_CAPABILITY,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};

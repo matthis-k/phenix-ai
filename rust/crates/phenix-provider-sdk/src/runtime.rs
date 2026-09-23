@@ -1,9 +1,8 @@
 use crate::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, ApiTokenScheme,
-    ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand,
-    ProviderAuthResponse, ProviderError, ProviderRequest, ProviderResponse, ProviderSpec,
-    RateLimits, Token,
+    provider_http_client_builder, ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore,
+    HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderRequest,
+    ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
     model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
