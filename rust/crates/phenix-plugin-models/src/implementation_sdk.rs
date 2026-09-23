@@ -201,19 +201,21 @@ fn handle_routing(
             provider_plugin,
             authenticated,
         } => {
-            if authenticated {
-                context.plugin.state.insert(provider_plugin.clone());
+            let changed = if authenticated {
+                context.plugin.state.insert(provider_plugin.clone())
             } else {
-                context.plugin.state.remove(&provider_plugin);
+                context.plugin.state.remove(&provider_plugin)
+            };
+            if changed {
+                emit_diagnostic(
+                    context,
+                    ModelDiagnosticEvent::AuthenticationChanged {
+                        provider_plugin: provider_plugin.as_str().to_owned(),
+                        authenticated,
+                        authenticated_providers: authenticated_providers(context),
+                    },
+                );
             }
-            emit_diagnostic(
-                context,
-                ModelDiagnosticEvent::AuthenticationChanged {
-                    provider_plugin: provider_plugin.as_str().to_owned(),
-                    authenticated,
-                    authenticated_providers: authenticated_providers(context),
-                },
-            );
             Ok(ModelResponse::Authentication {
                 provider_plugin,
                 authenticated,
