@@ -5,8 +5,9 @@ use crate::{
     RateLimits, Token,
 };
 use phenix_core::{
-    model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
-    ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
+    model_inference_service, ComponentInterface, InvocationOutcome, ModelInferenceInterface,
+    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginHost,
+    PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use std::{
@@ -252,16 +253,14 @@ impl PluginInstance for ProviderPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            return self
-                .invoke_model(request)
-                .and_then(|response| {
-                    context.kernel.encode_value(&response).map_err(|error| {
-                        ProviderError::Protocol {
-                            message: error.to_string(),
-                        }
-                    })
-                })
-                .map_err(|error| error.to_wire());
+            let outcome = match self.invoke_model(request) {
+                Ok(response) => InvocationOutcome::success(PhenixValue::from(&response)),
+                Err(error) => {
+                    InvocationOutcome::domain_error(PhenixValue::from(&error.inference_failure()))
+                }
+            };
+            return serde_json::to_vec(&outcome.into_transport_value())
+                .map_err(|error| format!("cannot encode model inference outcome: {error}"));
         }
         if service == &provider_auth_service() {
             let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;
