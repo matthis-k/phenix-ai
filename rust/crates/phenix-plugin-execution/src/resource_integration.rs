@@ -1,7 +1,7 @@
 use crate::{execution_factory, execution_manifest, execution_resource_service};
 use phenix_core::{
-    Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
-    PhenixValue, PluginId, Project,
+    ArtifactRevision, Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence,
+    ModelId, PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
     BudgetActual, BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest,
@@ -80,7 +80,7 @@ fn authority(values: &[&str]) -> ExecutionAuthority {
 
 fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
     DelegationTaskBinding {
-        contract_fingerprint: "sha256:contract".into(),
+        contract_revision: ArtifactRevision::from_content(b"contract"),
         parent_policy_revision: "policy-1".into(),
         resources: DelegatedWorkResources {
             target: RouteDecision {

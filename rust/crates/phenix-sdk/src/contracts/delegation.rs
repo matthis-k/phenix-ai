@@ -1,6 +1,7 @@
 use super::{
     BudgetReservation, ExactContextReference, ExecutionAuthority, ModelTurnUsage, RouteDecision,
 };
+use phenix_core::ArtifactRevision;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -32,7 +33,7 @@ pub struct DelegatedWorkResources {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct DelegationTaskBinding {
-    pub contract_fingerprint: String,
+    pub contract_revision: ArtifactRevision,
     pub parent_policy_revision: String,
     pub resources: DelegatedWorkResources,
 }

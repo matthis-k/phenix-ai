@@ -1,3 +1,4 @@
+use phenix_core::ArtifactRevision;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
@@ -176,6 +177,119 @@ impl DelegationContract {
         })
     }
 
+    /// Deterministic semantic identity for this typed delegation contract.
+    ///
+    /// This is deliberately not a wire serialization of the contract. It is a
+    /// canonical, versioned projection used to bind durable runtime state to the
+    /// exact typed design that produced it.
+    #[must_use]
+    pub fn revision(&self) -> ArtifactRevision {
+        let mut canonical = Vec::new();
+        write_str(&mut canonical, "phenix.delegation-contract.v1");
+        write_text(&mut canonical, &self.goal);
+        write_len(&mut canonical, self.components.len());
+        for (id, component) in &self.components {
+            write_str(&mut canonical, id.as_str());
+            write_text(&mut canonical, &component.responsibility);
+
+            write_len(&mut canonical, component.fixed.len());
+            for fixed in &component.fixed {
+                match fixed {
+                    FixedDesign::Provides(interface) => {
+                        canonical.push(0);
+                        write_str(&mut canonical, interface.id.as_str());
+                        write_text(&mut canonical, &interface.contract);
+                    }
+                    FixedDesign::Owns(element) => {
+                        canonical.push(1);
+                        write_str(&mut canonical, element.id.as_str());
+                        write_text(&mut canonical, &element.description);
+                    }
+                    FixedDesign::DependsOn(target) => {
+                        canonical.push(2);
+                        write_str(&mut canonical, target.as_str());
+                    }
+                    FixedDesign::Calls(target) => {
+                        canonical.push(3);
+                        write_str(&mut canonical, target.as_str());
+                    }
+                    FixedDesign::Invariant(invariant) => {
+                        canonical.push(4);
+                        write_text(&mut canonical, invariant);
+                    }
+                }
+            }
+
+            write_len(&mut canonical, component.implementation.len());
+            for requirement in &component.implementation {
+                match &requirement.target {
+                    ImplementationTarget::Component => canonical.push(0),
+                    ImplementationTarget::Interface(target) => {
+                        canonical.push(1);
+                        write_str(&mut canonical, target.as_str());
+                    }
+                    ImplementationTarget::OwnedElement(target) => {
+                        canonical.push(2);
+                        write_str(&mut canonical, target.as_str());
+                    }
+                    ImplementationTarget::Internals => canonical.push(3),
+                    ImplementationTarget::Tests => canonical.push(4),
+                }
+                write_text(&mut canonical, &requirement.requirement);
+            }
+
+            write_len(&mut canonical, component.may_change.len());
+            for permission in &component.may_change {
+                match &permission.scope {
+                    ChangeScope::OwnedElement(target) => {
+                        canonical.push(0);
+                        write_str(&mut canonical, target.as_str());
+                    }
+                    ChangeScope::Internals => canonical.push(1),
+                    ChangeScope::Tests => canonical.push(2),
+                }
+                write_text(&mut canonical, &permission.allowance);
+            }
+        }
+
+        write_len(&mut canonical, self.acceptance.len());
+        for criterion in &self.acceptance {
+            match criterion {
+                AcceptanceCriterion::Behavior(behavior) => {
+                    canonical.push(0);
+                    write_text(&mut canonical, behavior);
+                }
+                AcceptanceCriterion::Command {
+                    name,
+                    program,
+                    arguments,
+                } => {
+                    canonical.push(1);
+                    write_text(&mut canonical, name);
+                    write_text(&mut canonical, program);
+                    write_len(&mut canonical, arguments.len());
+                    for argument in arguments {
+                        write_str(&mut canonical, argument);
+                    }
+                }
+            }
+        }
+
+        write_len(&mut canonical, self.escalation.len());
+        for condition in &self.escalation {
+            match &condition.scope {
+                EscalationScope::Contract => canonical.push(0),
+                EscalationScope::Component(component) => {
+                    canonical.push(1);
+                    write_str(&mut canonical, component.as_str());
+                }
+            }
+            write_text(&mut canonical, &condition.condition);
+        }
+
+        ArtifactRevision::from_content(&canonical)
+    }
+
     #[must_use]
     pub fn goal(&self) -> &ContractText {
         &self.goal
@@ -341,6 +455,20 @@ fn validate_component(
     }
 
     Ok(())
+}
+
+fn write_len(output: &mut Vec<u8>, len: usize) {
+    let len = u64::try_from(len).expect("delegation contract collection length fits u64");
+    output.extend_from_slice(&len.to_be_bytes());
+}
+
+fn write_str(output: &mut Vec<u8>, value: &str) {
+    write_len(output, value.len());
+    output.extend_from_slice(value.as_bytes());
+}
+
+fn write_text(output: &mut Vec<u8>, value: &ContractText) {
+    write_str(output, value.as_str());
 }
 
 #[cfg(test)]
