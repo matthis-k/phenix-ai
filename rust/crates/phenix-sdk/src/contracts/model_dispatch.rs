@@ -1,6 +1,7 @@
 use super::{ModelInferenceResponse, RouteDecision};
 use phenix_core::{
-    Bytes, ComponentInterface, InterfaceId, ModelToolDescriptor, ModelToolTurn, ServiceId,
+    Bytes, ComponentInterface, InterfaceId, ModelInferenceFailure, ModelToolDescriptor,
+    ModelToolTurn, ServiceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,25 @@ pub enum ModelDispatchResponse {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ModelDispatchFailure {
+    pub decision: RouteDecision,
+    pub failure: ModelInferenceFailure,
+}
+
+impl ModelDispatchFailure {
+    #[must_use]
+    pub fn retryable(&self) -> bool {
+        self.failure.retryable()
+    }
+
+    #[must_use]
+    pub fn requires_context_recovery(&self) -> bool {
+        self.failure.requires_context_recovery()
+    }
+}
+
 pub struct ModelDispatchInterface;
 
 impl ComponentInterface for ModelDispatchInterface {
@@ -69,7 +89,11 @@ impl ComponentInterface for ModelDispatchInterface {
     }
 
     fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<ModelDispatchCommand, ModelDispatchResponse>()
+        phenix_core::InterfaceSchema::fallible_of::<
+            ModelDispatchCommand,
+            ModelDispatchResponse,
+            ModelDispatchFailure,
+        >()
     }
 }
 
