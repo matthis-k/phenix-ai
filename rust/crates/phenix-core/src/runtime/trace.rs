@@ -221,7 +221,10 @@ mod tests {
             .into_iter()
             .map(|entry| entry.service.as_str().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(services, ["fixture.two@1", "fixture.three@1"]);
+        assert_eq!(
+            services,
+            vec!["fixture.two@1".to_owned(), "fixture.three@1".to_owned()]
+        );
     }
 
     #[test]
