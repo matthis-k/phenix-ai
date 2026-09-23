@@ -1689,7 +1689,15 @@ fn start_prompt(
         }));
         return;
     }
-    let model_input = match model_input_from_content(&request.content) {
+    if let Err(error) = ensure_session_projection(worker, &request.session_id) {
+        invocation.respond(Err(error));
+        return;
+    }
+    let model_input = match model_input_from_session(
+        worker.projection().state(),
+        &request.session_id,
+        &request.content,
+    ) {
         Ok(input) => input,
         Err(error) => {
             invocation.respond(Err(error));
@@ -1924,7 +1932,67 @@ fn complete_prompt_output(
     })
 }
 
-fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
+fn ensure_session_projection(
+    worker: &mut ApplicationWorker,
+    session_id: &SessionId,
+) -> Result<(), ApplicationError> {
+    if worker
+        .projection()
+        .state()
+        .sessions
+        .contains_key(session_id.as_str())
+    {
+        return Ok(());
+    }
+    worker
+        .resume_session(SessionResumeInput {
+            session_id: session_id.clone(),
+            after_sequence: None,
+        })
+        .map(|_| ())
+}
+
+fn model_input_from_session(
+    state: &SessionProjectionState,
+    session_id: &SessionId,
+    current: &[Content],
+) -> Result<Bytes, ApplicationError> {
+    let current = validated_model_text(current)?;
+    let projection =
+        state
+            .sessions
+            .get(session_id.as_str())
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: format!("session {session_id}"),
+            })?;
+    let messages = projection.updates.iter().filter_map(|update| {
+        if let SessionChange::Message { message } = &update.update {
+            Some(message)
+        } else {
+            None
+        }
+    });
+
+    let mut messages = messages.peekable();
+    if messages.peek().is_none() {
+        return Ok(Bytes::new(current.into_bytes()));
+    }
+
+    let mut transcript = String::from("--- phenix session-history ---\n");
+    for message in messages {
+        transcript.push_str(match &message.role {
+            MessageRole::User => "--- user ---\n",
+            MessageRole::Assistant => "--- assistant ---\n",
+        });
+        transcript.push_str(&model_text_from_content(&message.content)?);
+        transcript.push('\n');
+    }
+    transcript.push_str("--- phenix current-user ---\n");
+    transcript.push_str(&current);
+    Ok(Bytes::new(transcript.into_bytes()))
+}
+
+fn model_text_from_content(content: &[Content]) -> Result<String, ApplicationError> {
     let mut text = String::new();
     for part in content {
         let Content::Text { text: part } = part else {
@@ -1934,12 +2002,22 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
         };
         text.push_str(part);
     }
+    Ok(text)
+}
+
+fn validated_model_text(content: &[Content]) -> Result<String, ApplicationError> {
+    let text = model_text_from_content(content)?;
     if text.trim().is_empty() {
         return Err(ApplicationError::InvalidInput {
             message: "prompt text must not be empty".to_owned(),
         });
     }
-    Ok(Bytes::new(text.into_bytes()))
+    Ok(text)
+}
+
+#[cfg(test)]
+fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationError> {
+    validated_model_text(content).map(|text| Bytes::new(text.into_bytes()))
 }
 
 struct AgentExecutionContext {
@@ -3215,6 +3293,148 @@ mod tests {
         }])
         .unwrap_err();
         assert!(matches!(error, ApplicationError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn async_model_input_keeps_the_first_session_turn_unwrapped() {
+        let mut reducer = SessionProjectionReducer::new();
+        let session = session("session-1", None);
+        let session_id = session.session_id.clone();
+        reducer.insert_created(session);
+
+        let input = model_input_from_session(
+            reducer.state(),
+            &session_id,
+            &[Content::Text {
+                text: "first question".into(),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(input.as_ref(), b"first question");
+    }
+
+    #[test]
+    fn async_model_input_rehydrates_durable_history_after_restart() {
+        let path = temp_db("application-session-memory");
+        let session_id;
+        {
+            let mut worker = persistent_application_worker(&path);
+            let created = invoke_operation::<CreateSession>(
+                &mut worker,
+                SessionCreateInput {
+                    working_directory: "/workspace".into(),
+                    title: None,
+                },
+            )
+            .unwrap();
+            session_id = created.session_id.clone();
+            let record = worker.session_record(&session_id).unwrap().unwrap();
+            for (role, text) in [
+                (MessageRole::User, "remember alpha"),
+                (MessageRole::Assistant, "alpha is remembered"),
+            ] {
+                worker
+                    .append_session_change(
+                        &record,
+                        SessionChange::Message {
+                            message: Message {
+                                role,
+                                content: vec![Content::Text { text: text.into() }],
+                            },
+                        },
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut worker = persistent_application_worker(&path);
+        assert!(!worker
+            .projection()
+            .state()
+            .sessions
+            .contains_key(session_id.as_str()));
+        ensure_session_projection(&mut worker, &session_id).unwrap();
+        let input = model_input_from_session(
+            worker.projection().state(),
+            &session_id,
+            &[Content::Text {
+                text: "what did I ask you to remember?".into(),
+            }],
+        )
+        .unwrap();
+        let input = String::from_utf8(input.as_ref().to_vec()).unwrap();
+
+        assert!(input.contains("--- user ---\nremember alpha"));
+        assert!(input.contains("--- assistant ---\nalpha is remembered"));
+        assert!(input.ends_with("what did I ask you to remember?"));
+        drop(worker);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn async_model_input_replays_all_prior_session_messages() {
+        let mut reducer = SessionProjectionReducer::new();
+        let session = session("session-1", None);
+        let session_id = session.session_id.clone();
+        reducer.insert_created(session);
+
+        for (sequence, role, text) in [
+            (
+                1,
+                MessageRole::User,
+                "whats the memory of this conversation you have?",
+            ),
+            (
+                2,
+                MessageRole::Assistant,
+                "I can see the messages in this current conversation.",
+            ),
+            (3, MessageRole::User, "is that the entire chat?"),
+            (
+                4,
+                MessageRole::Assistant,
+                "I can only see the messages in this current conversation.",
+            ),
+        ] {
+            reducer
+                .apply_update(SessionUpdate {
+                    session_id: session_id.clone(),
+                    sequence,
+                    update: SessionChange::Message {
+                        message: Message {
+                            role,
+                            content: vec![Content::Text { text: text.into() }],
+                        },
+                    },
+                })
+                .unwrap();
+        }
+
+        let input = model_input_from_session(
+            reducer.state(),
+            &session_id,
+            &[Content::Text {
+                text: "what question?".into(),
+            }],
+        )
+        .unwrap();
+        let input = String::from_utf8(input.as_ref().to_vec()).unwrap();
+
+        assert_eq!(
+            input,
+            "--- phenix session-history ---\n\
+--- user ---\n\
+whats the memory of this conversation you have?\n\
+--- assistant ---\n\
+I can see the messages in this current conversation.\n\
+--- user ---\n\
+is that the entire chat?\n\
+--- assistant ---\n\
+I can only see the messages in this current conversation.\n\
+--- phenix current-user ---\n\
+what question?"
+        );
     }
 
     #[test]
