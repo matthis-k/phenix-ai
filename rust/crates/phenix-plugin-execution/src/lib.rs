@@ -19,11 +19,13 @@ mod step_transaction_service;
 mod tool_schedule;
 
 pub use agent_loop::{
-    agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service, AgentLoopCommand,
-    AgentLoopFailure, AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionRequest,
-    AgentToolExecutionResponse, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    agent_loop_control_service, agent_loop_factory, agent_loop_factory_with_policy,
+    agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
+    agent_tool_execution_service, AgentLoopCommand, AgentLoopControlRequest,
+    AgentLoopControlResponse, AgentLoopFailure, AgentLoopPolicy, AgentLoopProgress,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE,
+    AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
     AGENT_TOOL_EXECUTION_SERVICE, DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 pub use component::*;
