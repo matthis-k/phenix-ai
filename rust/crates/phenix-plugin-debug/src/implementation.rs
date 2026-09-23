@@ -106,16 +106,9 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> DebugContext<'
     )
 }
 
+#[derive(Default)]
 pub struct DebugRuntimeTraceSink {
     retained: RuntimeTraceBuffer,
-}
-
-impl Default for DebugRuntimeTraceSink {
-    fn default() -> Self {
-        Self {
-            retained: RuntimeTraceBuffer::default(),
-        }
-    }
 }
 
 impl RuntimeTraceSink for DebugRuntimeTraceSink {
