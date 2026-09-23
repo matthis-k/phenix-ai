@@ -1,15 +1,17 @@
 pub use phenix_core::{
-    model_inference_service, ModelInferenceRequest, ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
+    model_inference_service, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
+    MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, RoutingProfileId,
-    ServiceContribution, ServiceId, TransactionOp,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, InvocationOutcome, KernelError,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, ResourceNamespace, RoutingProfileId, ServiceContribution, ServiceId,
+    TransactionOp,
 };
 pub use phenix_sdk::{
     model_diagnostic_event_type, model_dispatch_service, model_routing_service, ModelCommand,
-    ModelDiagnosticEvent, ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
+    ModelDiagnosticEvent, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
+    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
     RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
     MODEL_ROUTING_SERVICE,
 };
@@ -131,10 +133,11 @@ impl PluginInstance for ModelRoutingPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let response = handle_dispatch(&mut context, &self.routing, command)?;
-            return context
-                .kernel
-                .encode_value(&response)
+            let outcome = match handle_dispatch(&mut context, &self.routing, command) {
+                Ok(response) => InvocationOutcome::success(PhenixValue::from(&response)),
+                Err(error) => InvocationOutcome::domain_error(PhenixValue::from(&error)),
+            };
+            return serde_json::to_vec(&outcome.into_transport_value())
                 .map_err(|error| error.to_string());
         }
         Err(format!("unsupported model service: {service}"))
@@ -229,7 +232,7 @@ fn handle_dispatch(
     context: &mut ModelContext<'_, '_, '_>,
     routing: &RoutingServiceState,
     command: ModelDispatchCommand,
-) -> Result<ModelDispatchResponse, String> {
+) -> Result<ModelDispatchResponse, ModelDispatchFailure> {
     match command {
         ModelDispatchCommand::PrepareResolved {
             decision,
@@ -256,7 +259,7 @@ fn handle_dispatch(
                     continuation_turns: continuation.len(),
                 },
             );
-            if let Err(reason) = validate_dispatch(context, routing, &decision) {
+            if let Err(failure) = validate_dispatch(context, routing, &decision) {
                 emit_diagnostic(
                     context,
                     ModelDiagnosticEvent::DispatchPreflightRejected {
@@ -264,12 +267,19 @@ fn handle_dispatch(
                         model: decision.target.model.as_str().to_owned(),
                         authenticated,
                         authenticated_providers: authenticated_providers(context),
-                        reason: reason.clone(),
+                        reason: failure.message().to_owned(),
                     },
                 );
-                return Err(reason);
+                return Err(ModelDispatchFailure {
+                    decision,
+                    failure,
+                });
             }
-            let request = encode_request(context, &decision.target, input, tools, continuation)?;
+            let request = encode_request(context, &decision.target, input, tools, continuation)
+                .map_err(|failure| ModelDispatchFailure {
+                    decision: decision.clone(),
+                    failure,
+                })?;
             emit_diagnostic(
                 context,
                 ModelDiagnosticEvent::DispatchPrepared {
@@ -294,16 +304,16 @@ fn handle_dispatch(
             );
             let response = match invoke_encoded_target(context, &decision.target, request) {
                 Ok(response) => response,
-                Err(reason) => {
+                Err(failure) => {
                     emit_diagnostic(
                         context,
                         ModelDiagnosticEvent::DispatchInvocationFailed {
                             provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
                             model: decision.target.model.as_str().to_owned(),
-                            reason: reason.clone(),
+                            reason: failure.message().to_owned(),
                         },
                     );
-                    return Err(reason);
+                    return Err(ModelDispatchFailure { decision, failure });
                 }
             };
             emit_diagnostic(
@@ -380,21 +390,23 @@ fn validate_dispatch(
     context: &ModelContext<'_, '_, '_>,
     routing: &RoutingServiceState,
     decision: &phenix_sdk::RouteDecision,
-) -> Result<(), String> {
-    routing.validate_decision(decision)?;
+) -> Result<(), ModelInferenceFailure> {
+    routing
+        .validate_decision(decision)
+        .map_err(|message| ModelInferenceFailure::InvalidRequest { message })?;
     ensure_authenticated(context, &decision.target.provider_plugin)
 }
 
 fn ensure_authenticated(
     context: &ModelContext<'_, '_, '_>,
     provider_plugin: &PluginId,
-) -> Result<(), String> {
+) -> Result<(), ModelInferenceFailure> {
     if context.plugin.state.contains(provider_plugin) {
         Ok(())
     } else {
-        Err(format!(
-            "provider authentication required: {provider_plugin}"
-        ))
+        Err(ModelInferenceFailure::Authentication {
+            message: format!("provider authentication required: {provider_plugin}"),
+        })
     }
 }
 
@@ -404,7 +416,7 @@ fn encode_request(
     input: phenix_core::Bytes,
     tools: Vec<phenix_core::ModelToolDescriptor>,
     continuation: Vec<phenix_core::ModelToolTurn>,
-) -> Result<phenix_core::Bytes, String> {
+) -> Result<phenix_core::Bytes, ModelInferenceFailure> {
     let request = ModelInferenceRequest {
         model: target.model.clone(),
         input,
@@ -416,14 +428,16 @@ fn encode_request(
         .kernel
         .encode_value(&request)
         .map(Into::into)
-        .map_err(|error| error.to_string())
+        .map_err(|error| ModelInferenceFailure::InvalidRequest {
+            message: error.to_string(),
+        })
 }
 
 fn invoke_encoded_target(
     context: &mut ModelContext<'_, '_, '_>,
     target: &ModelTarget,
     request: phenix_core::Bytes,
-) -> Result<ModelInferenceResponse, String> {
+) -> Result<ModelInferenceResponse, ModelInferenceFailure> {
     let output = context
         .kernel
         .invoke_service_abi(
@@ -432,14 +446,42 @@ fn invoke_encoded_target(
             context.call.authority,
             Some(&target.provider_plugin),
         )
-        .map_err(|error| error.to_string())?;
-    context
-        .kernel
-        .decode_projected::<ModelInferenceResponse>(
-            &phenix_core::ModelInferenceInterface::interface_id(),
-            &output,
-        )
-        .map_err(|error| error.to_string())
+        .map_err(kernel_model_failure)?;
+    let value: PhenixValue =
+        serde_json::from_slice(&output).map_err(|error| ModelInferenceFailure::Protocol {
+            message: format!("cannot decode model inference outcome: {error}"),
+        })?;
+    match InvocationOutcome::from_transport_value(value) {
+        InvocationOutcome::Success(value) => ModelInferenceResponse::try_from(Project(&value))
+            .map_err(|error| ModelInferenceFailure::Protocol {
+                message: format!("cannot project model inference response: {error}"),
+            }),
+        InvocationOutcome::DomainError(value) => {
+            let failure = ModelInferenceFailure::try_from(Project(&value)).map_err(|error| {
+                ModelInferenceFailure::Protocol {
+                    message: format!("cannot project model inference failure: {error}"),
+                }
+            })?;
+            Err(failure)
+        }
+    }
+}
+
+fn kernel_model_failure(error: KernelError) -> ModelInferenceFailure {
+    let message = error.to_string();
+    match error {
+        KernelError::ServiceDenied { .. } | KernelError::HostOperationDenied { .. } => {
+            ModelInferenceFailure::Permission { message }
+        }
+        KernelError::NoEligibleProvider(_)
+        | KernelError::BoundProviderUnavailable { .. }
+        | KernelError::PluginNotActive(_)
+        | KernelError::RuntimeProviderUnavailable(_)
+        | KernelError::RuntimeProviderNotExecutable { .. }
+        | KernelError::RuntimeProviderContractUnavailable { .. }
+        | KernelError::ServiceInvoke { .. } => ModelInferenceFailure::Unavailable { message },
+        _ => ModelInferenceFailure::Protocol { message },
+    }
 }
 
 fn persist_runtime_state(
