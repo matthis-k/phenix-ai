@@ -1,10 +1,9 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    runtime_trace_event_type, Authority, CallError, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, RuntimeTraceEvent, SdkClient,
-    ServiceContribution, ServiceId, RUNTIME_TRACE_EVENT_VERSION,
+    Authority, CallError, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, ModelToolDescriptor, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, RuntimeTraceEvent, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
     select_route, step_runner_service, AttemptOutcome, BudgetActual, BudgetReservationPurpose,
@@ -120,24 +119,16 @@ fn trace_policy_stage(
     revision: Option<&str>,
     reason: Option<String>,
 ) {
-    let trace = RuntimeTraceEvent::PolicyStage {
-        policy: "phenix.step-runner".into(),
-        stage: stage.into(),
-        outcome: outcome.into(),
-        subject: Some("planned_step".into()),
-        revision: revision.map(str::to_owned),
-        reason,
-    };
-    let Ok(payload) = serde_json::to_vec(&trace) else {
-        return;
-    };
-    let _ = context.kernel.dispatch_event(
-        runtime_trace_event_type(),
-        RUNTIME_TRACE_EVENT_VERSION,
-        0,
-        0,
-        payload,
-    );
+    context
+        .kernel
+        .record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+            policy: "phenix.step-runner".into(),
+            stage: stage.into(),
+            outcome: outcome.into(),
+            subject: Some("planned_step".into()),
+            revision: revision.map(str::to_owned),
+            reason,
+        });
 }
 
 fn context<'host, 'runtime>(

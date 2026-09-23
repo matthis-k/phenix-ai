@@ -294,6 +294,8 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         maximum_authority: Authority::new([schema.clone(), read.clone(), write.clone()]),
     };
     let mut kernel = Kernel::new(KernelConfig::new([provider]).unwrap());
+    let traces = Arc::new(RuntimeTraceBuffer::default());
+    kernel.set_runtime_trace_sink(traces.clone());
     kernel
         .register_embedded_factory(plugin("storage"), move || {
             Box::new(PersistencePlugin {
@@ -335,6 +337,26 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         .unwrap_err();
     assert!(matches!(denied, KernelError::ServiceInvoke { .. }));
     assert!(denied.to_string().contains(PERSISTENCE_WRITE));
+
+    let recorded = traces.snapshot();
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::DataMutation {
+            resource,
+            stage,
+            outcome,
+            ..
+        } if resource == "storage.state" && stage == "commit" && outcome == "committed"
+    )));
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::DataMutation {
+            resource,
+            stage,
+            outcome,
+            ..
+        } if resource == "storage.state" && stage == "authorization" && outcome == "denied"
+    )));
 }
 
 #[test]
@@ -435,6 +457,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),
@@ -560,6 +583,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),
@@ -604,6 +628,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),

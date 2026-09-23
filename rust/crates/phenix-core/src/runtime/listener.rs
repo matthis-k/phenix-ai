@@ -19,7 +19,8 @@ struct ListenerRuntimeSnapshot {
     events: Weak<EventBus>,
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
-    provenance: Arc<Mutex<Vec<ServiceInvocationProvenance>>>,
+    trace_sink: Arc<dyn RuntimeTraceSink>,
+    provenance: Arc<ProvenanceBuffer>,
 }
 
 struct ScopedPluginListener {
@@ -38,7 +39,8 @@ pub(super) struct ListenerRuntimeSources<'a> {
     pub(super) events: &'a Arc<EventBus>,
     pub(super) tasks: &'a Arc<TaskRuntime>,
     pub(super) persistence: &'a Arc<Mutex<Box<dyn PersistenceBackend>>>,
-    pub(super) provenance: &'a Arc<Mutex<Vec<ServiceInvocationProvenance>>>,
+    pub(super) trace_sink: &'a Arc<dyn RuntimeTraceSink>,
+    pub(super) provenance: &'a Arc<ProvenanceBuffer>,
 }
 
 pub(super) fn scoped_event_handler(
@@ -58,6 +60,7 @@ pub(super) fn scoped_event_handler(
             events: Arc::downgrade(sources.events),
             tasks: Arc::clone(sources.tasks),
             persistence: Arc::clone(sources.persistence),
+            trace_sink: Arc::clone(sources.trace_sink),
             provenance: Arc::clone(sources.provenance),
         },
     })
@@ -90,6 +93,7 @@ impl ScopedPluginListener {
             tasks: &self.runtime.tasks,
             persistence: &self.runtime.persistence,
             prepared_mutations: &prepared_mutations,
+            trace_sink: self.runtime.trace_sink.as_ref(),
             provenance: &self.runtime.provenance,
             continuation: None,
             active_services: BTreeSet::new(),

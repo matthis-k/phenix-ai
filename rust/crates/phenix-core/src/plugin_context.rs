@@ -74,6 +74,11 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
     }
 
     #[doc(hidden)]
+    pub fn record_runtime_trace(&self, event: crate::RuntimeTraceEvent) {
+        self.host.record_runtime_trace(event);
+    }
+
+    #[doc(hidden)]
     pub fn invoke_service_abi(
         &self,
         service: &ServiceId,

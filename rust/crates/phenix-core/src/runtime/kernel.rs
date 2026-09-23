@@ -53,7 +53,8 @@ impl Kernel {
             tasks: Arc::new(TaskRuntime::default()),
             persistence: Arc::new(Mutex::new(persistence)),
             persistence_bootstrap,
-            provenance: Arc::new(Mutex::new(Vec::new())),
+            trace_sink: Arc::new(RuntimeTraceBuffer::default()),
+            provenance: Arc::new(ProvenanceBuffer::default()),
             runtime_active: false,
         }
     }
@@ -102,10 +103,14 @@ impl Kernel {
     }
 
     pub fn service_invocation_provenance(&self) -> Vec<ServiceInvocationProvenance> {
-        self.provenance
-            .lock()
-            .expect("service provenance mutex poisoned")
-            .clone()
+        self.provenance.snapshot()
+    }
+
+    /// Replace the process-local destination for metadata-only runtime diagnostics.
+    ///
+    /// The sink is not part of semantic event delivery and cannot affect invocation outcomes.
+    pub fn set_runtime_trace_sink(&mut self, sink: Arc<dyn RuntimeTraceSink>) {
+        self.trace_sink = sink;
     }
 
     pub fn state(&self, plugin: &PluginId) -> Option<PluginState> {
@@ -235,6 +240,7 @@ impl Kernel {
                             tasks: &self.tasks,
                             persistence: &self.persistence,
                             prepared_mutations: &prepared_mutations,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                             continuation: None,
                             active_services: BTreeSet::new(),
@@ -294,6 +300,7 @@ impl Kernel {
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                         },
                     );
@@ -320,6 +327,7 @@ impl Kernel {
                     tasks: &self.tasks,
                     persistence: &self.persistence,
                     prepared_mutations: &prepared_mutations,
+                    trace_sink: self.trace_sink.as_ref(),
                     provenance: &self.provenance,
                     continuation: None,
                     active_services: BTreeSet::new(),
@@ -349,6 +357,7 @@ impl Kernel {
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                         },
                     );
@@ -373,6 +382,7 @@ impl Kernel {
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
+                trace_sink: &self.trace_sink,
                 provenance: &self.provenance,
             }),
             None if self.component_graph.listeners().next().is_none() => Ok(Vec::new()),
@@ -392,6 +402,7 @@ impl Kernel {
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
+                        trace_sink: self.trace_sink.as_ref(),
                         provenance: &self.provenance,
                     },
                 );
@@ -429,6 +440,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
             service,
@@ -467,6 +479,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
             service,
@@ -508,6 +521,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
                 continuation: None,
                 active_services: BTreeSet::new(),

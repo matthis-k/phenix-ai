@@ -27,8 +27,13 @@ mod persistence_bootstrap;
 mod reconciliation;
 #[cfg(test)]
 mod tests;
+mod trace;
 
 pub use listener::PluginListener;
+pub use trace::{
+    ProvenanceBuffer, RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant,
+    RuntimeTraceSink, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
+};
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
@@ -244,7 +249,8 @@ pub struct PluginHost<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
-    provenance: &'a Mutex<Vec<ServiceInvocationProvenance>>,
+    trace_sink: &'a dyn RuntimeTraceSink,
+    provenance: &'a ProvenanceBuffer,
     continuation: Option<ContinuationState>,
     active_services: BTreeSet<ServiceId>,
     active_component_endpoints: BTreeSet<ComponentServiceEndpoint>,
@@ -440,7 +446,8 @@ struct InvocationContext<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
-    provenance: &'a Mutex<Vec<ServiceInvocationProvenance>>,
+    trace_sink: &'a dyn RuntimeTraceSink,
+    provenance: &'a ProvenanceBuffer,
 }
 
 pub struct Kernel {
@@ -456,6 +463,7 @@ pub struct Kernel {
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
     persistence_bootstrap: Option<crate::ResolvedPersistenceBootstrap>,
-    provenance: Arc<Mutex<Vec<ServiceInvocationProvenance>>>,
+    trace_sink: Arc<dyn RuntimeTraceSink>,
+    provenance: Arc<ProvenanceBuffer>,
     runtime_active: bool,
 }
