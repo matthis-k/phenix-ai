@@ -916,21 +916,22 @@ fn resolve_model_route(
             .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
             .collect::<BTreeMap<_, _>>();
 
+        let parent_attempt_id = attribution
+            .parent_attempt_id
+            .as_ref()
+            .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
+        let parent = attempts
+            .get(parent_attempt_id)
+            .ok_or_else(|| format!("unknown planned retry parent: {parent_attempt_id}"))?;
+        let parent_decision = parent
+            .route
+            .clone()
+            .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
+
         if retry_route_strategy == RetryRouteStrategy::PreserveParent {
-            let parent_attempt_id = attribution
-                .parent_attempt_id
-                .as_ref()
-                .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
-            let parent = attempts
-                .get(parent_attempt_id)
-                .ok_or_else(|| format!("unknown planned retry parent: {parent_attempt_id}"))?;
-            let decision = parent
-                .route
-                .clone()
-                .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
             return Ok(ModelResponse::Decision {
                 selection: RouteSelection {
-                    decision,
+                    decision: parent_decision,
                     rejected: Vec::new(),
                 },
             });
@@ -969,6 +970,12 @@ fn resolve_model_route(
                 return Ok(ModelResponse::Decision { selection });
             }
         }
+        return Ok(ModelResponse::Decision {
+            selection: RouteSelection {
+                decision: parent_decision,
+                rejected: Vec::new(),
+            },
+        });
     }
 
     context
