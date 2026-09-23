@@ -1,8 +1,9 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
-    execution_manifest, AgentLoopCommand, AgentLoopProgressRecord, AgentLoopProgressResponse,
-    AgentLoopResponse, AgentToolExecutionRequest, AgentToolExecutionResponse,
-    ExecutionReviewInterface, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    execution_manifest, AgentLoopCommand, AgentLoopControlRequest, AgentLoopControlResponse,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewInterface,
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
     AGENT_TOOL_EXECUTION_SERVICE,
 };
 use phenix_core::{
@@ -31,6 +32,19 @@ impl ComponentInterface for AgentLoopInterface {
 
     fn schema() -> phenix_core::InterfaceSchema {
         phenix_core::InterfaceSchema::of::<AgentLoopCommand, AgentLoopResponse>()
+    }
+}
+
+pub struct AgentLoopControlInterface;
+
+impl ComponentInterface for AgentLoopControlInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(AGENT_LOOP_CONTROL_SERVICE)
+            .expect("static agent loop control interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<AgentLoopControlRequest, AgentLoopControlResponse>()
     }
 }
 
@@ -146,6 +160,12 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
                 schema: DefaultInvocationInterface::schema(),
                 required: false,
                 authority: maximum_authority.clone(),
+            },
+            ComponentImport {
+                interface: AgentLoopControlInterface::interface_id(),
+                schema: AgentLoopControlInterface::schema(),
+                required: true,
+                authority: Authority::default(),
             },
             ComponentImport {
                 interface: AgentToolExecutionInterface::interface_id(),
@@ -264,7 +284,7 @@ mod tests {
 
         assert_eq!(component.id, agent_loop_component_id());
         assert_eq!(component.owner, plugin.id);
-        assert_eq!(component.imports.len(), 3);
+        assert_eq!(component.imports.len(), 4);
         assert!(!component.imports[0].required);
         assert_eq!(
             component.imports[0].interface,
@@ -274,11 +294,16 @@ mod tests {
         assert!(component.imports[1].required);
         assert_eq!(
             component.imports[1].interface,
-            AgentToolExecutionInterface::interface_id()
+            AgentLoopControlInterface::interface_id()
         );
         assert!(component.imports[2].required);
         assert_eq!(
             component.imports[2].interface,
+            AgentToolExecutionInterface::interface_id()
+        );
+        assert!(component.imports[3].required);
+        assert_eq!(
+            component.imports[3].interface,
             AgentLoopProgressInterface::interface_id()
         );
         assert_eq!(component.exports.len(), 1);
