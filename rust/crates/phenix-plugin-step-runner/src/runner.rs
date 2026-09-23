@@ -784,7 +784,7 @@ fn run(
                     Some(&plan.policy_revision),
                     Some(format!(
                         "retrying after {:?} on candidate {}",
-                        failure.failure, failure.decision.candidate_ordinal
+                        failure.failure, decision.candidate_ordinal
                     )),
                 );
                 return retry_step(context, retry_template, &attribution);
