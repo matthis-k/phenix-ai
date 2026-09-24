@@ -533,7 +533,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         authority: &authority,
         transaction_context: TransactionContext::unscoped(),
         call_cancellation: None,
-        call_stack: BTreeSet::from([caller_plugin.clone()]),
+        invocation_stack: InvocationStack::root(&caller_plugin),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -541,8 +541,6 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
     let denied = host
         .transact_prepared(&[caller_mutation, owner_mutation])
@@ -667,7 +665,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         authority: &authority,
         transaction_context: TransactionContext::unscoped(),
         call_cancellation: None,
-        call_stack: BTreeSet::from([second.id.clone()]),
+        invocation_stack: InvocationStack::root(&second.id),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -675,8 +673,6 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
 
     let denied = host
@@ -714,7 +710,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         authority: &authority,
         transaction_context: TransactionContext::unscoped(),
         call_cancellation: None,
-        call_stack: BTreeSet::from([owner_plugin.clone()]),
+        invocation_stack: InvocationStack::root(&owner_plugin),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -722,8 +718,6 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
     assert!(matches!(
         host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
