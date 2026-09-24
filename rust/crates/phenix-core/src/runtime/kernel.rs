@@ -286,7 +286,7 @@ impl Kernel {
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                            runtime: &self.runtime_generation,
+                        runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
                             events: &self.events,
@@ -300,9 +300,7 @@ impl Kernel {
                 }
             };
             if let Some(mut instance) = instance {
-                let live_call = self
-                    .tasks
-                    .begin_call(plugin, self.graph_generation());
+                let live_call = self.tasks.begin_call(plugin, self.graph_generation());
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
                 let host = PluginHost {

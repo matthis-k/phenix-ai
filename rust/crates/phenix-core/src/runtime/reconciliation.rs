@@ -207,7 +207,7 @@ impl Kernel {
                         cleanup_staged(
                             &staged,
                             StopView {
-                                runtime: candidate_runtime,
+                        runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
                                 events: &self.events,
@@ -221,7 +221,9 @@ impl Kernel {
                     }
                 };
                 if let Some(mut instance) = instance {
-                    let live_call = self.tasks.begin_call(plugin, candidate_runtime.generation());
+                    let live_call = self
+                        .tasks
+                        .begin_call(plugin, candidate_runtime.generation());
                     let cancellation = live_call.cancellation_token().clone();
                     let prepared_mutations =
                         PreparedMutationScope::new(candidate_runtime.generation());

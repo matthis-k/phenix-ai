@@ -429,7 +429,8 @@ fn stage_listener_subscriptions(
             message,
         })?;
         subscriptions.push(EventSubscription {
-            spec: resolved_listener.subscription_spec(sources.runtime.config().policy_identity().get()),
+            spec: resolved_listener
+                .subscription_spec(sources.runtime.config().policy_identity().get()),
             handler,
         });
     }
