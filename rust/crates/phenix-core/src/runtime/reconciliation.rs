@@ -4,9 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
-    pub(super) generation: Option<&'a GraphGenerationId>,
-    pub(super) graph: &'a ResolvedComponentGraph,
-    pub(super) config: &'a KernelConfig,
+    pub(super) runtime: &'a RuntimeGeneration,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) events: &'a EventBus,
@@ -18,17 +16,18 @@ pub(super) struct StopView<'a> {
 
 impl StopView<'_> {
     fn stop(&self, plugin: &PluginId, instance: &Arc<Mutex<Box<dyn PluginInstance>>>) {
-        let Some(manifest) = self.config.manifest(plugin) else {
+        let generation = self.runtime.generation();
+        let Some(manifest) = self.runtime.config().manifest(plugin) else {
             return;
         };
-        self.tasks.cancel_calls(plugin, self.generation);
-        self.tasks.cancel_plugin_generation(plugin, self.generation);
-        let live_call = self.tasks.begin_call(plugin, self.generation);
-        let prepared_mutations = PreparedMutationScope::new(self.generation);
+        self.tasks.cancel_calls(plugin, generation);
+        self.tasks.cancel_plugin_generation(plugin, generation);
+        let live_call = self.tasks.begin_call(plugin, generation);
+        let prepared_mutations = PreparedMutationScope::new(generation);
         let host = PluginHost {
-            graph_generation: self.generation,
-            component_graph: self.graph,
-            config: self.config,
+            graph_generation: generation,
+            component_graph: self.runtime.component_graph(),
+            config: self.runtime.config(),
             states: self.states,
             instances: self.instances,
             plugin,
@@ -74,7 +73,8 @@ impl Kernel {
         }
 
         let active_runtime = self.runtime_active;
-        let candidate_config = candidate.kernel_config().clone();
+        let candidate_runtime = candidate.runtime_generation();
+        let candidate_config = candidate_runtime.config().clone();
         let old_manifests: BTreeMap<_, _> = self
             .config
             .manifests()
@@ -85,7 +85,7 @@ impl Kernel {
             .map(|manifest| (manifest.id.clone(), manifest.clone()))
             .collect();
         let restart_plugins = runtime_restart_closure(
-            &self.config,
+            self.config(),
             &candidate_config,
             &old_manifests,
             &candidate_manifests,
@@ -135,14 +135,14 @@ impl Kernel {
                                 )?;
                             let live_call = self
                                 .tasks
-                                .begin_call(&binding.provider, Some(candidate.generation()));
+                                .begin_call(&binding.provider, candidate_runtime.generation());
                             let cancellation = live_call.cancellation_token().clone();
                             let prepared_mutations =
-                                PreparedMutationScope::new(Some(candidate.generation()));
+                                PreparedMutationScope::new(candidate_runtime.generation());
                             let host = PluginHost {
-                                graph_generation: Some(candidate.generation()),
-                                component_graph: candidate.component_graph(),
-                                config: &candidate_config,
+                                graph_generation: candidate_runtime.generation(),
+                                component_graph: candidate_runtime.component_graph(),
+                                config: candidate_runtime.config(),
                                 states: &next_states,
                                 instances: &next_instances,
                                 plugin: &binding.provider,
@@ -207,9 +207,7 @@ impl Kernel {
                         cleanup_staged(
                             &staged,
                             StopView {
-                                generation: Some(candidate.generation()),
-                                graph: candidate.component_graph(),
-                                config: &candidate_config,
+                                runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
                                 events: &self.events,
@@ -223,14 +221,14 @@ impl Kernel {
                     }
                 };
                 if let Some(mut instance) = instance {
-                    let live_call = self.tasks.begin_call(plugin, Some(candidate.generation()));
+                    let live_call = self.tasks.begin_call(plugin, candidate_runtime.generation());
                     let cancellation = live_call.cancellation_token().clone();
                     let prepared_mutations =
-                        PreparedMutationScope::new(Some(candidate.generation()));
+                        PreparedMutationScope::new(candidate_runtime.generation());
                     let host = PluginHost {
-                        graph_generation: Some(candidate.generation()),
-                        component_graph: candidate.component_graph(),
-                        config: &candidate_config,
+                        graph_generation: candidate_runtime.generation(),
+                        component_graph: candidate_runtime.component_graph(),
+                        config: candidate_runtime.config(),
                         states: &next_states,
                         instances: &next_instances,
                         plugin,
@@ -258,13 +256,11 @@ impl Kernel {
                     };
                     if let Some(message) = failure {
                         self.tasks
-                            .cancel_plugin_generation(plugin, Some(candidate.generation()));
+                            .cancel_plugin_generation(plugin, candidate_runtime.generation());
                         cleanup_staged(
                             &staged,
                             StopView {
-                                generation: Some(candidate.generation()),
-                                graph: candidate.component_graph(),
-                                config: &candidate_config,
+                                runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
                                 events: &self.events,
@@ -287,9 +283,7 @@ impl Kernel {
         }
 
         let subscriptions = match stage_listener_subscriptions(listener::ListenerRuntimeSources {
-            graph: candidate.component_graph(),
-            generation: candidate.generation(),
-            config: &candidate_config,
+            runtime: candidate_runtime,
             states: &next_states,
             instances: &next_instances,
             events: &self.events,
@@ -303,9 +297,7 @@ impl Kernel {
                 cleanup_staged(
                     &staged,
                     StopView {
-                        generation: Some(candidate.generation()),
-                        graph: candidate.component_graph(),
-                        config: &candidate_config,
+                                runtime: candidate_runtime,
                         states: &next_states,
                         instances: &next_instances,
                         events: &self.events,
@@ -332,26 +324,17 @@ impl Kernel {
             })
             .collect();
 
-        let old_generation = self.graph_generation.clone();
-        let old_graph = self.component_graph.clone();
-        let old_config = self.config.clone();
+        let old_runtime = self.runtime_generation.clone();
         let old_states = self.states.clone();
         let old_instances = self.instances.clone();
         self.events.replace_subscriptions(subscriptions)?;
-        self.config = candidate_config;
         self.states = next_states;
         self.instances = next_instances;
-        self.install_resolved_graph(
-            candidate.generation().clone(),
-            candidate.component_graph().clone(),
-            candidate.resources().to_vec(),
-        );
+        self.install_runtime_generation(candidate_runtime.clone());
         self.runtime_active = active_runtime;
 
         let retired_view = StopView {
-            generation: old_generation.as_ref(),
-            graph: &old_graph,
-            config: &old_config,
+            runtime: &old_runtime,
             states: &old_states,
             instances: &old_instances,
             events: &self.events,
