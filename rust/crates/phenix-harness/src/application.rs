@@ -52,7 +52,7 @@ use phenix_sdk::{
     ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
-    RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
+    RoutingProfile, SessionInterface, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
 use std::{
     collections::BTreeMap,
@@ -1604,6 +1604,7 @@ struct ApplicationAgentToolRun {
     service: SdkApplicationService,
     session_id: SessionId,
     permission_handler: Option<PermissionHandlerRef>,
+    tools: Vec<ModelToolDescriptor>,
     cancellation: Arc<AtomicBool>,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
 }
@@ -1849,14 +1850,27 @@ fn execute_application_agent_tool(
     }
 
     let call = request.call;
-    let change = if is_runtime_model_tool(&call.callable_id) {
-        execute_runtime_model_tool_call(&context.sdk.workspace, &call)
+    let dispatch_call = match normalize_model_tool_call(&run.tools, &call) {
+        Ok(call) => call,
+        Err(error) => {
+            return Ok(AgentToolExecutionResponse::Completed {
+                result: ModelToolResult {
+                    call_id: call.call_id,
+                    callable_id: call.callable_id,
+                    output: error.to_value(),
+                    is_error: true,
+                },
+            });
+        }
+    };
+    let change = if is_runtime_model_tool(&dispatch_call.callable_id) {
+        execute_runtime_model_tool_call(&context.sdk.workspace, &dispatch_call)
     } else {
         execute_admitted_client_tool_call(
             &run.service,
             &run.session_id,
             &request.execution_id,
-            call.clone(),
+            dispatch_call,
             |request| {
                 invoke_permission_handler(&run.service, run.permission_handler.as_ref(), request)
             },
@@ -1900,18 +1914,22 @@ fn record_application_agent_progress(
     if record.session_id.as_ref() != Some(&run.session_id) {
         return Err("agent progress session identity changed".into());
     }
+    if run.cancellation.load(Ordering::Acquire) {
+        return Ok(AgentLoopProgressResponse::Recorded);
+    }
 
     let event_permit = match &run.event_sender {
         Some(sender) => Some(
             sender
                 .clone()
                 .try_reserve_owned()
-                .map_err(|error| {
-                    if error.is_full() {
+                .map_err(|error| match error {
+                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
                         ApplicationError::Conflict {
                             message: "application event queue is full".to_owned(),
                         }
-                    } else {
+                    }
+                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
                         ApplicationError::Disconnected
                     }
                 })
@@ -1978,7 +1996,7 @@ fn record_application_agent_progress(
     Ok(AgentLoopProgressResponse::Recorded)
 }
 
-fn serve_application_worker(
+async fn serve_application_worker(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
@@ -2407,6 +2425,7 @@ fn run_agent_execution(
             service,
             session_id: session_id.clone(),
             permission_handler,
+            tools: tools.clone(),
             cancellation: Arc::clone(&cancellation),
             event_sender,
         },
@@ -2466,17 +2485,125 @@ fn run_agent_execution(
                         ),
                     })
                 }
-                AgentLoopFailure::InvalidToolCall { call_id, message } => {
-                    Err(ApplicationError::InvalidInput {
-                        message: format!("invalid model tool call {call_id}: {message}"),
-                    })
-                }
             },
         }
     })();
 
     adapter.remove(&execution_id);
     result
+}
+
+fn normalize_model_tool_call(
+    tools: &[ModelToolDescriptor],
+    call: &ModelToolCall,
+) -> Result<ModelToolCall, ApplicationError> {
+    let descriptor = tools
+        .iter()
+        .find(|tool| tool.id == call.callable_id)
+        .ok_or_else(|| ApplicationError::InvalidInput {
+            message: format!("model requested unavailable tool {}", call.callable_id),
+        })?;
+    let input = normalize_model_tool_input(&descriptor.input_schema, call.input.clone()).map_err(
+        |message| ApplicationError::InvalidInput {
+            message: format!("invalid input for tool {}: {message}", call.callable_id),
+        },
+    )?;
+    Ok(ModelToolCall {
+        call_id: call.call_id.clone(),
+        callable_id: call.callable_id.clone(),
+        input,
+    })
+}
+
+fn normalize_model_tool_input(
+    schema: &PhenixSchema,
+    value: PhenixValue,
+) -> Result<PhenixValue, String> {
+    if schema.parse(&value).is_ok() {
+        return Ok(value);
+    }
+
+    let normalized = match (schema, value) {
+        (PhenixSchema::Table(fields), PhenixValue::Map(values)) => {
+            normalize_model_tool_table(fields, values)?
+        }
+        (PhenixSchema::Table(fields), PhenixValue::Table(values)) => {
+            let values = values
+                .into_iter()
+                .map(|(key, value)| (key.as_str().to_owned(), value))
+                .collect();
+            normalize_model_tool_table(fields, values)?
+        }
+        (PhenixSchema::List(item), PhenixValue::List(values)) => PhenixValue::List(
+            values
+                .into_iter()
+                .map(|value| normalize_model_tool_input(item, value))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        (PhenixSchema::Array { item, len }, PhenixValue::List(values)) => {
+            if values.len() != *len {
+                return Err(format!("expected {len} values, got {}", values.len()));
+            }
+            PhenixValue::List(
+                values
+                    .into_iter()
+                    .map(|value| normalize_model_tool_input(item, value))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+        (PhenixSchema::Map(item), PhenixValue::Map(values)) => PhenixValue::Map(
+            values
+                .into_iter()
+                .map(|(key, value)| {
+                    normalize_model_tool_input(item, value).map(|value| (key, value))
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()?,
+        ),
+        (PhenixSchema::Option(_), PhenixValue::Unit) => PhenixValue::Option(None),
+        (PhenixSchema::Option(item), PhenixValue::Option(Some(value))) => {
+            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, *value)?)))
+        }
+        (PhenixSchema::Option(_), PhenixValue::Option(None)) => PhenixValue::Option(None),
+        (PhenixSchema::Option(item), value) => {
+            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, value)?)))
+        }
+        (PhenixSchema::I64, PhenixValue::U64(value)) if value <= i64::MAX as u64 => {
+            PhenixValue::I64(value as i64)
+        }
+        (PhenixSchema::U64, PhenixValue::I64(value)) if value >= 0 => {
+            PhenixValue::U64(value as u64)
+        }
+        (PhenixSchema::F64, PhenixValue::I64(value)) => PhenixValue::F64(value as f64),
+        (PhenixSchema::F64, PhenixValue::U64(value)) => PhenixValue::F64(value as f64),
+        (_, value) => return Err(format!("expected {}, got {}", schema.kind(), value.kind())),
+    };
+
+    schema
+        .parse(&normalized)
+        .map_err(|error| format!("{error:?}"))?;
+    Ok(normalized)
+}
+
+fn normalize_model_tool_table(
+    fields: &BTreeMap<Key, PhenixSchema>,
+    values: BTreeMap<String, PhenixValue>,
+) -> Result<PhenixValue, String> {
+    if let Some(key) = values.keys().find(|key| !fields.contains_key(key.as_str())) {
+        return Err(format!("unexpected field {key}"));
+    }
+
+    let mut normalized = BTreeMap::new();
+    for (key, field_schema) in fields {
+        let value = values
+            .get(key.as_str())
+            .cloned()
+            .ok_or_else(|| format!("missing field {key}"))?;
+        normalized.insert(
+            key.clone(),
+            normalize_model_tool_input(field_schema, value)?,
+        );
+    }
+    Ok(PhenixValue::Table(normalized))
 }
 
 fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
@@ -2736,7 +2863,6 @@ mod tests {
         let session_id = SessionId::parse("session-1").unwrap();
         let execution_id = "execution-1".to_owned();
         let cancellation = Arc::new(AtomicBool::new(false));
-        let (progress_sender, _progress_receiver) = mpsc::channel(4);
         let adapter = {
             let harness = worker.harness.lock();
             harness.application_agent_tools().clone()
@@ -2748,6 +2874,7 @@ mod tests {
                     service,
                     session_id: session_id.clone(),
                     permission_handler: None,
+                    tools: tools.clone(),
                     cancellation,
                     event_sender: None,
                 },
@@ -2757,8 +2884,8 @@ mod tests {
         let call = ModelToolCall {
             call_id: "call-1".into(),
             callable_id: CallableId::parse("bash").unwrap(),
-            input: PhenixValue::Table(BTreeMap::from([(
-                Key::parse("command").unwrap(),
+            input: PhenixValue::Map(BTreeMap::from([(
+                "command".to_owned(),
                 PhenixValue::String("printf phenix-runtime-bash".into()),
             )])),
         };
