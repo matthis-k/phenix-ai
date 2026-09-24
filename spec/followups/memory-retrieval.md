@@ -1,5 +1,5 @@
 ---
-status: planned
+status: partial
 ---
 
 # Memory retrieval ownership
@@ -39,6 +39,10 @@ trait MemoryCandidateSearch {
 ```
 
 This may be an internal strategy trait or a Phenix component interface. Use a public component interface only if independent plugins/backends need to provide it; do not create a contract solely to wrap one private crate.
+
+## Implemented boundary
+
+`retrieval.rs` now separates Phenix eligibility/revalidation from `CandidateSearch`. The default `LexicalCandidateSearch` is deliberately private and scan-backed: it can be replaced by a maintained index implementation without moving scope, kind, temporal visibility, or supersession policy into the search backend. Search hits are positional/score-only implementation data and are revalidated against authoritative records before final ordering.
 
 ## Tantivy decision gate
 
@@ -87,14 +91,14 @@ Build on the durable collection migration PR:
 
 ## Acceptance criteria
 
-- [ ] Retrieval pipeline is explicitly split into eligibility, candidate generation, ranking, and domain revalidation.
-- [ ] Existing `MemoryEmbeddingInterface` and `MemoryRankInterface` remain the canonical embedding/rerank extension points.
-- [ ] Generic lexical candidate retrieval is behind one implementation boundary rather than entangled with memory policy.
+- [x] Retrieval pipeline is explicitly split into eligibility, candidate generation, ranking, and domain revalidation.
+- [x] Existing `MemoryEmbeddingInterface` and `MemoryRankInterface` remain the canonical embedding/rerank extension points.
+- [x] Generic lexical candidate retrieval is behind one implementation boundary rather than entangled with memory policy.
 - [ ] Tantivy is either adopted with benchmark evidence or rejected with measured evidence and no speculative dependency.
 - [ ] No ANN/vector index is added without evidence.
-- [ ] Derived indexes cannot bypass scope/freshness/supersession/source validation.
+- [x] Candidate-search results are revalidated against scope/kind/visibility/supersession policy before ranking; any future derived index must preserve this boundary.
 - [ ] Index rebuild from durable state is deterministic and tested.
-- [ ] Final recall ordering is deterministic for equal scores.
+- [x] Final recall ordering is deterministic for equal scores.
 - [ ] Failure of the derived search index has an explicit policy: rebuild/fallback only as an availability mechanism, never as legacy compatibility.
 - [ ] Measure production LOC and dependency/compile impact of the chosen implementation.
 
