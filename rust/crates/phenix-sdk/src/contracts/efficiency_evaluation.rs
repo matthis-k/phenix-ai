@@ -28,7 +28,6 @@ pub struct EfficiencyTaskRecord {
     pub root_elapsed_ms: Option<u64>,
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct EfficiencyAttemptCharge {
@@ -82,8 +81,7 @@ pub fn derive_efficiency_task_record(
         }
 
         usage.observe(&charge.record);
-        known_cost_microunits =
-            known_cost_microunits.saturating_add(charge.known_cost_microunits);
+        known_cost_microunits = known_cost_microunits.saturating_add(charge.known_cost_microunits);
         cost_complete &= charge.cost_complete;
     }
 
@@ -140,9 +138,18 @@ pub struct EfficiencyCohortReport {
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EfficiencyEvaluationError {
     EmptyCohort,
-    MixedPolicyRevision { expected: String, observed: String },
-    MixedOutcomeEvaluator { expected: String, observed: String },
-    MixedPriceRevision { expected: String, observed: String },
+    MixedPolicyRevision {
+        expected: String,
+        observed: String,
+    },
+    MixedOutcomeEvaluator {
+        expected: String,
+        observed: String,
+    },
+    MixedPriceRevision {
+        expected: String,
+        observed: String,
+    },
     MismatchedTaskSet,
     CohortTooLarge,
     AttemptRootMismatch {
