@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_resolved_chain_with, invoke_service_with,
-        ComponentDispatchTarget, ComponentInvocationPlan, ServiceDispatchGuards,
+        ComponentDispatchTarget, ComponentInvocationPlan,
     },
     *,
 };
@@ -106,10 +106,7 @@ impl<'a> PluginHost<'a> {
             },
             &input,
             &delegated_authority,
-            ServiceDispatchGuards {
-                stack: &self.scope.stack,
-                terminal_component: Some(handle.exporter()),
-            },
+            &self.scope.stack,
         )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
@@ -150,10 +147,7 @@ impl<'a> PluginHost<'a> {
             input,
             &delegated_authority,
             binding,
-            ServiceDispatchGuards {
-                stack: &self.scope.stack,
-                terminal_component: None,
-            },
+            &self.scope.stack,
         )
     }
 
@@ -191,10 +185,8 @@ impl<'a> PluginHost<'a> {
             continuation.next_position,
             input,
             &delegated_authority,
-            ServiceDispatchGuards {
-                stack: &self.scope.stack,
-                terminal_component: continuation.terminal_component.as_ref(),
-            },
+            &self.scope.stack,
+            continuation.terminal_component.as_ref(),
             &continuation.trace,
         )
     }
