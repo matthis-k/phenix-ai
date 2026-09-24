@@ -244,7 +244,7 @@ enum InvocationFrame {
     Component(ComponentServiceEndpoint),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct InvocationStack {
     frames: Vec<InvocationFrame>,
 }
