@@ -33,7 +33,10 @@ impl<'a> PluginHost<'a> {
         component: &ComponentId,
         request: &crate::PhenixValue,
     ) -> Result<crate::PhenixValue, ComponentInvocationError> {
-        let resolved = self.scope.generation.component_graph()
+        let resolved = self
+            .scope
+            .generation
+            .component_graph()
             .component(component)
             .ok_or_else(|| crate::ComponentGraphError::UnknownComponent(component.clone()))?;
         if &resolved.owning_plugin != self.plugin {
@@ -44,7 +47,10 @@ impl<'a> PluginHost<'a> {
             .into());
         }
         let interface = I::interface_id();
-        let dispatch = self.scope.generation.dispatch_topology()
+        let dispatch = self
+            .scope
+            .generation
+            .dispatch_topology()
             .component_import(component, &interface)
             .ok_or_else(|| ComponentInvocationError::UnboundImport {
                 component: component.clone(),
@@ -100,7 +106,10 @@ impl<'a> PluginHost<'a> {
 
     fn provider_available(&self, handle: &ResolvedImportHandle) -> bool {
         self.runtime.states.get(handle.owning_plugin()).copied() == Some(PluginState::Active)
-            && self.runtime.invocations.contains_key(handle.owning_plugin())
+            && self
+                .runtime
+                .invocations
+                .contains_key(handle.owning_plugin())
     }
 
     #[doc(hidden)]
@@ -176,13 +185,17 @@ impl<'a> PluginHost<'a> {
             kernel_policy_revision,
             payload,
         };
-        self.runtime.events
-            .admit_in_generation(&event, &self.scope.authority, self.scope.generation.generation())
+        self.runtime.events.admit_in_generation(
+            &event,
+            &self.scope.authority,
+            self.scope.generation.generation(),
+        )
     }
 
     pub fn register_durable_schema(&self, schema: &DurableSchema) -> Result<(), KernelError> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
-        self.runtime.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .register_schema(self.plugin, schema)
@@ -196,7 +209,8 @@ impl<'a> PluginHost<'a> {
     ) -> Result<(), KernelError> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
         self.require_capability(PERSISTENCE_WRITE)?;
-        self.runtime.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .migrate_schema(self.plugin, schema, migrations)
@@ -209,7 +223,8 @@ impl<'a> PluginHost<'a> {
         key: &str,
     ) -> Result<Option<Vec<u8>>, KernelError> {
         self.require_persistence_operation(PERSISTENCE_READ, namespace)?;
-        self.runtime.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .read(self.plugin, namespace, key)
@@ -256,7 +271,9 @@ impl<'a> PluginHost<'a> {
             "started",
             None,
         );
-        let result = self.runtime.persistence
+        let result = self
+            .runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
@@ -294,7 +311,8 @@ impl<'a> PluginHost<'a> {
             self.require_active_plugin(self.plugin)?;
             self.require_not_cancelled("prepare durable transaction")?;
             self.require_prepared_scope_generation()?;
-            self.runtime.prepared_mutations
+            self.runtime
+                .prepared_mutations
                 .prepare(
                     self.plugin,
                     namespace,
@@ -344,12 +362,14 @@ impl<'a> PluginHost<'a> {
                 });
             }
 
-            let participants = self.runtime.prepared_mutations.consume(handles).map_err(|_| {
-                KernelError::HostOperationDenied {
+            let participants = self
+                .runtime
+                .prepared_mutations
+                .consume(handles)
+                .map_err(|_| KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
                     operation: "prepared mutation is unavailable in this invocation scope".into(),
-                }
-            })?;
+                })?;
             if participants
                 .iter()
                 .any(|participant| &participant.coordinator != self.plugin)
@@ -382,7 +402,13 @@ impl<'a> PluginHost<'a> {
                         ),
                     });
                 }
-                if self.scope.generation.config().resource_owner(&transaction.namespace) != Some(&transaction.owner) {
+                if self
+                    .scope
+                    .generation
+                    .config()
+                    .resource_owner(&transaction.namespace)
+                    != Some(&transaction.owner)
+                {
                     return Err(KernelError::HostOperationDenied {
                         plugin: self.plugin.clone(),
                         operation: format!(
@@ -395,7 +421,10 @@ impl<'a> PluginHost<'a> {
                     continue;
                 }
                 self.require_active_plugin(&transaction.owner)?;
-                let authorized_import = self.scope.generation.component_graph()
+                let authorized_import = self
+                    .scope
+                    .generation
+                    .component_graph()
                     .components()
                     .filter(|component| &component.owning_plugin == self.plugin)
                     .flat_map(|component| component.imports.iter())
@@ -419,7 +448,8 @@ impl<'a> PluginHost<'a> {
                 .into_iter()
                 .map(|participant| participant.transaction)
                 .collect();
-            self.runtime.persistence
+            self.runtime
+                .persistence
                 .lock()
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)

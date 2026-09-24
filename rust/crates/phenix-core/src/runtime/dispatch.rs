@@ -94,9 +94,7 @@ fn resolve_live_service_chain(
 
     let eligible = |terminal: &&ResolvedTerminalPlan| {
         binding.is_none_or(|bound| bound == &terminal.binding.plugin)
-            && scope
-                .authority
-                .permits_all(&terminal.required_authority)
+            && scope.authority.permits_all(&terminal.required_authority)
             && runtime.states.get(&terminal.binding.plugin).copied() == Some(PluginState::Active)
             && runtime.invocations.contains_key(&terminal.binding.plugin)
     };
@@ -284,14 +282,7 @@ pub(super) fn invoke_component_service_with(
         scope.generation.generation(),
         provider_provenance,
     )));
-    let result = invoke_resolved_chain_with(
-        runtime,
-        0,
-        input,
-        scope,
-        Some(component),
-        &trace,
-    );
+    let result = invoke_resolved_chain_with(runtime, 0, input, scope, Some(component), &trace);
     let completed = trace
         .lock()
         .expect("service invocation trace mutex poisoned")
@@ -510,9 +501,7 @@ pub(super) fn invoke_resolved_chain_with(
         }
     } else {
         let result = catch_unwind(AssertUnwindSafe(|| match terminal_component {
-            Some(component) => {
-                invocation.invoke_component(component, &chain.service, input, &host)
-            }
+            Some(component) => invocation.invoke_component(component, &chain.service, input, &host),
             None => invocation.invoke(&chain.service, input, &host),
         }));
         let result = match result {

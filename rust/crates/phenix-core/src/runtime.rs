@@ -286,11 +286,7 @@ impl CallScope {
         }
     }
 
-    pub(super) fn delegated(
-        &self,
-        authority: Authority,
-        transactions: TransactionContext,
-    ) -> Self {
+    pub(super) fn delegated(&self, authority: Authority, transactions: TransactionContext) -> Self {
         Self {
             generation: Arc::clone(&self.generation),
             authority,

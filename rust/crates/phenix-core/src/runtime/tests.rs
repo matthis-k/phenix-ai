@@ -557,7 +557,8 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         &caller_plugin,
         &authority,
         &prepared_mutations,
-    );    let denied = host
+    );
+    let denied = host
         .transact_prepared(&[caller_mutation, owner_mutation])
         .unwrap_err();
     assert!(matches!(denied, KernelError::HostOperationDenied { .. }));
@@ -711,7 +712,8 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         &owner_plugin,
         &authority,
         &prepared_mutations,
-    );    assert!(matches!(
+    );
+    assert!(matches!(
         host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
         Err(KernelError::HostOperationDenied { .. })
     ));
