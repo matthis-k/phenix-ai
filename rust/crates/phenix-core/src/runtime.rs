@@ -4,11 +4,11 @@ use crate::{
     DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedDispatchTopology, ResolvedImportHandle, ResolvedListener,
-    ResolvedProviderPlan, ResolvedServiceChain, ResourceNamespace, RuntimeGeneration, RuntimeId,
-    SchemaMigration,
-    ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
+    ProviderSelectionReason, ResolvedComponentGraph, ResolvedDispatchTopology, ResolvedImportHandle,
+    ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan,
+    ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
+    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
