@@ -508,7 +508,8 @@ impl<'a> PluginHost<'a> {
 
     fn require_not_cancelled(&self, operation: &str) -> Result<(), KernelError> {
         if !self
-            .call_cancellation
+            .scope
+            .cancellation
             .as_ref()
             .is_some_and(CallCancellationToken::is_cancelled)
         {
