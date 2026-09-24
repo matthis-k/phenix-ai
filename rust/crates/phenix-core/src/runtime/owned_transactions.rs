@@ -44,7 +44,7 @@ impl PluginHost<'_> {
                 .cancellation_token()
                 .is_some_and(CallCancellationToken::is_cancelled)
             {
-                self.prepared_mutations.clear();
+                self.runtime.prepared_mutations.clear();
                 return Err(KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
                     operation: "durable multi-namespace transaction after call cancellation".into(),
@@ -59,7 +59,7 @@ impl PluginHost<'_> {
 
             let mut transactions = Vec::with_capacity(participants.len());
             for (namespace, operations) in participants {
-                if self.config.resource_owner(namespace) != Some(self.plugin) {
+                if self.scope.generation.config().resource_owner(namespace) != Some(self.plugin) {
                     return Err(KernelError::HostOperationDenied {
                         plugin: self.plugin.clone(),
                         operation: format!("{PERSISTENCE_WRITE}:{}", namespace.as_str()),
@@ -72,7 +72,7 @@ impl PluginHost<'_> {
                 });
             }
 
-            self.persistence
+            self.runtime.persistence
                 .lock()
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)
