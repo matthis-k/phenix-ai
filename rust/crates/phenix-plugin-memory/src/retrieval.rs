@@ -22,17 +22,17 @@ pub(crate) fn recall(
         .filter(|record| supersession_effective_at(record, query.at))
         .flat_map(|record| record.supersedes.iter().cloned())
         .collect::<BTreeSet<_>>();
-    let eligible = records
+    let eligible_records = records
         .into_iter()
         .filter(|record| eligible(record, query, &superseded))
         .collect::<Vec<_>>();
 
     let search = LexicalCandidateSearch;
     let mut candidates = search
-        .search(&eligible, query)
+        .search(&eligible_records, query)
         .into_iter()
         .filter_map(|hit| {
-            let record = eligible.get(hit.index)?;
+            let record = eligible_records.get(hit.index)?;
             eligible(record, query, &superseded).then(|| (hit.score, record.clone()))
         })
         .collect::<Vec<_>>();
