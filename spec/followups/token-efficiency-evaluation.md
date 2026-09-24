@@ -13,10 +13,11 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Added task/cohort evaluation contracts with terminal outcome classes, complete-cost coverage, success-normalized cost, and explicit unresolved work.
 - [x] Cohort reports preserve fresh/cache-read/cache-write/output/reasoning/reacquisition usage categories and reject mixed policy/evaluator/price cohorts.
 - [x] Added paired-policy comparison that rejects mismatched task fixture sets before comparing reports.
+- [x] Added typed task derivation from distinct charged attempt records, rejecting duplicate, cross-root, and cross-policy charges while including helper/delegated work exactly once.
 
 ## Required implementation
 
-- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts.
+- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Attempt-level derivation and de-duplication are implemented; durable source collection/outcome-evidence integration remains.)
 - [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
 - [ ] Define task-level success/outcome evidence without creating a second canonical task state.
 - [x] Compare policy variants only after validating the same task fixture set.
@@ -29,7 +30,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 
 - [x] A policy with cheaper successful work but more expensive failures can score worse in success-normalized cost.
 - [x] Cached and fresh input remain distinct in cohort reports.
-- [ ] Delegated/helper work appears in total task cost.
+- [x] Delegated/helper work appears in total task cost when supplied as distinct charged attempt records; duplicate/cross-root charges are rejected.
 - [ ] Reacquisition caused by prior reduction is attributable when causal evidence exists.
 - [ ] Evaluation can compare baseline vs one optimization at a time and combined profiles.
 - [ ] Derived estimates can be deleted/rebuilt without losing canonical execution history.
