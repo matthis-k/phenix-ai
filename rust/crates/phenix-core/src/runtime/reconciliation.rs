@@ -33,6 +33,7 @@ impl StopView<'_> {
             instances: self.instances,
             plugin,
             authority: &manifest.maximum_authority,
+            transaction_context: TransactionContext::unscoped(),
             call_cancellation: Some(live_call.cancellation_token().clone()),
             call_stack: BTreeSet::from([plugin.clone()]),
             events: self.events,

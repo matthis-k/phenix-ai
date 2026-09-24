@@ -77,8 +77,8 @@ impl<'a> PluginHost<'a> {
             fallback_reason,
             delegated_authority.clone(),
         );
-        let output = self.prepared_mutations.with_coordinator(self.plugin, || {
-            invoke_component_service_with(
+        let transactions = TransactionContext::coordinated_by(self.plugin);
+        let output = invoke_component_service_with(
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
@@ -90,6 +90,7 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    transactions: &transactions,
                     trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
@@ -111,8 +112,7 @@ impl<'a> PluginHost<'a> {
                     active_component_endpoints: &self.active_component_endpoints,
                     terminal_component: Some(handle.exporter()),
                 },
-            )
-        })?;
+            )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
     }
@@ -131,8 +131,8 @@ impl<'a> PluginHost<'a> {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         let delegated_authority = self.authority.attenuate(requested_authority);
-        self.prepared_mutations.with_coordinator(self.plugin, || {
-            invoke_service_with(
+        let transactions = TransactionContext::coordinated_by(self.plugin);
+        invoke_service_with(
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
@@ -144,6 +144,7 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    transactions: &transactions,
                     trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
@@ -158,7 +159,6 @@ impl<'a> PluginHost<'a> {
                     terminal_component: None,
                 },
             )
-        })
     }
 
     pub fn continue_service(
@@ -187,6 +187,7 @@ impl<'a> PluginHost<'a> {
                 tasks: self.tasks,
                 persistence: self.persistence,
                 prepared_mutations: self.prepared_mutations,
+                transactions: &self.transaction_context,
                 trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
@@ -349,7 +350,13 @@ impl<'a> PluginHost<'a> {
             self.require_not_cancelled("prepare durable transaction")?;
             self.require_prepared_scope_generation()?;
             self.prepared_mutations
-                .prepare(self.plugin, namespace, operations, self.authority)
+                .prepare(
+                    self.plugin,
+                    namespace,
+                    operations,
+                    self.authority,
+                    &self.transaction_context,
+                )
                 .map_err(|message| self.persistence_error(message))
         })();
         match &result {

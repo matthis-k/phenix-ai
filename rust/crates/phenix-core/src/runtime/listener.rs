@@ -84,6 +84,7 @@ impl ScopedPluginListener {
             instances: &self.runtime.instances,
             plugin: &self.owner,
             authority,
+            transaction_context: TransactionContext::unscoped(),
             call_cancellation: Some(cancellation.clone()),
             call_stack: BTreeSet::from([self.owner.clone()]),
             events: &events,

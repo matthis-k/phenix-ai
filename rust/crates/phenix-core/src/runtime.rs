@@ -1,5 +1,6 @@
 use crate::{
-    prepared_mutation::PreparedMutationScope, ArtifactRevision, Authority, CallCancellationToken,
+    prepared_mutation::{PreparedMutationScope, TransactionContext}, ArtifactRevision, Authority,
+    CallCancellationToken,
     CapabilityId, ComponentGraphError, ComponentId, ComponentInterface, ComponentInvocationError,
     DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
@@ -246,6 +247,7 @@ pub struct PluginHost<'a> {
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     plugin: &'a PluginId,
     authority: &'a Authority,
+    transaction_context: TransactionContext,
     call_cancellation: Option<CallCancellationToken>,
     call_stack: BTreeSet<PluginId>,
     events: &'a EventBus,
@@ -455,6 +457,7 @@ struct InvocationContext<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
+    transactions: &'a TransactionContext,
     trace_sink: &'a dyn RuntimeTraceSink,
     provenance: &'a ProvenanceBuffer,
 }

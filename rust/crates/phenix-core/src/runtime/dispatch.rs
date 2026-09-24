@@ -468,6 +468,7 @@ pub(super) fn invoke_resolved_chain_with(
         instances: runtime.instances,
         plugin: &provider.plugin,
         authority: &effective_authority,
+        transaction_context: runtime.transactions.clone(),
         call_cancellation: Some(call_cancellation.clone()),
         call_stack: next_stack,
         events: runtime.events,

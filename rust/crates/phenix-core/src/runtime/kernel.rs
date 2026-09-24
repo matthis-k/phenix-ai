@@ -233,6 +233,7 @@ impl Kernel {
                             instances: &next_instances,
                             plugin: &binding.provider,
                             authority: &provider_manifest.maximum_authority,
+                            transaction_context: TransactionContext::unscoped(),
                             call_cancellation: Some(cancellation.clone()),
                             call_stack: BTreeSet::from([binding.provider.clone()]),
                             events: &self.events,
@@ -317,6 +318,7 @@ impl Kernel {
                     instances: &next_instances,
                     plugin,
                     authority: &manifest.maximum_authority,
+                    transaction_context: TransactionContext::unscoped(),
                     call_cancellation: Some(cancellation.clone()),
                     call_stack: BTreeSet::from([plugin.clone()]),
                     events: &self.events,
@@ -425,6 +427,7 @@ impl Kernel {
             |plan| plan.policy_identity,
         );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+        let transactions = TransactionContext::unscoped();
         invoke_component_service_with(
             InvocationContext {
                 graph_generation: self.graph_generation(),
@@ -437,6 +440,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                transactions: &transactions,
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
@@ -469,6 +473,7 @@ impl Kernel {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+        let transactions = TransactionContext::unscoped();
         invoke_service_with(
             InvocationContext {
                 graph_generation: self.graph_generation(),
@@ -481,6 +486,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                transactions: &transactions,
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
@@ -518,6 +524,7 @@ impl Kernel {
                 instances: &self.instances,
                 plugin,
                 authority: &manifest.maximum_authority,
+                transaction_context: TransactionContext::unscoped(),
                 call_cancellation: Some(cancellation.clone()),
                 call_stack: BTreeSet::from([plugin.clone()]),
                 events: &self.events,
