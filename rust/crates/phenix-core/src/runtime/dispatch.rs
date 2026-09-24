@@ -544,14 +544,12 @@ pub(super) fn invoke_resolved_chain_with(
         }
     } else {
         let result = match shared_invocation.as_ref() {
-            Some(invocation) => {
-                catch_unwind(AssertUnwindSafe(|| match terminal_component {
-                    Some(component) => {
-                        invocation.invoke_component(component, &chain.service, input, &host)
-                    }
-                    None => invocation.invoke(&chain.service, input, &host),
-                }))
-            }
+            Some(invocation) => catch_unwind(AssertUnwindSafe(|| match terminal_component {
+                Some(component) => {
+                    invocation.invoke_component(component, &chain.service, input, &host)
+                }
+                None => invocation.invoke(&chain.service, input, &host),
+            })),
             None => {
                 let mut instance = instance.lock().expect("plugin instance mutex poisoned");
                 catch_unwind(AssertUnwindSafe(|| match terminal_component {
