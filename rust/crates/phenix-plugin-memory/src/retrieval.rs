@@ -67,14 +67,17 @@ impl CandidateSearch for LexicalCandidateSearch {
             .iter()
             .enumerate()
             .filter_map(|(index, record)| {
-                recall_score(record, &normalized, &terms)
-                    .map(|score| SearchHit { index, score })
+                recall_score(record, &normalized, &terms).map(|score| SearchHit { index, score })
             })
             .collect()
     }
 }
 
-fn eligible(record: &MemoryRecord, query: &MemoryRecallQuery, superseded: &BTreeSet<String>) -> bool {
+fn eligible(
+    record: &MemoryRecord,
+    query: &MemoryRecallQuery,
+    superseded: &BTreeSet<String>,
+) -> bool {
     query.scopes.contains(&record.scope)
         && (query.kinds.is_empty() || query.kinds.contains(&record.kind))
         && visible_at(record, query.at)
