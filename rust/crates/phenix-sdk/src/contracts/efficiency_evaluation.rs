@@ -161,10 +161,7 @@ pub fn evaluate_efficiency_cohort(
     })
 }
 
-fn merge_metric(
-    target: &mut super::UsageMetricAggregate,
-    source: &super::UsageMetricAggregate,
-) {
+fn merge_metric(target: &mut super::UsageMetricAggregate, source: &super::UsageMetricAggregate) {
     target.reported = target.reported.saturating_add(source.reported);
     target.estimated = target.estimated.saturating_add(source.estimated);
     target.unavailable_records = target
@@ -178,8 +175,12 @@ fn merge_usage(target: &mut UsageAggregate, source: &UsageAggregate) {
     merge_metric(&mut target.cache_write_tokens, &source.cache_write_tokens);
     merge_metric(&mut target.output_tokens, &source.output_tokens);
     merge_metric(&mut target.reasoning_tokens, &source.reasoning_tokens);
-    target.tool_input_bytes = target.tool_input_bytes.saturating_add(source.tool_input_bytes);
-    target.tool_result_bytes = target.tool_result_bytes.saturating_add(source.tool_result_bytes);
+    target.tool_input_bytes = target
+        .tool_input_bytes
+        .saturating_add(source.tool_input_bytes);
+    target.tool_result_bytes = target
+        .tool_result_bytes
+        .saturating_add(source.tool_result_bytes);
     merge_metric(
         &mut target.reacquisition_fresh_input_tokens,
         &source.reacquisition_fresh_input_tokens,
@@ -188,7 +189,9 @@ fn merge_usage(target: &mut UsageAggregate, source: &UsageAggregate) {
         .reacquisition_tool_result_bytes
         .saturating_add(source.reacquisition_tool_result_bytes);
     target.attempts = target.attempts.saturating_add(source.attempts);
-    target.failed_attempts = target.failed_attempts.saturating_add(source.failed_attempts);
+    target.failed_attempts = target
+        .failed_attempts
+        .saturating_add(source.failed_attempts);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
