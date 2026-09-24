@@ -1983,8 +1983,8 @@ fn serve_application_worker(
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
 ) {
-    let (execution_sender, mut execution_events) =
-        mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+    let (execution_sender, mut execution_completions) =
+        mpsc::channel::<ExecutionCompletion>(APPLICATION_EXECUTION_CAPACITY);
     let mut active = BTreeMap::<String, ActiveExecution>::new();
     let mut input_closed = false;
 
