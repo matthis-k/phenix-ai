@@ -324,7 +324,7 @@ pub struct ResolvedTerminalPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedLayerPlan {
     pub binding: ProviderBinding,
-    pub required_authority: Authority,
+    pub required_authority: Option<Authority>,
     pub required: bool,
     pub enabled: bool,
 }
@@ -491,18 +491,17 @@ impl KernelConfig {
                         contribution.role == ServiceRole::Layer && contribution.service == service
                     })
                 });
-                if let Some(contribution) = contribution {
-                    layers.push(ResolvedLayerPlan {
-                        binding: ProviderBinding {
-                            service: service.clone(),
-                            plugin: policy.plugin.clone(),
-                            priority: policy.priority,
-                        },
-                        required_authority: contribution.required_authority.clone(),
-                        required: policy.required,
-                        enabled: policy.enabled,
-                    });
-                }
+                layers.push(ResolvedLayerPlan {
+                    binding: ProviderBinding {
+                        service: service.clone(),
+                        plugin: policy.plugin.clone(),
+                        priority: policy.priority,
+                    },
+                    required_authority: contribution
+                        .map(|contribution| contribution.required_authority.clone()),
+                    required: policy.required,
+                    enabled: policy.enabled,
+                });
             }
             layers.sort_by(|left, right| {
                 right
