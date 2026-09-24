@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ComponentInvocationPlan, ServiceDispatchGuards,
+        ComponentInvocationPlan,
     },
     *,
 };
@@ -454,10 +454,7 @@ impl Kernel {
             },
             input,
             caller_authority,
-            ServiceDispatchGuards {
-                stack: &InvocationStack::default(),
-                terminal_component: Some(component),
-            },
+            &InvocationStack::default(),
         )
     }
 
@@ -490,10 +487,7 @@ impl Kernel {
             input,
             caller_authority,
             binding,
-            ServiceDispatchGuards {
-                stack: &InvocationStack::default(),
-                terminal_component: None,
-            },
+            &InvocationStack::default(),
         )
     }
 
