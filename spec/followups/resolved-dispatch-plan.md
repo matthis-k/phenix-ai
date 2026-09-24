@@ -3,7 +3,7 @@ status: active
 source: kernel-runtime-mechanism-audit-2026-09-23
 base_sha: e4d653a0d9f6b8ef908a06cb59a4ac7766baf66b
 depends_on: runtime-generation
-implementation_status: service topology precomputed in RuntimeGeneration; hot-path migration pending
+implementation_status: generation topology and invocation hot paths migrated; exact-head validation pending
 ---
 
 # Precomputed resolved dispatch plans
