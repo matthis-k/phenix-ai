@@ -50,7 +50,7 @@ pub(super) fn scoped_event_handler(
         owner: owner.clone(),
         inner,
         runtime: ListenerRuntimeSnapshot {
-            runtime: Arc::new(sources.runtime.clone()),
+            runtime: Arc::new((*sources.runtime).clone()),
             states: sources.states.clone(),
             instances: sources.instances.clone(),
             invocations: sources.invocations.clone(),
