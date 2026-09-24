@@ -3,8 +3,8 @@ use crate::{
     AgentLoopProgressInterface, AgentToolExecutionInterface,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, ComponentInterface, Key, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, ModelToolTurn, PhenixSchema, PhenixValue, PluginContext, PluginExecution,
+    Authority, Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor,
+    ModelToolResult, ModelToolTurn, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
     ServiceId, ServiceRole, SessionId,
 };
@@ -12,7 +12,7 @@ use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
@@ -83,7 +83,6 @@ pub struct AgentLoopUsage {
 pub enum AgentLoopFailure {
     ModelTurnLimitExceeded { limit: u32 },
     ToolCallLimitExceeded { limit: u32, actual: u32 },
-    InvalidToolCall { call_id: String, message: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -358,18 +357,8 @@ fn run(
             });
         }
 
-        let normalized_calls = match normalize_model_tool_calls(&tools, &tool_calls) {
-            Ok(calls) => calls,
-            Err((call_id, message)) => {
-                return Ok(AgentLoopResponse::Failed {
-                    failure: AgentLoopFailure::InvalidToolCall { call_id, message },
-                    usage,
-                });
-            }
-        };
-
-        let mut tool_results = Vec::with_capacity(normalized_calls.len());
-        for call in &normalized_calls {
+        let mut tool_results = Vec::with_capacity(tool_calls.len());
+        for call in &tool_calls {
             emit_progress(
                 context,
                 AgentLoopProgressRecord {
@@ -420,7 +409,7 @@ fn run(
 
         continuation.push(ModelToolTurn {
             assistant_output: output,
-            tool_calls: normalized_calls,
+            tool_calls,
             tool_results,
         });
     }
@@ -447,126 +436,6 @@ fn emit_progress(
     }
 }
 
-fn normalize_model_tool_calls(
-    tools: &[ModelToolDescriptor],
-    calls: &[ModelToolCall],
-) -> Result<Vec<ModelToolCall>, (String, String)> {
-    calls
-        .iter()
-        .map(|call| {
-            normalize_model_tool_call(tools, call)
-                .map_err(|message| (call.call_id.clone(), message))
-        })
-        .collect()
-}
-
-fn normalize_model_tool_call(
-    tools: &[ModelToolDescriptor],
-    call: &ModelToolCall,
-) -> Result<ModelToolCall, String> {
-    let descriptor = tools
-        .iter()
-        .find(|tool| tool.id == call.callable_id)
-        .ok_or_else(|| format!("model requested unavailable tool {}", call.callable_id))?;
-    let input = normalize_model_tool_input(&descriptor.input_schema, call.input.clone())
-        .map_err(|message| format!("invalid input for tool {}: {message}", call.callable_id))?;
-    Ok(ModelToolCall {
-        call_id: call.call_id.clone(),
-        callable_id: call.callable_id.clone(),
-        input,
-    })
-}
-
-fn normalize_model_tool_input(
-    schema: &PhenixSchema,
-    value: PhenixValue,
-) -> Result<PhenixValue, String> {
-    if schema.parse(&value).is_ok() {
-        return Ok(value);
-    }
-
-    let normalized = match (schema, value) {
-        (PhenixSchema::Table(fields), PhenixValue::Map(values)) => {
-            normalize_model_tool_table(fields, values)?
-        }
-        (PhenixSchema::Table(fields), PhenixValue::Table(values)) => {
-            let values = values
-                .into_iter()
-                .map(|(key, value)| (key.as_str().to_owned(), value))
-                .collect();
-            normalize_model_tool_table(fields, values)?
-        }
-        (PhenixSchema::List(item), PhenixValue::List(values)) => PhenixValue::List(
-            values
-                .into_iter()
-                .map(|value| normalize_model_tool_input(item, value))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        (PhenixSchema::Array { item, len }, PhenixValue::List(values)) => {
-            if values.len() != *len {
-                return Err(format!("expected {len} values, got {}", values.len()));
-            }
-            PhenixValue::List(
-                values
-                    .into_iter()
-                    .map(|value| normalize_model_tool_input(item, value))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        }
-        (PhenixSchema::Map(item), PhenixValue::Map(values)) => PhenixValue::Map(
-            values
-                .into_iter()
-                .map(|(key, value)| {
-                    normalize_model_tool_input(item, value).map(|value| (key, value))
-                })
-                .collect::<Result<BTreeMap<_, _>, _>>()?,
-        ),
-        (PhenixSchema::Option(_), PhenixValue::Unit) => PhenixValue::Option(None),
-        (PhenixSchema::Option(item), PhenixValue::Option(Some(value))) => {
-            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, *value)?)))
-        }
-        (PhenixSchema::Option(_), PhenixValue::Option(None)) => PhenixValue::Option(None),
-        (PhenixSchema::Option(item), value) => {
-            PhenixValue::Option(Some(Box::new(normalize_model_tool_input(item, value)?)))
-        }
-        (PhenixSchema::I64, PhenixValue::U64(value)) if value <= i64::MAX as u64 => {
-            PhenixValue::I64(value as i64)
-        }
-        (PhenixSchema::U64, PhenixValue::I64(value)) if value >= 0 => {
-            PhenixValue::U64(value as u64)
-        }
-        (PhenixSchema::F64, PhenixValue::I64(value)) => PhenixValue::F64(value as f64),
-        (PhenixSchema::F64, PhenixValue::U64(value)) => PhenixValue::F64(value as f64),
-        (_, value) => return Err(format!("expected {}, got {}", schema.kind(), value.kind())),
-    };
-
-    schema
-        .parse(&normalized)
-        .map_err(|error| format!("{error:?}"))?;
-    Ok(normalized)
-}
-
-fn normalize_model_tool_table(
-    fields: &BTreeMap<Key, PhenixSchema>,
-    values: BTreeMap<String, PhenixValue>,
-) -> Result<PhenixValue, String> {
-    if let Some(key) = values.keys().find(|key| !fields.contains_key(key.as_str())) {
-        return Err(format!("unexpected field {key}"));
-    }
-
-    let mut normalized = BTreeMap::new();
-    for (key, field_schema) in fields {
-        let value = values
-            .get(key.as_str())
-            .cloned()
-            .ok_or_else(|| format!("missing field {key}"))?;
-        normalized.insert(
-            key.clone(),
-            normalize_model_tool_input(field_schema, value)?,
-        );
-    }
-    Ok(PhenixValue::Table(normalized))
-}
 
 #[cfg(test)]
 mod tests {
