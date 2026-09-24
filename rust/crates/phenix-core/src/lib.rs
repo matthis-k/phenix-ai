@@ -211,8 +211,9 @@ pub use reconciliation::{
 pub use reconciliation_inspection::CandidateResolutionInspection;
 pub use registry::{
     runtime_provider_runtime, runtime_provider_service, KernelConfig, KernelError,
-    KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedDispatchTopology,
-    ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan, ResolvedTerminalPlan,
+    KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedComponentDispatchPlan,
+    ResolvedDispatchTopology, ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan,
+    ResolvedTerminalPlan,
     RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
 };
 pub use resolver::{GraphGenerationId, ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
