@@ -1,6 +1,6 @@
 # Optional learned reducers
 
-status: specification-only
+status: implementation-in-progress
 
 Tracks #516 slice 11.
 
@@ -8,10 +8,15 @@ Tracks #516 slice 11.
 
 Phenix implements deterministic admission, compaction, provenance, and reacquisition accounting. No learned reducer is integrated or benchmarked after those deterministic stages.
 
+## Implementation progress
+
+- [x] Added typed reducer request/proposal contracts pinned to projection, configuration, authority, capability generation, stage, helper reservation, and output bound.
+- [x] Proposal validation rejects fabricated/duplicate/missing item decisions, missing exact recovery for omitted payloads, source-less summaries, stale projections, and underreported encoded size.
+
 ## Required implementation
 
-- [ ] Define a replaceable evidence/context reducer interface that cannot own canonical state.
-- [ ] Keep exact recovery references for every removed exact payload.
+- [ ] Define the replaceable runtime reducer backend/invocation interface without canonical-state authority.
+- [x] Keep exact recovery references for every removed exact payload.
 - [ ] Benchmark SWE-Pruner-style code evidence reduction after deterministic graph/context filtering.
 - [ ] Benchmark ACON-style history reduction separately from TokenPilot-inspired cache/layout policy.
 - [ ] Route reducer model work through ordinary bounded helper invocation.
