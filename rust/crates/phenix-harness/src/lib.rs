@@ -27,7 +27,7 @@ use phenix_plugin_catalog::{
     sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
-    workspace_component_manifest, workspace_factory, workspace_manifest,
+    workspace_component_manifest, workspace_factory, workspace_manifest, AGENT_LOOP_PLUGIN,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -121,6 +121,7 @@ pub struct HarnessBuilder {
     components: Vec<ComponentManifest>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
+    application_agent_tools: application::ApplicationAgentToolRegistry,
 }
 
 impl HarnessBuilder {
@@ -140,6 +141,11 @@ impl HarnessBuilder {
         builder.add_embedded(context_manifest(), context_factory)?;
         builder.add_embedded(execution_manifest(authority.clone()), execution_factory)?;
         builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
+        let application_agent_tools = builder.application_agent_tools.clone();
+        builder.add_embedded(
+            application::application_agent_tool_manifest(authority.clone()),
+            move || application::application_agent_tool_factory(application_agent_tools.clone()),
+        )?;
         builder.add_embedded(language_manifest(), language_factory)?;
         builder.add_embedded(memory_manifest(), memory_factory)?;
         builder.add_embedded(planning_manifest(), planning_factory)?;
@@ -173,6 +179,7 @@ impl HarnessBuilder {
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
             agent_loop_component_manifest(authority.clone()),
+            application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
             planning_component_manifest(),
@@ -284,6 +291,17 @@ impl HarnessBuilder {
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
+        if enabled.contains(AGENT_LOOP_PLUGIN) {
+            let application_agent_tools = builder.application_agent_tools.clone();
+            builder
+                .add_embedded(
+                    application::application_agent_tool_manifest(authority.clone()),
+                    move || {
+                        application::application_agent_tool_factory(application_agent_tools.clone())
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+        }
         builder.add_selected(&enabled, language_manifest(), language_factory)?;
         builder.add_selected(&enabled, memory_manifest(), memory_factory)?;
         builder.add_selected(&enabled, planning_manifest(), planning_factory)?;
@@ -339,7 +357,7 @@ impl HarnessBuilder {
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
-            sdk_component_manifest(authority),
+            sdk_component_manifest(authority.clone()),
             basic_model_component_manifest(),
             basic_tools_component_manifest(),
             basic_skills_component_manifest(),
@@ -348,6 +366,11 @@ impl HarnessBuilder {
             if enabled.contains(component.owner.as_str()) {
                 builder.add_component(component);
             }
+        }
+        if enabled.contains(AGENT_LOOP_PLUGIN) {
+            builder.add_component(application::application_agent_tool_component_manifest(
+                authority,
+            ));
         }
         Ok(builder)
     }
@@ -431,6 +454,7 @@ impl HarnessBuilder {
         self,
         create_kernel: impl FnOnce(&ResolvedHarness) -> Result<Kernel, HarnessBuildError>,
     ) -> Result<PhenixHarness, HarnessBuildError> {
+        let application_agent_tools = self.application_agent_tools.clone();
         let debug_id = debug_manifest(self.component_authority.clone()).id;
         let debug_enabled = self
             .manifests
@@ -452,13 +476,18 @@ impl HarnessBuilder {
         for (plugin, factory) in self.embedded_factories {
             kernel.register_embedded_factory(plugin, move || factory())?;
         }
-        Ok(PhenixHarness { kernel, resolved })
+        Ok(PhenixHarness {
+            kernel,
+            resolved,
+            application_agent_tools,
+        })
     }
 }
 
 pub struct PhenixHarness {
     kernel: Kernel,
     resolved: ResolvedHarness,
+    application_agent_tools: application::ApplicationAgentToolRegistry,
 }
 
 impl PhenixHarness {
@@ -493,7 +522,15 @@ impl PhenixHarness {
         kernel
             .activate_resolved_harness(&resolved)
             .expect("kernel-only resolved Harness activates");
-        Self { kernel, resolved }
+        Self {
+            kernel,
+            resolved,
+            application_agent_tools: application::ApplicationAgentToolRegistry::default(),
+        }
+    }
+
+    pub(crate) fn application_agent_tools(&self) -> &application::ApplicationAgentToolRegistry {
+        &self.application_agent_tools
     }
 
     pub fn default_suite() -> Result<Self, HarnessBuildError> {
