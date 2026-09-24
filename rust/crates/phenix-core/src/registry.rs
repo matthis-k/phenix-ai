@@ -1,6 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, PluginExecution,
-    PluginId, PluginManifest, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, InterfaceId,
+    PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph, ResolvedProviderPlan,
+    ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -337,15 +338,55 @@ pub struct ResolvedServicePlan {
     pub policy_identity: KernelPolicyIdentity,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedComponentDispatchPlan {
+    pub component: ComponentId,
+    pub interface: InterfaceId,
+    pub service: ServiceId,
+    pub providers: ResolvedProviderPlan,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ResolvedDispatchTopology {
     services: BTreeMap<ServiceId, ResolvedServicePlan>,
+    component_imports: BTreeMap<(ComponentId, InterfaceId), ResolvedComponentDispatchPlan>,
 }
 
 impl ResolvedDispatchTopology {
     #[must_use]
     pub fn service(&self, service: &ServiceId) -> Option<&ResolvedServicePlan> {
         self.services.get(service)
+    }
+
+    #[must_use]
+    pub fn component_import(
+        &self,
+        component: &ComponentId,
+        interface: &InterfaceId,
+    ) -> Option<&ResolvedComponentDispatchPlan> {
+        self.component_imports
+            .get(&(component.clone(), interface.clone()))
+    }
+
+    pub(crate) fn with_component_graph(mut self, graph: &ResolvedComponentGraph) -> Self {
+        for component in graph.components() {
+            for import in &component.imports {
+                let Some(providers) = import.provider_plan() else {
+                    continue;
+                };
+                let service = ServiceId::parse(import.interface.as_str().to_owned())
+                    .expect("component interface identity must share service identity syntax");
+                let plan = ResolvedComponentDispatchPlan {
+                    component: component.id.clone(),
+                    interface: import.interface.clone(),
+                    service,
+                    providers,
+                };
+                self.component_imports
+                    .insert((component.id.clone(), import.interface.clone()), plan);
+            }
+        }
+        self
     }
 }
 
@@ -521,7 +562,10 @@ impl KernelConfig {
                 },
             );
         }
-        ResolvedDispatchTopology { services }
+        ResolvedDispatchTopology {
+            services,
+            component_imports: BTreeMap::new(),
+        }
     }
 
     pub fn layer_policy(&self, service: &ServiceId) -> &[LayerPolicy] {
