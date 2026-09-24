@@ -237,6 +237,56 @@ pub(super) struct ComponentServiceEndpoint {
     pub(super) service: ServiceId,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum InvocationFrame {
+    Plugin(PluginId),
+    Service(ServiceId),
+    Component(ComponentServiceEndpoint),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct InvocationStack {
+    frames: Vec<InvocationFrame>,
+}
+
+impl InvocationStack {
+    pub(super) fn root(plugin: &PluginId) -> Self {
+        Self {
+            frames: vec![InvocationFrame::Plugin(plugin.clone())],
+        }
+    }
+
+    pub(super) fn contains_plugin(&self, plugin: &PluginId) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Plugin(active) if active == plugin))
+    }
+
+    pub(super) fn contains_service(&self, service: &ServiceId) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Service(active) if active == service))
+    }
+
+    pub(super) fn contains_component(&self, endpoint: &ComponentServiceEndpoint) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Component(active) if active == endpoint))
+    }
+
+    pub(super) fn push_plugin(&mut self, plugin: PluginId) {
+        self.frames.push(InvocationFrame::Plugin(plugin));
+    }
+
+    pub(super) fn push_service(&mut self, service: ServiceId) {
+        self.frames.push(InvocationFrame::Service(service));
+    }
+
+    pub(super) fn push_component(&mut self, endpoint: ComponentServiceEndpoint) {
+        self.frames.push(InvocationFrame::Component(endpoint));
+    }
+}
+
 pub struct PluginHost<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
@@ -248,7 +298,7 @@ pub struct PluginHost<'a> {
     authority: &'a Authority,
     transaction_context: TransactionContext,
     call_cancellation: Option<CallCancellationToken>,
-    call_stack: BTreeSet<PluginId>,
+    invocation_stack: InvocationStack,
     events: &'a EventBus,
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
@@ -256,8 +306,6 @@ pub struct PluginHost<'a> {
     trace_sink: &'a dyn RuntimeTraceSink,
     provenance: &'a ProvenanceBuffer,
     continuation: Option<ContinuationState>,
-    active_services: BTreeSet<ServiceId>,
-    active_component_endpoints: BTreeSet<ComponentServiceEndpoint>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
