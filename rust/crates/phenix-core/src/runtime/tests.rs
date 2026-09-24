@@ -501,20 +501,26 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
     let authority = Authority::new([write]);
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
     let caller_mutation = prepared_mutations
-        .prepare(&caller_plugin, &caller_namespace, &[], &authority)
+        .prepare(
+            &caller_plugin,
+            &caller_namespace,
+            &[],
+            &authority,
+            &TransactionContext::unscoped(),
+        )
         .unwrap();
+    let owner_transactions = TransactionContext::coordinated_by(&caller_plugin);
     let owner_mutation = prepared_mutations
-        .with_coordinator(&caller_plugin, || {
-            prepared_mutations.prepare(
-                &owner.id,
-                &owner_namespace,
-                &[TransactionOp::Put {
-                    key: "forbidden".into(),
-                    value: b"write".to_vec(),
-                }],
-                &authority,
-            )
-        })
+        .prepare(
+            &owner.id,
+            &owner_namespace,
+            &[TransactionOp::Put {
+                key: "forbidden".into(),
+                value: b"write".to_vec(),
+            }],
+            &authority,
+            &owner_transactions,
+        )
         .unwrap();
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
@@ -524,9 +530,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         states: &kernel.states,
         instances: &kernel.instances,
         plugin: &caller_plugin,
-        authority: &authority,
-        call_cancellation: None,
-        call_stack: BTreeSet::from([caller_plugin.clone()]),
+        scope: CallScope::root(&caller_plugin, &authority, None),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -534,8 +538,6 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
     let denied = host
         .transact_prepared(&[caller_mutation, owner_mutation])
@@ -627,21 +629,27 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
     kernel.activate_all().unwrap();
 
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
+    let owner_transactions = TransactionContext::coordinated_by(&first.id);
     let owner_mutation = prepared_mutations
-        .with_coordinator(&first.id, || {
-            prepared_mutations.prepare(
-                &owner.id,
-                &owner_namespace,
-                &[TransactionOp::Put {
-                    key: "value".into(),
-                    value: b"prepared".to_vec(),
-                }],
-                &authority,
-            )
-        })
+        .prepare(
+            &owner.id,
+            &owner_namespace,
+            &[TransactionOp::Put {
+                key: "value".into(),
+                value: b"prepared".to_vec(),
+            }],
+            &authority,
+            &owner_transactions,
+        )
         .unwrap();
     let second_mutation = prepared_mutations
-        .prepare(&second.id, &second_namespace, &[], &authority)
+        .prepare(
+            &second.id,
+            &second_namespace,
+            &[],
+            &authority,
+            &TransactionContext::unscoped(),
+        )
         .unwrap();
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
@@ -651,9 +659,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         states: &kernel.states,
         instances: &kernel.instances,
         plugin: &second.id,
-        authority: &authority,
-        call_cancellation: None,
-        call_stack: BTreeSet::from([second.id.clone()]),
+        scope: CallScope::root(&second.id, &authority, None),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -661,8 +667,6 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
 
     let denied = host
@@ -697,9 +701,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         states: &kernel.states,
         instances: &kernel.instances,
         plugin: &owner_plugin,
-        authority: &authority,
-        call_cancellation: None,
-        call_stack: BTreeSet::from([owner_plugin.clone()]),
+        scope: CallScope::root(&owner_plugin, &authority, None),
         events: &kernel.events,
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
@@ -707,8 +709,6 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
-        active_services: BTreeSet::new(),
-        active_component_endpoints: BTreeSet::new(),
     };
     assert!(matches!(
         host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),

@@ -7,7 +7,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
-    thread::{self, ThreadId},
 };
 
 const HANDLE_PREFIX: &str = "pm:";
@@ -116,26 +115,33 @@ pub(crate) struct PreparedMutation {
     pub(crate) coordinator: PluginId,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TransactionContext {
+    coordinator: Option<PluginId>,
+}
+
+impl TransactionContext {
+    pub(crate) fn unscoped() -> Self {
+        Self { coordinator: None }
+    }
+
+    pub(crate) fn coordinated_by(coordinator: &PluginId) -> Self {
+        Self {
+            coordinator: Some(coordinator.clone()),
+        }
+    }
+
+    fn coordinator_for(&self, owner: &PluginId) -> PluginId {
+        self.coordinator
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| owner.clone())
+    }
+}
+
 pub(crate) struct PreparedMutationScope {
     generation: Option<GraphGenerationId>,
     prepared: Mutex<BTreeMap<PreparedMutationHandle, PreparedMutation>>,
-    coordinators: Mutex<Vec<(ThreadId, PluginId)>>,
-}
-
-struct PreparedMutationCoordinatorGuard<'a> {
-    scope: &'a PreparedMutationScope,
-    thread: ThreadId,
-}
-
-impl Drop for PreparedMutationCoordinatorGuard<'_> {
-    fn drop(&mut self) {
-        let mut coordinators = self.scope.coordinators.lock();
-        let position = coordinators
-            .iter()
-            .rposition(|(thread, _)| thread == &self.thread)
-            .expect("prepared mutation coordinator frame is missing");
-        coordinators.remove(position);
-    }
 }
 
 impl PreparedMutationScope {
@@ -143,37 +149,11 @@ impl PreparedMutationScope {
         Self {
             generation: generation.cloned(),
             prepared: Mutex::new(BTreeMap::new()),
-            coordinators: Mutex::new(Vec::new()),
         }
     }
 
     pub(crate) fn generation(&self) -> Option<&GraphGenerationId> {
         self.generation.as_ref()
-    }
-
-    pub(crate) fn with_coordinator<T>(
-        &self,
-        coordinator: &PluginId,
-        operation: impl FnOnce() -> T,
-    ) -> T {
-        let thread = thread::current().id();
-        self.coordinators.lock().push((thread, coordinator.clone()));
-        let _guard = PreparedMutationCoordinatorGuard {
-            scope: self,
-            thread,
-        };
-        operation()
-    }
-
-    fn coordinator(&self, owner: &PluginId) -> PluginId {
-        let thread = thread::current().id();
-        self.coordinators
-            .lock()
-            .iter()
-            .rev()
-            .find(|(candidate, _)| candidate == &thread)
-            .map(|(_, coordinator)| coordinator.clone())
-            .unwrap_or_else(|| owner.clone())
     }
 
     pub(crate) fn prepare(
@@ -182,8 +162,9 @@ impl PreparedMutationScope {
         namespace: &ResourceNamespace,
         operations: &[TransactionOp],
         authority: &Authority,
+        transactions: &TransactionContext,
     ) -> Result<PreparedMutationHandle, String> {
-        let coordinator = self.coordinator(owner);
+        let coordinator = transactions.coordinator_for(owner);
         let mut prepared = self.prepared.lock();
         loop {
             let handle = PreparedMutationHandle::generate()?;
@@ -249,7 +230,13 @@ mod tests {
 
     fn prepared(scope: &PreparedMutationScope) -> PreparedMutationHandle {
         scope
-            .prepare(&owner(), &namespace(), &[], &Authority::default())
+            .prepare(
+                &owner(),
+                &namespace(),
+                &[],
+                &Authority::default(),
+                &TransactionContext::unscoped(),
+            )
             .unwrap()
     }
 

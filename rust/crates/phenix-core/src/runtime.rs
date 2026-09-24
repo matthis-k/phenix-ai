@@ -1,15 +1,15 @@
 use crate::{
-    prepared_mutation::PreparedMutationScope, ArtifactRevision, Authority, CallCancellationToken,
-    CapabilityId, ComponentGraphError, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
-    EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
-    KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
-    ProviderSelectionReason, ResolvedComponentGraph, ResolvedDispatchTopology,
-    ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId,
-    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
-    TransactionOp,
+    prepared_mutation::{PreparedMutationScope, TransactionContext},
+    ArtifactRevision, Authority, CallCancellationToken, CapabilityId, ComponentGraphError,
+    ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
+    EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
+    EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError, KernelEvent,
+    KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact, PluginExecution,
+    PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason, ProviderSelectionReason,
+    ResolvedComponentGraph, ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan,
+    ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan,
+    ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
+    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -237,6 +237,93 @@ pub(super) struct ComponentServiceEndpoint {
     pub(super) service: ServiceId,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum InvocationFrame {
+    Plugin(PluginId),
+    Service(ServiceId),
+    Component(ComponentServiceEndpoint),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct InvocationStack {
+    frames: Vec<InvocationFrame>,
+}
+
+#[derive(Clone)]
+pub(super) struct CallScope {
+    authority: Authority,
+    cancellation: Option<CallCancellationToken>,
+    stack: InvocationStack,
+    transactions: TransactionContext,
+}
+
+impl CallScope {
+    pub(super) fn root(
+        plugin: &PluginId,
+        authority: &Authority,
+        cancellation: Option<CallCancellationToken>,
+    ) -> Self {
+        Self {
+            authority: authority.clone(),
+            cancellation,
+            stack: InvocationStack::root(plugin),
+            transactions: TransactionContext::unscoped(),
+        }
+    }
+
+    pub(super) fn nested(
+        authority: Authority,
+        cancellation: Option<CallCancellationToken>,
+        stack: InvocationStack,
+        transactions: TransactionContext,
+    ) -> Self {
+        Self {
+            authority,
+            cancellation,
+            stack,
+            transactions,
+        }
+    }
+}
+
+impl InvocationStack {
+    pub(super) fn root(plugin: &PluginId) -> Self {
+        Self {
+            frames: vec![InvocationFrame::Plugin(plugin.clone())],
+        }
+    }
+
+    pub(super) fn contains_plugin(&self, plugin: &PluginId) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Plugin(active) if active == plugin))
+    }
+
+    pub(super) fn contains_service(&self, service: &ServiceId) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Service(active) if active == service))
+    }
+
+    pub(super) fn contains_component(&self, endpoint: &ComponentServiceEndpoint) -> bool {
+        self.frames
+            .iter()
+            .any(|frame| matches!(frame, InvocationFrame::Component(active) if active == endpoint))
+    }
+
+    pub(super) fn push_plugin(&mut self, plugin: PluginId) {
+        self.frames.push(InvocationFrame::Plugin(plugin));
+    }
+
+    pub(super) fn push_service(&mut self, service: ServiceId) {
+        self.frames.push(InvocationFrame::Service(service));
+    }
+
+    pub(super) fn push_component(&mut self, endpoint: ComponentServiceEndpoint) {
+        self.frames.push(InvocationFrame::Component(endpoint));
+    }
+}
+
 pub struct PluginHost<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
@@ -245,9 +332,7 @@ pub struct PluginHost<'a> {
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     plugin: &'a PluginId,
-    authority: &'a Authority,
-    call_cancellation: Option<CallCancellationToken>,
-    call_stack: BTreeSet<PluginId>,
+    scope: CallScope,
     events: &'a EventBus,
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
@@ -255,8 +340,6 @@ pub struct PluginHost<'a> {
     trace_sink: &'a dyn RuntimeTraceSink,
     provenance: &'a ProvenanceBuffer,
     continuation: Option<ContinuationState>,
-    active_services: BTreeSet<ServiceId>,
-    active_component_endpoints: BTreeSet<ComponentServiceEndpoint>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -455,6 +538,7 @@ struct InvocationContext<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
+    transactions: &'a TransactionContext,
     trace_sink: &'a dyn RuntimeTraceSink,
     provenance: &'a ProvenanceBuffer,
 }

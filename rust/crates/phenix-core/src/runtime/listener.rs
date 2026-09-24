@@ -83,9 +83,7 @@ impl ScopedPluginListener {
             states: &self.runtime.states,
             instances: &self.runtime.instances,
             plugin: &self.owner,
-            authority,
-            call_cancellation: Some(cancellation.clone()),
-            call_stack: BTreeSet::from([self.owner.clone()]),
+            scope: CallScope::root(&self.owner, authority, Some(cancellation.clone())),
             events: &events,
             tasks: &self.runtime.tasks,
             persistence: &self.runtime.persistence,
@@ -93,8 +91,6 @@ impl ScopedPluginListener {
             trace_sink: self.runtime.trace_sink.as_ref(),
             provenance: &self.runtime.provenance,
             continuation: None,
-            active_services: BTreeSet::new(),
-            active_component_endpoints: BTreeSet::new(),
         };
         let result = catch_unwind(AssertUnwindSafe(|| self.inner.handle(event, &host)))
             .map_err(|_| "plugin listener panicked".to_owned())?;

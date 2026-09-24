@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ComponentInvocationPlan, ServiceDispatchGuards,
+        ComponentInvocationPlan,
     },
     *,
 };
@@ -232,9 +232,11 @@ impl Kernel {
                             states: &next_states,
                             instances: &next_instances,
                             plugin: &binding.provider,
-                            authority: &provider_manifest.maximum_authority,
-                            call_cancellation: Some(cancellation.clone()),
-                            call_stack: BTreeSet::from([binding.provider.clone()]),
+                            scope: CallScope::root(
+                                &binding.provider,
+                                &provider_manifest.maximum_authority,
+                                Some(cancellation.clone()),
+                            ),
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
@@ -242,8 +244,6 @@ impl Kernel {
                             trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                             continuation: None,
-                            active_services: BTreeSet::new(),
-                            active_component_endpoints: BTreeSet::new(),
                         };
                         let mut provider = provider.lock().expect("plugin instance mutex poisoned");
                         let contract = provider.runtime_provider().ok_or_else(|| {
@@ -316,9 +316,11 @@ impl Kernel {
                     states: &next_states,
                     instances: &next_instances,
                     plugin,
-                    authority: &manifest.maximum_authority,
-                    call_cancellation: Some(cancellation.clone()),
-                    call_stack: BTreeSet::from([plugin.clone()]),
+                    scope: CallScope::root(
+                        plugin,
+                        &manifest.maximum_authority,
+                        Some(cancellation.clone()),
+                    ),
                     events: &self.events,
                     tasks: &self.tasks,
                     persistence: &self.persistence,
@@ -326,8 +328,6 @@ impl Kernel {
                     trace_sink: self.trace_sink.as_ref(),
                     provenance: &self.provenance,
                     continuation: None,
-                    active_services: BTreeSet::new(),
-                    active_component_endpoints: BTreeSet::new(),
                 };
                 let started = catch_unwind(AssertUnwindSafe(|| instance.start(&host)));
                 let failure = match started {
@@ -425,6 +425,7 @@ impl Kernel {
             |plan| plan.policy_identity,
         );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+        let transactions = TransactionContext::unscoped();
         invoke_component_service_with(
             InvocationContext {
                 graph_generation: self.graph_generation(),
@@ -437,6 +438,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                transactions: &transactions,
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
@@ -452,12 +454,7 @@ impl Kernel {
             },
             input,
             caller_authority,
-            ServiceDispatchGuards {
-                call_stack: &BTreeSet::new(),
-                active_services: &BTreeSet::new(),
-                active_component_endpoints: &BTreeSet::new(),
-                terminal_component: Some(component),
-            },
+            &InvocationStack::default(),
         )
     }
 
@@ -469,6 +466,7 @@ impl Kernel {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+        let transactions = TransactionContext::unscoped();
         invoke_service_with(
             InvocationContext {
                 graph_generation: self.graph_generation(),
@@ -481,6 +479,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                transactions: &transactions,
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
@@ -488,12 +487,7 @@ impl Kernel {
             input,
             caller_authority,
             binding,
-            ServiceDispatchGuards {
-                call_stack: &BTreeSet::new(),
-                active_services: &BTreeSet::new(),
-                active_component_endpoints: &BTreeSet::new(),
-                terminal_component: None,
-            },
+            &InvocationStack::default(),
         )
     }
 
@@ -517,9 +511,11 @@ impl Kernel {
                 states: &self.states,
                 instances: &self.instances,
                 plugin,
-                authority: &manifest.maximum_authority,
-                call_cancellation: Some(cancellation.clone()),
-                call_stack: BTreeSet::from([plugin.clone()]),
+                scope: CallScope::root(
+                    plugin,
+                    &manifest.maximum_authority,
+                    Some(cancellation.clone()),
+                ),
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
@@ -527,8 +523,6 @@ impl Kernel {
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
                 continuation: None,
-                active_services: BTreeSet::new(),
-                active_component_endpoints: BTreeSet::new(),
             };
             let mut instance = instance.lock().expect("plugin instance mutex poisoned");
             let stopped = catch_unwind(AssertUnwindSafe(|| instance.stop(&host)));

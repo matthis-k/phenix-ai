@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_resolved_chain_with, invoke_service_with,
-        ComponentDispatchTarget, ComponentInvocationPlan, ServiceDispatchGuards,
+        ComponentDispatchTarget, ComponentInvocationPlan,
     },
     *,
 };
@@ -16,11 +16,11 @@ impl<'a> PluginHost<'a> {
     }
 
     pub fn authority(&self) -> &Authority {
-        self.authority
+        &self.scope.authority
     }
 
     pub fn cancellation_token(&self) -> Option<&CallCancellationToken> {
-        self.call_cancellation.as_ref()
+        self.scope.cancellation.as_ref()
     }
 
     #[doc(hidden)]
@@ -69,7 +69,7 @@ impl<'a> PluginHost<'a> {
         let service = &dispatch.service;
         let input = serde_json::to_vec(request)
             .map_err(|error| ComponentInvocationError::Encode(error.to_string()))?;
-        let delegated_authority = self.authority.attenuate(handle.effective_authority());
+        let delegated_authority = self.scope.authority.attenuate(handle.effective_authority());
         let provider_provenance = ComponentProviderProvenance::from_plan(
             interface,
             plan,
@@ -77,42 +77,37 @@ impl<'a> PluginHost<'a> {
             fallback_reason,
             delegated_authority.clone(),
         );
-        let output = self.prepared_mutations.with_coordinator(self.plugin, || {
-            invoke_component_service_with(
-                InvocationContext {
-                    graph_generation: self.graph_generation,
-                    component_graph: self.component_graph,
-                    dispatch_topology: self.dispatch_topology,
-                    config: self.config,
-                    states: self.states,
-                    instances: self.instances,
-                    events: self.events,
-                    tasks: self.tasks,
-                    persistence: self.persistence,
-                    prepared_mutations: self.prepared_mutations,
-                    trace_sink: self.trace_sink,
-                    provenance: self.provenance,
-                },
-                ComponentInvocationPlan {
-                    service,
-                    layers: &dispatch.layers,
-                    policy_identity: dispatch.policy_identity,
-                },
-                ComponentDispatchTarget {
-                    component: handle.exporter(),
-                    binding: handle.owning_plugin(),
-                    provider_provenance: Some(provider_provenance),
-                },
-                &input,
-                &delegated_authority,
-                ServiceDispatchGuards {
-                    call_stack: &self.call_stack,
-                    active_services: &self.active_services,
-                    active_component_endpoints: &self.active_component_endpoints,
-                    terminal_component: Some(handle.exporter()),
-                },
-            )
-        })?;
+        let transactions = TransactionContext::coordinated_by(self.plugin);
+        let output = invoke_component_service_with(
+            InvocationContext {
+                graph_generation: self.graph_generation,
+                component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
+                config: self.config,
+                states: self.states,
+                instances: self.instances,
+                events: self.events,
+                tasks: self.tasks,
+                persistence: self.persistence,
+                prepared_mutations: self.prepared_mutations,
+                transactions: &transactions,
+                trace_sink: self.trace_sink,
+                provenance: self.provenance,
+            },
+            ComponentInvocationPlan {
+                service,
+                layers: &dispatch.layers,
+                policy_identity: dispatch.policy_identity,
+            },
+            ComponentDispatchTarget {
+                component: handle.exporter(),
+                binding: handle.owning_plugin(),
+                provider_provenance: Some(provider_provenance),
+            },
+            &input,
+            &delegated_authority,
+            &self.scope.stack,
+        )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
     }
@@ -130,35 +125,30 @@ impl<'a> PluginHost<'a> {
         requested_authority: &Authority,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        let delegated_authority = self.authority.attenuate(requested_authority);
-        self.prepared_mutations.with_coordinator(self.plugin, || {
-            invoke_service_with(
-                InvocationContext {
-                    graph_generation: self.graph_generation,
-                    component_graph: self.component_graph,
-                    dispatch_topology: self.dispatch_topology,
-                    config: self.config,
-                    states: self.states,
-                    instances: self.instances,
-                    events: self.events,
-                    tasks: self.tasks,
-                    persistence: self.persistence,
-                    prepared_mutations: self.prepared_mutations,
-                    trace_sink: self.trace_sink,
-                    provenance: self.provenance,
-                },
-                service,
-                input,
-                &delegated_authority,
-                binding,
-                ServiceDispatchGuards {
-                    call_stack: &self.call_stack,
-                    active_services: &self.active_services,
-                    active_component_endpoints: &self.active_component_endpoints,
-                    terminal_component: None,
-                },
-            )
-        })
+        let delegated_authority = self.scope.authority.attenuate(requested_authority);
+        let transactions = TransactionContext::coordinated_by(self.plugin);
+        invoke_service_with(
+            InvocationContext {
+                graph_generation: self.graph_generation,
+                component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
+                config: self.config,
+                states: self.states,
+                instances: self.instances,
+                events: self.events,
+                tasks: self.tasks,
+                persistence: self.persistence,
+                prepared_mutations: self.prepared_mutations,
+                transactions: &transactions,
+                trace_sink: self.trace_sink,
+                provenance: self.provenance,
+            },
+            service,
+            input,
+            &delegated_authority,
+            binding,
+            &self.scope.stack,
+        )
     }
 
     pub fn continue_service(
@@ -174,7 +164,7 @@ impl<'a> PluginHost<'a> {
         if continuation.used.swap(true, Ordering::AcqRel) {
             return Err(KernelError::ContinuationAlreadyUsed(service));
         }
-        let delegated_authority = self.authority.attenuate(requested_authority);
+        let delegated_authority = self.scope.authority.attenuate(requested_authority);
         invoke_resolved_chain_with(
             InvocationContext {
                 graph_generation: self.graph_generation,
@@ -187,6 +177,7 @@ impl<'a> PluginHost<'a> {
                 tasks: self.tasks,
                 persistence: self.persistence,
                 prepared_mutations: self.prepared_mutations,
+                transactions: &self.scope.transactions,
                 trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
@@ -194,12 +185,8 @@ impl<'a> PluginHost<'a> {
             continuation.next_position,
             input,
             &delegated_authority,
-            ServiceDispatchGuards {
-                call_stack: &self.call_stack,
-                active_services: &self.active_services,
-                active_component_endpoints: &self.active_component_endpoints,
-                terminal_component: continuation.terminal_component.as_ref(),
-            },
+            &self.scope.stack,
+            continuation.terminal_component.as_ref(),
             &continuation.trace,
         )
     }
@@ -208,7 +195,7 @@ impl<'a> PluginHost<'a> {
         Some(TaskScope::new_owned(
             self.tasks,
             self.graph_generation?,
-            self.authority,
+            &self.scope.authority,
             self.plugin,
         ))
     }
@@ -230,7 +217,7 @@ impl<'a> PluginHost<'a> {
             payload,
         };
         self.events
-            .admit_in_generation(&event, self.authority, self.graph_generation)
+            .admit_in_generation(&event, &self.scope.authority, self.graph_generation)
     }
 
     pub fn register_durable_schema(&self, schema: &DurableSchema) -> Result<(), KernelError> {
@@ -349,7 +336,13 @@ impl<'a> PluginHost<'a> {
             self.require_not_cancelled("prepare durable transaction")?;
             self.require_prepared_scope_generation()?;
             self.prepared_mutations
-                .prepare(self.plugin, namespace, operations, self.authority)
+                .prepare(
+                    self.plugin,
+                    namespace,
+                    operations,
+                    &self.scope.authority,
+                    &self.scope.transactions,
+                )
                 .map_err(|message| self.persistence_error(message))
         })();
         match &result {
@@ -507,7 +500,8 @@ impl<'a> PluginHost<'a> {
 
     fn require_not_cancelled(&self, operation: &str) -> Result<(), KernelError> {
         if !self
-            .call_cancellation
+            .scope
+            .cancellation
             .as_ref()
             .is_some_and(CallCancellationToken::is_cancelled)
         {
@@ -546,7 +540,7 @@ impl<'a> PluginHost<'a> {
 
     fn require_capability(&self, capability: &str) -> Result<(), KernelError> {
         let capability = CapabilityId::parse(capability).expect("kernel capability is valid");
-        if self.authority.permits(&capability) {
+        if self.scope.authority.permits(&capability) {
             return Ok(());
         }
         Err(KernelError::HostOperationDenied {
