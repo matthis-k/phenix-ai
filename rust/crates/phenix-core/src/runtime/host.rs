@@ -93,7 +93,9 @@ impl<'a> PluginHost<'a> {
                     trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
-                dispatch,
+                service,
+                &dispatch.layers,
+                dispatch.policy_identity,
                 ComponentDispatchTarget {
                     component: handle.exporter(),
                     binding: handle.owning_plugin(),
