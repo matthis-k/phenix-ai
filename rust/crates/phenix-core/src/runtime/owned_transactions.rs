@@ -72,7 +72,8 @@ impl PluginHost<'_> {
                 });
             }
 
-            self.runtime.persistence
+            self.runtime
+                .persistence
                 .lock()
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)
