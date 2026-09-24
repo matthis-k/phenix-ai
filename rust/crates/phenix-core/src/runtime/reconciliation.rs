@@ -35,7 +35,7 @@ impl StopView<'_> {
             authority: &manifest.maximum_authority,
             transaction_context: TransactionContext::unscoped(),
             call_cancellation: Some(live_call.cancellation_token().clone()),
-            call_stack: BTreeSet::from([plugin.clone()]),
+            invocation_stack: InvocationStack::root(plugin),
             events: self.events,
             tasks: self.tasks,
             persistence: self.persistence,
@@ -43,8 +43,6 @@ impl StopView<'_> {
             trace_sink: self.trace_sink,
             provenance: self.provenance,
             continuation: None,
-            active_services: BTreeSet::new(),
-            active_component_endpoints: BTreeSet::new(),
         };
         let mut instance = instance
             .lock()
@@ -150,8 +148,9 @@ impl Kernel {
                                 instances: &next_instances,
                                 plugin: &binding.provider,
                                 authority: &provider_manifest.maximum_authority,
+                                transaction_context: TransactionContext::unscoped(),
                                 call_cancellation: Some(cancellation.clone()),
-                                call_stack: BTreeSet::from([binding.provider.clone()]),
+                                invocation_stack: InvocationStack::root(&binding.provider),
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
@@ -159,8 +158,6 @@ impl Kernel {
                                 trace_sink: self.trace_sink.as_ref(),
                                 provenance: &self.provenance,
                                 continuation: None,
-                                active_services: BTreeSet::new(),
-                                active_component_endpoints: BTreeSet::new(),
                             };
                             let mut provider =
                                 provider.lock().expect("plugin instance mutex poisoned");
@@ -239,8 +236,9 @@ impl Kernel {
                         instances: &next_instances,
                         plugin,
                         authority: &manifest.maximum_authority,
+                        transaction_context: TransactionContext::unscoped(),
                         call_cancellation: Some(cancellation.clone()),
-                        call_stack: BTreeSet::from([plugin.clone()]),
+                        invocation_stack: InvocationStack::root(plugin),
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
@@ -248,8 +246,6 @@ impl Kernel {
                         trace_sink: self.trace_sink.as_ref(),
                         provenance: &self.provenance,
                         continuation: None,
-                        active_services: BTreeSet::new(),
-                        active_component_endpoints: BTreeSet::new(),
                     };
                     let started = catch_unwind(AssertUnwindSafe(|| instance.start(&host)));
                     let failure = match started {
