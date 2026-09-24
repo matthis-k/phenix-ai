@@ -69,7 +69,9 @@ impl RuntimeGeneration {
         component_graph: ResolvedComponentGraph,
         resources: Vec<SkillResourceMetadata>,
     ) -> Self {
-        let dispatch_topology = config.resolved_dispatch_topology();
+        let dispatch_topology = config
+            .resolved_dispatch_topology()
+            .with_component_graph(&component_graph);
         Self {
             identity: RuntimeGenerationIdentity::Resolved(id),
             config,
