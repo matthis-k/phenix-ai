@@ -86,6 +86,7 @@ impl<'a> PluginHost<'a> {
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
+                    dispatch_topology: self.dispatch_topology,
                     config: self.config,
                     states: self.states,
                     instances: self.instances,
@@ -135,6 +136,7 @@ impl<'a> PluginHost<'a> {
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
+                    dispatch_topology: self.dispatch_topology,
                     config: self.config,
                     states: self.states,
                     instances: self.instances,
@@ -177,6 +179,7 @@ impl<'a> PluginHost<'a> {
             InvocationContext {
                 graph_generation: self.graph_generation,
                 component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
                 config: self.config,
                 states: self.states,
                 instances: self.instances,
