@@ -23,6 +23,104 @@ fn emit_policy_stage(
     );
 }
 
+fn resolve_live_service_chain(
+    runtime: InvocationContext<'_>,
+    service: &ServiceId,
+    caller_authority: &Authority,
+    binding: Option<&PluginId>,
+) -> Result<ResolvedServiceChain, KernelError> {
+    let plan = runtime.dispatch_topology.service(service).ok_or_else(|| {
+        binding.map_or_else(
+            || KernelError::NoEligibleProvider(service.clone()),
+            |plugin| KernelError::BoundProviderUnavailable {
+                service: service.clone(),
+                plugin: plugin.clone(),
+            },
+        )
+    })?;
+
+    let mut layers = Vec::new();
+    for layer in &plan.layers {
+        let authorized = layer
+            .required_authority
+            .as_ref()
+            .is_some_and(|authority| caller_authority.permits_all(authority));
+        let available = layer.enabled
+            && authorized
+            && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&layer.binding.plugin);
+        let subject = Some(format!("{}:{}", service, layer.binding.plugin));
+        if available {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "allowed",
+                subject,
+                None,
+                None,
+            );
+            layers.push(layer.binding.clone());
+        } else if layer.required {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "denied",
+                subject,
+                None,
+                Some("required layer is unavailable or unauthorized".into()),
+            );
+            return Err(KernelError::RequiredLayerUnavailable {
+                service: service.clone(),
+                plugin: layer.binding.plugin.clone(),
+            });
+        } else {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "skipped",
+                subject,
+                None,
+                Some("optional layer is unavailable or unauthorized".into()),
+            );
+        }
+    }
+
+    let eligible = |terminal: &&ResolvedTerminalPlan| {
+        binding.is_none_or(|bound| bound == &terminal.binding.plugin)
+            && caller_authority.permits_all(&terminal.required_authority)
+            && runtime.states.get(&terminal.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&terminal.binding.plugin)
+    };
+    let terminal = plan.terminals.iter().find(eligible).ok_or_else(|| {
+        binding.map_or_else(
+            || KernelError::NoEligibleProvider(service.clone()),
+            |plugin| KernelError::BoundProviderUnavailable {
+                service: service.clone(),
+                plugin: plugin.clone(),
+            },
+        )
+    })?;
+
+    emit_policy_stage(
+        runtime,
+        "kernel.service_chain",
+        "terminal_availability",
+        "allowed",
+        Some(format!("{}:{}", service, terminal.binding.plugin)),
+        None,
+        None,
+    );
+    Ok(ResolvedServiceChain {
+        policy_identity: plan.policy_identity,
+        service: service.clone(),
+        layers,
+        terminal: terminal.binding.clone(),
+    })
+}
+
 fn prepare_active_chain(
     runtime: InvocationContext<'_>,
     mut chain: ResolvedServiceChain,
@@ -213,10 +311,7 @@ pub(super) fn invoke_service_with(
     if guards.active_services.contains(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let chain = match runtime
-        .config
-        .resolve_chain(service, caller_authority, binding)
-    {
+    let chain = match resolve_live_service_chain(runtime, service, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -242,7 +337,6 @@ pub(super) fn invoke_service_with(
             return Err(error);
         }
     };
-    let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
