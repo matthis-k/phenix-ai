@@ -45,13 +45,14 @@ impl<'a> PluginHost<'a> {
             .into());
         }
         let interface = I::interface_id();
-        let plan = self
-            .component_graph
-            .provider_plan(component, &interface)?
+        let dispatch = self
+            .dispatch_topology
+            .component_import(component, &interface)
             .ok_or_else(|| ComponentInvocationError::UnboundImport {
                 component: component.clone(),
                 interface: interface.clone(),
             })?;
+        let plan = &dispatch.providers;
         let (handle, fallback_reason) = if self.provider_available(plan.primary()) {
             (plan.primary(), None)
         } else if let Some(fallback) = plan
@@ -65,12 +66,7 @@ impl<'a> PluginHost<'a> {
                 KernelError::PluginNotActive(plan.primary().owning_plugin().clone()).into(),
             );
         };
-        let service = ServiceId::parse(interface.as_str().to_owned()).map_err(|message| {
-            ComponentInvocationError::InvalidInterface {
-                interface: interface.clone(),
-                message: message.into(),
-            }
-        })?;
+        let service = &dispatch.service;
         let input = serde_json::to_vec(request)
             .map_err(|error| ComponentInvocationError::Encode(error.to_string()))?;
         let delegated_authority = self.authority.attenuate(handle.effective_authority());
@@ -97,7 +93,7 @@ impl<'a> PluginHost<'a> {
                     trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
-                &service,
+                service,
                 ComponentDispatchTarget {
                     component: handle.exporter(),
                     binding: handle.owning_plugin(),
