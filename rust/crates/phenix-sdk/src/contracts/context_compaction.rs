@@ -106,9 +106,11 @@ pub enum ReducerValidationError {
     StageMismatch,
     UnknownItem { item_id: String },
     DuplicateItem { item_id: String },
+    MissingItemDecision { item_id: String },
     MissingRecoveryReference { item_id: String },
+    DuplicateSummary { item_id: String },
     SummaryWithoutExactSource { item_id: String },
-    OutputBudgetExceeded { reported: u64, allowed: u64 },
+    OutputBudgetExceeded { requested: u64, allowed: u64 },
 }
 
 impl ContextReducerProposal {
@@ -128,9 +130,13 @@ impl ContextReducerProposal {
         if self.stage != request.stage {
             return Err(ReducerValidationError::StageMismatch);
         }
-        if self.encoded_output_bytes > request.max_output_bytes {
+        let encoded = serde_json::to_vec(&phenix_core::PhenixValue::from(self))
+            .expect("context reducer proposal has a deterministic PhenixValue encoding");
+        let actual_encoded_bytes = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
+        let requested_output_bytes = self.encoded_output_bytes.max(actual_encoded_bytes);
+        if requested_output_bytes > request.max_output_bytes {
             return Err(ReducerValidationError::OutputBudgetExceeded {
-                reported: self.encoded_output_bytes,
+                requested: requested_output_bytes,
                 allowed: request.max_output_bytes,
             });
         }
@@ -162,9 +168,23 @@ impl ContextReducerProposal {
                 });
             }
         }
+        for item in &request.eligible {
+            if !seen.contains(item.item_id.as_str()) {
+                return Err(ReducerValidationError::MissingItemDecision {
+                    item_id: item.item_id.clone(),
+                });
+            }
+        }
+
+        let mut summary_seen = BTreeSet::new();
         for summary in &self.summaries {
             if !eligible.contains_key(summary.item_id.as_str()) {
                 return Err(ReducerValidationError::UnknownItem {
+                    item_id: summary.item_id.clone(),
+                });
+            }
+            if !summary_seen.insert(summary.item_id.as_str()) {
+                return Err(ReducerValidationError::DuplicateSummary {
                     item_id: summary.item_id.clone(),
                 });
             }
@@ -384,6 +404,51 @@ mod tests {
         assert!(matches!(
             proposal.validate_against(&request, &request.expected_projection),
             Err(ReducerValidationError::OutputBudgetExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn reducer_rejects_underreported_encoded_output_size() {
+        let mut request = reducer_request();
+        request.max_output_bytes = 64;
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: vec!["history-1".into()],
+            omitted_item_ids: Vec::new(),
+            summaries: Vec::new(),
+            encoded_output_bytes: 1,
+        };
+
+        assert!(matches!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::OutputBudgetExceeded {
+                requested,
+                allowed: 64
+            }) if requested > 64
+        ));
+    }
+
+    #[test]
+    fn reducer_requires_an_explicit_decision_for_every_eligible_item() {
+        let request = reducer_request();
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: Vec::new(),
+            omitted_item_ids: Vec::new(),
+            summaries: Vec::new(),
+            encoded_output_bytes: 1,
+        };
+
+        assert!(matches!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::MissingItemDecision { item_id })
+                if item_id == "history-1"
         ));
     }
 
