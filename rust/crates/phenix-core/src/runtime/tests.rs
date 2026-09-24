@@ -73,6 +73,23 @@ impl PluginInstance for EchoPlugin {
     }
 }
 
+struct TaggedPlugin(&'static [u8]);
+
+impl PluginInstance for TaggedPlugin {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        _service: &ServiceId,
+        _input: &[u8],
+        _host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        Ok(self.0.to_vec())
+    }
+}
+
 struct PanicPlugin;
 
 impl PluginInstance for PanicPlugin {
@@ -237,6 +254,64 @@ fn invocation_uses_caller_authority_attenuated_by_provider_grant() {
         .unwrap();
     assert_eq!(output, b"hello");
     assert_eq!(kernel.tasks().active_call_count(&plugin("echo")), 0);
+}
+
+#[test]
+fn unbound_service_selects_next_live_precomputed_terminal() {
+    let provider = |id: &str, priority| PluginManifest {
+        id: plugin(id),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![ServiceContribution {
+            role: crate::ServiceRole::Terminal,
+            service: service("fallback@1"),
+            priority,
+            required_authority: Authority::default(),
+        }],
+        resource_namespaces: Vec::new(),
+        maximum_authority: Authority::default(),
+    };
+    let preferred = provider("preferred", 20);
+    let fallback = provider("fallback", 10);
+    let mut kernel = Kernel::new(KernelConfig::new([preferred, fallback]).unwrap());
+    kernel
+        .register_embedded_factory(plugin("preferred"), || {
+            Box::new(TaggedPlugin(b"preferred"))
+        })
+        .unwrap();
+    kernel
+        .register_embedded_factory(plugin("fallback"), || Box::new(TaggedPlugin(b"fallback")))
+        .unwrap();
+    kernel.activate_all().unwrap();
+
+    kernel
+        .states
+        .insert(plugin("preferred"), PluginState::Stopped);
+
+    assert_eq!(
+        kernel
+            .invoke(
+                &service("fallback@1"),
+                b"ignored",
+                &Authority::default(),
+                None,
+            )
+            .unwrap(),
+        b"fallback"
+    );
+
+    assert!(matches!(
+        kernel
+            .invoke(
+                &service("fallback@1"),
+                b"ignored",
+                &Authority::default(),
+                Some(&plugin("preferred")),
+            )
+            .unwrap_err(),
+        KernelError::BoundProviderUnavailable { .. }
+    ));
 }
 
 #[test]
