@@ -2891,7 +2891,7 @@ mod tests {
         };
         let request = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
-            session_id: Some(session_id),
+            session_id: Some(session_id.clone()),
             call: call.clone(),
         };
         let encoded = serde_json::to_vec(&PhenixValue::from(&request)).unwrap();
@@ -2905,7 +2905,6 @@ mod tests {
                 None,
             )
             .unwrap();
-        adapter.remove(&execution_id);
         let value: PhenixValue = serde_json::from_slice(&output).unwrap();
         let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
         let AgentToolExecutionResponse::Completed { result } = response else {
@@ -2914,6 +2913,40 @@ mod tests {
         assert_eq!(result.call_id, "call-1");
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
+
+        let rejected = AgentToolExecutionRequest {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id),
+            call: ModelToolCall {
+                call_id: "call-2".into(),
+                callable_id: CallableId::parse("fixture.unadvertised").unwrap(),
+                input: PhenixValue::Unit,
+            },
+        };
+        let rejected = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&rejected)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
+        let rejected: PhenixValue = serde_json::from_slice(&rejected).unwrap();
+        let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
+        let AgentToolExecutionResponse::Completed { result: rejected } = rejected else {
+            panic!("unadvertised tool must be reported as a tool failure");
+        };
+        assert!(rejected.is_error);
+        assert!(matches!(
+            ApplicationError::from_value(&rejected.output).unwrap(),
+            ApplicationError::InvalidInput { message }
+                if message.contains("unavailable tool fixture.unadvertised")
+        ));
+
+        adapter.remove(&execution_id);
+
         let workspace = WorkspaceResponse::from_value(&result.output).unwrap();
         assert!(matches!(
             workspace,
