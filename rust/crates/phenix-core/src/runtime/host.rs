@@ -33,8 +33,7 @@ impl<'a> PluginHost<'a> {
         component: &ComponentId,
         request: &crate::PhenixValue,
     ) -> Result<crate::PhenixValue, ComponentInvocationError> {
-        let resolved = self
-            .component_graph
+        let resolved = self.scope.generation.component_graph()
             .component(component)
             .ok_or_else(|| crate::ComponentGraphError::UnknownComponent(component.clone()))?;
         if &resolved.owning_plugin != self.plugin {
@@ -45,8 +44,7 @@ impl<'a> PluginHost<'a> {
             .into());
         }
         let interface = I::interface_id();
-        let dispatch = self
-            .dispatch_topology
+        let dispatch = self.scope.generation.dispatch_topology()
             .component_import(component, &interface)
             .ok_or_else(|| ComponentInvocationError::UnboundImport {
                 component: component.clone(),
@@ -121,8 +119,6 @@ impl<'a> PluginHost<'a> {
         invoke_service_with(self.runtime, service, input, binding, scope)
     }
 
-    pub fn continue_service    }
-
     pub fn continue_service(
         &self,
         input: &[u8],
@@ -190,7 +186,7 @@ impl<'a> PluginHost<'a> {
             .lock()
             .expect("kernel persistence mutex poisoned")
             .register_schema(self.plugin, schema)
-            .map_err(|error| self.runtime.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error.to_string()))
     }
 
     pub fn migrate_durable_schema(
@@ -204,7 +200,7 @@ impl<'a> PluginHost<'a> {
             .lock()
             .expect("kernel persistence mutex poisoned")
             .migrate_schema(self.plugin, schema, migrations)
-            .map_err(|error| self.runtime.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error.to_string()))
     }
 
     pub fn read_durable(
@@ -217,7 +213,7 @@ impl<'a> PluginHost<'a> {
             .lock()
             .expect("kernel persistence mutex poisoned")
             .read(self.plugin, namespace, key)
-            .map_err(|error| self.runtime.persistence_error(error.to_string()))
+            .map_err(|error| self.persistence_error(error.to_string()))
     }
 
     pub fn transact_durable(
@@ -260,12 +256,11 @@ impl<'a> PluginHost<'a> {
             "started",
             None,
         );
-        let result = self
-            .persistence
+        let result = self.runtime.persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .transact(self.plugin, namespace, operations)
-            .map_err(|error| self.runtime.persistence_error(error.to_string()));
+            .map_err(|error| self.persistence_error(error.to_string()));
         match &result {
             Ok(()) => {
                 self.trace_data_mutation(resource, "commit", operations.len(), "committed", None)
@@ -307,7 +302,7 @@ impl<'a> PluginHost<'a> {
                     &self.scope.authority,
                     &self.scope.transactions,
                 )
-                .map_err(|message| self.runtime.persistence_error(message))
+                .map_err(|message| self.persistence_error(message))
         })();
         match &result {
             Ok(_) => {
@@ -400,8 +395,7 @@ impl<'a> PluginHost<'a> {
                     continue;
                 }
                 self.require_active_plugin(&transaction.owner)?;
-                let authorized_import = self
-                    .component_graph
+                let authorized_import = self.scope.generation.component_graph()
                     .components()
                     .filter(|component| &component.owning_plugin == self.plugin)
                     .flat_map(|component| component.imports.iter())
@@ -429,7 +423,7 @@ impl<'a> PluginHost<'a> {
                 .lock()
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)
-                .map_err(|error| self.runtime.persistence_error(error.to_string()))
+                .map_err(|error| self.persistence_error(error.to_string()))
         })();
 
         match &result {
