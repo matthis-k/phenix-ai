@@ -39,7 +39,7 @@ impl StopView<'_> {
             },
             plugin,
             scope: CallScope::root(
-                Arc::new(self.runtime.clone()),
+                Arc::new((*self.runtime).clone()),
                 plugin,
                 &manifest.maximum_authority,
                 Some(live_call.cancellation_token().clone()),
@@ -159,7 +159,7 @@ impl Kernel {
                                 },
                                 plugin: &binding.provider,
                                 scope: CallScope::root(
-                                    Arc::new(candidate_runtime.clone()),
+                                    Arc::new((*candidate_runtime).clone()),
                                     &binding.provider,
                                     &provider_manifest.maximum_authority,
                                     Some(cancellation.clone()),
@@ -249,7 +249,7 @@ impl Kernel {
                         },
                         plugin,
                         scope: CallScope::root(
-                            Arc::new(candidate_runtime.clone()),
+                            Arc::new((*candidate_runtime).clone()),
                             plugin,
                             &manifest.maximum_authority,
                             Some(cancellation.clone()),
