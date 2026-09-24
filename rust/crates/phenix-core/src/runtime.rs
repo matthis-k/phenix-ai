@@ -4,10 +4,12 @@ use crate::{
     DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration,
-    ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
+    ProviderSelectionReason, ResolvedComponentGraph, ResolvedDispatchTopology,
+    ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener, ResolvedProviderPlan,
+    ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
+    TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -222,7 +224,7 @@ impl InvocationTrace {
 
 #[derive(Clone)]
 struct ContinuationState {
-    chain: ResolvedServiceChain,
+    chain: Arc<ResolvedServiceChain>,
     terminal_component: Option<ComponentId>,
     next_position: usize,
     used: Arc<AtomicBool>,
@@ -238,6 +240,7 @@ pub(super) struct ComponentServiceEndpoint {
 pub struct PluginHost<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -444,6 +447,7 @@ type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 struct InvocationContext<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,

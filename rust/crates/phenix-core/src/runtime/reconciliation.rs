@@ -27,6 +27,7 @@ impl StopView<'_> {
         let host = PluginHost {
             graph_generation: generation,
             component_graph: self.runtime.component_graph(),
+            dispatch_topology: self.runtime.dispatch_topology(),
             config: self.runtime.config(),
             states: self.states,
             instances: self.instances,
@@ -142,6 +143,7 @@ impl Kernel {
                             let host = PluginHost {
                                 graph_generation: candidate_runtime.generation(),
                                 component_graph: candidate_runtime.component_graph(),
+                                dispatch_topology: candidate_runtime.dispatch_topology(),
                                 config: candidate_runtime.config(),
                                 states: &next_states,
                                 instances: &next_instances,
@@ -230,6 +232,7 @@ impl Kernel {
                     let host = PluginHost {
                         graph_generation: candidate_runtime.generation(),
                         component_graph: candidate_runtime.component_graph(),
+                        dispatch_topology: candidate_runtime.dispatch_topology(),
                         config: candidate_runtime.config(),
                         states: &next_states,
                         instances: &next_instances,

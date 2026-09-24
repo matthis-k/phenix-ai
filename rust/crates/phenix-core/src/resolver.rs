@@ -4,7 +4,7 @@ use crate::{
     ConfigurationFrontendMetadata, DurableSchemaRegistration, FrontendConfigContribution,
     FrontendConfigError, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
     PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
-    ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
+    ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,15 +47,18 @@ pub struct RuntimeGeneration {
     identity: RuntimeGenerationIdentity,
     config: KernelConfig,
     component_graph: ResolvedComponentGraph,
+    dispatch_topology: ResolvedDispatchTopology,
     resources: Vec<SkillResourceMetadata>,
 }
 
 impl RuntimeGeneration {
     pub(crate) fn bootstrap(config: KernelConfig) -> Self {
+        let dispatch_topology = config.resolved_dispatch_topology();
         Self {
             identity: RuntimeGenerationIdentity::Bootstrap,
             config,
             component_graph: ResolvedComponentGraph::empty(),
+            dispatch_topology,
             resources: Vec::new(),
         }
     }
@@ -66,10 +69,14 @@ impl RuntimeGeneration {
         component_graph: ResolvedComponentGraph,
         resources: Vec<SkillResourceMetadata>,
     ) -> Self {
+        let dispatch_topology = config
+            .resolved_dispatch_topology()
+            .with_component_graph(&component_graph);
         Self {
             identity: RuntimeGenerationIdentity::Resolved(id),
             config,
             component_graph,
+            dispatch_topology,
             resources,
         }
     }
@@ -95,6 +102,11 @@ impl RuntimeGeneration {
     #[must_use]
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
         &self.component_graph
+    }
+
+    #[must_use]
+    pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
+        &self.dispatch_topology
     }
 
     #[must_use]

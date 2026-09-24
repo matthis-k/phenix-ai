@@ -78,6 +78,7 @@ impl ScopedPluginListener {
         let host = PluginHost {
             graph_generation: Some(generation),
             component_graph: self.runtime.runtime.component_graph(),
+            dispatch_topology: self.runtime.runtime.dispatch_topology(),
             config: self.runtime.runtime.config(),
             states: &self.runtime.states,
             instances: &self.runtime.instances,

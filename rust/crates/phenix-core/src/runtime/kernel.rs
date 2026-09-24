@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ServiceDispatchGuards,
+        ComponentInvocationPlan, ServiceDispatchGuards,
     },
     *,
 };
@@ -82,6 +82,10 @@ impl Kernel {
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
         self.runtime_generation.component_graph()
+    }
+
+    pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
+        self.runtime_generation.dispatch_topology()
     }
 
     pub fn active_resources(&self) -> &[SkillResourceMetadata] {
@@ -223,6 +227,7 @@ impl Kernel {
                         let host = PluginHost {
                             graph_generation: self.graph_generation(),
                             component_graph: self.component_graph(),
+                            dispatch_topology: self.dispatch_topology(),
                             config: &config,
                             states: &next_states,
                             instances: &next_instances,
@@ -306,6 +311,7 @@ impl Kernel {
                 let host = PluginHost {
                     graph_generation: self.graph_generation(),
                     component_graph: self.component_graph(),
+                    dispatch_topology: self.dispatch_topology(),
                     config: &config,
                     states: &next_states,
                     instances: &next_instances,
@@ -412,11 +418,18 @@ impl Kernel {
         caller_authority: &Authority,
         binding: &PluginId,
     ) -> Result<Vec<u8>, KernelError> {
+        let service_plan = self.dispatch_topology().service(service);
+        let layer_plan = service_plan.map_or(&[][..], |plan| plan.layers.as_slice());
+        let policy_identity = service_plan.map_or_else(
+            || self.config().policy_identity(),
+            |plan| plan.policy_identity,
+        );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         invoke_component_service_with(
             InvocationContext {
                 graph_generation: self.graph_generation(),
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
@@ -427,7 +440,11 @@ impl Kernel {
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
-            service,
+            ComponentInvocationPlan {
+                service,
+                layers: layer_plan,
+                policy_identity,
+            },
             ComponentDispatchTarget {
                 component,
                 binding,
@@ -456,6 +473,7 @@ impl Kernel {
             InvocationContext {
                 graph_generation: self.graph_generation(),
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
@@ -494,6 +512,7 @@ impl Kernel {
             let host = PluginHost {
                 graph_generation: generation,
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
