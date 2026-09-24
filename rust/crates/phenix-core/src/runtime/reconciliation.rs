@@ -7,6 +7,7 @@ pub(super) struct StopView<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
     pub(super) events: &'a EventBus,
     pub(super) tasks: &'a TaskRuntime,
     pub(super) persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
@@ -25,24 +26,24 @@ impl StopView<'_> {
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
         let host = PluginHost {
-            graph_generation: generation,
-            component_graph: self.runtime.component_graph(),
-            dispatch_topology: self.runtime.dispatch_topology(),
-            config: self.runtime.config(),
-            states: self.states,
-            instances: self.instances,
+            runtime: RuntimeServices {
+                states: self.states,
+                instances: self.instances,
+                invocations: self.invocations,
+                events: self.events,
+                tasks: self.tasks,
+                persistence: self.persistence,
+                prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink,
+                provenance: self.provenance,
+            },
             plugin,
             scope: CallScope::root(
+                Arc::new(self.runtime.clone()),
                 plugin,
                 &manifest.maximum_authority,
                 Some(live_call.cancellation_token().clone()),
             ),
-            events: self.events,
-            tasks: self.tasks,
-            persistence: self.persistence,
-            prepared_mutations: &prepared_mutations,
-            trace_sink: self.trace_sink,
-            provenance: self.provenance,
             continuation: None,
         };
         let mut instance = instance
@@ -94,6 +95,7 @@ impl Kernel {
         );
         let mut next_states = BTreeMap::new();
         let mut next_instances = BTreeMap::new();
+        let mut next_invocations = BTreeMap::new();
         let mut staged = Vec::new();
 
         for (plugin, manifest) in &candidate_manifests {
@@ -104,6 +106,9 @@ impl Kernel {
                 next_states.insert(plugin.clone(), PluginState::Active);
                 if let Some(instance) = self.instances.get(plugin) {
                     next_instances.insert(plugin.clone(), Arc::clone(instance));
+                }
+                if let Some(invocation) = self.invocations.get(plugin) {
+                    next_invocations.insert(plugin.clone(), Arc::clone(invocation));
                 }
             } else {
                 next_states.insert(plugin.clone(), PluginState::Registered);
@@ -141,24 +146,24 @@ impl Kernel {
                             let prepared_mutations =
                                 PreparedMutationScope::new(candidate_runtime.generation());
                             let host = PluginHost {
-                                graph_generation: candidate_runtime.generation(),
-                                component_graph: candidate_runtime.component_graph(),
-                                dispatch_topology: candidate_runtime.dispatch_topology(),
-                                config: candidate_runtime.config(),
-                                states: &next_states,
-                                instances: &next_instances,
+                                runtime: RuntimeServices {
+                                    states: &next_states,
+                                    instances: &next_instances,
+                                    invocations: &next_invocations,
+                                    events: &self.events,
+                                    tasks: &self.tasks,
+                                    persistence: &self.persistence,
+                                    prepared_mutations: &prepared_mutations,
+                                    trace_sink: self.trace_sink.as_ref(),
+                                    provenance: &self.provenance,
+                                },
                                 plugin: &binding.provider,
                                 scope: CallScope::root(
+                                    Arc::new(candidate_runtime.clone()),
                                     &binding.provider,
                                     &provider_manifest.maximum_authority,
                                     Some(cancellation.clone()),
                                 ),
-                                events: &self.events,
-                                tasks: &self.tasks,
-                                persistence: &self.persistence,
-                                prepared_mutations: &prepared_mutations,
-                                trace_sink: self.trace_sink.as_ref(),
-                                provenance: &self.provenance,
                                 continuation: None,
                             };
                             let mut provider =
@@ -212,6 +217,7 @@ impl Kernel {
                                 runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
+                                invocations: &next_invocations,
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
@@ -230,24 +236,24 @@ impl Kernel {
                     let prepared_mutations =
                         PreparedMutationScope::new(candidate_runtime.generation());
                     let host = PluginHost {
-                        graph_generation: candidate_runtime.generation(),
-                        component_graph: candidate_runtime.component_graph(),
-                        dispatch_topology: candidate_runtime.dispatch_topology(),
-                        config: candidate_runtime.config(),
-                        states: &next_states,
-                        instances: &next_instances,
+                        runtime: RuntimeServices {
+                            states: &next_states,
+                            instances: &next_instances,
+                            invocations: &next_invocations,
+                            events: &self.events,
+                            tasks: &self.tasks,
+                            persistence: &self.persistence,
+                            prepared_mutations: &prepared_mutations,
+                            trace_sink: self.trace_sink.as_ref(),
+                            provenance: &self.provenance,
+                        },
                         plugin,
                         scope: CallScope::root(
+                            Arc::new(candidate_runtime.clone()),
                             plugin,
                             &manifest.maximum_authority,
                             Some(cancellation.clone()),
                         ),
-                        events: &self.events,
-                        tasks: &self.tasks,
-                        persistence: &self.persistence,
-                        prepared_mutations: &prepared_mutations,
-                        trace_sink: self.trace_sink.as_ref(),
-                        provenance: &self.provenance,
                         continuation: None,
                     };
                     let started = catch_unwind(AssertUnwindSafe(|| instance.start(&host)));
@@ -268,6 +274,7 @@ impl Kernel {
                                 runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
+                                invocations: &next_invocations,
                                 events: &self.events,
                                 tasks: &self.tasks,
                                 persistence: &self.persistence,
@@ -280,7 +287,10 @@ impl Kernel {
                             message,
                         });
                     }
-                    next_instances.insert(plugin.clone(), Arc::new(Mutex::new(instance)));
+                    let instance = Arc::new(Mutex::new(instance));
+                    let invocation = canonical_invocation(&instance);
+                    next_instances.insert(plugin.clone(), Arc::clone(&instance));
+                    next_invocations.insert(plugin.clone(), invocation);
                 }
                 next_states.insert(plugin.clone(), PluginState::Active);
                 staged.push(plugin.clone());
@@ -291,6 +301,7 @@ impl Kernel {
             runtime: candidate_runtime,
             states: &next_states,
             instances: &next_instances,
+            invocations: &next_invocations,
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
@@ -305,6 +316,7 @@ impl Kernel {
                         runtime: candidate_runtime,
                         states: &next_states,
                         instances: &next_instances,
+                        invocations: &next_invocations,
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
@@ -332,9 +344,11 @@ impl Kernel {
         let old_runtime = self.runtime_generation.clone();
         let old_states = self.states.clone();
         let old_instances = self.instances.clone();
+        let old_invocations = self.invocations.clone();
         self.events.replace_subscriptions(subscriptions)?;
         self.states = next_states;
         self.instances = next_instances;
+        self.invocations = next_invocations;
         self.install_runtime_generation(candidate_runtime.clone());
         self.runtime_active = active_runtime;
 
@@ -342,6 +356,7 @@ impl Kernel {
             runtime: &old_runtime,
             states: &old_states,
             instances: &old_instances,
+            invocations: &old_invocations,
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
