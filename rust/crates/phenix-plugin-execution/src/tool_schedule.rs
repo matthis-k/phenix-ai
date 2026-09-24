@@ -1,5 +1,6 @@
-use crate::DEFAULT_MAX_TOOL_CALLS_PER_TURN;
 use std::num::NonZeroUsize;
+
+const DEFAULT_MAX_PARALLEL_CALLS: usize = 10;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolConcurrency {
@@ -66,8 +67,8 @@ impl ToolScheduler {
 impl Default for ToolScheduler {
     fn default() -> Self {
         Self::new(
-            NonZeroUsize::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN as usize)
-                .expect("default per-turn tool-call limit is non-zero"),
+            NonZeroUsize::new(DEFAULT_MAX_PARALLEL_CALLS)
+                .expect("default parallel tool-call limit is non-zero"),
         )
     }
 }
@@ -91,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn default_scheduler_uses_harness_parallel_limit() {
+    fn default_scheduler_uses_scheduler_parallel_limit() {
         assert_eq!(ToolScheduler::default().max_parallel_calls().get(), 10);
     }
 
