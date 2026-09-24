@@ -214,7 +214,7 @@ pub use registry::{
     KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedServiceChain, RuntimeBinding,
     EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
 };
-pub use resolver::{GraphGenerationId, ResolvedHarness, ResolvedHarnessError};
+pub use resolver::{GraphGenerationId, ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
     PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,

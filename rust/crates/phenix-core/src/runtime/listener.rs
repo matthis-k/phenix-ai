@@ -11,9 +11,7 @@ pub trait PluginListener: Send + Sync {
 }
 
 struct ListenerRuntimeSnapshot {
-    generation: GraphGenerationId,
-    component_graph: ResolvedComponentGraph,
-    config: KernelConfig,
+    runtime: RuntimeGeneration,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     events: Weak<EventBus>,
@@ -31,9 +29,7 @@ struct ScopedPluginListener {
 
 #[derive(Clone, Copy)]
 pub(super) struct ListenerRuntimeSources<'a> {
-    pub(super) graph: &'a ResolvedComponentGraph,
-    pub(super) generation: &'a GraphGenerationId,
-    pub(super) config: &'a KernelConfig,
+    pub(super) runtime: &'a RuntimeGeneration,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) events: &'a Arc<EventBus>,
@@ -52,9 +48,7 @@ pub(super) fn scoped_event_handler(
         owner: owner.clone(),
         inner,
         runtime: ListenerRuntimeSnapshot {
-            generation: sources.generation.clone(),
-            component_graph: sources.graph.clone(),
-            config: sources.config.clone(),
+            runtime: sources.runtime.clone(),
             states: sources.states.clone(),
             instances: sources.instances.clone(),
             events: Arc::downgrade(sources.events),
@@ -73,16 +67,18 @@ impl ScopedPluginListener {
             .events
             .upgrade()
             .ok_or_else(|| "listener runtime is unavailable".to_owned())?;
-        let live_call = self
+        let generation = self
             .runtime
-            .tasks
-            .begin_call(&self.owner, Some(&self.runtime.generation));
+            .runtime
+            .generation()
+            .expect("listener runtime requires a resolved generation");
+        let live_call = self.runtime.tasks.begin_call(&self.owner, Some(generation));
         let cancellation = live_call.cancellation_token().clone();
-        let prepared_mutations = PreparedMutationScope::new(Some(&self.runtime.generation));
+        let prepared_mutations = PreparedMutationScope::new(Some(generation));
         let host = PluginHost {
-            graph_generation: Some(&self.runtime.generation),
-            component_graph: &self.runtime.component_graph,
-            config: &self.runtime.config,
+            graph_generation: Some(generation),
+            component_graph: self.runtime.runtime.component_graph(),
+            config: self.runtime.runtime.config(),
             states: &self.runtime.states,
             instances: &self.runtime.instances,
             plugin: &self.owner,
@@ -121,10 +117,15 @@ impl EventHandler for ScopedPluginListener {
         authority: &Authority,
         graph_generation: Option<&GraphGenerationId>,
     ) -> Result<(), String> {
-        if graph_generation.is_some_and(|generation| generation != &self.runtime.generation) {
+        let expected = self
+            .runtime
+            .runtime
+            .generation()
+            .expect("listener runtime requires a resolved generation");
+        if graph_generation.is_some_and(|generation| generation != expected) {
             return Err(format!(
                 "listener generation mismatch: expected {:?}, got {:?}",
-                self.runtime.generation, graph_generation
+                expected, graph_generation
             ));
         }
         self.run(event, authority)

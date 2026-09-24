@@ -6,8 +6,8 @@ use crate::{
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
     PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
     ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
-    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    ResolvedServiceChain, ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration,
+    ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -391,8 +391,12 @@ pub trait PluginInstance: Send {
 fn stage_listener_subscriptions(
     sources: listener::ListenerRuntimeSources<'_>,
 ) -> Result<Vec<EventSubscription>, KernelError> {
+    let generation = sources
+        .runtime
+        .generation()
+        .ok_or(KernelError::ResolvedGenerationMissing)?;
     let mut subscriptions = Vec::new();
-    for resolved_listener in sources.graph.listeners() {
+    for resolved_listener in sources.runtime.component_graph().listeners() {
         let instance = sources
             .instances
             .get(&resolved_listener.owning_plugin)
@@ -401,7 +405,7 @@ fn stage_listener_subscriptions(
             .lock()
             .expect("plugin instance mutex poisoned during listener binding");
         let handler = catch_unwind(AssertUnwindSafe(|| {
-            match instance.bind_plugin_listener(resolved_listener, sources.generation) {
+            match instance.bind_plugin_listener(resolved_listener, generation) {
                 Some(handler) => handler.map(|handler| {
                     listener::scoped_event_handler(
                         &resolved_listener.owning_plugin,
@@ -409,7 +413,7 @@ fn stage_listener_subscriptions(
                         sources,
                     )
                 }),
-                None => instance.bind_listener(resolved_listener, sources.generation),
+                None => instance.bind_listener(resolved_listener, generation),
             }
         }))
         .map_err(|_| KernelError::ListenerBinding {
@@ -425,7 +429,8 @@ fn stage_listener_subscriptions(
             message,
         })?;
         subscriptions.push(EventSubscription {
-            spec: resolved_listener.subscription_spec(sources.config.policy_identity().get()),
+            spec: resolved_listener
+                .subscription_spec(sources.runtime.config().policy_identity().get()),
             handler,
         });
     }
@@ -451,10 +456,7 @@ struct InvocationContext<'a> {
 }
 
 pub struct Kernel {
-    graph_generation: Option<GraphGenerationId>,
-    component_graph: ResolvedComponentGraph,
-    active_resources: Vec<SkillResourceMetadata>,
-    config: KernelConfig,
+    runtime_generation: RuntimeGeneration,
     states: BTreeMap<PluginId, PluginState>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
