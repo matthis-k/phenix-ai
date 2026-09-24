@@ -86,7 +86,7 @@ impl ScopedPluginListener {
             authority,
             transaction_context: TransactionContext::unscoped(),
             call_cancellation: Some(cancellation.clone()),
-            call_stack: BTreeSet::from([self.owner.clone()]),
+            invocation_stack: InvocationStack::root(&self.owner),
             events: &events,
             tasks: &self.runtime.tasks,
             persistence: &self.runtime.persistence,
@@ -94,8 +94,6 @@ impl ScopedPluginListener {
             trace_sink: self.runtime.trace_sink.as_ref(),
             provenance: &self.runtime.provenance,
             continuation: None,
-            active_services: BTreeSet::new(),
-            active_component_endpoints: BTreeSet::new(),
         };
         let result = catch_unwind(AssertUnwindSafe(|| self.inner.handle(event, &host)))
             .map_err(|_| "plugin listener panicked".to_owned())?;
