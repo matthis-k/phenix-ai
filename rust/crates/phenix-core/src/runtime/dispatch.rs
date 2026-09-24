@@ -2,7 +2,7 @@ use super::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 fn emit_policy_stage(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
     policy: &str,
     stage: &str,
     outcome: &str,
@@ -24,31 +24,35 @@ fn emit_policy_stage(
 }
 
 fn resolve_live_service_chain(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
+    scope: &CallScope,
     service: &ServiceId,
-    caller_authority: &Authority,
     binding: Option<&PluginId>,
 ) -> Result<ResolvedServiceChain, KernelError> {
-    let plan = runtime.dispatch_topology.service(service).ok_or_else(|| {
-        binding.map_or_else(
-            || KernelError::NoEligibleProvider(service.clone()),
-            |plugin| KernelError::BoundProviderUnavailable {
-                service: service.clone(),
-                plugin: plugin.clone(),
-            },
-        )
-    })?;
+    let plan = scope
+        .generation
+        .dispatch_topology()
+        .service(service)
+        .ok_or_else(|| {
+            binding.map_or_else(
+                || KernelError::NoEligibleProvider(service.clone()),
+                |plugin| KernelError::BoundProviderUnavailable {
+                    service: service.clone(),
+                    plugin: plugin.clone(),
+                },
+            )
+        })?;
 
     let mut layers = Vec::new();
     for layer in &plan.layers {
         let authorized = layer
             .required_authority
             .as_ref()
-            .is_some_and(|authority| caller_authority.permits_all(authority));
+            .is_some_and(|authority| scope.authority.permits_all(authority));
         let available = layer.enabled
             && authorized
             && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
-            && runtime.instances.contains_key(&layer.binding.plugin);
+            && runtime.invocations.contains_key(&layer.binding.plugin);
         let subject = Some(format!("{}:{}", service, layer.binding.plugin));
         if available {
             emit_policy_stage(
@@ -90,9 +94,11 @@ fn resolve_live_service_chain(
 
     let eligible = |terminal: &&ResolvedTerminalPlan| {
         binding.is_none_or(|bound| bound == &terminal.binding.plugin)
-            && caller_authority.permits_all(&terminal.required_authority)
+            && scope
+                .authority
+                .permits_all(&terminal.required_authority)
             && runtime.states.get(&terminal.binding.plugin).copied() == Some(PluginState::Active)
-            && runtime.instances.contains_key(&terminal.binding.plugin)
+            && runtime.invocations.contains_key(&terminal.binding.plugin)
     };
     let terminal = plan.terminals.iter().find(eligible).ok_or_else(|| {
         binding.map_or_else(
@@ -122,9 +128,9 @@ fn resolve_live_service_chain(
 }
 
 fn resolve_live_component_chain(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
+    scope: &CallScope,
     plan: ComponentInvocationPlan<'_>,
-    caller_authority: &Authority,
     binding: &PluginId,
 ) -> Result<ResolvedServiceChain, KernelError> {
     let service = plan.service;
@@ -133,11 +139,11 @@ fn resolve_live_component_chain(
         let authorized = layer
             .required_authority
             .as_ref()
-            .is_some_and(|authority| caller_authority.permits_all(authority));
+            .is_some_and(|authority| scope.authority.permits_all(authority));
         let available = layer.enabled
             && authorized
             && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
-            && runtime.instances.contains_key(&layer.binding.plugin);
+            && runtime.invocations.contains_key(&layer.binding.plugin);
         let subject = Some(format!("{}:{}", service, layer.binding.plugin));
         if available {
             emit_policy_stage(
@@ -178,7 +184,7 @@ fn resolve_live_component_chain(
     }
 
     if runtime.states.get(binding).copied() != Some(PluginState::Active)
-        || !runtime.instances.contains_key(binding)
+        || !runtime.invocations.contains_key(binding)
     {
         return Err(KernelError::PluginNotActive(binding.clone()));
     }
@@ -209,12 +215,11 @@ pub(super) struct ComponentDispatchTarget<'a> {
 }
 
 pub(super) fn invoke_component_service_with(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
     plan: ComponentInvocationPlan<'_>,
     target: ComponentDispatchTarget<'_>,
     input: &[u8],
-    caller_authority: &Authority,
-    stack: &InvocationStack,
+    mut scope: CallScope,
 ) -> Result<Vec<u8>, KernelError> {
     let ComponentDispatchTarget {
         component,
@@ -226,11 +231,12 @@ pub(super) fn invoke_component_service_with(
         component: component.clone(),
         service: service.clone(),
     };
-    if stack.contains_component(&endpoint) {
+    if scope.stack.contains_component(&endpoint) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let resolved = runtime
-        .component_graph
+    let resolved = scope
+        .generation
+        .component_graph()
         .component(component)
         .ok_or_else(|| ComponentGraphError::UnknownComponent(component.clone()))?;
     if &resolved.owning_plugin != binding {
@@ -242,7 +248,7 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = match resolve_live_component_chain(runtime, plan, caller_authority, binding) {
+    let chain = match resolve_live_component_chain(runtime, &scope, plan, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -268,23 +274,21 @@ pub(super) fn invoke_component_service_with(
             return Err(error);
         }
     };
-    let mut next_stack = stack.clone();
-    next_stack.push_service(service.clone());
-    next_stack.push_component(endpoint);
+    scope.stack.push_service(service.clone());
+    scope.stack.push_component(endpoint);
     let chain = Arc::new(chain);
+    scope.selected_chain = Some(Arc::clone(&chain));
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
-        caller_authority,
-        runtime.graph_generation,
+        &scope.authority,
+        scope.generation.generation(),
         provider_provenance,
     )));
     let result = invoke_resolved_chain_with(
         runtime,
-        Arc::clone(&chain),
         0,
         input,
-        caller_authority,
-        &next_stack,
+        scope,
         Some(component),
         &trace,
     );
@@ -299,17 +303,16 @@ pub(super) fn invoke_component_service_with(
 }
 
 pub(super) fn invoke_service_with(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
     service: &ServiceId,
     input: &[u8],
-    caller_authority: &Authority,
     binding: Option<&PluginId>,
-    stack: &InvocationStack,
+    mut scope: CallScope,
 ) -> Result<Vec<u8>, KernelError> {
-    if stack.contains_service(service) {
+    if scope.stack.contains_service(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let chain = match resolve_live_service_chain(runtime, service, caller_authority, binding) {
+    let chain = match resolve_live_service_chain(runtime, &scope, service, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -335,25 +338,16 @@ pub(super) fn invoke_service_with(
             return Err(error);
         }
     };
-    let mut next_stack = stack.clone();
-    next_stack.push_service(service.clone());
+    scope.stack.push_service(service.clone());
     let chain = Arc::new(chain);
+    scope.selected_chain = Some(Arc::clone(&chain));
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
-        caller_authority,
-        runtime.graph_generation,
+        &scope.authority,
+        scope.generation.generation(),
         None,
     )));
-    let result = invoke_resolved_chain_with(
-        runtime,
-        Arc::clone(&chain),
-        0,
-        input,
-        caller_authority,
-        &next_stack,
-        None,
-        &trace,
-    );
+    let result = invoke_resolved_chain_with(runtime, 0, input, scope, None, &trace);
     let completed = trace
         .lock()
         .expect("service invocation trace mutex poisoned")
@@ -364,19 +358,20 @@ pub(super) fn invoke_service_with(
     result
 }
 
-// The resolved-chain cursor is intentionally explicit here; collapsing these values into an
-// untyped bag would obscure the call-scope/continuation boundary this PR makes visible.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn invoke_resolved_chain_with(
-    runtime: InvocationContext<'_>,
-    chain: Arc<ResolvedServiceChain>,
+    runtime: RuntimeServices<'_>,
     position: usize,
     input: &[u8],
-    caller_authority: &Authority,
-    stack: &InvocationStack,
+    mut scope: CallScope,
     terminal_component: Option<&ComponentId>,
     trace: &Arc<Mutex<InvocationTrace>>,
 ) -> Result<Vec<u8>, KernelError> {
+    let chain = Arc::clone(
+        scope
+            .selected_chain
+            .as_ref()
+            .expect("resolved invocation scope carries its selected chain"),
+    );
     let (provider, is_layer) = if position < chain.layers.len() {
         (&chain.layers[position], true)
     } else {
@@ -385,32 +380,24 @@ pub(super) fn invoke_resolved_chain_with(
     if runtime.states.get(&provider.plugin).copied() != Some(PluginState::Active) {
         return Err(KernelError::PluginNotActive(provider.plugin.clone()));
     }
-    let instance = runtime
-        .instances
+    let invocation = runtime
+        .invocations
         .get(&provider.plugin)
         .ok_or_else(|| KernelError::WrongExecutionKind(provider.plugin.clone()))?;
-    let shared_invocation = if stack.contains_plugin(&provider.plugin) {
-        instance
-            .try_lock()
-            .ok()
-            .and_then(|instance| instance.shared_invocation())
-    } else {
-        instance
-            .lock()
-            .expect("plugin instance mutex poisoned")
-            .shared_invocation()
-    };
-    if stack.contains_plugin(&provider.plugin) && shared_invocation.is_none() {
+    if scope.stack.contains_plugin(&provider.plugin) && !invocation.supports_reentry() {
         return Err(KernelError::HostOperationDenied {
             plugin: provider.plugin.clone(),
             operation: format!("causal plugin re-entry:{}", chain.service),
         });
     }
-    let provider_manifest = runtime
-        .config
+    let provider_manifest = scope
+        .generation
+        .config()
         .manifest(&provider.plugin)
         .expect("resolved providers are registered");
-    let effective_authority = caller_authority.attenuate(&provider_manifest.maximum_authority);
+    let effective_authority = scope
+        .authority
+        .attenuate(&provider_manifest.maximum_authority);
     emit_policy_stage(
         runtime,
         "kernel.authority",
@@ -432,10 +419,8 @@ pub(super) fn invoke_resolved_chain_with(
             },
             effective_authority.clone(),
         );
-    let mut next_stack = stack.clone();
-    next_stack.push_plugin(provider.plugin.clone());
+    scope.stack.push_plugin(provider.plugin.clone());
     let continuation = is_layer.then(|| ContinuationState {
-        chain: Arc::clone(&chain),
         terminal_component: terminal_component.cloned(),
         next_position: position + 1,
         used: Arc::new(AtomicBool::new(false)),
@@ -444,42 +429,20 @@ pub(super) fn invoke_resolved_chain_with(
     let continuation_used = continuation.as_ref().map(|state| Arc::clone(&state.used));
     let live_call = runtime
         .tasks
-        .begin_call(&provider.plugin, runtime.graph_generation);
+        .begin_call(&provider.plugin, scope.generation.generation());
     let call_cancellation = live_call.cancellation_token().clone();
+    scope.authority = effective_authority.clone();
+    scope.cancellation = Some(call_cancellation.clone());
     let host = PluginHost {
-        graph_generation: runtime.graph_generation,
-        component_graph: runtime.component_graph,
-        dispatch_topology: runtime.dispatch_topology,
-        config: runtime.config,
-        states: runtime.states,
-        instances: runtime.instances,
+        runtime,
         plugin: &provider.plugin,
-        scope: CallScope::nested(
-            effective_authority.clone(),
-            Some(call_cancellation.clone()),
-            next_stack,
-            runtime.transactions.clone(),
-        ),
-        events: runtime.events,
-        tasks: runtime.tasks,
-        persistence: runtime.persistence,
-        prepared_mutations: runtime.prepared_mutations,
-        trace_sink: runtime.trace_sink,
-        provenance: runtime.provenance,
+        scope,
         continuation,
     };
     if is_layer {
-        let result = match shared_invocation.as_ref() {
-            Some(invocation) => catch_unwind(AssertUnwindSafe(|| {
-                invocation.invoke_layer(&chain.service, input, &host)
-            })),
-            None => {
-                let mut instance = instance.lock().expect("plugin instance mutex poisoned");
-                catch_unwind(AssertUnwindSafe(|| {
-                    instance.invoke_layer(&chain.service, input, &host)
-                }))
-            }
-        };
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            invocation.invoke_layer(&chain.service, input, &host)
+        }));
         let result = match result {
             Ok(result) => result,
             Err(_) => {
@@ -546,23 +509,12 @@ pub(super) fn invoke_resolved_chain_with(
             }
         }
     } else {
-        let result = match shared_invocation.as_ref() {
-            Some(invocation) => catch_unwind(AssertUnwindSafe(|| match terminal_component {
-                Some(component) => {
-                    invocation.invoke_component(component, &chain.service, input, &host)
-                }
-                None => invocation.invoke(&chain.service, input, &host),
-            })),
-            None => {
-                let mut instance = instance.lock().expect("plugin instance mutex poisoned");
-                catch_unwind(AssertUnwindSafe(|| match terminal_component {
-                    Some(component) => {
-                        instance.invoke_component(component, &chain.service, input, &host)
-                    }
-                    None => instance.invoke(&chain.service, input, &host),
-                }))
+        let result = catch_unwind(AssertUnwindSafe(|| match terminal_component {
+            Some(component) => {
+                invocation.invoke_component(component, &chain.service, input, &host)
             }
-        };
+            None => invocation.invoke(&chain.service, input, &host),
+        }));
         let result = match result {
             Ok(result) => result,
             Err(_) => {
@@ -611,7 +563,7 @@ pub(super) fn invoke_resolved_chain_with(
 }
 
 fn emit_runtime_trace(
-    runtime: InvocationContext<'_>,
+    runtime: RuntimeServices<'_>,
     provenance: &ServiceInvocationProvenance,
     input_bytes: usize,
     result: &Result<Vec<u8>, KernelError>,
