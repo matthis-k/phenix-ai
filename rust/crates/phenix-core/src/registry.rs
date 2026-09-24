@@ -1,6 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, PluginExecution,
-    PluginId, PluginManifest, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, InterfaceId,
+    PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph, ResolvedProviderPlan,
+    ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -315,6 +316,90 @@ pub struct ResolvedServiceChain {
     pub terminal: ProviderBinding,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedTerminalPlan {
+    pub binding: ProviderBinding,
+    pub required_authority: Authority,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedLayerPlan {
+    pub binding: ProviderBinding,
+    pub required_authority: Option<Authority>,
+    pub required: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedServicePlan {
+    pub service: ServiceId,
+    pub layers: Vec<ResolvedLayerPlan>,
+    pub terminals: Vec<ResolvedTerminalPlan>,
+    pub policy_identity: KernelPolicyIdentity,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedComponentDispatchPlan {
+    pub component: ComponentId,
+    pub interface: InterfaceId,
+    pub service: ServiceId,
+    pub providers: ResolvedProviderPlan,
+    pub layers: Vec<ResolvedLayerPlan>,
+    pub policy_identity: KernelPolicyIdentity,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedDispatchTopology {
+    policy_identity: KernelPolicyIdentity,
+    services: BTreeMap<ServiceId, ResolvedServicePlan>,
+    component_imports: BTreeMap<(ComponentId, InterfaceId), ResolvedComponentDispatchPlan>,
+}
+
+impl ResolvedDispatchTopology {
+    #[must_use]
+    pub fn service(&self, service: &ServiceId) -> Option<&ResolvedServicePlan> {
+        self.services.get(service)
+    }
+
+    #[must_use]
+    pub fn component_import(
+        &self,
+        component: &ComponentId,
+        interface: &InterfaceId,
+    ) -> Option<&ResolvedComponentDispatchPlan> {
+        self.component_imports
+            .get(&(component.clone(), interface.clone()))
+    }
+
+    pub(crate) fn with_component_graph(mut self, graph: &ResolvedComponentGraph) -> Self {
+        for component in graph.components() {
+            for import in &component.imports {
+                let Some(providers) = import.provider_plan() else {
+                    continue;
+                };
+                let service = ServiceId::parse(import.interface.as_str().to_owned())
+                    .expect("component interface identity must share service identity syntax");
+                let layers = self
+                    .services
+                    .get(&service)
+                    .map(|plan| plan.layers.clone())
+                    .unwrap_or_default();
+                let plan = ResolvedComponentDispatchPlan {
+                    component: component.id.clone(),
+                    interface: import.interface.clone(),
+                    service,
+                    providers,
+                    layers,
+                    policy_identity: self.policy_identity,
+                };
+                self.component_imports
+                    .insert((component.id.clone(), import.interface.clone()), plan);
+            }
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayerPolicy {
     pub plugin: PluginId,
@@ -414,6 +499,84 @@ impl KernelConfig {
 
     pub fn policy_identity(&self) -> KernelPolicyIdentity {
         self.policy_identity
+    }
+    pub fn resolved_dispatch_topology(&self) -> ResolvedDispatchTopology {
+        let mut service_ids = BTreeSet::new();
+        for manifest in self.manifests.values() {
+            for contribution in &manifest.services {
+                service_ids.insert(contribution.service.clone());
+            }
+        }
+        service_ids.extend(self.layer_policies.keys().cloned());
+
+        let mut services = BTreeMap::new();
+        for service in service_ids {
+            let mut terminals = Vec::new();
+            for manifest in self.manifests.values() {
+                for contribution in &manifest.services {
+                    if contribution.role == ServiceRole::Terminal && contribution.service == service
+                    {
+                        terminals.push(ResolvedTerminalPlan {
+                            binding: ProviderBinding {
+                                service: service.clone(),
+                                plugin: manifest.id.clone(),
+                                priority: contribution.priority,
+                            },
+                            required_authority: contribution.required_authority.clone(),
+                        });
+                    }
+                }
+            }
+            terminals.sort_by(|left, right| {
+                right
+                    .binding
+                    .priority
+                    .cmp(&left.binding.priority)
+                    .then_with(|| left.binding.plugin.cmp(&right.binding.plugin))
+            });
+
+            let mut layers = Vec::new();
+            for policy in self.layer_policy(&service) {
+                let contribution = self.manifests.get(&policy.plugin).and_then(|manifest| {
+                    manifest.services.iter().find(|contribution| {
+                        contribution.role == ServiceRole::Layer && contribution.service == service
+                    })
+                });
+                layers.push(ResolvedLayerPlan {
+                    binding: ProviderBinding {
+                        service: service.clone(),
+                        plugin: policy.plugin.clone(),
+                        priority: policy.priority,
+                    },
+                    required_authority: contribution
+                        .map(|contribution| contribution.required_authority.clone()),
+                    required: policy.required,
+                    enabled: policy.enabled,
+                });
+            }
+            layers.sort_by(|left, right| {
+                right
+                    .binding
+                    .priority
+                    .cmp(&left.binding.priority)
+                    .then_with(|| left.binding.plugin.cmp(&right.binding.plugin))
+            });
+
+            services.insert(
+                service.clone(),
+                ResolvedServicePlan {
+                    service,
+                    layers,
+                    terminals,
+                    policy_identity: self.policy_identity,
+                },
+            );
+        }
+        ResolvedDispatchTopology {
+            policy_identity: self.policy_identity,
+            services,
+            component_imports: BTreeMap::new(),
+        }
     }
 
     pub fn layer_policy(&self, service: &ServiceId) -> &[LayerPolicy] {
@@ -860,6 +1023,54 @@ mod tests {
                 .plugin,
             plugin("terminal")
         );
+    }
+
+    #[test]
+    fn dispatch_topology_precomputes_terminal_and_layer_order() {
+        let mut lower = manifest("z-layer", 10, Authority::default());
+        lower.services[0].role = ServiceRole::Layer;
+        let mut higher = manifest("higher-layer", 20, Authority::default());
+        higher.services[0].role = ServiceRole::Layer;
+        let lower_terminal = manifest("z-terminal", 10, Authority::default());
+        let higher_terminal = manifest("a-terminal", 20, Authority::default());
+        let config = KernelConfig::new([lower, higher, lower_terminal, higher_terminal])
+            .unwrap()
+            .with_layer_policy(
+                service("demo.service@1"),
+                vec![
+                    LayerPolicy {
+                        plugin: plugin("z-layer"),
+                        priority: 10,
+                        required: false,
+                        enabled: true,
+                    },
+                    LayerPolicy {
+                        plugin: plugin("higher-layer"),
+                        priority: 20,
+                        required: true,
+                        enabled: true,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let topology = config.resolved_dispatch_topology();
+        let plan = topology.service(&service("demo.service@1")).unwrap();
+        assert_eq!(
+            plan.terminals
+                .iter()
+                .map(|terminal| terminal.binding.plugin.clone())
+                .collect::<Vec<_>>(),
+            vec![plugin("a-terminal"), plugin("z-terminal")]
+        );
+        assert_eq!(
+            plan.layers
+                .iter()
+                .map(|layer| (layer.binding.plugin.clone(), layer.required))
+                .collect::<Vec<_>>(),
+            vec![(plugin("higher-layer"), true), (plugin("z-layer"), false)]
+        );
+        assert_eq!(plan.policy_identity, config.policy_identity());
     }
 
     #[test]

@@ -4,10 +4,12 @@ use crate::{
     DurableSchema, EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler,
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
-    PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
-    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
+    ProviderSelectionReason, ResolvedComponentGraph, ResolvedDispatchTopology,
+    ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener, ResolvedProviderPlan,
+    ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
+    TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -27,8 +29,13 @@ mod persistence_bootstrap;
 mod reconciliation;
 #[cfg(test)]
 mod tests;
+mod trace;
 
 pub use listener::PluginListener;
+pub use trace::{
+    ProvenanceBuffer, RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant,
+    RuntimeTraceSink, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
+};
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
@@ -217,7 +224,7 @@ impl InvocationTrace {
 
 #[derive(Clone)]
 struct ContinuationState {
-    chain: ResolvedServiceChain,
+    chain: Arc<ResolvedServiceChain>,
     terminal_component: Option<ComponentId>,
     next_position: usize,
     used: Arc<AtomicBool>,
@@ -233,6 +240,7 @@ pub(super) struct ComponentServiceEndpoint {
 pub struct PluginHost<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -244,7 +252,8 @@ pub struct PluginHost<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
-    provenance: &'a Mutex<Vec<ServiceInvocationProvenance>>,
+    trace_sink: &'a dyn RuntimeTraceSink,
+    provenance: &'a ProvenanceBuffer,
     continuation: Option<ContinuationState>,
     active_services: BTreeSet<ServiceId>,
     active_component_endpoints: BTreeSet<ComponentServiceEndpoint>,
@@ -385,8 +394,12 @@ pub trait PluginInstance: Send {
 fn stage_listener_subscriptions(
     sources: listener::ListenerRuntimeSources<'_>,
 ) -> Result<Vec<EventSubscription>, KernelError> {
+    let generation = sources
+        .runtime
+        .generation()
+        .ok_or(KernelError::ResolvedGenerationMissing)?;
     let mut subscriptions = Vec::new();
-    for resolved_listener in sources.graph.listeners() {
+    for resolved_listener in sources.runtime.component_graph().listeners() {
         let instance = sources
             .instances
             .get(&resolved_listener.owning_plugin)
@@ -395,7 +408,7 @@ fn stage_listener_subscriptions(
             .lock()
             .expect("plugin instance mutex poisoned during listener binding");
         let handler = catch_unwind(AssertUnwindSafe(|| {
-            match instance.bind_plugin_listener(resolved_listener, sources.generation) {
+            match instance.bind_plugin_listener(resolved_listener, generation) {
                 Some(handler) => handler.map(|handler| {
                     listener::scoped_event_handler(
                         &resolved_listener.owning_plugin,
@@ -403,7 +416,7 @@ fn stage_listener_subscriptions(
                         sources,
                     )
                 }),
-                None => instance.bind_listener(resolved_listener, sources.generation),
+                None => instance.bind_listener(resolved_listener, generation),
             }
         }))
         .map_err(|_| KernelError::ListenerBinding {
@@ -419,7 +432,8 @@ fn stage_listener_subscriptions(
             message,
         })?;
         subscriptions.push(EventSubscription {
-            spec: resolved_listener.subscription_spec(sources.config.policy_identity().get()),
+            spec: resolved_listener
+                .subscription_spec(sources.runtime.config().policy_identity().get()),
             handler,
         });
     }
@@ -433,6 +447,7 @@ type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 struct InvocationContext<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -440,14 +455,12 @@ struct InvocationContext<'a> {
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
-    provenance: &'a Mutex<Vec<ServiceInvocationProvenance>>,
+    trace_sink: &'a dyn RuntimeTraceSink,
+    provenance: &'a ProvenanceBuffer,
 }
 
 pub struct Kernel {
-    graph_generation: Option<GraphGenerationId>,
-    component_graph: ResolvedComponentGraph,
-    active_resources: Vec<SkillResourceMetadata>,
-    config: KernelConfig,
+    runtime_generation: RuntimeGeneration,
     states: BTreeMap<PluginId, PluginState>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
@@ -456,6 +469,7 @@ pub struct Kernel {
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
     persistence_bootstrap: Option<crate::ResolvedPersistenceBootstrap>,
-    provenance: Arc<Mutex<Vec<ServiceInvocationProvenance>>>,
+    trace_sink: Arc<dyn RuntimeTraceSink>,
+    provenance: Arc<ProvenanceBuffer>,
     runtime_active: bool,
 }

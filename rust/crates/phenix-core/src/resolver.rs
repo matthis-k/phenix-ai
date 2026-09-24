@@ -4,7 +4,7 @@ use crate::{
     ConfigurationFrontendMetadata, DurableSchemaRegistration, FrontendConfigContribution,
     FrontendConfigError, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
     PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
-    ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
+    ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +27,100 @@ impl GraphGenerationId {
         let bytes = serde_json::to_vec(&(self.as_str(), metadata))
             .expect("resolved composition metadata is serializable");
         self.0 = format!("sha256:{:x}", Sha256::digest(bytes));
+    }
+}
+
+#[derive(Clone, Debug)]
+enum RuntimeGenerationIdentity {
+    Bootstrap,
+    Resolved(GraphGenerationId),
+}
+
+/// One coherent runtime topology.
+///
+/// Bootstrap is an explicit state: configuration exists before a resolved
+/// semantic generation is installed. In the resolved state the generation
+/// identity, configuration, component graph, and resources always move
+/// together as one value.
+#[derive(Clone, Debug)]
+pub struct RuntimeGeneration {
+    identity: RuntimeGenerationIdentity,
+    config: KernelConfig,
+    component_graph: ResolvedComponentGraph,
+    dispatch_topology: ResolvedDispatchTopology,
+    resources: Vec<SkillResourceMetadata>,
+}
+
+impl RuntimeGeneration {
+    pub(crate) fn bootstrap(config: KernelConfig) -> Self {
+        let dispatch_topology = config.resolved_dispatch_topology();
+        Self {
+            identity: RuntimeGenerationIdentity::Bootstrap,
+            config,
+            component_graph: ResolvedComponentGraph::empty(),
+            dispatch_topology,
+            resources: Vec::new(),
+        }
+    }
+
+    fn resolved(
+        id: GraphGenerationId,
+        config: KernelConfig,
+        component_graph: ResolvedComponentGraph,
+        resources: Vec<SkillResourceMetadata>,
+    ) -> Self {
+        let dispatch_topology = config
+            .resolved_dispatch_topology()
+            .with_component_graph(&component_graph);
+        Self {
+            identity: RuntimeGenerationIdentity::Resolved(id),
+            config,
+            component_graph,
+            dispatch_topology,
+            resources,
+        }
+    }
+
+    #[must_use]
+    pub fn generation(&self) -> Option<&GraphGenerationId> {
+        match &self.identity {
+            RuntimeGenerationIdentity::Bootstrap => None,
+            RuntimeGenerationIdentity::Resolved(id) => Some(id),
+        }
+    }
+
+    pub(crate) fn resolved_generation(&self) -> &GraphGenerationId {
+        self.generation()
+            .expect("resolved harness runtime generation has an identity")
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &KernelConfig {
+        &self.config
+    }
+
+    #[must_use]
+    pub fn component_graph(&self) -> &ResolvedComponentGraph {
+        &self.component_graph
+    }
+
+    #[must_use]
+    pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
+        &self.dispatch_topology
+    }
+
+    #[must_use]
+    pub fn resources(&self) -> &[SkillResourceMetadata] {
+        &self.resources
+    }
+
+    fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
+        match &mut self.identity {
+            RuntimeGenerationIdentity::Bootstrap => {
+                panic!("bootstrap runtime generation cannot absorb resolved semantic metadata")
+            }
+            RuntimeGenerationIdentity::Resolved(id) => id.incorporate_semantic_metadata(metadata),
+        }
     }
 }
 
@@ -186,14 +280,11 @@ impl From<KernelError> for ResolvedHarnessError {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedHarness {
-    generation: GraphGenerationId,
+    runtime: RuntimeGeneration,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
     durable_schemas: Vec<DurableSchemaRegistration>,
-    resources: Vec<SkillResourceMetadata>,
     configuration: ResolvedConfigContributions,
-    kernel_config: KernelConfig,
-    component_graph: ResolvedComponentGraph,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
 }
@@ -413,14 +504,16 @@ impl ResolvedHarness {
         .identity();
 
         Ok(Self {
-            generation,
+            runtime: RuntimeGeneration::resolved(
+                generation,
+                kernel_config,
+                component_graph,
+                resources,
+            ),
             plugins,
             components,
             durable_schemas,
-            resources,
             configuration,
-            kernel_config,
-            component_graph,
             layer_policies: inputs.layer_policies,
             provider_policy: inputs.provider_policy,
         })
@@ -465,7 +558,12 @@ impl ResolvedHarness {
     }
 
     pub fn generation(&self) -> &GraphGenerationId {
-        &self.generation
+        self.runtime.resolved_generation()
+    }
+
+    #[must_use]
+    pub fn runtime_generation(&self) -> &RuntimeGeneration {
+        &self.runtime
     }
 
     pub fn plugins(&self) -> &[PluginManifest] {
@@ -481,7 +579,7 @@ impl ResolvedHarness {
     }
 
     pub fn resources(&self) -> &[SkillResourceMetadata] {
-        &self.resources
+        self.runtime.resources()
     }
 
     pub fn configuration(&self) -> &ResolvedConfigContributions {
@@ -489,11 +587,11 @@ impl ResolvedHarness {
     }
 
     pub fn kernel_config(&self) -> &KernelConfig {
-        &self.kernel_config
+        self.runtime.config()
     }
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
-        &self.component_graph
+        self.runtime.component_graph()
     }
 
     pub fn layer_policies(&self) -> &BTreeMap<ServiceId, Vec<LayerPolicy>> {
@@ -505,7 +603,7 @@ impl ResolvedHarness {
     }
 
     pub(crate) fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
-        self.generation.incorporate_semantic_metadata(metadata);
+        self.runtime.incorporate_semantic_metadata(metadata);
     }
 
     /// Re-resolve a sibling harness that shares this harness's resources,
@@ -538,7 +636,7 @@ impl ResolvedHarness {
             plugins: &plugins,
             components: &components,
             durable_schemas: durable_schema_payload(&durable_schemas),
-            resources: &self.resources,
+            resources: self.resources(),
             configuration: self.configuration.semantic_payload(),
             layer_policies: layer_policy_payload(&self.layer_policies),
             provider_policy: &self.provider_policy,
@@ -546,14 +644,16 @@ impl ResolvedHarness {
         }
         .identity();
         Ok(Self {
-            generation,
+            runtime: RuntimeGeneration::resolved(
+                generation,
+                kernel_config,
+                component_graph,
+                self.resources().to_vec(),
+            ),
             plugins,
             components,
             durable_schemas,
-            resources: self.resources.clone(),
             configuration: self.configuration.clone(),
-            kernel_config,
-            component_graph,
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
         })
@@ -1032,6 +1132,27 @@ mod tests {
             first.configuration().entries()[0].attributions,
             second.configuration().entries()[0].attributions
         );
+    }
+
+    #[test]
+    fn resolved_harness_projects_one_runtime_generation() {
+        let resolved = ResolvedHarness::resolve_with_resources(
+            [],
+            [],
+            [resource("review", "sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let runtime = resolved.runtime_generation();
+
+        assert_eq!(runtime.generation(), Some(resolved.generation()));
+        assert!(std::ptr::eq(runtime.config(), resolved.kernel_config()));
+        assert!(std::ptr::eq(
+            runtime.component_graph(),
+            resolved.component_graph()
+        ));
+        assert_eq!(runtime.resources(), resolved.resources());
     }
 
     #[test]

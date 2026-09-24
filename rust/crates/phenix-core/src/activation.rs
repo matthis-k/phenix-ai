@@ -125,11 +125,7 @@ impl ResolvedHarnessActivation for Kernel {
 
         self.prepare_durable_schemas(resolved.durable_schemas())
             .map_err(ResolvedHarnessActivationError::DurableSchemaPreparation)?;
-        self.install_resolved_graph(
-            resolved.generation().clone(),
-            resolved.component_graph().clone(),
-            resolved.resources().to_vec(),
-        );
+        self.install_runtime_generation(resolved.runtime_generation().clone());
         Ok(())
     }
 }
@@ -246,6 +242,18 @@ mod tests {
         assert_eq!(kernel.component_graph(), &expected.component_graph);
         assert_eq!(kernel.active_resources(), expected.resources.as_slice());
         assert_eq!(kernel.active_resources()[0].identity, "fixture.skill");
+        assert_eq!(
+            kernel.runtime_generation().generation(),
+            Some(&expected.generation)
+        );
+        assert_eq!(
+            kernel.runtime_generation().component_graph(),
+            &expected.component_graph
+        );
+        assert_eq!(
+            kernel.runtime_generation().resources(),
+            expected.resources.as_slice()
+        );
         assert_eq!(kernel.active_resolved_graph(), Some(expected));
     }
 

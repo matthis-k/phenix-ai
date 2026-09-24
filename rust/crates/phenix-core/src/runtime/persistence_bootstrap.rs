@@ -22,7 +22,7 @@ impl Kernel {
                     message: format!("durable schema is declared more than once: {namespace}"),
                 });
             }
-            match self.config.resource_owner(namespace) {
+            match self.config().resource_owner(namespace) {
                 Some(owner) if owner == &registration.owner => {}
                 Some(owner) => {
                     return Err(KernelError::Persistence {

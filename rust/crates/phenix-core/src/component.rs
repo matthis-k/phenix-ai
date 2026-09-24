@@ -187,7 +187,7 @@ pub struct ResolvedImport {
 }
 
 impl ResolvedImport {
-    fn provider_plan(&self) -> Option<ResolvedProviderPlan> {
+    pub(crate) fn provider_plan(&self) -> Option<ResolvedProviderPlan> {
         self.binding.as_ref().map(|primary| ResolvedProviderPlan {
             primary: primary.clone(),
             fallbacks: self.fallbacks.clone(),

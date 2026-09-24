@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ServiceDispatchGuards,
+        ComponentInvocationPlan, ServiceDispatchGuards,
     },
     *,
 };
@@ -41,10 +41,7 @@ impl Kernel {
             .map(|manifest| (manifest.id.clone(), PluginState::Registered))
             .collect();
         Self {
-            graph_generation: None,
-            component_graph: ResolvedComponentGraph::empty(),
-            active_resources: Vec::new(),
-            config,
+            runtime_generation: RuntimeGeneration::bootstrap(config),
             states,
             embedded_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
@@ -53,7 +50,8 @@ impl Kernel {
             tasks: Arc::new(TaskRuntime::default()),
             persistence: Arc::new(Mutex::new(persistence)),
             persistence_bootstrap,
-            provenance: Arc::new(Mutex::new(Vec::new())),
+            trace_sink: Arc::new(RuntimeTraceBuffer::default()),
+            provenance: Arc::new(ProvenanceBuffer::default()),
             runtime_active: false,
         }
     }
@@ -62,8 +60,12 @@ impl Kernel {
         Self::new(KernelConfig::empty())
     }
 
+    pub fn runtime_generation(&self) -> &RuntimeGeneration {
+        &self.runtime_generation
+    }
+
     pub fn config(&self) -> &KernelConfig {
-        &self.config
+        self.runtime_generation.config()
     }
 
     pub fn persistence_bootstrap(&self) -> Option<&crate::ResolvedPersistenceBootstrap> {
@@ -71,26 +73,23 @@ impl Kernel {
     }
 
     pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
-        self.graph_generation.as_ref()
+        self.runtime_generation.generation()
     }
 
-    pub(crate) fn install_resolved_graph(
-        &mut self,
-        generation: GraphGenerationId,
-        graph: ResolvedComponentGraph,
-        resources: Vec<SkillResourceMetadata>,
-    ) {
-        self.graph_generation = Some(generation);
-        self.component_graph = graph;
-        self.active_resources = resources;
+    pub(crate) fn install_runtime_generation(&mut self, generation: RuntimeGeneration) {
+        self.runtime_generation = generation;
     }
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
-        &self.component_graph
+        self.runtime_generation.component_graph()
+    }
+
+    pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
+        self.runtime_generation.dispatch_topology()
     }
 
     pub fn active_resources(&self) -> &[SkillResourceMetadata] {
-        &self.active_resources
+        self.runtime_generation.resources()
     }
 
     pub fn events(&self) -> Arc<EventBus> {
@@ -102,10 +101,14 @@ impl Kernel {
     }
 
     pub fn service_invocation_provenance(&self) -> Vec<ServiceInvocationProvenance> {
-        self.provenance
-            .lock()
-            .expect("service provenance mutex poisoned")
-            .clone()
+        self.provenance.snapshot()
+    }
+
+    /// Replace the process-local destination for metadata-only runtime diagnostics.
+    ///
+    /// The sink is not part of semantic event delivery and cannot affect invocation outcomes.
+    pub fn set_runtime_trace_sink(&mut self, sink: Arc<dyn RuntimeTraceSink>) {
+        self.trace_sink = sink;
     }
 
     pub fn state(&self, plugin: &PluginId) -> Option<PluginState> {
@@ -121,7 +124,7 @@ impl Kernel {
         F: Fn() -> Box<dyn PluginInstance> + Send + Sync + 'static,
     {
         let manifest = self
-            .config
+            .config()
             .manifest(&plugin)
             .ok_or_else(|| KernelError::UnknownPlugin(plugin.clone()))?;
         if !matches!(manifest.execution, PluginExecution::Embedded) {
@@ -173,7 +176,7 @@ impl Kernel {
         {
             return Ok(());
         }
-        let config = self.config.clone();
+        let config = self.config().clone();
         let mut next_states = if self.runtime_active {
             self.states.clone()
         } else {
@@ -217,13 +220,14 @@ impl Kernel {
                                 })?;
                         let live_call = self
                             .tasks
-                            .begin_call(&binding.provider, self.graph_generation.as_ref());
+                            .begin_call(&binding.provider, self.graph_generation());
                         let cancellation = live_call.cancellation_token().clone();
                         let prepared_mutations =
-                            PreparedMutationScope::new(self.graph_generation.as_ref());
+                            PreparedMutationScope::new(self.graph_generation());
                         let host = PluginHost {
-                            graph_generation: self.graph_generation.as_ref(),
-                            component_graph: &self.component_graph,
+                            graph_generation: self.graph_generation(),
+                            component_graph: self.component_graph(),
+                            dispatch_topology: self.dispatch_topology(),
                             config: &config,
                             states: &next_states,
                             instances: &next_instances,
@@ -235,6 +239,7 @@ impl Kernel {
                             tasks: &self.tasks,
                             persistence: &self.persistence,
                             prepared_mutations: &prepared_mutations,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                             continuation: None,
                             active_services: BTreeSet::new(),
@@ -286,14 +291,13 @@ impl Kernel {
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                            generation: self.graph_generation.as_ref(),
-                            graph: &self.component_graph,
-                            config: &config,
+                            runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                         },
                     );
@@ -301,14 +305,13 @@ impl Kernel {
                 }
             };
             if let Some(mut instance) = instance {
-                let live_call = self
-                    .tasks
-                    .begin_call(plugin, self.graph_generation.as_ref());
+                let live_call = self.tasks.begin_call(plugin, self.graph_generation());
                 let cancellation = live_call.cancellation_token().clone();
-                let prepared_mutations = PreparedMutationScope::new(self.graph_generation.as_ref());
+                let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
                 let host = PluginHost {
-                    graph_generation: self.graph_generation.as_ref(),
-                    component_graph: &self.component_graph,
+                    graph_generation: self.graph_generation(),
+                    component_graph: self.component_graph(),
+                    dispatch_topology: self.dispatch_topology(),
                     config: &config,
                     states: &next_states,
                     instances: &next_instances,
@@ -320,6 +323,7 @@ impl Kernel {
                     tasks: &self.tasks,
                     persistence: &self.persistence,
                     prepared_mutations: &prepared_mutations,
+                    trace_sink: self.trace_sink.as_ref(),
                     provenance: &self.provenance,
                     continuation: None,
                     active_services: BTreeSet::new(),
@@ -337,18 +341,17 @@ impl Kernel {
                 };
                 if let Some(message) = failure {
                     self.tasks
-                        .cancel_plugin_generation(plugin, self.graph_generation.as_ref());
+                        .cancel_plugin_generation(plugin, self.graph_generation());
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                            generation: self.graph_generation.as_ref(),
-                            graph: &self.component_graph,
-                            config: &config,
+                            runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
+                            trace_sink: self.trace_sink.as_ref(),
                             provenance: &self.provenance,
                         },
                     );
@@ -363,19 +366,18 @@ impl Kernel {
             staged.push(plugin.clone());
         }
 
-        let subscriptions = match self.graph_generation.as_ref() {
-            Some(generation) => stage_listener_subscriptions(listener::ListenerRuntimeSources {
-                graph: &self.component_graph,
-                generation,
-                config: &config,
+        let subscriptions = match self.graph_generation() {
+            Some(_generation) => stage_listener_subscriptions(listener::ListenerRuntimeSources {
+                runtime: &self.runtime_generation,
                 states: &next_states,
                 instances: &next_instances,
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
+                trace_sink: &self.trace_sink,
                 provenance: &self.provenance,
             }),
-            None if self.component_graph.listeners().next().is_none() => Ok(Vec::new()),
+            None if self.component_graph().listeners().next().is_none() => Ok(Vec::new()),
             None => Err(KernelError::ResolvedGenerationMissing),
         };
         let subscriptions = match subscriptions {
@@ -384,14 +386,13 @@ impl Kernel {
                 reconciliation::cleanup_staged(
                     &staged,
                     reconciliation::StopView {
-                        generation: self.graph_generation.as_ref(),
-                        graph: &self.component_graph,
-                        config: &config,
+                        runtime: &self.runtime_generation,
                         states: &next_states,
                         instances: &next_instances,
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
+                        trace_sink: self.trace_sink.as_ref(),
                         provenance: &self.provenance,
                     },
                 );
@@ -417,21 +418,33 @@ impl Kernel {
         caller_authority: &Authority,
         binding: &PluginId,
     ) -> Result<Vec<u8>, KernelError> {
-        let prepared_mutations = PreparedMutationScope::new(self.graph_generation.as_ref());
+        let service_plan = self.dispatch_topology().service(service);
+        let layer_plan = service_plan.map_or(&[][..], |plan| plan.layers.as_slice());
+        let policy_identity = service_plan.map_or_else(
+            || self.config().policy_identity(),
+            |plan| plan.policy_identity,
+        );
+        let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         invoke_component_service_with(
             InvocationContext {
-                graph_generation: self.graph_generation.as_ref(),
-                component_graph: &self.component_graph,
-                config: &self.config,
+                graph_generation: self.graph_generation(),
+                component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
+                config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
-            service,
+            ComponentInvocationPlan {
+                service,
+                layers: layer_plan,
+                policy_identity,
+            },
             ComponentDispatchTarget {
                 component,
                 binding,
@@ -455,18 +468,20 @@ impl Kernel {
         caller_authority: &Authority,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        let prepared_mutations = PreparedMutationScope::new(self.graph_generation.as_ref());
+        let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         invoke_service_with(
             InvocationContext {
-                graph_generation: self.graph_generation.as_ref(),
-                component_graph: &self.component_graph,
-                config: &self.config,
+                graph_generation: self.graph_generation(),
+                component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
+                config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
             service,
@@ -484,10 +499,10 @@ impl Kernel {
 
     pub fn stop(&mut self, plugin: &PluginId) -> Result<(), KernelError> {
         let manifest = self
-            .config
+            .config()
             .manifest(plugin)
             .ok_or_else(|| KernelError::UnknownPlugin(plugin.clone()))?;
-        let generation = self.graph_generation.as_ref();
+        let generation = self.graph_generation();
         self.tasks.cancel_calls(plugin, generation);
         self.tasks.cancel_plugin_generation(plugin, generation);
         if let Some(instance) = self.instances.get(plugin) {
@@ -496,8 +511,9 @@ impl Kernel {
             let prepared_mutations = PreparedMutationScope::new(generation);
             let host = PluginHost {
                 graph_generation: generation,
-                component_graph: &self.component_graph,
-                config: &self.config,
+                component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
+                config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
                 plugin,
@@ -508,6 +524,7 @@ impl Kernel {
                 tasks: &self.tasks,
                 persistence: &self.persistence,
                 prepared_mutations: &prepared_mutations,
+                trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
                 continuation: None,
                 active_services: BTreeSet::new(),

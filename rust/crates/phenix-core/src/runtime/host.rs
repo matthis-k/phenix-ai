@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_resolved_chain_with, invoke_service_with,
-        ComponentDispatchTarget, ServiceDispatchGuards,
+        ComponentDispatchTarget, ComponentInvocationPlan, ServiceDispatchGuards,
     },
     *,
 };
@@ -23,6 +23,11 @@ impl<'a> PluginHost<'a> {
         self.call_cancellation.as_ref()
     }
 
+    #[doc(hidden)]
+    pub fn record_runtime_trace(&self, event: RuntimeTraceEvent) {
+        trace::record_runtime_trace(self.trace_sink, event);
+    }
+
     pub fn invoke_import<I: ComponentInterface>(
         &self,
         component: &ComponentId,
@@ -40,13 +45,14 @@ impl<'a> PluginHost<'a> {
             .into());
         }
         let interface = I::interface_id();
-        let plan = self
-            .component_graph
-            .provider_plan(component, &interface)?
+        let dispatch = self
+            .dispatch_topology
+            .component_import(component, &interface)
             .ok_or_else(|| ComponentInvocationError::UnboundImport {
                 component: component.clone(),
                 interface: interface.clone(),
             })?;
+        let plan = &dispatch.providers;
         let (handle, fallback_reason) = if self.provider_available(plan.primary()) {
             (plan.primary(), None)
         } else if let Some(fallback) = plan
@@ -60,18 +66,13 @@ impl<'a> PluginHost<'a> {
                 KernelError::PluginNotActive(plan.primary().owning_plugin().clone()).into(),
             );
         };
-        let service = ServiceId::parse(interface.as_str().to_owned()).map_err(|message| {
-            ComponentInvocationError::InvalidInterface {
-                interface: interface.clone(),
-                message: message.into(),
-            }
-        })?;
+        let service = &dispatch.service;
         let input = serde_json::to_vec(request)
             .map_err(|error| ComponentInvocationError::Encode(error.to_string()))?;
         let delegated_authority = self.authority.attenuate(handle.effective_authority());
         let provider_provenance = ComponentProviderProvenance::from_plan(
             interface,
-            &plan,
+            plan,
             handle,
             fallback_reason,
             delegated_authority.clone(),
@@ -81,6 +82,7 @@ impl<'a> PluginHost<'a> {
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
+                    dispatch_topology: self.dispatch_topology,
                     config: self.config,
                     states: self.states,
                     instances: self.instances,
@@ -88,9 +90,14 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
-                &service,
+                ComponentInvocationPlan {
+                    service,
+                    layers: &dispatch.layers,
+                    policy_identity: dispatch.policy_identity,
+                },
                 ComponentDispatchTarget {
                     component: handle.exporter(),
                     binding: handle.owning_plugin(),
@@ -129,6 +136,7 @@ impl<'a> PluginHost<'a> {
                 InvocationContext {
                     graph_generation: self.graph_generation,
                     component_graph: self.component_graph,
+                    dispatch_topology: self.dispatch_topology,
                     config: self.config,
                     states: self.states,
                     instances: self.instances,
@@ -136,6 +144,7 @@ impl<'a> PluginHost<'a> {
                     tasks: self.tasks,
                     persistence: self.persistence,
                     prepared_mutations: self.prepared_mutations,
+                    trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
                 service,
@@ -170,6 +179,7 @@ impl<'a> PluginHost<'a> {
             InvocationContext {
                 graph_generation: self.graph_generation,
                 component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
                 config: self.config,
                 states: self.states,
                 instances: self.instances,
@@ -177,9 +187,10 @@ impl<'a> PluginHost<'a> {
                 tasks: self.tasks,
                 persistence: self.persistence,
                 prepared_mutations: self.prepared_mutations,
+                trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
-            &continuation.chain,
+            Arc::clone(&continuation.chain),
             continuation.next_position,
             input,
             &delegated_authority,
@@ -552,22 +563,15 @@ impl<'a> PluginHost<'a> {
         outcome: &str,
         error: Option<String>,
     ) {
-        let trace = crate::RuntimeTraceEvent::DataMutation {
-            resource,
-            stage: stage.to_owned(),
-            operation_count,
-            outcome: outcome.to_owned(),
-            error,
-        };
-        let Ok(payload) = serde_json::to_vec(&trace) else {
-            return;
-        };
-        let _ = self.dispatch_event(
-            crate::runtime_trace_event_type(),
-            crate::RUNTIME_TRACE_EVENT_VERSION,
-            0,
-            0,
-            payload,
+        trace::record_runtime_trace(
+            self.trace_sink,
+            RuntimeTraceEvent::DataMutation {
+                resource,
+                stage: stage.to_owned(),
+                operation_count,
+                outcome: outcome.to_owned(),
+                error,
+            },
         );
     }
 

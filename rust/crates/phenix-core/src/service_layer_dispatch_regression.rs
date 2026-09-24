@@ -1,16 +1,11 @@
 use crate::{
-    runtime_trace_event_type, Authority, CapabilityId, EventEnvelope, EventFailurePolicy,
-    EventSubscription, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, RuntimeTraceEvent,
-    ServiceContribution, ServiceId, ServiceRole, SubscriptionId, SubscriptionSpec,
-    RUNTIME_TRACE_EVENT_VERSION,
+    Authority, CapabilityId, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, RuntimeTraceBuffer,
+    RuntimeTraceEvent, ServiceContribution, ServiceId, ServiceRole,
 };
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 fn plugin(value: &str) -> PluginId {
@@ -382,31 +377,8 @@ fn runtime_trace_reports_service_chain_without_request_payload() {
         Arc::clone(&called),
         Authority::default(),
     );
-    let (sender, receiver) = mpsc::channel();
-    let handler = Arc::new(
-        move |event: &EventEnvelope, _authority: &Authority| -> Result<(), String> {
-            sender
-                .send(event.clone())
-                .map_err(|error| error.to_string())
-        },
-    );
-    kernel
-        .events()
-        .install_subscriptions([EventSubscription {
-            spec: SubscriptionSpec {
-                id: SubscriptionId::parse("test/runtime-trace").unwrap(),
-                owner: plugin("trace-listener"),
-                event_type: runtime_trace_event_type(),
-                event_version: RUNTIME_TRACE_EVENT_VERSION,
-                dependencies: Vec::new(),
-                failure_policy: EventFailurePolicy::FailDelivery,
-                required_authority: Authority::default(),
-                maximum_authority: Authority::default(),
-                kernel_policy_revision: 0,
-            },
-            handler,
-        }])
-        .unwrap();
+    let traces = Arc::new(RuntimeTraceBuffer::default());
+    kernel.set_runtime_trace_sink(traces.clone());
 
     let input = b"secret-marker";
     assert_eq!(
@@ -416,18 +388,16 @@ fn runtime_trace_reports_service_chain_without_request_payload() {
         b"layer:terminal:secret-marker"
     );
 
-    let (event, trace) = loop {
-        let event = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("runtime trace should be delivered");
-        let encoded = String::from_utf8(event.payload.clone()).unwrap();
-        assert!(!encoded.contains("secret-marker"));
-        let trace: RuntimeTraceEvent = serde_json::from_slice(&event.payload).unwrap();
-        if matches!(trace, RuntimeTraceEvent::ServiceInvocation { .. }) {
-            break (event, trace);
-        }
-    };
-    let encoded = String::from_utf8(event.payload.clone()).unwrap();
+    let recorded = traces.snapshot();
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::PolicyStage { policy, .. } if policy == "kernel.service_chain"
+    )));
+    let trace = recorded
+        .into_iter()
+        .find(|trace| matches!(trace, RuntimeTraceEvent::ServiceInvocation { .. }))
+        .expect("service invocation trace should be recorded");
+    let encoded = serde_json::to_string(&trace).unwrap();
     assert!(!encoded.contains("secret-marker"));
     let RuntimeTraceEvent::ServiceInvocation {
         service: traced_service,

@@ -73,6 +73,23 @@ impl PluginInstance for EchoPlugin {
     }
 }
 
+struct TaggedPlugin(&'static [u8]);
+
+impl PluginInstance for TaggedPlugin {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        _service: &ServiceId,
+        _input: &[u8],
+        _host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        Ok(self.0.to_vec())
+    }
+}
+
 struct PanicPlugin;
 
 impl PluginInstance for PanicPlugin {
@@ -240,6 +257,62 @@ fn invocation_uses_caller_authority_attenuated_by_provider_grant() {
 }
 
 #[test]
+fn unbound_service_selects_next_live_precomputed_terminal() {
+    let provider = |id: &str, priority| PluginManifest {
+        id: plugin(id),
+        version: 1,
+        execution: PluginExecution::Embedded,
+        dependencies: Vec::new(),
+        services: vec![ServiceContribution {
+            role: crate::ServiceRole::Terminal,
+            service: service("fallback@1"),
+            priority,
+            required_authority: Authority::default(),
+        }],
+        resource_namespaces: Vec::new(),
+        maximum_authority: Authority::default(),
+    };
+    let preferred = provider("preferred", 20);
+    let fallback = provider("fallback", 10);
+    let mut kernel = Kernel::new(KernelConfig::new([preferred, fallback]).unwrap());
+    kernel
+        .register_embedded_factory(plugin("preferred"), || Box::new(TaggedPlugin(b"preferred")))
+        .unwrap();
+    kernel
+        .register_embedded_factory(plugin("fallback"), || Box::new(TaggedPlugin(b"fallback")))
+        .unwrap();
+    kernel.activate_all().unwrap();
+
+    kernel
+        .states
+        .insert(plugin("preferred"), PluginState::Stopped);
+
+    assert_eq!(
+        kernel
+            .invoke(
+                &service("fallback@1"),
+                b"ignored",
+                &Authority::default(),
+                None,
+            )
+            .unwrap(),
+        b"fallback"
+    );
+
+    assert!(matches!(
+        kernel
+            .invoke(
+                &service("fallback@1"),
+                b"ignored",
+                &Authority::default(),
+                Some(&plugin("preferred")),
+            )
+            .unwrap_err(),
+        KernelError::BoundProviderUnavailable { .. }
+    ));
+}
+
+#[test]
 fn plugin_panic_is_normalized_and_closes_live_call_scope() {
     let provider = PluginManifest {
         id: plugin("panic-provider"),
@@ -294,6 +367,8 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         maximum_authority: Authority::new([schema.clone(), read.clone(), write.clone()]),
     };
     let mut kernel = Kernel::new(KernelConfig::new([provider]).unwrap());
+    let traces = Arc::new(RuntimeTraceBuffer::default());
+    kernel.set_runtime_trace_sink(traces.clone());
     kernel
         .register_embedded_factory(plugin("storage"), move || {
             Box::new(PersistencePlugin {
@@ -335,6 +410,26 @@ fn persistence_host_rechecks_effective_authority_on_every_call() {
         .unwrap_err();
     assert!(matches!(denied, KernelError::ServiceInvoke { .. }));
     assert!(denied.to_string().contains(PERSISTENCE_WRITE));
+
+    let recorded = traces.snapshot();
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::DataMutation {
+            resource,
+            stage,
+            outcome,
+            ..
+        } if resource == "storage.state" && stage == "commit" && outcome == "committed"
+    )));
+    assert!(recorded.iter().any(|trace| matches!(
+        trace,
+        RuntimeTraceEvent::DataMutation {
+            resource,
+            stage,
+            outcome,
+            ..
+        } if resource == "storage.state" && stage == "authorization" && outcome == "denied"
+    )));
 }
 
 #[test]
@@ -424,6 +519,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: &graph,
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
@@ -435,6 +531,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),
@@ -549,6 +646,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: &graph,
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
@@ -560,6 +658,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),
@@ -593,6 +692,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: kernel.component_graph(),
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
@@ -604,6 +704,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
         tasks: &kernel.tasks,
         persistence: &kernel.persistence,
         prepared_mutations: &prepared_mutations,
+        trace_sink: kernel.trace_sink.as_ref(),
         provenance: &kernel.provenance,
         continuation: None,
         active_services: BTreeSet::new(),

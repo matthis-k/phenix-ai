@@ -10,39 +10,47 @@ fn emit_policy_stage(
     revision: Option<String>,
     reason: Option<String>,
 ) {
-    let trace = crate::RuntimeTraceEvent::PolicyStage {
-        policy: policy.to_owned(),
-        stage: stage.to_owned(),
-        outcome: outcome.to_owned(),
-        subject,
-        revision,
-        reason,
-    };
-    let Ok(payload) = serde_json::to_vec(&trace) else {
-        return;
-    };
-    let event = EventEnvelope {
-        event_type: crate::runtime_trace_event_type(),
-        version: crate::RUNTIME_TRACE_EVENT_VERSION,
-        emitter: PluginId::parse("kernel.runtime").expect("static runtime trace emitter is valid"),
-        causality_id: 0,
-        kernel_policy_revision: 0,
-        payload,
-    };
-    let _ =
-        runtime
-            .events
-            .admit_in_generation(&event, &Authority::default(), runtime.graph_generation);
+    trace::record_runtime_trace(
+        runtime.trace_sink,
+        RuntimeTraceEvent::PolicyStage {
+            policy: policy.to_owned(),
+            stage: stage.to_owned(),
+            outcome: outcome.to_owned(),
+            subject,
+            revision,
+            reason,
+        },
+    );
 }
 
-fn prepare_active_chain(
+fn resolve_live_service_chain(
     runtime: InvocationContext<'_>,
-    mut chain: ResolvedServiceChain,
+    service: &ServiceId,
+    caller_authority: &Authority,
+    binding: Option<&PluginId>,
 ) -> Result<ResolvedServiceChain, KernelError> {
-    let configured_layers = std::mem::take(&mut chain.layers);
-    for layer in configured_layers {
-        let subject = Some(format!("{}:{}", chain.service, layer.plugin));
-        if runtime.states.get(&layer.plugin).copied() == Some(PluginState::Active) {
+    let plan = runtime.dispatch_topology.service(service).ok_or_else(|| {
+        binding.map_or_else(
+            || KernelError::NoEligibleProvider(service.clone()),
+            |plugin| KernelError::BoundProviderUnavailable {
+                service: service.clone(),
+                plugin: plugin.clone(),
+            },
+        )
+    })?;
+
+    let mut layers = Vec::new();
+    for layer in &plan.layers {
+        let authorized = layer
+            .required_authority
+            .as_ref()
+            .is_some_and(|authority| caller_authority.permits_all(authority));
+        let available = layer.enabled
+            && authorized
+            && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&layer.binding.plugin);
+        let subject = Some(format!("{}:{}", service, layer.binding.plugin));
+        if available {
             emit_policy_stage(
                 runtime,
                 "kernel.service_chain",
@@ -52,16 +60,8 @@ fn prepare_active_chain(
                 None,
                 None,
             );
-            chain.layers.push(layer);
-            continue;
-        }
-        let required = runtime
-            .config
-            .layer_policy(&chain.service)
-            .iter()
-            .find(|policy| policy.plugin == layer.plugin)
-            .is_some_and(|policy| policy.required);
-        if required {
+            layers.push(layer.binding.clone());
+        } else if layer.required {
             emit_policy_stage(
                 runtime,
                 "kernel.service_chain",
@@ -69,46 +69,137 @@ fn prepare_active_chain(
                 "denied",
                 subject,
                 None,
-                Some("required layer is inactive".into()),
+                Some("required layer is unavailable or unauthorized".into()),
             );
             return Err(KernelError::RequiredLayerUnavailable {
-                service: chain.service.clone(),
-                plugin: layer.plugin,
+                service: service.clone(),
+                plugin: layer.binding.plugin.clone(),
             });
+        } else {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "skipped",
+                subject,
+                None,
+                Some("optional layer is unavailable or unauthorized".into()),
+            );
         }
-        emit_policy_stage(
-            runtime,
-            "kernel.service_chain",
-            "layer_availability",
-            "skipped",
-            subject,
-            None,
-            Some("optional layer is inactive".into()),
-        );
     }
-    let terminal_subject = Some(format!("{}:{}", chain.service, chain.terminal.plugin));
-    if runtime.states.get(&chain.terminal.plugin).copied() != Some(PluginState::Active) {
-        emit_policy_stage(
-            runtime,
-            "kernel.service_chain",
-            "terminal_availability",
-            "denied",
-            terminal_subject,
-            None,
-            Some("terminal provider is inactive".into()),
-        );
-        return Err(KernelError::PluginNotActive(chain.terminal.plugin.clone()));
-    }
+
+    let eligible = |terminal: &&ResolvedTerminalPlan| {
+        binding.is_none_or(|bound| bound == &terminal.binding.plugin)
+            && caller_authority.permits_all(&terminal.required_authority)
+            && runtime.states.get(&terminal.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&terminal.binding.plugin)
+    };
+    let terminal = plan.terminals.iter().find(eligible).ok_or_else(|| {
+        binding.map_or_else(
+            || KernelError::NoEligibleProvider(service.clone()),
+            |plugin| KernelError::BoundProviderUnavailable {
+                service: service.clone(),
+                plugin: plugin.clone(),
+            },
+        )
+    })?;
+
     emit_policy_stage(
         runtime,
         "kernel.service_chain",
         "terminal_availability",
         "allowed",
-        terminal_subject,
+        Some(format!("{}:{}", service, terminal.binding.plugin)),
         None,
         None,
     );
-    Ok(chain)
+    Ok(ResolvedServiceChain {
+        policy_identity: plan.policy_identity,
+        service: service.clone(),
+        layers,
+        terminal: terminal.binding.clone(),
+    })
+}
+
+fn resolve_live_component_chain(
+    runtime: InvocationContext<'_>,
+    plan: ComponentInvocationPlan<'_>,
+    caller_authority: &Authority,
+    binding: &PluginId,
+) -> Result<ResolvedServiceChain, KernelError> {
+    let service = plan.service;
+    let mut layers = Vec::new();
+    for layer in plan.layers {
+        let authorized = layer
+            .required_authority
+            .as_ref()
+            .is_some_and(|authority| caller_authority.permits_all(authority));
+        let available = layer.enabled
+            && authorized
+            && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&layer.binding.plugin);
+        let subject = Some(format!("{}:{}", service, layer.binding.plugin));
+        if available {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "allowed",
+                subject,
+                None,
+                None,
+            );
+            layers.push(layer.binding.clone());
+        } else if layer.required {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "denied",
+                subject,
+                None,
+                Some("required layer is unavailable or unauthorized".into()),
+            );
+            return Err(KernelError::RequiredLayerUnavailable {
+                service: service.clone(),
+                plugin: layer.binding.plugin.clone(),
+            });
+        } else {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "skipped",
+                subject,
+                None,
+                Some("optional layer is unavailable or unauthorized".into()),
+            );
+        }
+    }
+
+    if runtime.states.get(binding).copied() != Some(PluginState::Active)
+        || !runtime.instances.contains_key(binding)
+    {
+        return Err(KernelError::PluginNotActive(binding.clone()));
+    }
+
+    Ok(ResolvedServiceChain {
+        policy_identity: plan.policy_identity,
+        service: service.clone(),
+        layers,
+        terminal: ProviderBinding {
+            service: service.clone(),
+            plugin: binding.clone(),
+            priority: 0,
+        },
+    })
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ComponentInvocationPlan<'a> {
+    pub(super) service: &'a ServiceId,
+    pub(super) layers: &'a [ResolvedLayerPlan],
+    pub(super) policy_identity: KernelPolicyIdentity,
 }
 
 pub(super) struct ComponentDispatchTarget<'a> {
@@ -119,7 +210,7 @@ pub(super) struct ComponentDispatchTarget<'a> {
 
 pub(super) fn invoke_component_service_with(
     runtime: InvocationContext<'_>,
-    service: &ServiceId,
+    plan: ComponentInvocationPlan<'_>,
     target: ComponentDispatchTarget<'_>,
     input: &[u8],
     caller_authority: &Authority,
@@ -130,6 +221,7 @@ pub(super) fn invoke_component_service_with(
         binding,
         provider_provenance,
     } = target;
+    let service = plan.service;
     let endpoint = ComponentServiceEndpoint {
         component: component.clone(),
         service: service.clone(),
@@ -150,10 +242,7 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = match runtime
-        .config
-        .resolve_component_chain(service, caller_authority, binding)
-    {
+    let chain = match resolve_live_component_chain(runtime, plan, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -179,11 +268,11 @@ pub(super) fn invoke_component_service_with(
             return Err(error);
         }
     };
-    let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
     let mut next_component_endpoints = guards.active_component_endpoints.clone();
     next_component_endpoints.insert(endpoint);
+    let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
         caller_authority,
@@ -192,7 +281,7 @@ pub(super) fn invoke_component_service_with(
     )));
     let result = invoke_resolved_chain_with(
         runtime,
-        &chain,
+        Arc::clone(&chain),
         0,
         input,
         caller_authority,
@@ -209,11 +298,7 @@ pub(super) fn invoke_component_service_with(
         .expect("service invocation trace mutex poisoned")
         .clone()
         .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed.clone());
+    runtime.provenance.record(completed.clone());
     emit_runtime_trace(runtime, &completed, input.len(), &result);
     result
 }
@@ -229,10 +314,7 @@ pub(super) fn invoke_service_with(
     if guards.active_services.contains(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
-    let chain = match runtime
-        .config
-        .resolve_chain(service, caller_authority, binding)
-    {
+    let chain = match resolve_live_service_chain(runtime, service, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -258,9 +340,9 @@ pub(super) fn invoke_service_with(
             return Err(error);
         }
     };
-    let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
+    let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
         caller_authority,
@@ -269,7 +351,7 @@ pub(super) fn invoke_service_with(
     )));
     let result = invoke_resolved_chain_with(
         runtime,
-        &chain,
+        Arc::clone(&chain),
         0,
         input,
         caller_authority,
@@ -286,11 +368,7 @@ pub(super) fn invoke_service_with(
         .expect("service invocation trace mutex poisoned")
         .clone()
         .finish();
-    runtime
-        .provenance
-        .lock()
-        .expect("service provenance mutex poisoned")
-        .push(completed.clone());
+    runtime.provenance.record(completed.clone());
     emit_runtime_trace(runtime, &completed, input.len(), &result);
     result
 }
@@ -305,7 +383,7 @@ pub(super) struct ServiceDispatchGuards<'a> {
 
 pub(super) fn invoke_resolved_chain_with(
     runtime: InvocationContext<'_>,
-    chain: &ResolvedServiceChain,
+    chain: Arc<ResolvedServiceChain>,
     position: usize,
     input: &[u8],
     caller_authority: &Authority,
@@ -370,7 +448,7 @@ pub(super) fn invoke_resolved_chain_with(
     let mut next_stack = guards.call_stack.clone();
     next_stack.insert(provider.plugin.clone());
     let continuation = is_layer.then(|| ContinuationState {
-        chain: chain.clone(),
+        chain: Arc::clone(&chain),
         terminal_component: guards.terminal_component.cloned(),
         next_position: position + 1,
         used: Arc::new(AtomicBool::new(false)),
@@ -384,6 +462,7 @@ pub(super) fn invoke_resolved_chain_with(
     let host = PluginHost {
         graph_generation: runtime.graph_generation,
         component_graph: runtime.component_graph,
+        dispatch_topology: runtime.dispatch_topology,
         config: runtime.config,
         states: runtime.states,
         instances: runtime.instances,
@@ -395,6 +474,7 @@ pub(super) fn invoke_resolved_chain_with(
         tasks: runtime.tasks,
         persistence: runtime.persistence,
         prepared_mutations: runtime.prepared_mutations,
+        trace_sink: runtime.trace_sink,
         provenance: runtime.provenance,
         continuation,
         active_services: guards.active_services.clone(),
@@ -550,47 +630,35 @@ fn emit_runtime_trace(
     input_bytes: usize,
     result: &Result<Vec<u8>, KernelError>,
 ) {
-    let trace = crate::RuntimeTraceEvent::ServiceInvocation {
-        service: provenance.service.as_str().to_owned(),
-        input_bytes,
-        output_bytes: result.as_ref().ok().map(Vec::len),
-        success: result.is_ok(),
-        error: result.as_ref().err().map(ToString::to_string),
-        terminal_reached: provenance.terminal_reached,
-        participants: provenance
-            .participants
-            .iter()
-            .map(|participant| crate::RuntimeTraceParticipant {
-                plugin: participant.plugin.as_str().to_owned(),
-                role: match participant.role {
-                    ServiceRole::Terminal => "terminal",
-                    ServiceRole::Layer => "layer",
-                }
-                .to_owned(),
-                outcome: match participant.outcome {
-                    ServiceParticipantOutcome::Handled => "handled",
-                    ServiceParticipantOutcome::Delegated => "delegated",
-                    ServiceParticipantOutcome::Denied => "denied",
-                    ServiceParticipantOutcome::Failed => "failed",
-                    ServiceParticipantOutcome::Succeeded => "succeeded",
-                }
-                .to_owned(),
-            })
-            .collect(),
-    };
-    let Ok(payload) = serde_json::to_vec(&trace) else {
-        return;
-    };
-    let event = EventEnvelope {
-        event_type: crate::runtime_trace_event_type(),
-        version: crate::RUNTIME_TRACE_EVENT_VERSION,
-        emitter: PluginId::parse("kernel.runtime").expect("static runtime trace emitter is valid"),
-        causality_id: 0,
-        kernel_policy_revision: 0,
-        payload,
-    };
-    let _ =
-        runtime
-            .events
-            .admit_in_generation(&event, &Authority::default(), runtime.graph_generation);
+    trace::record_runtime_trace(
+        runtime.trace_sink,
+        RuntimeTraceEvent::ServiceInvocation {
+            service: provenance.service.as_str().to_owned(),
+            input_bytes,
+            output_bytes: result.as_ref().ok().map(Vec::len),
+            success: result.is_ok(),
+            error: result.as_ref().err().map(ToString::to_string),
+            terminal_reached: provenance.terminal_reached,
+            participants: provenance
+                .participants
+                .iter()
+                .map(|participant| RuntimeTraceParticipant {
+                    plugin: participant.plugin.as_str().to_owned(),
+                    role: match participant.role {
+                        ServiceRole::Terminal => "terminal",
+                        ServiceRole::Layer => "layer",
+                    }
+                    .to_owned(),
+                    outcome: match participant.outcome {
+                        ServiceParticipantOutcome::Handled => "handled",
+                        ServiceParticipantOutcome::Delegated => "delegated",
+                        ServiceParticipantOutcome::Denied => "denied",
+                        ServiceParticipantOutcome::Failed => "failed",
+                        ServiceParticipantOutcome::Succeeded => "succeeded",
+                    }
+                    .to_owned(),
+                })
+                .collect(),
+        },
+    );
 }
