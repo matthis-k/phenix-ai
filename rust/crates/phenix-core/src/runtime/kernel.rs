@@ -420,8 +420,10 @@ impl Kernel {
     ) -> Result<Vec<u8>, KernelError> {
         let service_plan = self.dispatch_topology().service(service);
         let layer_plan = service_plan.map_or(&[][..], |plan| plan.layers.as_slice());
-        let policy_identity =
-            service_plan.map_or_else(|| self.config().policy_identity(), |plan| plan.policy_identity);
+        let policy_identity = service_plan.map_or_else(
+            || self.config().policy_identity(),
+            |plan| plan.policy_identity,
+        );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         invoke_component_service_with(
             InvocationContext {
