@@ -48,6 +48,23 @@ impl RuntimeGeneration {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn bootstrap_with_component_graph(
+        config: KernelConfig,
+        component_graph: ResolvedComponentGraph,
+    ) -> Self {
+        let dispatch_topology = config
+            .resolved_dispatch_topology()
+            .with_component_graph(&component_graph);
+        Self {
+            identity: RuntimeGenerationIdentity::Bootstrap,
+            config,
+            component_graph,
+            dispatch_topology,
+            resources: Vec::new(),
+        }
+    }
+
     fn resolved(
         id: GraphGenerationId,
         config: KernelConfig,
