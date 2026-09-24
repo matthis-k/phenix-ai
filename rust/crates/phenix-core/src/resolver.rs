@@ -1123,6 +1123,27 @@ mod tests {
     }
 
     #[test]
+    fn resolved_harness_projects_one_runtime_generation() {
+        let resolved = ResolvedHarness::resolve_with_resources(
+            [],
+            [],
+            [resource("review", "sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let runtime = resolved.runtime_generation();
+
+        assert_eq!(runtime.generation(), Some(resolved.generation()));
+        assert!(std::ptr::eq(runtime.config(), resolved.kernel_config()));
+        assert!(std::ptr::eq(
+            runtime.component_graph(),
+            resolved.component_graph()
+        ));
+        assert_eq!(runtime.resources(), resolved.resources());
+    }
+
+    #[test]
     fn resource_metadata_is_part_of_resolution_and_generation_identity() {
         let baseline = ResolvedHarness::resolve_with_resources(
             [],
