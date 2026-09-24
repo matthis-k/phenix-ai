@@ -121,82 +121,83 @@ fn resolve_live_service_chain(
     })
 }
 
-fn prepare_active_chain(
+fn resolve_live_component_chain(
     runtime: InvocationContext<'_>,
-    mut chain: ResolvedServiceChain,
+    service: &ServiceId,
+    caller_authority: &Authority,
+    binding: &PluginId,
 ) -> Result<ResolvedServiceChain, KernelError> {
-    let configured_layers = std::mem::take(&mut chain.layers);
-    for layer in configured_layers {
-        let subject = Some(format!("{}:{}", chain.service, layer.plugin));
-        if runtime.states.get(&layer.plugin).copied() == Some(PluginState::Active) {
-            emit_policy_stage(
-                runtime,
-                "kernel.service_chain",
-                "layer_availability",
-                "allowed",
-                subject,
-                None,
-                None,
-            );
-            chain.layers.push(layer);
-            continue;
+    let mut layers = Vec::new();
+    let service_plan = runtime.dispatch_topology.service(service);
+    if let Some(plan) = service_plan {
+        for layer in &plan.layers {
+            let authorized = layer
+                .required_authority
+                .as_ref()
+                .is_some_and(|authority| caller_authority.permits_all(authority));
+            let available = layer.enabled
+                && authorized
+                && runtime.states.get(&layer.binding.plugin).copied()
+                    == Some(PluginState::Active)
+                && runtime.instances.contains_key(&layer.binding.plugin);
+            let subject = Some(format!("{}:{}", service, layer.binding.plugin));
+            if available {
+                emit_policy_stage(
+                    runtime,
+                    "kernel.service_chain",
+                    "layer_availability",
+                    "allowed",
+                    subject,
+                    None,
+                    None,
+                );
+                layers.push(layer.binding.clone());
+            } else if layer.required {
+                emit_policy_stage(
+                    runtime,
+                    "kernel.service_chain",
+                    "layer_availability",
+                    "denied",
+                    subject,
+                    None,
+                    Some("required layer is unavailable or unauthorized".into()),
+                );
+                return Err(KernelError::RequiredLayerUnavailable {
+                    service: service.clone(),
+                    plugin: layer.binding.plugin.clone(),
+                });
+            } else {
+                emit_policy_stage(
+                    runtime,
+                    "kernel.service_chain",
+                    "layer_availability",
+                    "skipped",
+                    subject,
+                    None,
+                    Some("optional layer is unavailable or unauthorized".into()),
+                );
+            }
         }
-        let required = runtime
-            .config
-            .layer_policy(&chain.service)
-            .iter()
-            .find(|policy| policy.plugin == layer.plugin)
-            .is_some_and(|policy| policy.required);
-        if required {
-            emit_policy_stage(
-                runtime,
-                "kernel.service_chain",
-                "layer_availability",
-                "denied",
-                subject,
-                None,
-                Some("required layer is inactive".into()),
-            );
-            return Err(KernelError::RequiredLayerUnavailable {
-                service: chain.service.clone(),
-                plugin: layer.plugin,
-            });
-        }
-        emit_policy_stage(
-            runtime,
-            "kernel.service_chain",
-            "layer_availability",
-            "skipped",
-            subject,
-            None,
-            Some("optional layer is inactive".into()),
-        );
     }
-    let terminal_subject = Some(format!("{}:{}", chain.service, chain.terminal.plugin));
-    if runtime.states.get(&chain.terminal.plugin).copied() != Some(PluginState::Active) {
-        emit_policy_stage(
-            runtime,
-            "kernel.service_chain",
-            "terminal_availability",
-            "denied",
-            terminal_subject,
-            None,
-            Some("terminal provider is inactive".into()),
-        );
-        return Err(KernelError::PluginNotActive(chain.terminal.plugin.clone()));
-    }
-    emit_policy_stage(
-        runtime,
-        "kernel.service_chain",
-        "terminal_availability",
-        "allowed",
-        terminal_subject,
-        None,
-        None,
-    );
-    Ok(chain)
-}
 
+    if runtime.states.get(binding).copied() != Some(PluginState::Active)
+        || !runtime.instances.contains_key(binding)
+    {
+        return Err(KernelError::PluginNotActive(binding.clone()));
+    }
+
+    Ok(ResolvedServiceChain {
+        policy_identity: service_plan
+            .map_or_else(|| runtime.config.policy_identity(), |plan| plan.policy_identity),
+        service: service.clone(),
+        layers,
+        terminal: ProviderBinding {
+            service: service.clone(),
+            plugin: binding.clone(),
+            priority: 0,
+        },
+    })
+}
 pub(super) struct ComponentDispatchTarget<'a> {
     pub(super) component: &'a ComponentId,
     pub(super) binding: &'a PluginId,
@@ -236,10 +237,7 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = match runtime
-        .config
-        .resolve_component_chain(service, caller_authority, binding)
-    {
+    let chain = match resolve_live_component_chain(runtime, service, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -265,7 +263,6 @@ pub(super) fn invoke_component_service_with(
             return Err(error);
         }
     };
-    let chain = prepare_active_chain(runtime, chain)?;
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
     let mut next_component_endpoints = guards.active_component_endpoints.clone();
