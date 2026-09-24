@@ -72,7 +72,7 @@ impl<'a> PluginHost<'a> {
         let delegated_authority = self.authority.attenuate(handle.effective_authority());
         let provider_provenance = ComponentProviderProvenance::from_plan(
             interface,
-            &plan,
+            plan,
             handle,
             fallback_reason,
             delegated_authority.clone(),
