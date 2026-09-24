@@ -7,9 +7,9 @@ use crate::{
     PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
     ProviderSelectionReason, ResolvedComponentDispatchPlan, ResolvedComponentGraph,
     ResolvedDispatchTopology, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain,
-    ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration,
-    ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
+    TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},

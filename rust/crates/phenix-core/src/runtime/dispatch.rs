@@ -130,52 +130,52 @@ fn resolve_live_component_chain(
     let service = &plan.service;
     let mut layers = Vec::new();
     for layer in &plan.layers {
-            let authorized = layer
-                .required_authority
-                .as_ref()
-                .is_some_and(|authority| caller_authority.permits_all(authority));
-            let available = layer.enabled
-                && authorized
-                && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
-                && runtime.instances.contains_key(&layer.binding.plugin);
-            let subject = Some(format!("{}:{}", service, layer.binding.plugin));
-            if available {
-                emit_policy_stage(
-                    runtime,
-                    "kernel.service_chain",
-                    "layer_availability",
-                    "allowed",
-                    subject,
-                    None,
-                    None,
-                );
-                layers.push(layer.binding.clone());
-            } else if layer.required {
-                emit_policy_stage(
-                    runtime,
-                    "kernel.service_chain",
-                    "layer_availability",
-                    "denied",
-                    subject,
-                    None,
-                    Some("required layer is unavailable or unauthorized".into()),
-                );
-                return Err(KernelError::RequiredLayerUnavailable {
-                    service: service.clone(),
-                    plugin: layer.binding.plugin.clone(),
-                });
-            } else {
-                emit_policy_stage(
-                    runtime,
-                    "kernel.service_chain",
-                    "layer_availability",
-                    "skipped",
-                    subject,
-                    None,
-                    Some("optional layer is unavailable or unauthorized".into()),
-                );
-            }
+        let authorized = layer
+            .required_authority
+            .as_ref()
+            .is_some_and(|authority| caller_authority.permits_all(authority));
+        let available = layer.enabled
+            && authorized
+            && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
+            && runtime.instances.contains_key(&layer.binding.plugin);
+        let subject = Some(format!("{}:{}", service, layer.binding.plugin));
+        if available {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "allowed",
+                subject,
+                None,
+                None,
+            );
+            layers.push(layer.binding.clone());
+        } else if layer.required {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "denied",
+                subject,
+                None,
+                Some("required layer is unavailable or unauthorized".into()),
+            );
+            return Err(KernelError::RequiredLayerUnavailable {
+                service: service.clone(),
+                plugin: layer.binding.plugin.clone(),
+            });
+        } else {
+            emit_policy_stage(
+                runtime,
+                "kernel.service_chain",
+                "layer_availability",
+                "skipped",
+                subject,
+                None,
+                Some("optional layer is unavailable or unauthorized".into()),
+            );
         }
+    }
 
     if runtime.states.get(binding).copied() != Some(PluginState::Active)
         || !runtime.instances.contains_key(binding)
