@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
         invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ServiceDispatchGuards,
+        ComponentInvocationPlan, ServiceDispatchGuards,
     },
     *,
 };
@@ -440,9 +440,11 @@ impl Kernel {
                 trace_sink: self.trace_sink.as_ref(),
                 provenance: &self.provenance,
             },
-            service,
-            layer_plan,
-            policy_identity,
+            ComponentInvocationPlan {
+                service,
+                layers: layer_plan,
+                policy_identity,
+            },
             ComponentDispatchTarget {
                 component,
                 binding,

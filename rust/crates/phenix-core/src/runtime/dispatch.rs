@@ -123,14 +123,13 @@ fn resolve_live_service_chain(
 
 fn resolve_live_component_chain(
     runtime: InvocationContext<'_>,
-    service: &ServiceId,
-    layer_plan: &[ResolvedLayerPlan],
-    policy_identity: KernelPolicyIdentity,
+    plan: ComponentInvocationPlan<'_>,
     caller_authority: &Authority,
     binding: &PluginId,
 ) -> Result<ResolvedServiceChain, KernelError> {
+    let service = plan.service;
     let mut layers = Vec::new();
-    for layer in layer_plan {
+    for layer in plan.layers {
         let authorized = layer
             .required_authority
             .as_ref()
@@ -185,7 +184,7 @@ fn resolve_live_component_chain(
     }
 
     Ok(ResolvedServiceChain {
-        policy_identity,
+        policy_identity: plan.policy_identity,
         service: service.clone(),
         layers,
         terminal: ProviderBinding {
@@ -196,6 +195,13 @@ fn resolve_live_component_chain(
     })
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ComponentInvocationPlan<'a> {
+    pub(super) service: &'a ServiceId,
+    pub(super) layers: &'a [ResolvedLayerPlan],
+    pub(super) policy_identity: KernelPolicyIdentity,
+}
+
 pub(super) struct ComponentDispatchTarget<'a> {
     pub(super) component: &'a ComponentId,
     pub(super) binding: &'a PluginId,
@@ -204,9 +210,7 @@ pub(super) struct ComponentDispatchTarget<'a> {
 
 pub(super) fn invoke_component_service_with(
     runtime: InvocationContext<'_>,
-    service: &ServiceId,
-    layer_plan: &[ResolvedLayerPlan],
-    policy_identity: KernelPolicyIdentity,
+    plan: ComponentInvocationPlan<'_>,
     target: ComponentDispatchTarget<'_>,
     input: &[u8],
     caller_authority: &Authority,
@@ -217,6 +221,7 @@ pub(super) fn invoke_component_service_with(
         binding,
         provider_provenance,
     } = target;
+    let service = plan.service;
     let endpoint = ComponentServiceEndpoint {
         component: component.clone(),
         service: service.clone(),
@@ -237,14 +242,7 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = match resolve_live_component_chain(
-        runtime,
-        service,
-        layer_plan,
-        policy_identity,
-        caller_authority,
-        binding,
-    ) {
+    let chain = match resolve_live_component_chain(runtime, plan, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
