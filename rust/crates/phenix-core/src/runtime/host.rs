@@ -100,7 +100,7 @@ impl<'a> PluginHost<'a> {
 
     fn provider_available(&self, handle: &ResolvedImportHandle) -> bool {
         self.runtime.states.get(handle.owning_plugin()).copied() == Some(PluginState::Active)
-            && self.runtime.instances.contains_key(handle.owning_plugin())
+            && self.runtime.invocations.contains_key(handle.owning_plugin())
     }
 
     #[doc(hidden)]
