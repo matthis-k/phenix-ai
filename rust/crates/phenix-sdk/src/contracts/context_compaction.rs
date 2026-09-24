@@ -1,6 +1,7 @@
 use super::{ContextRetention, ExactContextReference};
 use phenix_core::Bytes;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +39,143 @@ pub struct RetentionTransition {
     pub from: ContextRetention,
     pub to: ContextRetention,
     pub recovery: Option<ExactContextReference>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextReducerStage {
+    CodeEvidence,
+    ObservationSummary,
+    HistorySummary,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ReducerEligibleItem {
+    pub item_id: String,
+    pub recovery: Option<ExactContextReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextReducerRequest {
+    pub execution_id: String,
+    pub expected_projection: ProjectionRevision,
+    pub configuration_revision: String,
+    pub authority_revision: String,
+    pub capability_generation: String,
+    pub stage: ContextReducerStage,
+    pub query: String,
+    pub helper_reservation_id: String,
+    pub max_output_bytes: u64,
+    pub eligible: Vec<ReducerEligibleItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DerivedReductionSummary {
+    pub item_id: String,
+    pub content: Bytes,
+    #[serde(default)]
+    pub exact_sources: Vec<ExactContextReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextReducerProposal {
+    pub execution_id: String,
+    pub expected_projection: ProjectionRevision,
+    pub stage: ContextReducerStage,
+    pub helper_attempt_id: String,
+    #[serde(default)]
+    pub retained_item_ids: Vec<String>,
+    #[serde(default)]
+    pub omitted_item_ids: Vec<String>,
+    #[serde(default)]
+    pub summaries: Vec<DerivedReductionSummary>,
+    pub encoded_output_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReducerValidationError {
+    StaleProjection,
+    ExecutionMismatch,
+    StageMismatch,
+    UnknownItem { item_id: String },
+    DuplicateItem { item_id: String },
+    MissingRecoveryReference { item_id: String },
+    SummaryWithoutExactSource { item_id: String },
+    OutputBudgetExceeded { reported: u64, allowed: u64 },
+}
+
+impl ContextReducerProposal {
+    pub fn validate_against(
+        &self,
+        request: &ContextReducerRequest,
+        actual_projection: &ProjectionRevision,
+    ) -> Result<(), ReducerValidationError> {
+        if &request.expected_projection != actual_projection
+            || &self.expected_projection != actual_projection
+        {
+            return Err(ReducerValidationError::StaleProjection);
+        }
+        if self.execution_id != request.execution_id {
+            return Err(ReducerValidationError::ExecutionMismatch);
+        }
+        if self.stage != request.stage {
+            return Err(ReducerValidationError::StageMismatch);
+        }
+        if self.encoded_output_bytes > request.max_output_bytes {
+            return Err(ReducerValidationError::OutputBudgetExceeded {
+                reported: self.encoded_output_bytes,
+                allowed: request.max_output_bytes,
+            });
+        }
+
+        let eligible = request
+            .eligible
+            .iter()
+            .map(|item| (item.item_id.as_str(), item))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut seen = BTreeSet::new();
+        for item_id in self
+            .retained_item_ids
+            .iter()
+            .chain(self.omitted_item_ids.iter())
+        {
+            if !seen.insert(item_id.as_str()) {
+                return Err(ReducerValidationError::DuplicateItem {
+                    item_id: item_id.clone(),
+                });
+            }
+            let Some(item) = eligible.get(item_id.as_str()) else {
+                return Err(ReducerValidationError::UnknownItem {
+                    item_id: item_id.clone(),
+                });
+            };
+            if self.omitted_item_ids.contains(item_id) && item.recovery.is_none() {
+                return Err(ReducerValidationError::MissingRecoveryReference {
+                    item_id: item_id.clone(),
+                });
+            }
+        }
+        for summary in &self.summaries {
+            if !eligible.contains_key(summary.item_id.as_str()) {
+                return Err(ReducerValidationError::UnknownItem {
+                    item_id: summary.item_id.clone(),
+                });
+            }
+            if summary.exact_sources.is_empty() {
+                return Err(ReducerValidationError::SummaryWithoutExactSource {
+                    item_id: summary.item_id.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -179,6 +317,74 @@ mod tests {
                 tool_groups: Vec::new(),
             },
         }
+    }
+
+    fn reducer_request() -> ContextReducerRequest {
+        ContextReducerRequest {
+            execution_id: "e1".into(),
+            expected_projection: ProjectionRevision {
+                revision: 7,
+                cache_epoch: 2,
+            },
+            configuration_revision: "config-1".into(),
+            authority_revision: "authority-1".into(),
+            capability_generation: "capability-1".into(),
+            stage: ContextReducerStage::HistorySummary,
+            query: "current task".into(),
+            helper_reservation_id: "reservation-1".into(),
+            max_output_bytes: 1024,
+            eligible: vec![ReducerEligibleItem {
+                item_id: "history-1".into(),
+                recovery: Some(exact("context:history-1")),
+            }],
+        }
+    }
+
+    #[test]
+    fn reducer_cannot_omit_content_without_exact_recovery() {
+        let mut request = reducer_request();
+        request.eligible[0].recovery = None;
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: Vec::new(),
+            omitted_item_ids: vec!["history-1".into()],
+            summaries: Vec::new(),
+            encoded_output_bytes: 10,
+        };
+
+        assert!(matches!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::MissingRecoveryReference { .. })
+        ));
+    }
+
+    #[test]
+    fn reducer_rejects_fabricated_ids_and_oversized_output() {
+        let request = reducer_request();
+        let mut proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: vec!["fabricated".into()],
+            omitted_item_ids: Vec::new(),
+            summaries: Vec::new(),
+            encoded_output_bytes: 10,
+        };
+        assert!(matches!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::UnknownItem { .. })
+        ));
+
+        proposal.retained_item_ids = vec!["history-1".into()];
+        proposal.encoded_output_bytes = 1025;
+        assert!(matches!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::OutputBudgetExceeded { .. })
+        ));
     }
 
     #[test]
