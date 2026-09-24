@@ -79,40 +79,40 @@ impl<'a> PluginHost<'a> {
         );
         let transactions = TransactionContext::coordinated_by(self.plugin);
         let output = invoke_component_service_with(
-                InvocationContext {
-                    graph_generation: self.graph_generation,
-                    component_graph: self.component_graph,
-                    dispatch_topology: self.dispatch_topology,
-                    config: self.config,
-                    states: self.states,
-                    instances: self.instances,
-                    events: self.events,
-                    tasks: self.tasks,
-                    persistence: self.persistence,
-                    prepared_mutations: self.prepared_mutations,
-                    transactions: &transactions,
-                    trace_sink: self.trace_sink,
-                    provenance: self.provenance,
-                },
-                ComponentInvocationPlan {
-                    service,
-                    layers: &dispatch.layers,
-                    policy_identity: dispatch.policy_identity,
-                },
-                ComponentDispatchTarget {
-                    component: handle.exporter(),
-                    binding: handle.owning_plugin(),
-                    provider_provenance: Some(provider_provenance),
-                },
-                &input,
-                &delegated_authority,
-                ServiceDispatchGuards {
-                    call_stack: &self.call_stack,
-                    active_services: &self.active_services,
-                    active_component_endpoints: &self.active_component_endpoints,
-                    terminal_component: Some(handle.exporter()),
-                },
-            )?;
+            InvocationContext {
+                graph_generation: self.graph_generation,
+                component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
+                config: self.config,
+                states: self.states,
+                instances: self.instances,
+                events: self.events,
+                tasks: self.tasks,
+                persistence: self.persistence,
+                prepared_mutations: self.prepared_mutations,
+                transactions: &transactions,
+                trace_sink: self.trace_sink,
+                provenance: self.provenance,
+            },
+            ComponentInvocationPlan {
+                service,
+                layers: &dispatch.layers,
+                policy_identity: dispatch.policy_identity,
+            },
+            ComponentDispatchTarget {
+                component: handle.exporter(),
+                binding: handle.owning_plugin(),
+                provider_provenance: Some(provider_provenance),
+            },
+            &input,
+            &delegated_authority,
+            ServiceDispatchGuards {
+                call_stack: &self.call_stack,
+                active_services: &self.active_services,
+                active_component_endpoints: &self.active_component_endpoints,
+                terminal_component: Some(handle.exporter()),
+            },
+        )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
     }
@@ -133,32 +133,32 @@ impl<'a> PluginHost<'a> {
         let delegated_authority = self.authority.attenuate(requested_authority);
         let transactions = TransactionContext::coordinated_by(self.plugin);
         invoke_service_with(
-                InvocationContext {
-                    graph_generation: self.graph_generation,
-                    component_graph: self.component_graph,
-                    dispatch_topology: self.dispatch_topology,
-                    config: self.config,
-                    states: self.states,
-                    instances: self.instances,
-                    events: self.events,
-                    tasks: self.tasks,
-                    persistence: self.persistence,
-                    prepared_mutations: self.prepared_mutations,
-                    transactions: &transactions,
-                    trace_sink: self.trace_sink,
-                    provenance: self.provenance,
-                },
-                service,
-                input,
-                &delegated_authority,
-                binding,
-                ServiceDispatchGuards {
-                    call_stack: &self.call_stack,
-                    active_services: &self.active_services,
-                    active_component_endpoints: &self.active_component_endpoints,
-                    terminal_component: None,
-                },
-            )
+            InvocationContext {
+                graph_generation: self.graph_generation,
+                component_graph: self.component_graph,
+                dispatch_topology: self.dispatch_topology,
+                config: self.config,
+                states: self.states,
+                instances: self.instances,
+                events: self.events,
+                tasks: self.tasks,
+                persistence: self.persistence,
+                prepared_mutations: self.prepared_mutations,
+                transactions: &transactions,
+                trace_sink: self.trace_sink,
+                provenance: self.provenance,
+            },
+            service,
+            input,
+            &delegated_authority,
+            binding,
+            ServiceDispatchGuards {
+                call_stack: &self.call_stack,
+                active_services: &self.active_services,
+                active_component_endpoints: &self.active_component_endpoints,
+                terminal_component: None,
+            },
+        )
     }
 
     pub fn continue_service(
