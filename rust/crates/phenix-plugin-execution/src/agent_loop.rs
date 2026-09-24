@@ -4,9 +4,9 @@ use crate::{
 };
 use phenix_core::{
     Authority, Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, ModelToolTurn, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole, SessionId,
+    ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    SessionId,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
@@ -435,7 +435,6 @@ fn emit_progress(
         AgentLoopProgressResponse::Recorded => Ok(()),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
