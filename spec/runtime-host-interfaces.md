@@ -2,7 +2,7 @@
 
 status: implemented
 coverage:
-  - rust/crates/phenix-core/src/plugin_context.rs
+  - rust/crates/phenix-core/src/plugin/context.rs
   - rust/crates/phenix-sdk/src/authoring/context.rs
   - rust/crates/phenix-core/src/provider_fallback_regression.rs
   - rust/crates/phenix-core/src/host_authority_regression.rs

@@ -3,9 +3,9 @@
 status: implemented
 coverage:
   - rust/crates/phenix-core/tests/persistence_backend_conformance.rs
-  - rust/crates/phenix-core/src/persistence_bootstrap.rs
+  - rust/crates/phenix-core/src/persistence/bootstrap.rs
   - rust/crates/phenix-core/src/runtime/persistence_bootstrap.rs
-  - rust/crates/phenix-core/src/prepared_mutation.rs
+  - rust/crates/phenix-core/src/plugin/prepared_mutation.rs
   - rust/crates/phenix-core/src/runtime/host.rs
   - rust/crates/phenix-core/src/runtime/tests.rs
   - rust/crates/phenix-plugin-sessions/src/implementation.rs

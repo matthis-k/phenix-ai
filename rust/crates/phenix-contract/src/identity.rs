@@ -230,6 +230,22 @@ impl<'value> TryFrom<crate::Project<&'value PhenixValue>> for InterfaceId {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct GraphGenerationId(String);
+
+impl GraphGenerationId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for GraphGenerationId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

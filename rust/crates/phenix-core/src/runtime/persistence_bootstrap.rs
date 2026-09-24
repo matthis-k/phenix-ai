@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    persistence_provider::prepare_durable_schema_set, DurableSchemaRegistration,
+    persistence::provider::prepare_durable_schema_set, DurableSchemaRegistration,
     PersistenceCandidateError, PersistenceError,
 };
 

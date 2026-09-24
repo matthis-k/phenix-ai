@@ -2,33 +2,18 @@ use crate::{
     Authority, BackendFeature, CapabilityId, ComponentGraphError, ComponentManifest,
     CompositionMetadataError, ConfigContribution, ConfigMergeError, ConfigurationFrontendId,
     ConfigurationFrontendMetadata, DurableSchemaRegistration, FrontendConfigContribution,
-    FrontendConfigError, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
-    PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
-    ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
+    FrontendConfigError, GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy,
+    PluginId, PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph,
+    ResolvedConfigContributions, ResolvedDispatchTopology, ResourceNamespace, ServiceId,
+    ServiceRole, SkillResourceMetadata,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt::{self, Display, Formatter},
 };
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
-pub struct GraphGenerationId(String);
-
-impl GraphGenerationId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
-        let bytes = serde_json::to_vec(&(self.as_str(), metadata))
-            .expect("resolved composition metadata is serializable");
-        self.0 = format!("sha256:{:x}", Sha256::digest(bytes));
-    }
-}
 
 #[derive(Clone, Debug)]
 enum RuntimeGenerationIdentity {
@@ -119,7 +104,11 @@ impl RuntimeGeneration {
             RuntimeGenerationIdentity::Bootstrap => {
                 panic!("bootstrap runtime generation cannot absorb resolved semantic metadata")
             }
-            RuntimeGenerationIdentity::Resolved(id) => id.incorporate_semantic_metadata(metadata),
+            RuntimeGenerationIdentity::Resolved(id) => {
+                let bytes = serde_json::to_vec(&(id.as_str(), metadata))
+                    .expect("resolved composition metadata is serializable");
+                *id = GraphGenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
+            }
         }
     }
 }
@@ -681,7 +670,7 @@ impl SemanticGeneration<'_> {
             use std::fmt::Write as _;
             write!(&mut identity, "{byte:02x}").expect("writing to String cannot fail");
         }
-        GraphGenerationId(identity)
+        GraphGenerationId::from(identity)
     }
 }
 
