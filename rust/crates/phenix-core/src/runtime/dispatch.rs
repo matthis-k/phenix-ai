@@ -137,8 +137,7 @@ fn resolve_live_component_chain(
                 .is_some_and(|authority| caller_authority.permits_all(authority));
             let available = layer.enabled
                 && authorized
-                && runtime.states.get(&layer.binding.plugin).copied()
-                    == Some(PluginState::Active)
+                && runtime.states.get(&layer.binding.plugin).copied() == Some(PluginState::Active)
                 && runtime.instances.contains_key(&layer.binding.plugin);
             let subject = Some(format!("{}:{}", service, layer.binding.plugin));
             if available {
@@ -187,8 +186,10 @@ fn resolve_live_component_chain(
     }
 
     Ok(ResolvedServiceChain {
-        policy_identity: service_plan
-            .map_or_else(|| runtime.config.policy_identity(), |plan| plan.policy_identity),
+        policy_identity: service_plan.map_or_else(
+            || runtime.config.policy_identity(),
+            |plan| plan.policy_identity,
+        ),
         service: service.clone(),
         layers,
         terminal: ProviderBinding {
