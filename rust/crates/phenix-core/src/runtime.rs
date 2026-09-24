@@ -5,8 +5,9 @@ use crate::{
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
     PluginExecution, PluginId, PluginManifest, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
-    ResolvedServiceChain, ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration,
+    ResolvedComponentGraph, ResolvedDispatchTopology, ResolvedImportHandle, ResolvedListener,
+    ResolvedProviderPlan, ResolvedServiceChain, ResourceNamespace, RuntimeGeneration, RuntimeId,
+    SchemaMigration,
     ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
@@ -238,6 +239,7 @@ pub(super) struct ComponentServiceEndpoint {
 pub struct PluginHost<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -444,6 +446,7 @@ type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 struct InvocationContext<'a> {
     graph_generation: Option<&'a GraphGenerationId>,
     component_graph: &'a ResolvedComponentGraph,
+    dispatch_topology: &'a ResolvedDispatchTopology,
     config: &'a KernelConfig,
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
