@@ -311,6 +311,7 @@ impl Kernel {
                 let host = PluginHost {
                     graph_generation: self.graph_generation(),
                     component_graph: self.component_graph(),
+                    dispatch_topology: self.dispatch_topology(),
                     config: &config,
                     states: &next_states,
                     instances: &next_instances,
