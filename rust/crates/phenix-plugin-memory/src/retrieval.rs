@@ -22,17 +22,18 @@ pub(crate) fn recall(
         .filter(|record| supersession_effective_at(record, query.at))
         .flat_map(|record| record.supersedes.iter().cloned())
         .collect::<BTreeSet<_>>();
-    let normalized = query.query.trim().to_lowercase();
-    let terms = normalized.split_whitespace().collect::<Vec<_>>();
-
-    let mut candidates = records
+    let eligible_records = records
         .into_iter()
-        .filter(|record| query.scopes.contains(&record.scope))
-        .filter(|record| query.kinds.is_empty() || query.kinds.contains(&record.kind))
-        .filter(|record| visible_at(record, query.at))
-        .filter(|record| !superseded.contains(&record.id))
-        .filter_map(|record| {
-            recall_score(&record, &normalized, &terms).map(|score| (score, record))
+        .filter(|record| eligible(record, query, &superseded))
+        .collect::<Vec<_>>();
+
+    let search = LexicalCandidateSearch;
+    let mut candidates = search
+        .search(&eligible_records, query)
+        .into_iter()
+        .filter_map(|hit| {
+            let record = eligible_records.get(hit.index)?;
+            eligible(record, query, &superseded).then(|| (hit.score, record.clone()))
         })
         .collect::<Vec<_>>();
 
@@ -44,6 +45,43 @@ pub(crate) fn recall(
     });
     candidates.truncate(query.limit as usize);
     Ok(candidates.into_iter().map(|(_, record)| record).collect())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SearchHit {
+    index: usize,
+    score: u32,
+}
+
+trait CandidateSearch {
+    fn search(&self, records: &[MemoryRecord], query: &MemoryRecallQuery) -> Vec<SearchHit>;
+}
+
+struct LexicalCandidateSearch;
+
+impl CandidateSearch for LexicalCandidateSearch {
+    fn search(&self, records: &[MemoryRecord], query: &MemoryRecallQuery) -> Vec<SearchHit> {
+        let normalized = query.query.trim().to_lowercase();
+        let terms = normalized.split_whitespace().collect::<Vec<_>>();
+        records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                recall_score(record, &normalized, &terms).map(|score| SearchHit { index, score })
+            })
+            .collect()
+    }
+}
+
+fn eligible(
+    record: &MemoryRecord,
+    query: &MemoryRecallQuery,
+    superseded: &BTreeSet<String>,
+) -> bool {
+    query.scopes.contains(&record.scope)
+        && (query.kinds.is_empty() || query.kinds.contains(&record.kind))
+        && visible_at(record, query.at)
+        && !superseded.contains(&record.id)
 }
 
 fn visible_at(record: &MemoryRecord, at: u64) -> bool {
