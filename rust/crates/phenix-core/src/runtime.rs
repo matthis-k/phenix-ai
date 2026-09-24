@@ -224,7 +224,6 @@ impl InvocationTrace {
 
 #[derive(Clone)]
 struct ContinuationState {
-    chain: Arc<ResolvedServiceChain>,
     terminal_component: Option<ComponentId>,
     next_position: usize,
     used: Arc<AtomicBool>,
@@ -251,37 +250,54 @@ pub(super) struct InvocationStack {
 
 #[derive(Clone)]
 pub(super) struct CallScope {
+    generation: Arc<RuntimeGeneration>,
     authority: Authority,
     cancellation: Option<CallCancellationToken>,
     stack: InvocationStack,
     transactions: TransactionContext,
+    selected_chain: Option<Arc<ResolvedServiceChain>>,
 }
 
 impl CallScope {
+    pub(super) fn external(generation: Arc<RuntimeGeneration>, authority: &Authority) -> Self {
+        Self {
+            generation,
+            authority: authority.clone(),
+            cancellation: None,
+            stack: InvocationStack::default(),
+            transactions: TransactionContext::unscoped(),
+            selected_chain: None,
+        }
+    }
+
     pub(super) fn root(
+        generation: Arc<RuntimeGeneration>,
         plugin: &PluginId,
         authority: &Authority,
         cancellation: Option<CallCancellationToken>,
     ) -> Self {
         Self {
+            generation,
             authority: authority.clone(),
             cancellation,
             stack: InvocationStack::root(plugin),
             transactions: TransactionContext::unscoped(),
+            selected_chain: None,
         }
     }
 
-    pub(super) fn nested(
+    pub(super) fn delegated(
+        &self,
         authority: Authority,
-        cancellation: Option<CallCancellationToken>,
-        stack: InvocationStack,
         transactions: TransactionContext,
     ) -> Self {
         Self {
+            generation: Arc::clone(&self.generation),
             authority,
-            cancellation,
-            stack,
+            cancellation: self.cancellation.clone(),
+            stack: self.stack.clone(),
             transactions,
+            selected_chain: self.selected_chain.clone(),
         }
     }
 }
@@ -325,20 +341,9 @@ impl InvocationStack {
 }
 
 pub struct PluginHost<'a> {
-    graph_generation: Option<&'a GraphGenerationId>,
-    component_graph: &'a ResolvedComponentGraph,
-    dispatch_topology: &'a ResolvedDispatchTopology,
-    config: &'a KernelConfig,
-    states: &'a BTreeMap<PluginId, PluginState>,
-    instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    runtime: RuntimeServices<'a>,
     plugin: &'a PluginId,
     scope: CallScope,
-    events: &'a EventBus,
-    tasks: &'a TaskRuntime,
-    persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
-    prepared_mutations: &'a PreparedMutationScope,
-    trace_sink: &'a dyn RuntimeTraceSink,
-    provenance: &'a ProvenanceBuffer,
     continuation: Option<ContinuationState>,
 }
 
@@ -474,6 +479,126 @@ pub trait PluginInstance: Send {
     }
 }
 
+trait PluginInvocation: Send + Sync {
+    fn supports_reentry(&self) -> bool;
+
+    fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String>;
+
+    fn invoke_component(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String>;
+
+    fn invoke_layer(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<LayerResult, String>;
+}
+
+struct SharedInvocationEndpoint(Arc<dyn SharedPluginInvocation>);
+
+impl PluginInvocation for SharedInvocationEndpoint {
+    fn supports_reentry(&self) -> bool {
+        true
+    }
+
+    fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.0.invoke(service, input, host)
+    }
+
+    fn invoke_component(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.0.invoke_component(component, service, input, host)
+    }
+
+    fn invoke_layer(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<LayerResult, String> {
+        self.0.invoke_layer(service, input, host)
+    }
+}
+
+struct MutableInvocationEndpoint(Arc<Mutex<Box<dyn PluginInstance>>>);
+
+impl PluginInvocation for MutableInvocationEndpoint {
+    fn supports_reentry(&self) -> bool {
+        false
+    }
+
+    fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.0
+            .lock()
+            .expect("plugin instance mutex poisoned")
+            .invoke(service, input, host)
+    }
+
+    fn invoke_component(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.0
+            .lock()
+            .expect("plugin instance mutex poisoned")
+            .invoke_component(component, service, input, host)
+    }
+
+    fn invoke_layer(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<LayerResult, String> {
+        self.0
+            .lock()
+            .expect("plugin instance mutex poisoned")
+            .invoke_layer(service, input, host)
+    }
+}
+
+fn canonical_invocation(
+    instance: &Arc<Mutex<Box<dyn PluginInstance>>>,
+) -> Arc<dyn PluginInvocation> {
+    let shared = instance
+        .lock()
+        .expect("plugin instance mutex poisoned")
+        .shared_invocation();
+    match shared {
+        Some(shared) => Arc::new(SharedInvocationEndpoint(shared)),
+        None => Arc::new(MutableInvocationEndpoint(Arc::clone(instance))),
+    }
+}
+
 fn stage_listener_subscriptions(
     sources: listener::ListenerRuntimeSources<'_>,
 ) -> Result<Vec<EventSubscription>, KernelError> {
@@ -527,18 +652,14 @@ fn stage_listener_subscriptions(
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
 #[derive(Clone, Copy)]
-struct InvocationContext<'a> {
-    graph_generation: Option<&'a GraphGenerationId>,
-    component_graph: &'a ResolvedComponentGraph,
-    dispatch_topology: &'a ResolvedDispatchTopology,
-    config: &'a KernelConfig,
+struct RuntimeServices<'a> {
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
     events: &'a EventBus,
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
     prepared_mutations: &'a PreparedMutationScope,
-    transactions: &'a TransactionContext,
     trace_sink: &'a dyn RuntimeTraceSink,
     provenance: &'a ProvenanceBuffer,
 }
@@ -549,6 +670,7 @@ pub struct Kernel {
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
