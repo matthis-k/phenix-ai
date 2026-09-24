@@ -1,4 +1,4 @@
-use super::UsageAggregate;
+use super::{AttemptUsageRecord, UsageAggregate};
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -26,6 +26,79 @@ pub struct EfficiencyTaskRecord {
     pub known_cost_microunits: u64,
     pub cost_complete: bool,
     pub root_elapsed_ms: Option<u64>,
+}
+
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyAttemptCharge {
+    pub record: AttemptUsageRecord,
+    pub known_cost_microunits: u64,
+    pub cost_complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyTaskEvidence {
+    pub task_fixture_revision: String,
+    pub root_execution_id: String,
+    pub policy_revision: String,
+    pub outcome_evaluator_identity: String,
+    pub price_revision: String,
+    pub outcome: EvaluationOutcome,
+    #[serde(default)]
+    pub attempts: Vec<EfficiencyAttemptCharge>,
+    pub root_elapsed_ms: Option<u64>,
+}
+
+pub fn derive_efficiency_task_record(
+    evidence: &EfficiencyTaskEvidence,
+) -> Result<EfficiencyTaskRecord, EfficiencyEvaluationError> {
+    let mut seen_attempts = std::collections::BTreeSet::new();
+    let mut usage = UsageAggregate::default();
+    let mut known_cost_microunits = 0_u64;
+    let mut cost_complete = true;
+
+    for charge in &evidence.attempts {
+        let attribution = &charge.record.attribution;
+        if attribution.root_execution_id != evidence.root_execution_id {
+            return Err(EfficiencyEvaluationError::AttemptRootMismatch {
+                expected: evidence.root_execution_id.clone(),
+                observed: attribution.root_execution_id.clone(),
+                attempt_id: attribution.attempt_id.clone(),
+            });
+        }
+        if attribution.policy_revision != evidence.policy_revision {
+            return Err(EfficiencyEvaluationError::AttemptPolicyMismatch {
+                expected: evidence.policy_revision.clone(),
+                observed: attribution.policy_revision.clone(),
+                attempt_id: attribution.attempt_id.clone(),
+            });
+        }
+        if !seen_attempts.insert(attribution.attempt_id.clone()) {
+            return Err(EfficiencyEvaluationError::DuplicateAttempt {
+                attempt_id: attribution.attempt_id.clone(),
+            });
+        }
+
+        usage.observe(&charge.record);
+        known_cost_microunits =
+            known_cost_microunits.saturating_add(charge.known_cost_microunits);
+        cost_complete &= charge.cost_complete;
+    }
+
+    Ok(EfficiencyTaskRecord {
+        task_fixture_revision: evidence.task_fixture_revision.clone(),
+        root_execution_id: evidence.root_execution_id.clone(),
+        policy_revision: evidence.policy_revision.clone(),
+        outcome_evaluator_identity: evidence.outcome_evaluator_identity.clone(),
+        price_revision: evidence.price_revision.clone(),
+        outcome: evidence.outcome,
+        usage,
+        known_cost_microunits,
+        cost_complete,
+        root_elapsed_ms: evidence.root_elapsed_ms,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -72,6 +145,19 @@ pub enum EfficiencyEvaluationError {
     MixedPriceRevision { expected: String, observed: String },
     MismatchedTaskSet,
     CohortTooLarge,
+    AttemptRootMismatch {
+        expected: String,
+        observed: String,
+        attempt_id: String,
+    },
+    AttemptPolicyMismatch {
+        expected: String,
+        observed: String,
+        attempt_id: String,
+    },
+    DuplicateAttempt {
+        attempt_id: String,
+    },
 }
 
 pub fn evaluate_efficiency_cohort(
@@ -238,6 +324,42 @@ pub fn compare_efficiency_policies(
 mod tests {
     use super::*;
 
+    fn attempt(
+        root_execution_id: &str,
+        attempt_id: &str,
+        kind: super::super::UsageAttemptKind,
+        outcome: super::super::AttemptOutcome,
+        cost: u64,
+    ) -> EfficiencyAttemptCharge {
+        EfficiencyAttemptCharge {
+            record: AttemptUsageRecord {
+                attribution: super::super::UsageAttribution {
+                    root_execution_id: root_execution_id.into(),
+                    execution_id: format!("execution-{attempt_id}"),
+                    attempt_id: attempt_id.into(),
+                    parent_attempt_id: None,
+                    policy_revision: "policy-1".into(),
+                    kind,
+                    task_id: Some("task-0".into()),
+                },
+                usage: phenix_core::ModelTurnUsage {
+                    fresh_input_tokens: phenix_core::UsageQuantity::Reported { value: 10 },
+                    cache_read_tokens: phenix_core::UsageQuantity::Reported { value: 0 },
+                    cache_write_tokens: phenix_core::UsageQuantity::Reported { value: 0 },
+                    output_tokens: phenix_core::UsageQuantity::Reported { value: 5 },
+                    reasoning_tokens: phenix_core::UsageQuantity::Reported { value: 0 },
+                },
+                latency_ms: Some(100),
+                tool_input_bytes: 0,
+                tool_result_bytes: 0,
+                outcome,
+                reacquisition: Vec::new(),
+            },
+            known_cost_microunits: cost,
+            cost_complete: true,
+        }
+    }
+
     fn task(id: usize, outcome: EvaluationOutcome, cost: u64) -> EfficiencyTaskRecord {
         EfficiencyTaskRecord {
             task_fixture_revision: format!("task-{id}@1"),
@@ -251,6 +373,114 @@ mod tests {
             cost_complete: true,
             root_elapsed_ms: Some(1_000),
         }
+    }
+
+    #[test]
+    fn task_derivation_counts_root_helper_and_delegated_attempts_once() {
+        let evidence = EfficiencyTaskEvidence {
+            task_fixture_revision: "task-0@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            attempts: vec![
+                attempt(
+                    "root-1",
+                    "root-attempt",
+                    super::super::UsageAttemptKind::Root,
+                    super::super::AttemptOutcome::Succeeded,
+                    10,
+                ),
+                attempt(
+                    "root-1",
+                    "helper-attempt",
+                    super::super::UsageAttemptKind::Helper,
+                    super::super::AttemptOutcome::Succeeded,
+                    4,
+                ),
+                attempt(
+                    "root-1",
+                    "delegated-attempt",
+                    super::super::UsageAttemptKind::Delegated,
+                    super::super::AttemptOutcome::Failed,
+                    7,
+                ),
+            ],
+            root_elapsed_ms: Some(250),
+        };
+
+        let record = derive_efficiency_task_record(&evidence).unwrap();
+        assert_eq!(record.known_cost_microunits, 21);
+        assert_eq!(record.usage.attempts, 3);
+        assert_eq!(record.usage.failed_attempts, 1);
+        assert_eq!(record.usage.fresh_input_tokens.reported, 30);
+        assert_eq!(record.usage.output_tokens.reported, 15);
+        assert!(record.cost_complete);
+    }
+
+    #[test]
+    fn task_derivation_rejects_duplicate_attempt_charges() {
+        let duplicated = attempt(
+            "root-1",
+            "attempt-1",
+            super::super::UsageAttemptKind::Root,
+            super::super::AttemptOutcome::Succeeded,
+            10,
+        );
+        let evidence = EfficiencyTaskEvidence {
+            task_fixture_revision: "task-0@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            attempts: vec![duplicated.clone(), duplicated],
+            root_elapsed_ms: Some(100),
+        };
+
+        assert_eq!(
+            derive_efficiency_task_record(&evidence),
+            Err(EfficiencyEvaluationError::DuplicateAttempt {
+                attempt_id: "attempt-1".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn task_derivation_rejects_cross_root_or_cross_policy_charges() {
+        let mut wrong_root = attempt(
+            "other-root",
+            "attempt-1",
+            super::super::UsageAttemptKind::Root,
+            super::super::AttemptOutcome::Succeeded,
+            10,
+        );
+        let evidence = EfficiencyTaskEvidence {
+            task_fixture_revision: "task-0@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            attempts: vec![wrong_root.clone()],
+            root_elapsed_ms: Some(100),
+        };
+        assert!(matches!(
+            derive_efficiency_task_record(&evidence),
+            Err(EfficiencyEvaluationError::AttemptRootMismatch { .. })
+        ));
+
+        wrong_root.record.attribution.root_execution_id = "root-1".into();
+        wrong_root.record.attribution.policy_revision = "policy-2".into();
+        let evidence = EfficiencyTaskEvidence {
+            attempts: vec![wrong_root],
+            ..evidence
+        };
+        assert!(matches!(
+            derive_efficiency_task_record(&evidence),
+            Err(EfficiencyEvaluationError::AttemptPolicyMismatch { .. })
+        ));
     }
 
     #[test]
