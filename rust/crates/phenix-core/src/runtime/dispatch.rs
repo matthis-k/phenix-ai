@@ -226,7 +226,7 @@ pub(super) fn invoke_component_service_with(
         component: component.clone(),
         service: service.clone(),
     };
-    if guards.active_component_endpoints.contains(&endpoint) {
+    if guards.stack.contains_component(&endpoint) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
     let resolved = runtime
@@ -268,10 +268,9 @@ pub(super) fn invoke_component_service_with(
             return Err(error);
         }
     };
-    let mut next_services = guards.active_services.clone();
-    next_services.insert(service.clone());
-    let mut next_component_endpoints = guards.active_component_endpoints.clone();
-    next_component_endpoints.insert(endpoint);
+    let mut next_stack = guards.stack.clone();
+    next_stack.push_service(service.clone());
+    next_stack.push_component(endpoint);
     let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
@@ -286,9 +285,7 @@ pub(super) fn invoke_component_service_with(
         input,
         caller_authority,
         ServiceDispatchGuards {
-            call_stack: guards.call_stack,
-            active_services: &next_services,
-            active_component_endpoints: &next_component_endpoints,
+            stack: &next_stack,
             terminal_component: Some(component),
         },
         &trace,
@@ -311,7 +308,7 @@ pub(super) fn invoke_service_with(
     binding: Option<&PluginId>,
     guards: ServiceDispatchGuards<'_>,
 ) -> Result<Vec<u8>, KernelError> {
-    if guards.active_services.contains(service) {
+    if guards.stack.contains_service(service) {
         return Err(KernelError::CausalServiceReentry(service.clone()));
     }
     let chain = match resolve_live_service_chain(runtime, service, caller_authority, binding) {
@@ -340,8 +337,8 @@ pub(super) fn invoke_service_with(
             return Err(error);
         }
     };
-    let mut next_services = guards.active_services.clone();
-    next_services.insert(service.clone());
+    let mut next_stack = guards.stack.clone();
+    next_stack.push_service(service.clone());
     let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
@@ -356,9 +353,7 @@ pub(super) fn invoke_service_with(
         input,
         caller_authority,
         ServiceDispatchGuards {
-            call_stack: guards.call_stack,
-            active_services: &next_services,
-            active_component_endpoints: guards.active_component_endpoints,
+            stack: &next_stack,
             terminal_component: None,
         },
         &trace,
@@ -375,9 +370,7 @@ pub(super) fn invoke_service_with(
 
 #[derive(Clone, Copy)]
 pub(super) struct ServiceDispatchGuards<'a> {
-    pub(super) call_stack: &'a BTreeSet<PluginId>,
-    pub(super) active_services: &'a BTreeSet<ServiceId>,
-    pub(super) active_component_endpoints: &'a BTreeSet<ComponentServiceEndpoint>,
+    pub(super) stack: &'a InvocationStack,
     pub(super) terminal_component: Option<&'a ComponentId>,
 }
 
@@ -402,7 +395,7 @@ pub(super) fn invoke_resolved_chain_with(
         .instances
         .get(&provider.plugin)
         .ok_or_else(|| KernelError::WrongExecutionKind(provider.plugin.clone()))?;
-    let shared_invocation = if guards.call_stack.contains(&provider.plugin) {
+    let shared_invocation = if guards.stack.contains_plugin(&provider.plugin) {
         instance
             .try_lock()
             .ok()
@@ -413,7 +406,7 @@ pub(super) fn invoke_resolved_chain_with(
             .expect("plugin instance mutex poisoned")
             .shared_invocation()
     };
-    if guards.call_stack.contains(&provider.plugin) && shared_invocation.is_none() {
+    if guards.stack.contains_plugin(&provider.plugin) && shared_invocation.is_none() {
         return Err(KernelError::HostOperationDenied {
             plugin: provider.plugin.clone(),
             operation: format!("causal plugin re-entry:{}", chain.service),
@@ -445,8 +438,8 @@ pub(super) fn invoke_resolved_chain_with(
             },
             effective_authority.clone(),
         );
-    let mut next_stack = guards.call_stack.clone();
-    next_stack.insert(provider.plugin.clone());
+    let mut next_stack = guards.stack.clone();
+    next_stack.push_plugin(provider.plugin.clone());
     let continuation = is_layer.then(|| ContinuationState {
         chain: Arc::clone(&chain),
         terminal_component: guards.terminal_component.cloned(),
@@ -470,7 +463,7 @@ pub(super) fn invoke_resolved_chain_with(
         authority: &effective_authority,
         transaction_context: runtime.transactions.clone(),
         call_cancellation: Some(call_cancellation.clone()),
-        call_stack: next_stack,
+        invocation_stack: next_stack,
         events: runtime.events,
         tasks: runtime.tasks,
         persistence: runtime.persistence,
@@ -478,8 +471,6 @@ pub(super) fn invoke_resolved_chain_with(
         trace_sink: runtime.trace_sink,
         provenance: runtime.provenance,
         continuation,
-        active_services: guards.active_services.clone(),
-        active_component_endpoints: guards.active_component_endpoints.clone(),
     };
     if is_layer {
         let result = match shared_invocation.as_ref() {
