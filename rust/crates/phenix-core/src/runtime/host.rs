@@ -8,7 +8,7 @@ use super::{
 
 impl<'a> PluginHost<'a> {
     pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
-        self.graph_generation
+        self.scope.generation.generation()
     }
 
     pub fn plugin(&self) -> &PluginId {
@@ -25,7 +25,7 @@ impl<'a> PluginHost<'a> {
 
     #[doc(hidden)]
     pub fn record_runtime_trace(&self, event: RuntimeTraceEvent) {
-        trace::record_runtime_trace(self.trace_sink, event);
+        trace::record_runtime_trace(self.runtime.trace_sink, event);
     }
 
     pub fn invoke_import<I: ComponentInterface>(
@@ -34,7 +34,9 @@ impl<'a> PluginHost<'a> {
         request: &crate::PhenixValue,
     ) -> Result<crate::PhenixValue, ComponentInvocationError> {
         let resolved = self
-            .component_graph
+            .scope
+            .generation
+            .component_graph()
             .component(component)
             .ok_or_else(|| crate::ComponentGraphError::UnknownComponent(component.clone()))?;
         if &resolved.owning_plugin != self.plugin {
@@ -46,7 +48,9 @@ impl<'a> PluginHost<'a> {
         }
         let interface = I::interface_id();
         let dispatch = self
-            .dispatch_topology
+            .scope
+            .generation
+            .dispatch_topology()
             .component_import(component, &interface)
             .ok_or_else(|| ComponentInvocationError::UnboundImport {
                 component: component.clone(),
@@ -77,23 +81,12 @@ impl<'a> PluginHost<'a> {
             fallback_reason,
             delegated_authority.clone(),
         );
-        let transactions = TransactionContext::coordinated_by(self.plugin);
+        let scope = self.scope.delegated(
+            delegated_authority.clone(),
+            TransactionContext::coordinated_by(self.plugin),
+        );
         let output = invoke_component_service_with(
-            InvocationContext {
-                graph_generation: self.graph_generation,
-                component_graph: self.component_graph,
-                dispatch_topology: self.dispatch_topology,
-                config: self.config,
-                states: self.states,
-                instances: self.instances,
-                events: self.events,
-                tasks: self.tasks,
-                persistence: self.persistence,
-                prepared_mutations: self.prepared_mutations,
-                transactions: &transactions,
-                trace_sink: self.trace_sink,
-                provenance: self.provenance,
-            },
+            self.runtime,
             ComponentInvocationPlan {
                 service,
                 layers: &dispatch.layers,
@@ -105,16 +98,18 @@ impl<'a> PluginHost<'a> {
                 provider_provenance: Some(provider_provenance),
             },
             &input,
-            &delegated_authority,
-            &self.scope.stack,
+            scope,
         )?;
         serde_json::from_slice(&output)
             .map_err(|error| ComponentInvocationError::Decode(error.to_string()))
     }
 
     fn provider_available(&self, handle: &ResolvedImportHandle) -> bool {
-        self.states.get(handle.owning_plugin()).copied() == Some(PluginState::Active)
-            && self.instances.contains_key(handle.owning_plugin())
+        self.runtime.states.get(handle.owning_plugin()).copied() == Some(PluginState::Active)
+            && self
+                .runtime
+                .invocations
+                .contains_key(handle.owning_plugin())
     }
 
     #[doc(hidden)]
@@ -126,29 +121,11 @@ impl<'a> PluginHost<'a> {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         let delegated_authority = self.scope.authority.attenuate(requested_authority);
-        let transactions = TransactionContext::coordinated_by(self.plugin);
-        invoke_service_with(
-            InvocationContext {
-                graph_generation: self.graph_generation,
-                component_graph: self.component_graph,
-                dispatch_topology: self.dispatch_topology,
-                config: self.config,
-                states: self.states,
-                instances: self.instances,
-                events: self.events,
-                tasks: self.tasks,
-                persistence: self.persistence,
-                prepared_mutations: self.prepared_mutations,
-                transactions: &transactions,
-                trace_sink: self.trace_sink,
-                provenance: self.provenance,
-            },
-            service,
-            input,
-            &delegated_authority,
-            binding,
-            &self.scope.stack,
-        )
+        let scope = self.scope.delegated(
+            delegated_authority,
+            TransactionContext::coordinated_by(self.plugin),
+        );
+        invoke_service_with(self.runtime, service, input, binding, scope)
     }
 
     pub fn continue_service(
@@ -160,32 +137,24 @@ impl<'a> PluginHost<'a> {
             .continuation
             .as_ref()
             .ok_or(KernelError::ContinuationUnavailable)?;
-        let service = continuation.chain.service.clone();
+        let chain = self
+            .scope
+            .selected_chain
+            .as_ref()
+            .ok_or(KernelError::ContinuationUnavailable)?;
+        let service = chain.service.clone();
         if continuation.used.swap(true, Ordering::AcqRel) {
             return Err(KernelError::ContinuationAlreadyUsed(service));
         }
         let delegated_authority = self.scope.authority.attenuate(requested_authority);
+        let scope = self
+            .scope
+            .delegated(delegated_authority, self.scope.transactions.clone());
         invoke_resolved_chain_with(
-            InvocationContext {
-                graph_generation: self.graph_generation,
-                component_graph: self.component_graph,
-                dispatch_topology: self.dispatch_topology,
-                config: self.config,
-                states: self.states,
-                instances: self.instances,
-                events: self.events,
-                tasks: self.tasks,
-                persistence: self.persistence,
-                prepared_mutations: self.prepared_mutations,
-                transactions: &self.scope.transactions,
-                trace_sink: self.trace_sink,
-                provenance: self.provenance,
-            },
-            Arc::clone(&continuation.chain),
+            self.runtime,
             continuation.next_position,
             input,
-            &delegated_authority,
-            &self.scope.stack,
+            scope,
             continuation.terminal_component.as_ref(),
             &continuation.trace,
         )
@@ -193,8 +162,8 @@ impl<'a> PluginHost<'a> {
 
     pub fn task_scope(&self) -> Option<TaskScope<'_>> {
         Some(TaskScope::new_owned(
-            self.tasks,
-            self.graph_generation?,
+            self.runtime.tasks,
+            self.scope.generation.generation()?,
             &self.scope.authority,
             self.plugin,
         ))
@@ -216,13 +185,17 @@ impl<'a> PluginHost<'a> {
             kernel_policy_revision,
             payload,
         };
-        self.events
-            .admit_in_generation(&event, &self.scope.authority, self.graph_generation)
+        self.runtime.events.admit_in_generation(
+            &event,
+            &self.scope.authority,
+            self.scope.generation.generation(),
+        )
     }
 
     pub fn register_durable_schema(&self, schema: &DurableSchema) -> Result<(), KernelError> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
-        self.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .register_schema(self.plugin, schema)
@@ -236,7 +209,8 @@ impl<'a> PluginHost<'a> {
     ) -> Result<(), KernelError> {
         self.require_persistence_operation(PERSISTENCE_SCHEMA, &schema.namespace)?;
         self.require_capability(PERSISTENCE_WRITE)?;
-        self.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .migrate_schema(self.plugin, schema, migrations)
@@ -249,7 +223,8 @@ impl<'a> PluginHost<'a> {
         key: &str,
     ) -> Result<Option<Vec<u8>>, KernelError> {
         self.require_persistence_operation(PERSISTENCE_READ, namespace)?;
-        self.persistence
+        self.runtime
+            .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
             .read(self.plugin, namespace, key)
@@ -297,6 +272,7 @@ impl<'a> PluginHost<'a> {
             None,
         );
         let result = self
+            .runtime
             .persistence
             .lock()
             .expect("kernel persistence mutex poisoned")
@@ -335,7 +311,8 @@ impl<'a> PluginHost<'a> {
             self.require_active_plugin(self.plugin)?;
             self.require_not_cancelled("prepare durable transaction")?;
             self.require_prepared_scope_generation()?;
-            self.prepared_mutations
+            self.runtime
+                .prepared_mutations
                 .prepare(
                     self.plugin,
                     namespace,
@@ -385,12 +362,14 @@ impl<'a> PluginHost<'a> {
                 });
             }
 
-            let participants = self.prepared_mutations.consume(handles).map_err(|_| {
-                KernelError::HostOperationDenied {
+            let participants = self
+                .runtime
+                .prepared_mutations
+                .consume(handles)
+                .map_err(|_| KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
                     operation: "prepared mutation is unavailable in this invocation scope".into(),
-                }
-            })?;
+                })?;
             if participants
                 .iter()
                 .any(|participant| &participant.coordinator != self.plugin)
@@ -423,7 +402,13 @@ impl<'a> PluginHost<'a> {
                         ),
                     });
                 }
-                if self.config.resource_owner(&transaction.namespace) != Some(&transaction.owner) {
+                if self
+                    .scope
+                    .generation
+                    .config()
+                    .resource_owner(&transaction.namespace)
+                    != Some(&transaction.owner)
+                {
                     return Err(KernelError::HostOperationDenied {
                         plugin: self.plugin.clone(),
                         operation: format!(
@@ -437,7 +422,9 @@ impl<'a> PluginHost<'a> {
                 }
                 self.require_active_plugin(&transaction.owner)?;
                 let authorized_import = self
-                    .component_graph
+                    .scope
+                    .generation
+                    .component_graph()
                     .components()
                     .filter(|component| &component.owning_plugin == self.plugin)
                     .flat_map(|component| component.imports.iter())
@@ -461,7 +448,8 @@ impl<'a> PluginHost<'a> {
                 .into_iter()
                 .map(|participant| participant.transaction)
                 .collect();
-            self.persistence
+            self.runtime
+                .persistence
                 .lock()
                 .expect("kernel persistence mutex poisoned")
                 .transact_many(&transactions)
@@ -488,10 +476,10 @@ impl<'a> PluginHost<'a> {
     }
 
     fn require_prepared_scope_generation(&self) -> Result<(), KernelError> {
-        if self.prepared_mutations.generation() == self.graph_generation {
+        if self.runtime.prepared_mutations.generation() == self.scope.generation.generation() {
             return Ok(());
         }
-        self.prepared_mutations.clear();
+        self.runtime.prepared_mutations.clear();
         Err(KernelError::HostOperationDenied {
             plugin: self.plugin.clone(),
             operation: "prepared mutation scope belongs to another graph generation".into(),
@@ -507,7 +495,7 @@ impl<'a> PluginHost<'a> {
         {
             return Ok(());
         }
-        self.prepared_mutations.clear();
+        self.runtime.prepared_mutations.clear();
         Err(KernelError::HostOperationDenied {
             plugin: self.plugin.clone(),
             operation: format!("{operation} after call cancellation"),
@@ -515,8 +503,8 @@ impl<'a> PluginHost<'a> {
     }
 
     fn require_active_plugin(&self, plugin: &PluginId) -> Result<(), KernelError> {
-        if self.states.get(plugin).copied() == Some(PluginState::Active)
-            && self.instances.contains_key(plugin)
+        if self.runtime.states.get(plugin).copied() == Some(PluginState::Active)
+            && self.runtime.instances.contains_key(plugin)
         {
             return Ok(());
         }
@@ -529,7 +517,7 @@ impl<'a> PluginHost<'a> {
         namespace: &ResourceNamespace,
     ) -> Result<(), KernelError> {
         self.require_capability(capability)?;
-        if self.config.resource_owner(namespace) == Some(self.plugin) {
+        if self.scope.generation.config().resource_owner(namespace) == Some(self.plugin) {
             return Ok(());
         }
         Err(KernelError::HostOperationDenied {
@@ -558,7 +546,7 @@ impl<'a> PluginHost<'a> {
         error: Option<String>,
     ) {
         trace::record_runtime_trace(
-            self.trace_sink,
+            self.runtime.trace_sink,
             RuntimeTraceEvent::DataMutation {
                 resource,
                 stage: stage.to_owned(),

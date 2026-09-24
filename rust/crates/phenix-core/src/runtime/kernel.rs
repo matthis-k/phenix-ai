@@ -46,6 +46,7 @@ impl Kernel {
             embedded_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
             instances: BTreeMap::new(),
+            invocations: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
             tasks: Arc::new(TaskRuntime::default()),
             persistence: Arc::new(Mutex::new(persistence)),
@@ -191,6 +192,11 @@ impl Kernel {
             } else {
                 BTreeMap::new()
             };
+        let mut next_invocations = if self.runtime_active {
+            self.invocations.clone()
+        } else {
+            BTreeMap::new()
+        };
         let mut staged = Vec::new();
 
         for plugin in config.activation_order() {
@@ -225,24 +231,24 @@ impl Kernel {
                         let prepared_mutations =
                             PreparedMutationScope::new(self.graph_generation());
                         let host = PluginHost {
-                            graph_generation: self.graph_generation(),
-                            component_graph: self.component_graph(),
-                            dispatch_topology: self.dispatch_topology(),
-                            config: &config,
-                            states: &next_states,
-                            instances: &next_instances,
+                            runtime: RuntimeServices {
+                                states: &next_states,
+                                instances: &next_instances,
+                                invocations: &next_invocations,
+                                events: &self.events,
+                                tasks: &self.tasks,
+                                persistence: &self.persistence,
+                                prepared_mutations: &prepared_mutations,
+                                trace_sink: self.trace_sink.as_ref(),
+                                provenance: &self.provenance,
+                            },
                             plugin: &binding.provider,
                             scope: CallScope::root(
+                                Arc::new(self.runtime_generation.clone()),
                                 &binding.provider,
                                 &provider_manifest.maximum_authority,
                                 Some(cancellation.clone()),
                             ),
-                            events: &self.events,
-                            tasks: &self.tasks,
-                            persistence: &self.persistence,
-                            prepared_mutations: &prepared_mutations,
-                            trace_sink: self.trace_sink.as_ref(),
-                            provenance: &self.provenance,
                             continuation: None,
                         };
                         let mut provider = provider.lock().expect("plugin instance mutex poisoned");
@@ -294,6 +300,7 @@ impl Kernel {
                             runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
+                            invocations: &next_invocations,
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
@@ -309,24 +316,24 @@ impl Kernel {
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
                 let host = PluginHost {
-                    graph_generation: self.graph_generation(),
-                    component_graph: self.component_graph(),
-                    dispatch_topology: self.dispatch_topology(),
-                    config: &config,
-                    states: &next_states,
-                    instances: &next_instances,
+                    runtime: RuntimeServices {
+                        states: &next_states,
+                        instances: &next_instances,
+                        invocations: &next_invocations,
+                        events: &self.events,
+                        tasks: &self.tasks,
+                        persistence: &self.persistence,
+                        prepared_mutations: &prepared_mutations,
+                        trace_sink: self.trace_sink.as_ref(),
+                        provenance: &self.provenance,
+                    },
                     plugin,
                     scope: CallScope::root(
+                        Arc::new(self.runtime_generation.clone()),
                         plugin,
                         &manifest.maximum_authority,
                         Some(cancellation.clone()),
                     ),
-                    events: &self.events,
-                    tasks: &self.tasks,
-                    persistence: &self.persistence,
-                    prepared_mutations: &prepared_mutations,
-                    trace_sink: self.trace_sink.as_ref(),
-                    provenance: &self.provenance,
                     continuation: None,
                 };
                 let started = catch_unwind(AssertUnwindSafe(|| instance.start(&host)));
@@ -348,6 +355,7 @@ impl Kernel {
                             runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
+                            invocations: &next_invocations,
                             events: &self.events,
                             tasks: &self.tasks,
                             persistence: &self.persistence,
@@ -360,7 +368,10 @@ impl Kernel {
                         message,
                     });
                 }
-                next_instances.insert(plugin.clone(), Arc::new(Mutex::new(instance)));
+                let instance = Arc::new(Mutex::new(instance));
+                let invocation = canonical_invocation(&instance);
+                next_instances.insert(plugin.clone(), Arc::clone(&instance));
+                next_invocations.insert(plugin.clone(), invocation);
             }
             next_states.insert(plugin.clone(), PluginState::Active);
             staged.push(plugin.clone());
@@ -371,6 +382,7 @@ impl Kernel {
                 runtime: &self.runtime_generation,
                 states: &next_states,
                 instances: &next_instances,
+                invocations: &next_invocations,
                 events: &self.events,
                 tasks: &self.tasks,
                 persistence: &self.persistence,
@@ -389,6 +401,7 @@ impl Kernel {
                         runtime: &self.runtime_generation,
                         states: &next_states,
                         instances: &next_instances,
+                        invocations: &next_invocations,
                         events: &self.events,
                         tasks: &self.tasks,
                         persistence: &self.persistence,
@@ -403,6 +416,7 @@ impl Kernel {
         self.events.replace_subscriptions(subscriptions)?;
         self.states = next_states;
         self.instances = next_instances;
+        self.invocations = next_invocations;
         self.runtime_active = true;
         for plugin in staged {
             self.events.publish(KernelEvent::PluginActivated(plugin));
@@ -425,23 +439,21 @@ impl Kernel {
             |plan| plan.policy_identity,
         );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
-        let transactions = TransactionContext::unscoped();
+        let runtime = RuntimeServices {
+            states: &self.states,
+            instances: &self.instances,
+            invocations: &self.invocations,
+            events: &self.events,
+            tasks: &self.tasks,
+            persistence: &self.persistence,
+            prepared_mutations: &prepared_mutations,
+            trace_sink: self.trace_sink.as_ref(),
+            provenance: &self.provenance,
+        };
+        let scope =
+            CallScope::external(Arc::new(self.runtime_generation.clone()), caller_authority);
         invoke_component_service_with(
-            InvocationContext {
-                graph_generation: self.graph_generation(),
-                component_graph: self.component_graph(),
-                dispatch_topology: self.dispatch_topology(),
-                config: self.config(),
-                states: &self.states,
-                instances: &self.instances,
-                events: &self.events,
-                tasks: &self.tasks,
-                persistence: &self.persistence,
-                prepared_mutations: &prepared_mutations,
-                transactions: &transactions,
-                trace_sink: self.trace_sink.as_ref(),
-                provenance: &self.provenance,
-            },
+            runtime,
             ComponentInvocationPlan {
                 service,
                 layers: layer_plan,
@@ -453,8 +465,7 @@ impl Kernel {
                 provider_provenance: None,
             },
             input,
-            caller_authority,
-            &InvocationStack::default(),
+            scope,
         )
     }
 
@@ -466,29 +477,20 @@ impl Kernel {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
-        let transactions = TransactionContext::unscoped();
-        invoke_service_with(
-            InvocationContext {
-                graph_generation: self.graph_generation(),
-                component_graph: self.component_graph(),
-                dispatch_topology: self.dispatch_topology(),
-                config: self.config(),
-                states: &self.states,
-                instances: &self.instances,
-                events: &self.events,
-                tasks: &self.tasks,
-                persistence: &self.persistence,
-                prepared_mutations: &prepared_mutations,
-                transactions: &transactions,
-                trace_sink: self.trace_sink.as_ref(),
-                provenance: &self.provenance,
-            },
-            service,
-            input,
-            caller_authority,
-            binding,
-            &InvocationStack::default(),
-        )
+        let runtime = RuntimeServices {
+            states: &self.states,
+            instances: &self.instances,
+            invocations: &self.invocations,
+            events: &self.events,
+            tasks: &self.tasks,
+            persistence: &self.persistence,
+            prepared_mutations: &prepared_mutations,
+            trace_sink: self.trace_sink.as_ref(),
+            provenance: &self.provenance,
+        };
+        let scope =
+            CallScope::external(Arc::new(self.runtime_generation.clone()), caller_authority);
+        invoke_service_with(runtime, service, input, binding, scope)
     }
 
     pub fn stop(&mut self, plugin: &PluginId) -> Result<(), KernelError> {
@@ -504,24 +506,24 @@ impl Kernel {
             let cancellation = live_call.cancellation_token().clone();
             let prepared_mutations = PreparedMutationScope::new(generation);
             let host = PluginHost {
-                graph_generation: generation,
-                component_graph: self.component_graph(),
-                dispatch_topology: self.dispatch_topology(),
-                config: self.config(),
-                states: &self.states,
-                instances: &self.instances,
+                runtime: RuntimeServices {
+                    states: &self.states,
+                    instances: &self.instances,
+                    invocations: &self.invocations,
+                    events: &self.events,
+                    tasks: &self.tasks,
+                    persistence: &self.persistence,
+                    prepared_mutations: &prepared_mutations,
+                    trace_sink: self.trace_sink.as_ref(),
+                    provenance: &self.provenance,
+                },
                 plugin,
                 scope: CallScope::root(
+                    Arc::new(self.runtime_generation.clone()),
                     plugin,
                     &manifest.maximum_authority,
                     Some(cancellation.clone()),
                 ),
-                events: &self.events,
-                tasks: &self.tasks,
-                persistence: &self.persistence,
-                prepared_mutations: &prepared_mutations,
-                trace_sink: self.trace_sink.as_ref(),
-                provenance: &self.provenance,
                 continuation: None,
             };
             let mut instance = instance.lock().expect("plugin instance mutex poisoned");
@@ -550,6 +552,7 @@ impl Kernel {
             }
         }
         self.instances.remove(plugin);
+        self.invocations.remove(plugin);
         let state = self
             .states
             .get_mut(plugin)

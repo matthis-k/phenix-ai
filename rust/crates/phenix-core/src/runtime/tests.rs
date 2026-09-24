@@ -20,6 +20,31 @@ fn service(value: &str) -> ServiceId {
     ServiceId::parse(value).unwrap()
 }
 
+fn test_host<'a>(
+    kernel: &'a Kernel,
+    generation: Arc<RuntimeGeneration>,
+    plugin: &'a PluginId,
+    authority: &Authority,
+    prepared_mutations: &'a PreparedMutationScope,
+) -> PluginHost<'a> {
+    PluginHost {
+        runtime: RuntimeServices {
+            states: &kernel.states,
+            instances: &kernel.instances,
+            invocations: &kernel.invocations,
+            events: &kernel.events,
+            tasks: &kernel.tasks,
+            persistence: &kernel.persistence,
+            prepared_mutations,
+            trace_sink: kernel.trace_sink.as_ref(),
+            provenance: &kernel.provenance,
+        },
+        plugin,
+        scope: CallScope::root(generation, plugin, authority, None),
+        continuation: None,
+    }
+}
+
 struct MarkerPlugin(Arc<AtomicBool>);
 impl PluginInstance for MarkerPlugin {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
@@ -522,23 +547,17 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
             &owner_transactions,
         )
         .unwrap();
-    let host = PluginHost {
-        graph_generation: kernel.graph_generation(),
-        component_graph: &graph,
-        dispatch_topology: kernel.dispatch_topology(),
-        config: kernel.config(),
-        states: &kernel.states,
-        instances: &kernel.instances,
-        plugin: &caller_plugin,
-        scope: CallScope::root(&caller_plugin, &authority, None),
-        events: &kernel.events,
-        tasks: &kernel.tasks,
-        persistence: &kernel.persistence,
-        prepared_mutations: &prepared_mutations,
-        trace_sink: kernel.trace_sink.as_ref(),
-        provenance: &kernel.provenance,
-        continuation: None,
-    };
+    let generation = Arc::new(RuntimeGeneration::bootstrap_with_component_graph(
+        kernel.config().clone(),
+        graph,
+    ));
+    let host = test_host(
+        &kernel,
+        generation,
+        &caller_plugin,
+        &authority,
+        &prepared_mutations,
+    );
     let denied = host
         .transact_prepared(&[caller_mutation, owner_mutation])
         .unwrap_err();
@@ -651,24 +670,17 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
             &TransactionContext::unscoped(),
         )
         .unwrap();
-    let host = PluginHost {
-        graph_generation: kernel.graph_generation(),
-        component_graph: &graph,
-        dispatch_topology: kernel.dispatch_topology(),
-        config: kernel.config(),
-        states: &kernel.states,
-        instances: &kernel.instances,
-        plugin: &second.id,
-        scope: CallScope::root(&second.id, &authority, None),
-        events: &kernel.events,
-        tasks: &kernel.tasks,
-        persistence: &kernel.persistence,
-        prepared_mutations: &prepared_mutations,
-        trace_sink: kernel.trace_sink.as_ref(),
-        provenance: &kernel.provenance,
-        continuation: None,
-    };
-
+    let generation = Arc::new(RuntimeGeneration::bootstrap_with_component_graph(
+        kernel.config().clone(),
+        graph,
+    ));
+    let host = test_host(
+        &kernel,
+        generation,
+        &second.id,
+        &authority,
+        &prepared_mutations,
+    );
     let denied = host
         .transact_prepared(&[owner_mutation, second_mutation])
         .unwrap_err();
@@ -693,23 +705,14 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
     let authority = Authority::new([capability(PERSISTENCE_SCHEMA)]);
     let owner_plugin = plugin("owner");
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
-    let host = PluginHost {
-        graph_generation: kernel.graph_generation(),
-        component_graph: kernel.component_graph(),
-        dispatch_topology: kernel.dispatch_topology(),
-        config: kernel.config(),
-        states: &kernel.states,
-        instances: &kernel.instances,
-        plugin: &owner_plugin,
-        scope: CallScope::root(&owner_plugin, &authority, None),
-        events: &kernel.events,
-        tasks: &kernel.tasks,
-        persistence: &kernel.persistence,
-        prepared_mutations: &prepared_mutations,
-        trace_sink: kernel.trace_sink.as_ref(),
-        provenance: &kernel.provenance,
-        continuation: None,
-    };
+    let generation = Arc::new(kernel.runtime_generation.clone());
+    let host = test_host(
+        &kernel,
+        generation,
+        &owner_plugin,
+        &authority,
+        &prepared_mutations,
+    );
     assert!(matches!(
         host.register_durable_schema(&DurableSchema::new(other_namespace, 1)),
         Err(KernelError::HostOperationDenied { .. })
