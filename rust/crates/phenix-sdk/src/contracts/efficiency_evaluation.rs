@@ -46,6 +46,7 @@ impl CostPerSuccess {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct EfficiencyCohortReport {
+    pub policy_revision: String,
     pub outcome_evaluator_identity: String,
     pub price_revision: String,
     pub total_tasks: u32,
@@ -57,6 +58,7 @@ pub struct EfficiencyCohortReport {
     pub unresolved_tasks: u32,
     pub known_cost_microunits: u64,
     pub incomplete_cost_records: u32,
+    pub usage: UsageAggregate,
     pub cost_per_success: Option<CostPerSuccess>,
     pub rollout_comparable: bool,
 }
@@ -65,8 +67,10 @@ pub struct EfficiencyCohortReport {
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EfficiencyEvaluationError {
     EmptyCohort,
+    MixedPolicyRevision { expected: String, observed: String },
     MixedOutcomeEvaluator { expected: String, observed: String },
     MixedPriceRevision { expected: String, observed: String },
+    MismatchedTaskSet,
     CohortTooLarge,
 }
 
@@ -85,8 +89,15 @@ pub fn evaluate_efficiency_cohort(
     let mut unresolved_tasks = 0_u32;
     let mut incomplete_cost_records = 0_u32;
     let mut known_cost_microunits = 0_u64;
+    let mut usage = UsageAggregate::default();
 
     for record in records {
+        if record.policy_revision != first.policy_revision {
+            return Err(EfficiencyEvaluationError::MixedPolicyRevision {
+                expected: first.policy_revision.clone(),
+                observed: record.policy_revision.clone(),
+            });
+        }
         if record.outcome_evaluator_identity != first.outcome_evaluator_identity {
             return Err(EfficiencyEvaluationError::MixedOutcomeEvaluator {
                 expected: first.outcome_evaluator_identity.clone(),
@@ -100,6 +111,7 @@ pub fn evaluate_efficiency_cohort(
             });
         }
         known_cost_microunits = known_cost_microunits.saturating_add(record.known_cost_microunits);
+        merge_usage(&mut usage, &record.usage);
         if !record.cost_complete {
             incomplete_cost_records = incomplete_cost_records.saturating_add(1);
         }
@@ -131,6 +143,7 @@ pub fn evaluate_efficiency_cohort(
     });
 
     Ok(EfficiencyCohortReport {
+        policy_revision: first.policy_revision.clone(),
         outcome_evaluator_identity: first.outcome_evaluator_identity.clone(),
         price_revision: first.price_revision.clone(),
         total_tasks,
@@ -142,8 +155,79 @@ pub fn evaluate_efficiency_cohort(
         unresolved_tasks,
         known_cost_microunits,
         incomplete_cost_records,
+        usage,
         cost_per_success,
         rollout_comparable,
+    })
+}
+
+fn merge_metric(
+    target: &mut super::UsageMetricAggregate,
+    source: &super::UsageMetricAggregate,
+) {
+    target.reported = target.reported.saturating_add(source.reported);
+    target.estimated = target.estimated.saturating_add(source.estimated);
+    target.unavailable_records = target
+        .unavailable_records
+        .saturating_add(source.unavailable_records);
+}
+
+fn merge_usage(target: &mut UsageAggregate, source: &UsageAggregate) {
+    merge_metric(&mut target.fresh_input_tokens, &source.fresh_input_tokens);
+    merge_metric(&mut target.cache_read_tokens, &source.cache_read_tokens);
+    merge_metric(&mut target.cache_write_tokens, &source.cache_write_tokens);
+    merge_metric(&mut target.output_tokens, &source.output_tokens);
+    merge_metric(&mut target.reasoning_tokens, &source.reasoning_tokens);
+    target.tool_input_bytes = target.tool_input_bytes.saturating_add(source.tool_input_bytes);
+    target.tool_result_bytes = target.tool_result_bytes.saturating_add(source.tool_result_bytes);
+    merge_metric(
+        &mut target.reacquisition_fresh_input_tokens,
+        &source.reacquisition_fresh_input_tokens,
+    );
+    target.reacquisition_tool_result_bytes = target
+        .reacquisition_tool_result_bytes
+        .saturating_add(source.reacquisition_tool_result_bytes);
+    target.attempts = target.attempts.saturating_add(source.attempts);
+    target.failed_attempts = target.failed_attempts.saturating_add(source.failed_attempts);
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyPolicyComparison {
+    pub baseline: EfficiencyCohortReport,
+    pub candidate: EfficiencyCohortReport,
+}
+
+pub fn compare_efficiency_policies(
+    baseline: &[EfficiencyTaskRecord],
+    candidate: &[EfficiencyTaskRecord],
+) -> Result<EfficiencyPolicyComparison, EfficiencyEvaluationError> {
+    let baseline_keys = baseline
+        .iter()
+        .map(|record| (&record.task_fixture_revision, &record.root_execution_id))
+        .collect::<std::collections::BTreeSet<_>>();
+    let candidate_keys = candidate
+        .iter()
+        .map(|record| (&record.task_fixture_revision, &record.root_execution_id))
+        .collect::<std::collections::BTreeSet<_>>();
+    if baseline.len() != baseline_keys.len()
+        || candidate.len() != candidate_keys.len()
+        || baseline_keys.len() != candidate_keys.len()
+        || baseline_keys
+            .iter()
+            .map(|(task, _)| *task)
+            .collect::<std::collections::BTreeSet<_>>()
+            != candidate_keys
+                .iter()
+                .map(|(task, _)| *task)
+                .collect::<std::collections::BTreeSet<_>>()
+    {
+        return Err(EfficiencyEvaluationError::MismatchedTaskSet);
+    }
+
+    Ok(EfficiencyPolicyComparison {
+        baseline: evaluate_efficiency_cohort(baseline)?,
+        candidate: evaluate_efficiency_cohort(candidate)?,
     })
 }
 
@@ -164,6 +248,52 @@ mod tests {
             cost_complete: true,
             root_elapsed_ms: Some(1_000),
         }
+    }
+
+    #[test]
+    fn cohort_preserves_fresh_cache_and_reacquisition_categories() {
+        let mut record = task(0, EvaluationOutcome::Succeeded, 10);
+        record.usage.fresh_input_tokens.reported = 100;
+        record.usage.cache_read_tokens.reported = 200;
+        record.usage.cache_write_tokens.reported = 25;
+        record.usage.output_tokens.reported = 50;
+        record.usage.reacquisition_fresh_input_tokens.reported = 30;
+
+        let report = evaluate_efficiency_cohort(&[record]).unwrap();
+        assert_eq!(report.usage.fresh_input_tokens.reported, 100);
+        assert_eq!(report.usage.cache_read_tokens.reported, 200);
+        assert_eq!(report.usage.cache_write_tokens.reported, 25);
+        assert_eq!(report.usage.output_tokens.reported, 50);
+        assert_eq!(report.usage.reacquisition_fresh_input_tokens.reported, 30);
+    }
+
+    #[test]
+    fn cohort_rejects_mixed_policy_revisions() {
+        let first = task(0, EvaluationOutcome::Succeeded, 10);
+        let mut second = task(1, EvaluationOutcome::Succeeded, 10);
+        second.policy_revision = "policy-2".into();
+
+        assert!(matches!(
+            evaluate_efficiency_cohort(&[first, second]),
+            Err(EfficiencyEvaluationError::MixedPolicyRevision { .. })
+        ));
+    }
+
+    #[test]
+    fn paired_comparison_requires_the_same_task_fixture_set() {
+        let baseline = vec![
+            task(0, EvaluationOutcome::Succeeded, 10),
+            task(1, EvaluationOutcome::Succeeded, 10),
+        ];
+        let candidate = vec![
+            task(0, EvaluationOutcome::Succeeded, 8),
+            task(2, EvaluationOutcome::Succeeded, 8),
+        ];
+
+        assert_eq!(
+            compare_efficiency_policies(&baseline, &candidate),
+            Err(EfficiencyEvaluationError::MismatchedTaskSet)
+        );
     }
 
     #[test]
