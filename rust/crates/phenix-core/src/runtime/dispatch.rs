@@ -364,6 +364,9 @@ pub(super) fn invoke_service_with(
     result
 }
 
+// The resolved-chain cursor is intentionally explicit here; collapsing these values into an
+// untyped bag would obscure the call-scope/continuation boundary this PR makes visible.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn invoke_resolved_chain_with(
     runtime: InvocationContext<'_>,
     chain: Arc<ResolvedServiceChain>,
