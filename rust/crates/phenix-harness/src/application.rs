@@ -2857,7 +2857,7 @@ mod tests {
         let session_id = SessionId::parse("session-1").unwrap();
         let execution_id = "execution-1".to_owned();
         let cancellation = Arc::new(AtomicBool::new(false));
-        let (progress_sender, _progress_receiver) =
+        let (progress_sender, mut progress_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
         let adapter = {
             let harness = worker.harness.lock();
@@ -2871,7 +2871,7 @@ mod tests {
                     session_id: session_id.clone(),
                     permission_handler: None,
                     tools: tools.clone(),
-                    cancellation,
+                    cancellation: Arc::clone(&cancellation),
                     progress_sender,
                 },
             )
@@ -2885,6 +2885,49 @@ mod tests {
                 PhenixValue::String("printf phenix-runtime-bash".into()),
             )])),
         };
+
+        record_application_agent_progress(
+            &adapter,
+            AgentLoopProgressRecord {
+                execution_id: execution_id.clone(),
+                session_id: Some(session_id.clone()),
+                progress: AgentLoopProgress::ToolCall { call: call.clone() },
+            },
+        )
+        .unwrap();
+        let progress = progress_receiver.try_recv().expect("tool progress event");
+        let ExecutionWorkerEvent::Progress(progress) = progress else {
+            panic!("agent loop progress must stay on the ordered application worker channel");
+        };
+        assert_eq!(progress.session_id, session_id);
+        assert_eq!(progress.execution_id, execution_id);
+        let ExecutionChange::ToolCall {
+            call_id,
+            callable_id,
+            input,
+        } = progress.change
+        else {
+            panic!("tool call progress must retain its application execution shape");
+        };
+        assert_eq!(call_id, call.call_id);
+        assert_eq!(callable_id, call.callable_id);
+        assert_eq!(input, call.input);
+
+        cancellation.store(true, Ordering::Release);
+        record_application_agent_progress(
+            &adapter,
+            AgentLoopProgressRecord {
+                execution_id: execution_id.clone(),
+                session_id: Some(session_id.clone()),
+                progress: AgentLoopProgress::ToolCall { call: call.clone() },
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            progress_receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        cancellation.store(false, Ordering::Release);
         let request = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
             session_id: Some(session_id.clone()),
