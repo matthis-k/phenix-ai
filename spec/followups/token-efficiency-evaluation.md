@@ -1,6 +1,6 @@
 # Success-normalized efficiency evaluation
 
-status: specification-only
+status: implementation-in-progress
 
 Tracks #516 slices 1 and 10 plus the rollout rule in `token-efficiency.md`.
 
@@ -8,21 +8,27 @@ Tracks #516 slices 1 and 10 plus the rollout rule in `token-efficiency.md`.
 
 Merged runtime work records typed usage, cache counters where available, attempts, retries, budgets, routing evidence, reacquisition, and outcomes. There is no single evaluation/reporting layer that compares efficiency policies by successful task work instead of raw token reduction.
 
+## Implementation progress
+
+- [x] Added task/cohort evaluation contracts with terminal outcome classes, complete-cost coverage, success-normalized cost, and explicit unresolved work.
+- [x] Cohort reports preserve fresh/cache-read/cache-write/output/reasoning/reacquisition usage categories and reject mixed policy/evaluator/price cohorts.
+- [x] Added paired-policy comparison that rejects mismatched task fixture sets before comparing reports.
+
 ## Required implementation
 
 - [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts.
-- [ ] Keep fresh input, cache reads, cache writes, output, reasoning, helper/delegated work, retries, reacquisition, latency, and cost separate.
+- [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
 - [ ] Define task-level success/outcome evidence without creating a second canonical task state.
-- [ ] Compare policy variants on the same representative task set.
+- [x] Compare policy variants only after validating the same task fixture set.
 - [ ] Report marginal effect of each independently disableable reduction stage.
 - [ ] Feed historical estimates into routing/UsagePolicy only as derived evidence for later attempts.
 - [ ] Keep current-turn outcome out of its own planning/routing decision.
-- [ ] Expose unknown/unavailable accounting explicitly rather than treating it as zero.
+- [x] Expose unknown/unavailable usage and incomplete monetary accounting explicitly rather than treating them as zero.
 
 ## Acceptance
 
-- [ ] A policy that lowers prompt tokens but increases retries can score worse overall.
-- [ ] Cached and fresh input are never collapsed before provider/cost policy has used them.
+- [x] A policy with cheaper successful work but more expensive failures can score worse in success-normalized cost.
+- [x] Cached and fresh input remain distinct in cohort reports.
 - [ ] Delegated/helper work appears in total task cost.
 - [ ] Reacquisition caused by prior reduction is attributable when causal evidence exists.
 - [ ] Evaluation can compare baseline vs one optimization at a time and combined profiles.
