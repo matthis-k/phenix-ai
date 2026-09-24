@@ -286,7 +286,7 @@ impl Kernel {
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                        runtime: &self.runtime_generation,
+                            runtime: &self.runtime_generation,
                             states: &next_states,
                             instances: &next_instances,
                             events: &self.events,
@@ -380,7 +380,7 @@ impl Kernel {
                 reconciliation::cleanup_staged(
                     &staged,
                     reconciliation::StopView {
-                            runtime: &self.runtime_generation,
+                        runtime: &self.runtime_generation,
                         states: &next_states,
                         instances: &next_instances,
                         events: &self.events,

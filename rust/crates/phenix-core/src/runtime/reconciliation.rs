@@ -207,7 +207,7 @@ impl Kernel {
                         cleanup_staged(
                             &staged,
                             StopView {
-                        runtime: candidate_runtime,
+                                runtime: candidate_runtime,
                                 states: &next_states,
                                 instances: &next_instances,
                                 events: &self.events,
@@ -299,7 +299,7 @@ impl Kernel {
                 cleanup_staged(
                     &staged,
                     StopView {
-                                runtime: candidate_runtime,
+                        runtime: candidate_runtime,
                         states: &next_states,
                         instances: &next_instances,
                         events: &self.events,
