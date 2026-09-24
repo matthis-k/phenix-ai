@@ -1,5 +1,5 @@
 use crate::{
-    prepared_mutation::{PreparedMutationScope, TransactionContext},
+    plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
     ArtifactRevision, Authority, CallCancellationToken, CapabilityId, ComponentGraphError,
     ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
     EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,

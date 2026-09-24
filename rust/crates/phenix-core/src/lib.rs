@@ -3,52 +3,26 @@
 //! This crate owns fundamental Phenix primitives and simple host mechanisms. Rich
 //! behavior, policy, discovery, management, and product semantics belong to plugins.
 
-mod activation;
 mod agent;
 mod artifact;
 mod authority;
 mod capability;
-mod component;
-mod composition_metadata;
+mod composition;
 mod configuration;
 #[cfg(test)]
 mod configuration_regression;
 mod content_reference;
-mod contract;
-mod contract_wire;
 mod events;
-mod frontend_metadata;
-mod identity;
-mod infallible_value;
-mod inspection;
 mod invocation;
-mod live_reconciliation;
 mod logging;
-mod management;
-mod manifest;
-mod metadata_input;
-mod metadata_inspection;
-mod metadata_reconciliation;
+mod metadata;
 mod observable;
 mod persistence;
-mod persistence_bootstrap;
-mod persistence_provider;
-mod persistence_value;
-mod plugin_build;
-mod plugin_build_execution;
-mod plugin_context;
-mod prepared_mutation;
-mod provider_resolution;
+mod plugin;
 mod reconciliation;
-mod reconciliation_inspection;
-mod registry;
-mod resolver;
 mod runtime;
 mod sdk;
-mod std_value;
-mod structural_value;
 mod tasks;
-mod typed_component;
 
 extern crate self as phenix_core;
 #[cfg(test)]
@@ -89,9 +63,6 @@ mod service_layer_dispatch_regression;
 #[cfg(test)]
 mod third_party_component_regression;
 
-pub use activation::{
-    ActiveResolvedGraph, ResolvedHarnessActivation, ResolvedHarnessActivationError,
-};
 pub use agent::{
     context_service, model_inference_service, skill_service, tool_service, ContextCommand,
     ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextResponse, ContextScope,
@@ -106,15 +77,30 @@ pub use capability::{
     CapabilityError, CapabilityHandler, CapabilityInvokeInput, CapabilityInvokeResult,
     CapabilityRegistry, SharedCapabilityRegistry,
 };
-pub use component::{
+pub use composition::activation::{
+    ActiveResolvedGraph, ResolvedHarnessActivation, ResolvedHarnessActivationError,
+};
+pub use composition::component::{
     ComponentGraphError, ResolvedComponent, ResolvedComponentGraph, ResolvedImport,
     ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
 };
-pub use composition_metadata::{
-    CompatibilityMetadata, ComponentHostKind, ComponentRuntimeMetadata, ComponentStateClass,
-    CompositionMetadataError, DurableMigrationMetadata, PluginPackageMetadata, ReloadPolicy,
-    SkillResourceMetadata,
+pub use composition::component_invocation::ComponentInvocationError;
+pub use composition::inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
+pub use composition::manifest::{
+    ComponentExport, ComponentImport, ComponentListener, ComponentManifest, ListenerProjection,
+    PluginArtifact, PluginExecution, PluginManifest, ServiceContribution, ServiceRole,
 };
+pub use composition::provider_resolution::{
+    InterfaceProviderPolicy, ProviderCompositionPolicy, ProviderFallbackReason,
+    ProviderSelectionReason,
+};
+pub use composition::registry::{
+    runtime_provider_runtime, runtime_provider_service, KernelConfig, KernelError,
+    KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedComponentDispatchPlan,
+    ResolvedDispatchTopology, ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan,
+    ResolvedTerminalPlan, RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
+};
+pub use composition::resolver::{ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
 pub use configuration::{
     ConfigContribution, ConfigContributionSource, ConfigMergeError, ConfigNamespace,
     ConfigSourceClass, ConfigurationFrontendMetadata, FrontendConfigContribution,
@@ -123,45 +109,27 @@ pub use configuration::{
 pub use content_reference::{
     ContentLocator, ContentReference, ContentReferenceStore, FileContentReferenceStore,
 };
-pub use contract::{
-    Bytes, CallableRef, CapabilityOwnerId, Contract, ContractId, ContractValue, Exact,
-    HasPhenixSchema, Key, ObjectRef, PhenixContract, PhenixSchema, PhenixValue, Project,
-    ReferenceId, SchemaCompatibility, SchemaMismatch, Type, TypeKind, ValueCodec, ValueError,
-    ValueMatch,
-};
 pub use events::{
     EventAdmissionReceipt, EventBus, EventDeliveryCancellation, EventDeliveryStatus,
     EventDispatchReport, EventEnvelope, EventError, EventFailurePolicy, EventHandler,
     EventSubscription, KernelEvent, SubscriptionSpec,
 };
-pub use frontend_metadata::FrontendMetadataResolutionError;
-pub use identity::{
-    CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId, ComponentId,
-    ConfigurationFrontendId, ContextResourceId, ContextRevisionId, EventTypeId, InterfaceId,
-    ModelId, PluginId, ResourceNamespace, RoutingProfileId, RuntimeId, SdkNamespace, SdkResourceId,
-    ServiceId, SessionId, SkillId, SubscriptionId,
-};
-pub use inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
 pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
-pub use live_reconciliation::LiveReconciliationError;
 pub use logging::{
     LogDetailMode, LogSink, StructuredLogger, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV,
     PHENIX_LOG_STORE_ENV,
 };
-pub use management::{
-    PluginBuildReport, PluginLoadRequest, PluginManagementContext, PluginManagementError,
-    PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginSetRequest,
-    PluginUnloadRequest,
+pub use metadata::composition::{
+    CompatibilityMetadata, ComponentHostKind, ComponentRuntimeMetadata, ComponentStateClass,
+    CompositionMetadataError, DurableMigrationMetadata, PluginPackageMetadata, ReloadPolicy,
+    SkillResourceMetadata,
 };
-pub use manifest::{
-    ComponentExport, ComponentImport, ComponentListener, ComponentManifest, ListenerProjection,
-    PluginArtifact, PluginExecution, PluginManifest, ServiceContribution, ServiceRole,
-};
-pub use metadata_input::{CompositionMetadataInput, MetadataResolutionError};
-pub use metadata_inspection::ResolvedCompositionMetadata;
-pub use metadata_reconciliation::{
+pub use metadata::frontend::FrontendMetadataResolutionError;
+pub use metadata::input::{CompositionMetadataInput, MetadataResolutionError};
+pub use metadata::inspection::ResolvedCompositionMetadata;
+pub use metadata::reconciliation::{
     ComponentMetadataChange, CompositionMetadataDiff, FrontendMetadataChange, MetadataChangeKind,
     MetadataReconciliationError, MetadataReconciliationPreview, PackageMetadataChange,
     ResourceMetadataChange,
@@ -173,49 +141,54 @@ pub use observable::{
     ObservationScope, ObservationSpec, ObservationSubscription, SnapshotPolicy, ValueAddress,
     ValueChange, ValueId, ValuePath, ValuePathSegment, ValueVersion, OBSERVABLE_CONTRACT,
 };
-pub use persistence::{
+pub use persistence::backend::{
     BackendFeature, DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
     PersistenceError, SchemaMigration, TransactionOp,
 };
-pub use persistence_bootstrap::{
+pub use persistence::bootstrap::{
     resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBootstrapDependency,
     PersistenceBootstrapError, PersistenceProviderDescriptor, PersistenceProviderTransition,
     ResolvedPersistenceBootstrap, StoreBinding, StoreBindingId, StoreBindingIdParseError,
 };
-pub use persistence_provider::{
+pub use persistence::provider::{
     prepare_persistence_candidate, PersistenceCandidateError, PersistenceProvider,
     PersistenceProviderError, PreparedPersistence,
 };
-pub use plugin_build::{
+pub use phenix_contract::{
+    Bytes, CallableId, CallableRef, CapabilityGenerationId, CapabilityId, CapabilityOwnerId,
+    ClientConnectionId, ComponentId, ComponentInterface, ConfigurationFrontendId,
+    ContextResourceId, ContextRevisionId, Contract, ContractId, ContractValue, EventTypeId, Exact,
+    GraphGenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId, InterfaceSchema,
+    InterfaceSchemaMismatch, Key, ModelId, ObjectRef, PhenixContract, PhenixSchema, PhenixValue,
+    PluginId, Project, ReferenceId, ResourceNamespace, RoutingProfileId, RuntimeId,
+    SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId, SessionId,
+    SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
+};
+pub use plugin::build::{
     BuildArgument, BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
     BuildSourceIdentity, BuildSourceRevision, BuildWorkingDirectory, PluginArtifactInput,
     PluginBuildPlan, PluginBuildPlanError, PluginBuildSource, PluginBuildStep,
 };
-pub use plugin_build_execution::{
+pub use plugin::build_execution::{
     PluginArtifactStore, PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution,
     PluginBuildExecutor, PluginBuildFailure, PluginBuildOutput,
 };
-pub use plugin_context::{
+pub use plugin::context::{
     CallContext, CurrentPlugin, KernelAccess, PluginContext, SdkClient, SdkContract, SdkObject,
 };
-pub use prepared_mutation::PreparedMutationHandle;
-pub use provider_resolution::{
-    InterfaceProviderPolicy, ProviderCompositionPolicy, ProviderFallbackReason,
-    ProviderSelectionReason,
+pub use plugin::management::{
+    PluginBuildReport, PluginLoadRequest, PluginManagementContext, PluginManagementError,
+    PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginSetRequest,
+    PluginUnloadRequest,
 };
-pub use reconciliation::{
+pub use plugin::prepared_mutation::PreparedMutationHandle;
+pub use reconciliation::graph::{
     BindingChange, ComponentChange, ComponentChangeKind, GraphDiff, GraphReconciler,
     ReconciliationAction, ReconciliationPreview, ReconciliationResult, ResourceChange,
     ResourceChangeKind,
 };
-pub use reconciliation_inspection::CandidateResolutionInspection;
-pub use registry::{
-    runtime_provider_runtime, runtime_provider_service, KernelConfig, KernelError,
-    KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedComponentDispatchPlan,
-    ResolvedDispatchTopology, ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan,
-    ResolvedTerminalPlan, RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
-};
-pub use resolver::{GraphGenerationId, ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
+pub use reconciliation::inspection::CandidateResolutionInspection;
+pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
     PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
@@ -229,7 +202,3 @@ pub use sdk::{
     SdkResolutionError, SdkValue,
 };
 pub use tasks::{CallCancellationToken, CancellationToken, TaskHandle, TaskRuntime, TaskScope};
-pub use typed_component::{
-    ComponentInterface, ComponentInvocationError, InterfaceCompatibility, InterfaceSchema,
-    InterfaceSchemaMismatch,
-};

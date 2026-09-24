@@ -100,8 +100,11 @@ fn validate_live_reconciliation(
         });
     }
 
-    crate::activation::validate_resolved_harness_configuration(kernel, reconciler.active())
-        .map_err(map_activation_validation_error)
+    crate::composition::activation::validate_resolved_harness_configuration(
+        kernel,
+        reconciler.active(),
+    )
+    .map_err(map_activation_validation_error)
 }
 
 fn restart_plugins_for_plan(

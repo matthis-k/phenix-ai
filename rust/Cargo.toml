@@ -10,6 +10,7 @@ members = [
   "crates/phenix-client-acp",
   "crates/phenix-binding-generator",
   "crates/phenix-binding-lua",
+  "crates/phenix-contract",
   "crates/phenix-core",
   "crates/phenix-domain",
   "crates/phenix-client",
