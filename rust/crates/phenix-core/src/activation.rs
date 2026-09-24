@@ -242,6 +242,18 @@ mod tests {
         assert_eq!(kernel.component_graph(), &expected.component_graph);
         assert_eq!(kernel.active_resources(), expected.resources.as_slice());
         assert_eq!(kernel.active_resources()[0].identity, "fixture.skill");
+        assert_eq!(
+            kernel.runtime_generation().generation(),
+            Some(&expected.generation)
+        );
+        assert_eq!(
+            kernel.runtime_generation().component_graph(),
+            &expected.component_graph
+        );
+        assert_eq!(
+            kernel.runtime_generation().resources(),
+            expected.resources.as_slice()
+        );
         assert_eq!(kernel.active_resolved_graph(), Some(expected));
     }
 
