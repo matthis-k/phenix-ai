@@ -50,9 +50,23 @@ pub struct WorkspaceSearchMatch {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceWriteAtomicity {
+    PreconditionCheckedSequential,
+    CrashRecoverable,
+    SnapshotAtomic,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceCapabilities {
+    pub write_atomicity: WorkspaceWriteAtomicity,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum WorkspaceCommand {
+    Capabilities,
     Read {
         path: String,
     },
@@ -80,6 +94,9 @@ pub enum WorkspaceCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum WorkspaceResponse {
+    Capabilities {
+        capabilities: WorkspaceCapabilities,
+    },
     Read {
         path: String,
         content: String,

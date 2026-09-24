@@ -3,9 +3,9 @@ use phenix_core::{
     PluginId, PluginInstance, PluginManifest, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
-    WORKSPACE_SERVICE,
+    WorkspaceCapabilities, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -125,6 +125,11 @@ fn handle(
     command: WorkspaceCommand,
 ) -> Result<WorkspaceResponse, String> {
     match command {
+        WorkspaceCommand::Capabilities => Ok(WorkspaceResponse::Capabilities {
+            capabilities: WorkspaceCapabilities {
+                write_atomicity: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+            },
+        }),
         WorkspaceCommand::Read { path } => read(context, path),
         WorkspaceCommand::Write {
             path,
@@ -451,6 +456,28 @@ mod tests {
                 serde_json::from_slice(&output).map_err(|error| error.to_string())?;
             WorkspaceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
         }
+    }
+
+    #[test]
+    fn capabilities_do_not_overclaim_write_batch_atomicity() {
+        let root = temp_workspace("workspace-capabilities");
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::Capabilities,
+            &Authority::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::Capabilities {
+                capabilities: WorkspaceCapabilities {
+                    write_atomicity: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+                },
+            }
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
