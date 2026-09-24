@@ -16,11 +16,11 @@ impl<'a> PluginHost<'a> {
     }
 
     pub fn authority(&self) -> &Authority {
-        self.authority
+        &self.scope.authority
     }
 
     pub fn cancellation_token(&self) -> Option<&CallCancellationToken> {
-        self.call_cancellation.as_ref()
+        self.scope.cancellation.as_ref()
     }
 
     #[doc(hidden)]
@@ -69,7 +69,7 @@ impl<'a> PluginHost<'a> {
         let service = &dispatch.service;
         let input = serde_json::to_vec(request)
             .map_err(|error| ComponentInvocationError::Encode(error.to_string()))?;
-        let delegated_authority = self.authority.attenuate(handle.effective_authority());
+        let delegated_authority = self.scope.authority.attenuate(handle.effective_authority());
         let provider_provenance = ComponentProviderProvenance::from_plan(
             interface,
             plan,
@@ -107,7 +107,7 @@ impl<'a> PluginHost<'a> {
             &input,
             &delegated_authority,
             ServiceDispatchGuards {
-                stack: &self.invocation_stack,
+                stack: &self.scope.stack,
                 terminal_component: Some(handle.exporter()),
             },
         )?;
@@ -128,7 +128,7 @@ impl<'a> PluginHost<'a> {
         requested_authority: &Authority,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        let delegated_authority = self.authority.attenuate(requested_authority);
+        let delegated_authority = self.scope.authority.attenuate(requested_authority);
         let transactions = TransactionContext::coordinated_by(self.plugin);
         invoke_service_with(
             InvocationContext {
@@ -151,7 +151,7 @@ impl<'a> PluginHost<'a> {
             &delegated_authority,
             binding,
             ServiceDispatchGuards {
-                stack: &self.invocation_stack,
+                stack: &self.scope.stack,
                 terminal_component: None,
             },
         )
@@ -170,7 +170,7 @@ impl<'a> PluginHost<'a> {
         if continuation.used.swap(true, Ordering::AcqRel) {
             return Err(KernelError::ContinuationAlreadyUsed(service));
         }
-        let delegated_authority = self.authority.attenuate(requested_authority);
+        let delegated_authority = self.scope.authority.attenuate(requested_authority);
         invoke_resolved_chain_with(
             InvocationContext {
                 graph_generation: self.graph_generation,
@@ -183,7 +183,7 @@ impl<'a> PluginHost<'a> {
                 tasks: self.tasks,
                 persistence: self.persistence,
                 prepared_mutations: self.prepared_mutations,
-                transactions: &self.transaction_context,
+                transactions: &self.scope.transactions,
                 trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
@@ -192,7 +192,7 @@ impl<'a> PluginHost<'a> {
             input,
             &delegated_authority,
             ServiceDispatchGuards {
-                stack: &self.invocation_stack,
+                stack: &self.scope.stack,
                 terminal_component: continuation.terminal_component.as_ref(),
             },
             &continuation.trace,
@@ -203,7 +203,7 @@ impl<'a> PluginHost<'a> {
         Some(TaskScope::new_owned(
             self.tasks,
             self.graph_generation?,
-            self.authority,
+            &self.scope.authority,
             self.plugin,
         ))
     }
@@ -225,7 +225,7 @@ impl<'a> PluginHost<'a> {
             payload,
         };
         self.events
-            .admit_in_generation(&event, self.authority, self.graph_generation)
+            .admit_in_generation(&event, &self.scope.authority, self.graph_generation)
     }
 
     pub fn register_durable_schema(&self, schema: &DurableSchema) -> Result<(), KernelError> {
@@ -348,8 +348,8 @@ impl<'a> PluginHost<'a> {
                     self.plugin,
                     namespace,
                     operations,
-                    self.authority,
-                    &self.transaction_context,
+                    &self.scope.authority,
+                    &self.scope.transactions,
                 )
                 .map_err(|message| self.persistence_error(message))
         })();
@@ -547,7 +547,7 @@ impl<'a> PluginHost<'a> {
 
     fn require_capability(&self, capability: &str) -> Result<(), KernelError> {
         let capability = CapabilityId::parse(capability).expect("kernel capability is valid");
-        if self.authority.permits(&capability) {
+        if self.scope.authority.permits(&capability) {
             return Ok(());
         }
         Err(KernelError::HostOperationDenied {
