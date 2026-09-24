@@ -276,9 +276,7 @@ fn unbound_service_selects_next_live_precomputed_terminal() {
     let fallback = provider("fallback", 10);
     let mut kernel = Kernel::new(KernelConfig::new([preferred, fallback]).unwrap());
     kernel
-        .register_embedded_factory(plugin("preferred"), || {
-            Box::new(TaggedPlugin(b"preferred"))
-        })
+        .register_embedded_factory(plugin("preferred"), || Box::new(TaggedPlugin(b"preferred")))
         .unwrap();
     kernel
         .register_embedded_factory(plugin("fallback"), || Box::new(TaggedPlugin(b"fallback")))
