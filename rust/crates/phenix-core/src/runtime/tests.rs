@@ -446,6 +446,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: &graph,
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
@@ -572,6 +573,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: &graph,
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
@@ -617,6 +619,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
     let host = PluginHost {
         graph_generation: kernel.graph_generation(),
         component_graph: kernel.component_graph(),
+        dispatch_topology: kernel.dispatch_topology(),
         config: kernel.config(),
         states: &kernel.states,
         instances: &kernel.instances,
