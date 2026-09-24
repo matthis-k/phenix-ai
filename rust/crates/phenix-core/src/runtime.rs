@@ -12,7 +12,7 @@ use crate::{
     SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
