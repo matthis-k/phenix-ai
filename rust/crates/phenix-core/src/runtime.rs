@@ -249,6 +249,43 @@ pub(super) struct InvocationStack {
     frames: Vec<InvocationFrame>,
 }
 
+#[derive(Clone)]
+pub(super) struct CallScope {
+    authority: Authority,
+    cancellation: Option<CallCancellationToken>,
+    stack: InvocationStack,
+    transactions: TransactionContext,
+}
+
+impl CallScope {
+    pub(super) fn root(
+        plugin: &PluginId,
+        authority: &Authority,
+        cancellation: Option<CallCancellationToken>,
+    ) -> Self {
+        Self {
+            authority: authority.clone(),
+            cancellation,
+            stack: InvocationStack::root(plugin),
+            transactions: TransactionContext::unscoped(),
+        }
+    }
+
+    pub(super) fn nested(
+        authority: Authority,
+        cancellation: Option<CallCancellationToken>,
+        stack: InvocationStack,
+        transactions: TransactionContext,
+    ) -> Self {
+        Self {
+            authority,
+            cancellation,
+            stack,
+            transactions,
+        }
+    }
+}
+
 impl InvocationStack {
     pub(super) fn root(plugin: &PluginId) -> Self {
         Self {
@@ -295,10 +332,7 @@ pub struct PluginHost<'a> {
     states: &'a BTreeMap<PluginId, PluginState>,
     instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     plugin: &'a PluginId,
-    authority: &'a Authority,
-    transaction_context: TransactionContext,
-    call_cancellation: Option<CallCancellationToken>,
-    invocation_stack: InvocationStack,
+    scope: CallScope,
     events: &'a EventBus,
     tasks: &'a TaskRuntime,
     persistence: &'a Mutex<Box<dyn PersistenceBackend>>,
