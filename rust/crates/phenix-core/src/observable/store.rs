@@ -175,10 +175,7 @@ impl ObservableStore {
                 });
             }
 
-            let id = ObservationId(state.next_observation);
-            state.next_observation = state.next_observation.saturating_add(1);
-            let generation = ObservationGeneration(state.next_generation);
-            state.next_generation = state.next_generation.saturating_add(1);
+            let (id, generation) = allocate_observation(&mut state)?;
 
             if spec.initial == InitialObservation::Full {
                 let registered = state
@@ -333,6 +330,79 @@ impl ObservableStore {
         }
 
         Ok(result)
+    }
+}
+
+fn allocate_observation(
+    state: &mut StoreState,
+) -> Result<(ObservationId, ObservationGeneration), ObservableError> {
+    let next_observation = state
+        .next_observation
+        .checked_add(1)
+        .ok_or(ObservableError::SubscriptionCapacity)?;
+    let next_generation = state
+        .next_generation
+        .checked_add(1)
+        .ok_or(ObservableError::SubscriptionCapacity)?;
+    let id = ObservationId::new(state.next_observation);
+    let generation = ObservationGeneration::new(state.next_generation);
+    state.next_observation = next_observation;
+    state.next_generation = next_generation;
+    Ok((id, generation))
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    #[test]
+    fn observation_allocation_exhausts_before_identity_can_repeat() {
+        let mut state = StoreState {
+            next_observation: u64::MAX - 1,
+            next_generation: u64::MAX - 1,
+            ..StoreState::default()
+        };
+
+        let (id, generation) = allocate_observation(&mut state).unwrap();
+        assert_eq!(id.get(), u64::MAX - 1);
+        assert_eq!(generation.get(), u64::MAX - 1);
+        assert_eq!(
+            allocate_observation(&mut state),
+            Err(ObservableError::SubscriptionCapacity)
+        );
+        assert_eq!(
+            allocate_observation(&mut state),
+            Err(ObservableError::SubscriptionCapacity)
+        );
+        assert_eq!(state.next_observation, u64::MAX);
+        assert_eq!(state.next_generation, u64::MAX);
+    }
+
+    #[test]
+    fn observation_allocation_is_atomic_when_either_counter_is_exhausted() {
+        let mut generation_exhausted = StoreState {
+            next_observation: 17,
+            next_generation: u64::MAX,
+            ..StoreState::default()
+        };
+        assert_eq!(
+            allocate_observation(&mut generation_exhausted),
+            Err(ObservableError::SubscriptionCapacity)
+        );
+        assert_eq!(generation_exhausted.next_observation, 17);
+        assert_eq!(generation_exhausted.next_generation, u64::MAX);
+
+        let mut observation_exhausted = StoreState {
+            next_observation: u64::MAX,
+            next_generation: 23,
+            ..StoreState::default()
+        };
+        assert_eq!(
+            allocate_observation(&mut observation_exhausted),
+            Err(ObservableError::SubscriptionCapacity)
+        );
+        assert_eq!(observation_exhausted.next_observation, u64::MAX);
+        assert_eq!(observation_exhausted.next_generation, 23);
     }
 }
 

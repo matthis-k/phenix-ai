@@ -594,6 +594,9 @@ struct SubscriptionEntry {
     handler: Arc<dyn ObservationHandler>,
 }
 
+// Typed ValuePath trie: exact/recursive observation semantics operate on structural path
+// segments directly. Public ObservationId values remain the canonical keys; adding arena
+// keys here would require a second identity mapping without replacing this path index.
 #[derive(Default)]
 struct SubscriptionNode {
     exact: SmallVec<[ObservationId; 2]>,
