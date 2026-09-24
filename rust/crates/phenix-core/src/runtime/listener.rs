@@ -11,9 +11,10 @@ pub trait PluginListener: Send + Sync {
 }
 
 struct ListenerRuntimeSnapshot {
-    runtime: RuntimeGeneration,
+    runtime: Arc<RuntimeGeneration>,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
     events: Weak<EventBus>,
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
@@ -32,6 +33,7 @@ pub(super) struct ListenerRuntimeSources<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
     pub(super) events: &'a Arc<EventBus>,
     pub(super) tasks: &'a Arc<TaskRuntime>,
     pub(super) persistence: &'a Arc<Mutex<Box<dyn PersistenceBackend>>>,
@@ -48,9 +50,10 @@ pub(super) fn scoped_event_handler(
         owner: owner.clone(),
         inner,
         runtime: ListenerRuntimeSnapshot {
-            runtime: sources.runtime.clone(),
+            runtime: Arc::new(sources.runtime.clone()),
             states: sources.states.clone(),
             instances: sources.instances.clone(),
+            invocations: sources.invocations.clone(),
             events: Arc::downgrade(sources.events),
             tasks: Arc::clone(sources.tasks),
             persistence: Arc::clone(sources.persistence),
@@ -76,20 +79,24 @@ impl ScopedPluginListener {
         let cancellation = live_call.cancellation_token().clone();
         let prepared_mutations = PreparedMutationScope::new(Some(generation));
         let host = PluginHost {
-            graph_generation: Some(generation),
-            component_graph: self.runtime.runtime.component_graph(),
-            dispatch_topology: self.runtime.runtime.dispatch_topology(),
-            config: self.runtime.runtime.config(),
-            states: &self.runtime.states,
-            instances: &self.runtime.instances,
+            runtime: RuntimeServices {
+                states: &self.runtime.states,
+                instances: &self.runtime.instances,
+                invocations: &self.runtime.invocations,
+                events: &events,
+                tasks: &self.runtime.tasks,
+                persistence: &self.runtime.persistence,
+                prepared_mutations: &prepared_mutations,
+                trace_sink: self.runtime.trace_sink.as_ref(),
+                provenance: &self.runtime.provenance,
+            },
             plugin: &self.owner,
-            scope: CallScope::root(&self.owner, authority, Some(cancellation.clone())),
-            events: &events,
-            tasks: &self.runtime.tasks,
-            persistence: &self.runtime.persistence,
-            prepared_mutations: &prepared_mutations,
-            trace_sink: self.runtime.trace_sink.as_ref(),
-            provenance: &self.runtime.provenance,
+            scope: CallScope::root(
+                Arc::clone(&self.runtime.runtime),
+                &self.owner,
+                authority,
+                Some(cancellation.clone()),
+            ),
             continuation: None,
         };
         let result = catch_unwind(AssertUnwindSafe(|| self.inner.handle(event, &host)))
