@@ -364,6 +364,7 @@ pub(super) fn invoke_resolved_chain_with(
     let host = PluginHost {
         graph_generation: runtime.graph_generation,
         component_graph: runtime.component_graph,
+        dispatch_topology: runtime.dispatch_topology,
         config: runtime.config,
         states: runtime.states,
         instances: runtime.instances,
