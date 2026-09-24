@@ -5,8 +5,9 @@ use crate::{
     EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError,
     KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact,
     PluginExecution, PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason,
-    ProviderSelectionReason, ResolvedComponentGraph, ResolvedDispatchTopology,
-    ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain,
+    ProviderSelectionReason, ResolvedComponentDispatchPlan, ResolvedComponentGraph,
+    ResolvedDispatchTopology, ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
+    ResolvedServiceChain,
     ResolvedTerminalPlan, ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration,
     ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
 };
@@ -223,7 +224,7 @@ impl InvocationTrace {
 
 #[derive(Clone)]
 struct ContinuationState {
-    chain: ResolvedServiceChain,
+    chain: Arc<ResolvedServiceChain>,
     terminal_component: Option<ComponentId>,
     next_position: usize,
     used: Arc<AtomicBool>,

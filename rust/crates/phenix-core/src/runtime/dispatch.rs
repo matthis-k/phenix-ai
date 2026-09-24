@@ -123,14 +123,13 @@ fn resolve_live_service_chain(
 
 fn resolve_live_component_chain(
     runtime: InvocationContext<'_>,
-    service: &ServiceId,
+    plan: &ResolvedComponentDispatchPlan,
     caller_authority: &Authority,
     binding: &PluginId,
 ) -> Result<ResolvedServiceChain, KernelError> {
+    let service = &plan.service;
     let mut layers = Vec::new();
-    let service_plan = runtime.dispatch_topology.service(service);
-    if let Some(plan) = service_plan {
-        for layer in &plan.layers {
+    for layer in &plan.layers {
             let authorized = layer
                 .required_authority
                 .as_ref()
@@ -177,7 +176,6 @@ fn resolve_live_component_chain(
                 );
             }
         }
-    }
 
     if runtime.states.get(binding).copied() != Some(PluginState::Active)
         || !runtime.instances.contains_key(binding)
@@ -186,10 +184,7 @@ fn resolve_live_component_chain(
     }
 
     Ok(ResolvedServiceChain {
-        policy_identity: service_plan.map_or_else(
-            || runtime.config.policy_identity(),
-            |plan| plan.policy_identity,
-        ),
+        policy_identity: plan.policy_identity,
         service: service.clone(),
         layers,
         terminal: ProviderBinding {
@@ -207,7 +202,7 @@ pub(super) struct ComponentDispatchTarget<'a> {
 
 pub(super) fn invoke_component_service_with(
     runtime: InvocationContext<'_>,
-    service: &ServiceId,
+    dispatch: &ResolvedComponentDispatchPlan,
     target: ComponentDispatchTarget<'_>,
     input: &[u8],
     caller_authority: &Authority,
@@ -218,6 +213,7 @@ pub(super) fn invoke_component_service_with(
         binding,
         provider_provenance,
     } = target;
+    let service = &dispatch.service;
     let endpoint = ComponentServiceEndpoint {
         component: component.clone(),
         service: service.clone(),
@@ -238,7 +234,7 @@ pub(super) fn invoke_component_service_with(
             ),
         });
     }
-    let chain = match resolve_live_component_chain(runtime, service, caller_authority, binding) {
+    let chain = match resolve_live_component_chain(runtime, dispatch, caller_authority, binding) {
         Ok(chain) => {
             emit_policy_stage(
                 runtime,
@@ -268,6 +264,7 @@ pub(super) fn invoke_component_service_with(
     next_services.insert(service.clone());
     let mut next_component_endpoints = guards.active_component_endpoints.clone();
     next_component_endpoints.insert(endpoint);
+    let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
         caller_authority,
@@ -276,7 +273,7 @@ pub(super) fn invoke_component_service_with(
     )));
     let result = invoke_resolved_chain_with(
         runtime,
-        &chain,
+        Arc::clone(&chain),
         0,
         input,
         caller_authority,
@@ -337,6 +334,7 @@ pub(super) fn invoke_service_with(
     };
     let mut next_services = guards.active_services.clone();
     next_services.insert(service.clone());
+    let chain = Arc::new(chain);
     let trace = Arc::new(Mutex::new(InvocationTrace::new(
         &chain,
         caller_authority,
@@ -345,7 +343,7 @@ pub(super) fn invoke_service_with(
     )));
     let result = invoke_resolved_chain_with(
         runtime,
-        &chain,
+        Arc::clone(&chain),
         0,
         input,
         caller_authority,
@@ -377,7 +375,7 @@ pub(super) struct ServiceDispatchGuards<'a> {
 
 pub(super) fn invoke_resolved_chain_with(
     runtime: InvocationContext<'_>,
-    chain: &ResolvedServiceChain,
+    chain: Arc<ResolvedServiceChain>,
     position: usize,
     input: &[u8],
     caller_authority: &Authority,
@@ -442,7 +440,7 @@ pub(super) fn invoke_resolved_chain_with(
     let mut next_stack = guards.call_stack.clone();
     next_stack.insert(provider.plugin.clone());
     let continuation = is_layer.then(|| ContinuationState {
-        chain: chain.clone(),
+        chain: Arc::clone(&chain),
         terminal_component: guards.terminal_component.cloned(),
         next_position: position + 1,
         used: Arc::new(AtomicBool::new(false)),

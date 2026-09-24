@@ -93,7 +93,7 @@ impl<'a> PluginHost<'a> {
                     trace_sink: self.trace_sink,
                     provenance: self.provenance,
                 },
-                service,
+                dispatch,
                 ComponentDispatchTarget {
                     component: handle.exporter(),
                     binding: handle.owning_plugin(),
@@ -186,7 +186,7 @@ impl<'a> PluginHost<'a> {
                 trace_sink: self.trace_sink,
                 provenance: self.provenance,
             },
-            &continuation.chain,
+            Arc::clone(&continuation.chain),
             continuation.next_position,
             input,
             &delegated_authority,

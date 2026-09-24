@@ -344,10 +344,13 @@ pub struct ResolvedComponentDispatchPlan {
     pub interface: InterfaceId,
     pub service: ServiceId,
     pub providers: ResolvedProviderPlan,
+    pub layers: Vec<ResolvedLayerPlan>,
+    pub policy_identity: KernelPolicyIdentity,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedDispatchTopology {
+    policy_identity: KernelPolicyIdentity,
     services: BTreeMap<ServiceId, ResolvedServicePlan>,
     component_imports: BTreeMap<(ComponentId, InterfaceId), ResolvedComponentDispatchPlan>,
 }
@@ -376,11 +379,18 @@ impl ResolvedDispatchTopology {
                 };
                 let service = ServiceId::parse(import.interface.as_str().to_owned())
                     .expect("component interface identity must share service identity syntax");
+                let layers = self
+                    .services
+                    .get(&service)
+                    .map(|plan| plan.layers.clone())
+                    .unwrap_or_default();
                 let plan = ResolvedComponentDispatchPlan {
                     component: component.id.clone(),
                     interface: import.interface.clone(),
                     service,
                     providers,
+                    layers,
+                    policy_identity: self.policy_identity,
                 };
                 self.component_imports
                     .insert((component.id.clone(), import.interface.clone()), plan);
@@ -563,6 +573,7 @@ impl KernelConfig {
             );
         }
         ResolvedDispatchTopology {
+            policy_identity: self.policy_identity,
             services,
             component_imports: BTreeMap::new(),
         }
