@@ -84,6 +84,10 @@ impl Kernel {
         self.runtime_generation.component_graph()
     }
 
+    pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
+        self.runtime_generation.dispatch_topology()
+    }
+
     pub fn active_resources(&self) -> &[SkillResourceMetadata] {
         self.runtime_generation.resources()
     }
@@ -223,6 +227,7 @@ impl Kernel {
                         let host = PluginHost {
                             graph_generation: self.graph_generation(),
                             component_graph: self.component_graph(),
+                            dispatch_topology: self.dispatch_topology(),
                             config: &config,
                             states: &next_states,
                             instances: &next_instances,
@@ -417,6 +422,7 @@ impl Kernel {
             InvocationContext {
                 graph_generation: self.graph_generation(),
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
@@ -456,6 +462,7 @@ impl Kernel {
             InvocationContext {
                 graph_generation: self.graph_generation(),
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
@@ -494,6 +501,7 @@ impl Kernel {
             let host = PluginHost {
                 graph_generation: generation,
                 component_graph: self.component_graph(),
+                dispatch_topology: self.dispatch_topology(),
                 config: self.config(),
                 states: &self.states,
                 instances: &self.instances,
