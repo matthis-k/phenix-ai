@@ -34,15 +34,14 @@ impl PluginHost<'_> {
         let result = (|| {
             let write = CapabilityId::parse(PERSISTENCE_WRITE)
                 .expect("kernel persistence write capability is valid");
-            if !self.authority.permits(&write) {
+            if !self.authority().permits(&write) {
                 return Err(KernelError::HostOperationDenied {
                     plugin: self.plugin.clone(),
                     operation: PERSISTENCE_WRITE.into(),
                 });
             }
             if self
-                .call_cancellation
-                .as_ref()
+                .cancellation_token()
                 .is_some_and(CallCancellationToken::is_cancelled)
             {
                 self.prepared_mutations.clear();
