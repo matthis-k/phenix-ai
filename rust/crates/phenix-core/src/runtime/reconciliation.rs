@@ -76,7 +76,7 @@ impl Kernel {
         let candidate_runtime = candidate.runtime_generation();
         let candidate_config = candidate_runtime.config().clone();
         let old_manifests: BTreeMap<_, _> = self
-            .config
+            .config()
             .manifests()
             .map(|manifest| (manifest.id.clone(), manifest.clone()))
             .collect();
