@@ -105,7 +105,6 @@ pub struct EfficiencyCollectionRequest {
     pub policy_revision: String,
     pub outcome_evaluator_identity: String,
     pub price_revision: String,
-    pub root_elapsed_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
