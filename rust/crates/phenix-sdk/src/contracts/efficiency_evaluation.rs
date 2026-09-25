@@ -151,6 +151,14 @@ pub enum EfficiencyEvaluationError {
         observed: String,
     },
     MismatchedTaskSet,
+    ComparisonOutcomeEvaluatorMismatch {
+        baseline: String,
+        candidate: String,
+    },
+    ComparisonPriceRevisionMismatch {
+        baseline: String,
+        candidate: String,
+    },
     CohortTooLarge,
     AttemptRootMismatch {
         expected: String,
@@ -321,9 +329,24 @@ pub fn compare_efficiency_policies(
         return Err(EfficiencyEvaluationError::MismatchedTaskSet);
     }
 
+    let baseline = evaluate_efficiency_cohort(baseline)?;
+    let candidate = evaluate_efficiency_cohort(candidate)?;
+    if baseline.outcome_evaluator_identity != candidate.outcome_evaluator_identity {
+        return Err(EfficiencyEvaluationError::ComparisonOutcomeEvaluatorMismatch {
+            baseline: baseline.outcome_evaluator_identity,
+            candidate: candidate.outcome_evaluator_identity,
+        });
+    }
+    if baseline.price_revision != candidate.price_revision {
+        return Err(EfficiencyEvaluationError::ComparisonPriceRevisionMismatch {
+            baseline: baseline.price_revision,
+            candidate: candidate.price_revision,
+        });
+    }
+
     Ok(EfficiencyPolicyComparison {
-        baseline: evaluate_efficiency_cohort(baseline)?,
-        candidate: evaluate_efficiency_cohort(candidate)?,
+        baseline,
+        candidate,
     })
 }
 
@@ -534,6 +557,25 @@ mod tests {
             compare_efficiency_policies(&baseline, &candidate),
             Err(EfficiencyEvaluationError::MismatchedTaskSet)
         );
+    }
+
+    #[test]
+    fn paired_comparison_requires_the_same_outcome_evaluator_and_price_revision() {
+        let baseline = vec![task(0, EvaluationOutcome::Succeeded, 10)];
+        let mut candidate = vec![task(0, EvaluationOutcome::Succeeded, 8)];
+        candidate[0].outcome_evaluator_identity = "tests-v2".into();
+
+        assert!(matches!(
+            compare_efficiency_policies(&baseline, &candidate),
+            Err(EfficiencyEvaluationError::ComparisonOutcomeEvaluatorMismatch { .. })
+        ));
+
+        candidate[0].outcome_evaluator_identity = "tests-v1".into();
+        candidate[0].price_revision = "prices-v2".into();
+        assert!(matches!(
+            compare_efficiency_policies(&baseline, &candidate),
+            Err(EfficiencyEvaluationError::ComparisonPriceRevisionMismatch { .. })
+        ));
     }
 
     #[test]
