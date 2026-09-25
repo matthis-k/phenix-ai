@@ -2824,17 +2824,6 @@ mod tests {
 
     #[test]
     fn default_runtime_exposes_backend_neutral_bash_tool() {
-        let tools = runtime_model_tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].id.as_str(), "bash");
-        assert_eq!(
-            tools[0].input_schema,
-            PhenixSchema::Table(BTreeMap::from([(
-                Key::parse("command").unwrap(),
-                PhenixSchema::String,
-            )]))
-        );
-
         let worker = application_worker();
         let sdk = {
             let harness = worker.harness.lock();
@@ -2862,6 +2851,30 @@ mod tests {
         )
         .unwrap();
         let session_id = SessionId::parse("session-1").unwrap();
+        let tools = application_model_tool_surface(&service, &session_id).unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id.as_str(), "bash");
+        assert_eq!(
+            tools[0].input_schema,
+            PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixSchema::String,
+            )]))
+        );
+        let report = crate::model_surface_fixture::model_surface_report(
+            &phenix_core::ModelInferenceRequest {
+                model: phenix_core::ModelId::parse("fixture-introspection").unwrap(),
+                input: Bytes::new(b"show available capabilities".to_vec()),
+                options: BTreeMap::new(),
+                cache: Default::default(),
+                tools: tools.clone(),
+                continuation: Vec::new(),
+            },
+        );
+        assert_eq!(report.tools.len(), 1);
+        assert_eq!(report.tools[0].id, "bash");
+        assert_eq!(report.request, "show available capabilities");
+
         let execution_id = "execution-1".to_owned();
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, mut progress_receiver) =
