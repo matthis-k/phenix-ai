@@ -179,6 +179,13 @@ pub enum StepAttemptCommand {
         policy_revision: String,
         kind: UsageAttemptKind,
     },
+    AllocateDelegatedIdentity {
+        root_execution_id: String,
+        execution_id: String,
+        parent_attempt_id: String,
+        policy_revision: String,
+        task_id: String,
+    },
     Create {
         attribution: UsageAttribution,
         plan: StepPlan,
