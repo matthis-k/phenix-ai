@@ -333,14 +333,24 @@ fn run_delegated_task(
         );
     }
 
-    let preparation: ContextResponse = context
+    let preparation: ContextResponse = match context
         .sdk
         .context
         .invoke_projected(&ContextCommand::PrepareInvocation {
             execution_id: execution_id.clone(),
             input: record.binding.contract.clone(),
         })
-        .map_err(|error| format!("delegated context preparation failed: {error}"))?;
+    {
+        Ok(preparation) => preparation,
+        Err(error) => {
+            return cancel_delegated_before_start(
+                context,
+                &task_id,
+                Some(&execution_id),
+                format!("delegated context preparation failed: {error}"),
+            );
+        }
+    };
     let ContextResponse::InvocationPrepared { preparation } = preparation else {
         return cancel_delegated_before_start(
             context,
@@ -350,17 +360,38 @@ fn run_delegated_task(
         );
     };
 
-    let allocated: StepAttemptResponse = context
+    let root_execution_id = match root_execution_for_task(context, &task_id) {
+        Ok(root_execution_id) => root_execution_id,
+        Err(error) => {
+            return cancel_delegated_before_start(
+                context,
+                &task_id,
+                Some(&execution_id),
+                format!("delegated root identity lookup failed: {error}"),
+            );
+        }
+    };
+    let allocated: StepAttemptResponse = match context
         .sdk
         .attempts
         .invoke_projected(&StepAttemptCommand::AllocateDelegatedIdentity {
-            root_execution_id: root_execution_for_task(context, &task_id)?,
+            root_execution_id,
             execution_id: execution_id.clone(),
             parent_attempt_id: originating_attempt_id,
             policy_revision: record.binding.parent_policy_revision.clone(),
             task_id: task_id.clone(),
         })
-        .map_err(|error| format!("delegated attempt allocation failed: {error}"))?;
+    {
+        Ok(allocated) => allocated,
+        Err(error) => {
+            return cancel_delegated_before_start(
+                context,
+                &task_id,
+                Some(&execution_id),
+                format!("delegated attempt allocation failed: {error}"),
+            );
+        }
+    };
     let StepAttemptResponse::Attribution { attribution } = allocated else {
         return cancel_delegated_before_start(
             context,
@@ -405,7 +436,7 @@ fn run_delegated_task(
         now_ms,
     };
 
-    let started: ExecutionResourceResponse = context
+    let started: ExecutionResourceResponse = match context
         .sdk
         .resources
         .invoke_projected(&ExecutionResourceCommand::StartDelegated {
@@ -413,9 +444,21 @@ fn run_delegated_task(
             execution_id: execution_id.clone(),
             now_ms,
         })
-        .map_err(|error| format!("delegated task start failed: {error}"))?;
+    {
+        Ok(started) => started,
+        Err(error) => {
+            return cancel_delegated_before_start(
+                context,
+                &task_id,
+                Some(&execution_id),
+                format!("delegated task start failed before state transition: {error}"),
+            );
+        }
+    };
     if !matches!(started, ExecutionResourceResponse::DelegatedTask { .. }) {
-        return Err("execution resource service returned a non-task start response".into());
+        return Err(
+            "execution resource service returned a non-task start response after mutation".into(),
+        );
     }
 
     let response = match run(
