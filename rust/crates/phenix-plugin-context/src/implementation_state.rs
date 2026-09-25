@@ -11,7 +11,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     choose_cache_aware_compaction, context_service, AdmittedContextItem, CachePlacement,
-    ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
+    ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
     ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
@@ -194,6 +194,9 @@ fn handle(
                 injection,
                 resource,
             })
+        }
+        ContextCommand::AdmitDelegatedResult { task_id } => {
+            admit_delegated_result(context, state, task_id)
         }
         ContextCommand::LoadOnce {
             admission_id,
@@ -503,6 +506,60 @@ fn load_delegated_result(
         ContextInjectionLifetime::Execution,
         format!("delegated result {task_id}"),
     )
+}
+
+fn admit_delegated_result(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    task_id: String,
+) -> Result<ContextResponse, String> {
+    let (injection, resource) = load_delegated_result(context, state, task_id.clone())?;
+    let response: ExecutionResourceResponse = context
+        .sdk
+        .resources
+        .invoke_projected(&ExecutionResourceCommand::GetDelegated {
+            task_id: task_id.clone(),
+        })
+        .map_err(|error| format!("delegated task lookup failed: {error}"))?;
+    let ExecutionResourceResponse::DelegatedTaskLookup {
+        task: Some(record),
+    } = response
+    else {
+        return Err(format!("unknown delegated task after result load: {task_id}"));
+    };
+    let parent_plan = record
+        .binding
+        .parent_plan
+        .clone()
+        .ok_or_else(|| format!("delegated task has no parent plan: {task_id}"))?;
+    let parent_execution = record.task.parent_execution;
+    let preparation = prepare_invocation(
+        context,
+        state,
+        parent_execution.clone(),
+        Bytes::from(Vec::new()),
+    )?;
+    let admitted = handle_state_command(
+        context,
+        state,
+        ContextCommand::Admit {
+            request: ContextAdmissionRequest {
+                execution_id: parent_execution,
+                step_plan: parent_plan,
+                candidates: preparation.candidates,
+                cache_epoch: preparation.projection.cache_epoch,
+            },
+        },
+    )?;
+    let ContextResponse::Admission { result, projection } = admitted else {
+        return Err("context state service returned a non-admission response".into());
+    };
+    Ok(ContextResponse::DelegatedResultAdmitted {
+        injection,
+        resource,
+        result,
+        projection,
+    })
 }
 
 fn load_context(

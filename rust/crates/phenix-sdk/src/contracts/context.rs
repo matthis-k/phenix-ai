@@ -132,6 +132,9 @@ pub enum ContextCommand {
     LoadDelegatedResult {
         task_id: String,
     },
+    AdmitDelegatedResult {
+        task_id: String,
+    },
     LoadOnce {
         admission_id: String,
         execution_id: String,
@@ -192,6 +195,12 @@ pub enum ContextResponse {
     Loaded {
         injection: ContextInjection,
         resource: ContextResourceRevision,
+    },
+    DelegatedResultAdmitted {
+        injection: ContextInjection,
+        resource: ContextResourceRevision,
+        result: ContextAdmissionResult,
+        projection: ProjectionRevision,
     },
     Projection {
         projection: ExecutionContextProjection,

@@ -618,51 +618,27 @@ fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admiss
     )
     .unwrap();
 
-    let loaded = invoke(
+    let admitted = invoke(
         &mut kernel,
-        ContextCommand::LoadDelegatedResult {
+        ContextCommand::AdmitDelegatedResult {
             task_id: "task-result".into(),
         },
     )
     .unwrap();
-    let ContextResponse::Loaded { resource, .. } = loaded else {
-        panic!("expected delegated result to load as exact context");
+    let ContextResponse::DelegatedResultAdmitted {
+        injection,
+        resource,
+        result,
+        projection,
+    } = admitted
+    else {
+        panic!("expected delegated result admission");
     };
+    assert_eq!(injection.execution_id, "root");
     assert_eq!(resource.descriptor.kind, ContextResourceKind::External);
     assert!(String::from_utf8_lossy(resource.content.as_ref()).contains("delegated summary"));
+    assert_eq!(result.execution_id, "root");
 
-    let prepared = invoke(
-        &mut kernel,
-        ContextCommand::PrepareInvocation {
-            execution_id: "root".into(),
-            input: b"continue".to_vec().into(),
-        },
-    )
-    .unwrap();
-    let ContextResponse::InvocationPrepared { preparation } = prepared else {
-        panic!("expected invocation preparation");
-    };
-    assert!(preparation.candidates.iter().any(|candidate| {
-        matches!(candidate.source, ContextSource::Exact { .. })
-            && candidate.content.as_ref()
-                == resource.content.as_ref()
-    }));
-
-    let admitted = invoke(
-        &mut kernel,
-        ContextCommand::Admit {
-            request: ContextAdmissionRequest {
-                execution_id: "root".into(),
-                step_plan: parent_plan,
-                candidates: preparation.candidates,
-                cache_epoch: preparation.projection.cache_epoch,
-            },
-        },
-    )
-    .unwrap();
-    let ContextResponse::Admission { projection, .. } = admitted else {
-        panic!("expected ordinary context admission");
-    };
     let materialized = invoke(
         &mut kernel,
         ContextCommand::MaterializeInvocation {
