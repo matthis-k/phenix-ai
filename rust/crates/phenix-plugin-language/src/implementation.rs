@@ -794,6 +794,27 @@ mod tests {
         kernel
     }
 
+    fn kernel_with_workspace(path: &PathBuf, root: &PathBuf) -> Kernel {
+        let language = language_manifest();
+        let language_id = language.id.clone();
+        let workspace = phenix_plugin_workspace::workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let persistence = LocalPersistence::open(path).unwrap();
+        let mut kernel =
+            Kernel::with_persistence(KernelConfig::new([language, workspace]).unwrap(), persistence);
+        kernel
+            .register_embedded_factory(language_id, language_factory)
+            .unwrap();
+        let root = root.clone();
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                phenix_plugin_workspace::workspace_factory_for(root.clone())
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+        kernel
+    }
+
     fn invoke(kernel: &mut Kernel, command: LanguageCommand) -> Result<LanguageResponse, String> {
         let input = serde_json::to_vec(&phenix_core::PhenixValue::from(&command)).unwrap();
         let output = kernel
@@ -846,6 +867,44 @@ mod tests {
                 provenance: DocumentProvenance::WorkspaceBacked,
             }],
         }
+    }
+
+    #[test]
+    fn providerless_fallback_reads_exact_workspace_revision_without_semantic_claims() {
+        let path = temp_db("file-fallback");
+        let root = std::env::temp_dir().join(format!(
+            "phenix-language-file-fallback-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "fn fallback() {}\n").unwrap();
+        let mut kernel = kernel_with_workspace(&path, &root);
+
+        let response = invoke(
+            &mut kernel,
+            LanguageCommand::ReadFileFallback {
+                workspace_id: "workspace".into(),
+                path: "src/lib.rs".into(),
+            },
+        )
+        .unwrap();
+        let LanguageResponse::FileFallback { fallback } = response else {
+            panic!("expected exact file fallback");
+        };
+        assert_eq!(fallback.workspace_id, "workspace");
+        assert_eq!(fallback.document.path, "src/lib.rs");
+        assert_eq!(fallback.document.provenance, DocumentProvenance::WorkspaceBacked);
+        assert!(fallback.document.file_version.as_deref().is_some_and(|revision| {
+            revision.starts_with("sha256:") && revision.len() > "sha256:".len()
+        }));
+        assert_eq!(fallback.content, "fn fallback() {}\n");
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
