@@ -6,7 +6,7 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFact,
-    CodeEntityRevision, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
+    CodeEntityProviderFactBatch, CodeEntityRevision, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
     CodeIdentityRebuildCheckpoint, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
@@ -248,10 +248,11 @@ fn handle(
         }
         LanguageCommand::IngestEntityFact {
             observation_id,
-            fact,
+            fact_id,
         } => {
             validate_identity("language observation id", &observation_id)?;
-            let revision = ingest_entity_fact(context, &observation_id, fact)?;
+            validate_identity("provider fact id", &fact_id)?;
+            let revision = ingest_entity_fact(context, &observation_id, &fact_id)?;
             Ok(LanguageResponse::EntityRevision {
                 revision: Some(revision),
             })
@@ -474,7 +475,7 @@ fn read_observation(
 fn ingest_entity_fact(
     context: &LanguageContext<'_, '_, '_>,
     observation_id: &str,
-    fact: CodeEntityProviderFact,
+    fact_id: &str,
 ) -> Result<CodeEntityRevision, String> {
     let observation = read_observation(context, observation_id)?
         .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
@@ -489,6 +490,16 @@ fn ingest_entity_fact(
     ) {
         return Err("language observation does not contain reusable semantic code facts".into());
     }
+
+    let payload = serde_json::Value::from_value(&observation.result.payload)
+        .map_err(|error| format!("provider fact payload is not JSON-compatible: {error}"))?;
+    let batch: CodeEntityProviderFactBatch = serde_json::from_value(payload)
+        .map_err(|error| format!("provider fact payload is invalid: {error}"))?;
+    let fact = batch
+        .facts
+        .into_iter()
+        .find(|fact| fact.id == fact_id)
+        .ok_or_else(|| format!("provider fact not found in observation: {fact_id}"))?;
 
     let document_index = usize::try_from(fact.document_index)
         .map_err(|_| "provider fact document index is out of range".to_owned())?;
@@ -1367,38 +1378,60 @@ mod tests {
                 epoch: epoch(7),
                 result: LanguageOperationResult {
                     operation: LanguageOperationKind::DocumentSymbols,
-                    payload: serde_json::json!({"symbols": [{"name": "observed"}]}).into(),
+                    payload: serde_json::json!({
+                        "facts": [{
+                            "id": "fact-observed",
+                            "entity": {
+                                "id": "entity-observed",
+                                "repository_id": "repo-1"
+                            },
+                            "revision": "revision-1",
+                            "sequence": 1,
+                            "document_index": 0,
+                            "symbol": "crate::observed",
+                            "name": "observed",
+                            "signature_identity": "signature-1",
+                            "body_identity": "body-1",
+                            "facets": {
+                                "existence": "existence-1",
+                                "name_location": "location-1",
+                                "signature": "signature-1",
+                                "body": "body-1",
+                                "relations": {"callers": "callers-1"}
+                            }
+                        }, {
+                            "id": "fact-stale",
+                            "entity": {
+                                "id": "entity-stale",
+                                "repository_id": "repo-1"
+                            },
+                            "revision": "revision-stale",
+                            "sequence": 1,
+                            "document_index": 0,
+                            "symbol": "crate::observed",
+                            "name": "observed",
+                            "signature_identity": "signature-1",
+                            "body_identity": "body-1",
+                            "facets": {
+                                "existence": "existence-stale",
+                                "name_location": "location-stale",
+                                "signature": "signature-stale",
+                                "body": "body-stale",
+                                "relations": {}
+                            }
+                        }]
+                    }).into(),
                     documents: vec![fallback.document.clone()],
                 },
             },
         )
         .unwrap();
 
-        let fact = CodeEntityProviderFact {
-            entity: LogicalCodeEntity {
-                id: "entity-observed".into(),
-                repository_id: "repo-1".into(),
-            },
-            revision: "revision-1".into(),
-            sequence: 1,
-            document_index: 0,
-            symbol: Some("crate::observed".into()),
-            name: "observed".into(),
-            signature_identity: Some("signature-1".into()),
-            body_identity: Some("body-1".into()),
-            facets: CodeEntityFacetRevisions {
-                existence: "existence-1".into(),
-                name_location: "location-1".into(),
-                signature: Some("signature-1".into()),
-                body: Some("body-1".into()),
-                relations: BTreeMap::from([("callers".into(), "callers-1".into())]),
-            },
-        };
         let response = invoke(
             &mut kernel,
             LanguageCommand::IngestEntityFact {
                 observation_id: "symbols-1".into(),
-                fact: fact.clone(),
+                fact_id: "fact-observed".into(),
             },
         )
         .unwrap();
@@ -1417,14 +1450,7 @@ mod tests {
             &mut kernel,
             LanguageCommand::IngestEntityFact {
                 observation_id: "symbols-1".into(),
-                fact: CodeEntityProviderFact {
-                    entity: LogicalCodeEntity {
-                        id: "entity-stale".into(),
-                        repository_id: "repo-1".into(),
-                    },
-                    revision: "revision-stale".into(),
-                    ..fact
-                },
+                fact_id: "fact-stale".into(),
             },
         )
         .unwrap_err();
