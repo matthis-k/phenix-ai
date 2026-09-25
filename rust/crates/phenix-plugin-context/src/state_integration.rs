@@ -234,15 +234,32 @@ mod legacy_resources {
         assert_eq!(projection.entries[0].resource, resource);
 
         drop(kernel);
-        let mut restored = kernel(&path);
+        let mut restored = super::kernel(&path);
         let replay_after_restart = invoke(&mut restored, command.clone()).unwrap();
         assert_eq!(first, replay_after_restart);
 
+        let ContextCommand::LoadOnce {
+            admission_id,
+            execution_id,
+            resource_id,
+            revision,
+            requester,
+            lifetime,
+            ..
+        } = command.clone()
+        else {
+            unreachable!("load-once fixture command changed variant");
+        };
         let conflict = invoke(
             &mut restored,
             ContextCommand::LoadOnce {
+                admission_id,
+                execution_id,
+                resource_id,
+                revision,
+                requester,
+                lifetime,
                 reason: "changed meaning".into(),
-                ..command
             },
         )
         .unwrap_err();
