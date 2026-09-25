@@ -1982,6 +1982,7 @@ name = "phenix-plugin-memory"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-language",
  "phenix-plugin-models",
  "phenix-plugin-sessions",
  "phenix-sdk",
