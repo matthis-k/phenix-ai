@@ -13,7 +13,9 @@ use phenix_sdk::{
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
     WORKSPACE_SERVICE,
 };
-use std::collections::BTreeMap;
+use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 
 const LANGUAGE_PLUGIN: &str = "phenix.language";
 const LANGUAGE_NAMESPACE: &str = "phenix.language.state";
@@ -255,6 +257,20 @@ fn handle(
             let revision = ingest_entity_fact(context, &observation_id, &fact_id)?;
             Ok(LanguageResponse::EntityRevision {
                 revision: Some(revision),
+            })
+        }
+        LanguageCommand::IngestDocumentSymbols {
+            observation_id,
+            repository_id,
+        } => {
+            validate_identity("language observation id", &observation_id)?;
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::EntityRevisions {
+                revisions: ingest_document_symbol_observation(
+                    context,
+                    &observation_id,
+                    &repository_id,
+                )?,
             })
         }
         LanguageCommand::RecordEntityLineage {
@@ -534,6 +550,303 @@ fn ingest_entity_fact(
     validate_code_entity_revision(&revision)?;
     store_entity_revision(context, &revision)?;
     Ok(revision)
+}
+
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct LspPosition {
+    line: u32,
+    character: u32,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct LspRange {
+    start: LspPosition,
+    end: LspPosition,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct LspDocumentSymbol {
+    name: String,
+    #[serde(default)]
+    detail: Option<String>,
+    kind: u32,
+    range: LspRange,
+    #[serde(rename = "selectionRange")]
+    selection_range: LspRange,
+    #[serde(default)]
+    children: Option<Vec<LspDocumentSymbol>>,
+}
+
+fn ingest_document_symbol_observation(
+    context: &LanguageContext<'_, '_, '_>,
+    observation_id: &str,
+    repository_id: &str,
+) -> Result<Vec<CodeEntityRevision>, String> {
+    let observation = read_observation(context, observation_id)?
+        .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
+    if observation.result.operation != LanguageOperationKind::DocumentSymbols {
+        return Err("document-symbol ingestion requires a document_symbols observation".into());
+    }
+    if observation.result.documents.len() != 1 {
+        return Err("document-symbol ingestion requires exactly one source document".into());
+    }
+
+    let document = observation.result.documents[0].clone();
+    if document.provenance != DocumentProvenance::WorkspaceBacked {
+        return Err("document-symbol ingestion requires workspace-backed source provenance".into());
+    }
+    let source_revision = document
+        .file_version
+        .as_deref()
+        .ok_or_else(|| "document-symbol ingestion requires an exact workspace source revision".to_owned())?;
+    verify_workspace_document_revision(context, &document.path, source_revision)?;
+
+    let symbols = parse_lsp_document_symbols(&observation.result.payload)?;
+    let mut revisions = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut parents = Vec::new();
+    for symbol in &symbols {
+        ingest_lsp_document_symbol(
+            context,
+            &observation,
+            repository_id,
+            &document,
+            source_revision,
+            symbol,
+            &mut parents,
+            &mut seen,
+            &mut revisions,
+        )?;
+    }
+    Ok(revisions)
+}
+
+fn parse_lsp_document_symbols(
+    payload: &phenix_core::PhenixValue,
+) -> Result<Vec<LspDocumentSymbol>, String> {
+    let value = serde_json::Value::from_value(payload)
+        .map_err(|error| format!("document-symbol payload is not JSON-compatible: {error}"))?;
+    let symbols = match value {
+        serde_json::Value::Null => return Ok(Vec::new()),
+        serde_json::Value::Array(_) => value,
+        serde_json::Value::Object(mut object) => object
+            .remove("symbols")
+            .ok_or_else(|| "document-symbol payload must be an LSP symbol array".to_owned())?,
+        _ => return Err("document-symbol payload must be an LSP symbol array".into()),
+    };
+    serde_json::from_value(symbols)
+        .map_err(|error| format!("document-symbol payload is invalid: {error}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ingest_lsp_document_symbol(
+    context: &LanguageContext<'_, '_, '_>,
+    observation: &LanguageObservation,
+    repository_id: &str,
+    document: &LanguageDocumentIdentity,
+    source_revision: &str,
+    symbol: &LspDocumentSymbol,
+    parents: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    revisions: &mut Vec<CodeEntityRevision>,
+) -> Result<(), String> {
+    validate_identity("LSP document symbol name", &symbol.name)?;
+    if symbol.kind == 0 {
+        return Err("LSP document symbol kind must be non-zero".into());
+    }
+    validate_lsp_range(&symbol.range)?;
+    validate_lsp_range(&symbol.selection_range)?;
+    if !range_contains(&symbol.range, &symbol.selection_range) {
+        return Err("LSP document symbol selection range must be inside its full range".into());
+    }
+
+    let mut path = parents.clone();
+    path.push(symbol.name.clone());
+    let semantic_path = path.join("::");
+    let detail = symbol
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+        .unwrap_or("");
+    let semantic_key = digest_identity(
+        "lsp-symbol",
+        &[
+            repository_id.to_owned(),
+            document.path.clone(),
+            semantic_path.clone(),
+            symbol.kind.to_string(),
+            detail.to_owned(),
+        ],
+    );
+    if !seen.insert(semantic_key.clone()) {
+        return Err(format!(
+            "ambiguous duplicate LSP document symbol identity: {semantic_path}"
+        ));
+    }
+
+    let entity_id = digest_identity(
+        "code-entity",
+        &[repository_id.to_owned(), semantic_key.clone()],
+    );
+    let name_location = digest_identity(
+        "code-name-location",
+        &[
+            document.path.clone(),
+            semantic_path.clone(),
+            lsp_range_identity(&symbol.range),
+            lsp_range_identity(&symbol.selection_range),
+        ],
+    );
+    let signature_identity = (!detail.is_empty()).then(|| {
+        digest_identity(
+            "code-signature",
+            &[symbol.kind.to_string(), detail.to_owned()],
+        )
+    });
+    let revision_id = digest_identity(
+        "code-revision",
+        &[
+            entity_id.clone(),
+            source_revision.to_owned(),
+            name_location.clone(),
+            signature_identity.clone().unwrap_or_default(),
+        ],
+    );
+    let entity = LogicalCodeEntity {
+        id: entity_id,
+        repository_id: repository_id.to_owned(),
+    };
+    let current = read_entity_revision(context, repository_id, &entity.id)?;
+    if let Some(current) = current.as_ref() {
+        if current.revision == revision_id {
+            revisions.push(current.clone());
+            ingest_lsp_children(
+                context,
+                observation,
+                repository_id,
+                document,
+                source_revision,
+                symbol,
+                parents,
+                seen,
+                revisions,
+            )?;
+            return Ok(());
+        }
+    }
+    let sequence = current
+        .as_ref()
+        .map_or(Ok(1), |current| {
+            current
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| "code entity revision sequence overflow".to_owned())
+        })?;
+    let revision = CodeEntityRevision {
+        entity: entity.clone(),
+        revision: revision_id,
+        sequence,
+        document: document.clone(),
+        symbol: Some(semantic_path),
+        name: symbol.name.clone(),
+        signature_identity: signature_identity.clone(),
+        body_identity: None,
+        provider_id: observation.provider_id.clone(),
+        provider_epoch: observation.provider_epoch,
+        facets: CodeEntityFacetRevisions {
+            existence: digest_identity(
+                "code-existence",
+                &[repository_id.to_owned(), entity.id.clone(), "present".into()],
+            ),
+            name_location,
+            signature: signature_identity,
+            body: None,
+            relations: BTreeMap::new(),
+        },
+    };
+    validate_code_entity_revision(&revision)?;
+    store_entity_revision(context, &revision)?;
+    revisions.push(revision);
+
+    ingest_lsp_children(
+        context,
+        observation,
+        repository_id,
+        document,
+        source_revision,
+        symbol,
+        parents,
+        seen,
+        revisions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ingest_lsp_children(
+    context: &LanguageContext<'_, '_, '_>,
+    observation: &LanguageObservation,
+    repository_id: &str,
+    document: &LanguageDocumentIdentity,
+    source_revision: &str,
+    symbol: &LspDocumentSymbol,
+    parents: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    revisions: &mut Vec<CodeEntityRevision>,
+) -> Result<(), String> {
+    let Some(children) = symbol.children.as_deref() else {
+        return Ok(());
+    };
+    parents.push(symbol.name.clone());
+    for child in children {
+        ingest_lsp_document_symbol(
+            context,
+            observation,
+            repository_id,
+            document,
+            source_revision,
+            child,
+            parents,
+            seen,
+            revisions,
+        )?;
+    }
+    parents.pop();
+    Ok(())
+}
+
+fn validate_lsp_range(range: &LspRange) -> Result<(), String> {
+    if position_key(&range.start) > position_key(&range.end) {
+        return Err("LSP document symbol range end precedes start".into());
+    }
+    Ok(())
+}
+
+fn range_contains(outer: &LspRange, inner: &LspRange) -> bool {
+    position_key(&outer.start) <= position_key(&inner.start)
+        && position_key(&inner.end) <= position_key(&outer.end)
+}
+
+fn position_key(position: &LspPosition) -> (u32, u32) {
+    (position.line, position.character)
+}
+
+fn lsp_range_identity(range: &LspRange) -> String {
+    format!(
+        "{}:{}-{}:{}",
+        range.start.line, range.start.character, range.end.line, range.end.character
+    )
+}
+
+fn digest_identity(label: &str, parts: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(label.as_bytes());
+    for part in parts {
+        hasher.update([0]);
+        hasher.update(part.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn verify_workspace_document_revision(
@@ -1450,6 +1763,147 @@ mod tests {
             LanguageCommand::IngestEntityFact {
                 observation_id: "symbols-1".into(),
                 fact_id: "fact-stale".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(stale.contains("source revision is stale"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(root);
+    }
+
+
+    #[test]
+    fn lsp_document_symbols_ingest_conservative_entity_revisions() {
+        let path = temp_db("lsp-document-symbol-ingestion");
+        let root = std::env::temp_dir().join(format!(
+            "phenix-language-lsp-symbols-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn outer() { fn inner() {} }\n",
+        )
+        .unwrap();
+        let mut kernel = kernel_with_workspace(&path, &root);
+
+        let LanguageResponse::FileFallback { fallback } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadFileFallback {
+                workspace_id: "workspace".into(),
+                path: "src/lib.rs".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected exact workspace fallback");
+        };
+
+        activate(&mut kernel, 9);
+        invoke(
+            &mut kernel,
+            LanguageCommand::Consume {
+                observation_id: "lsp-symbols-1".into(),
+                execution_id: "execution-1".into(),
+                workspace_id: "workspace".into(),
+                provider_id: "rust-analyzer".into(),
+                epoch: epoch(9),
+                result: LanguageOperationResult {
+                    operation: LanguageOperationKind::DocumentSymbols,
+                    payload: serde_json::json!([{
+                        "name": "outer",
+                        "detail": "fn outer()",
+                        "kind": 12,
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 34}
+                        },
+                        "selectionRange": {
+                            "start": {"line": 0, "character": 7},
+                            "end": {"line": 0, "character": 12}
+                        },
+                        "children": [{
+                            "name": "inner",
+                            "detail": "fn inner()",
+                            "kind": 12,
+                            "range": {
+                                "start": {"line": 0, "character": 17},
+                                "end": {"line": 0, "character": 30}
+                            },
+                            "selectionRange": {
+                                "start": {"line": 0, "character": 20},
+                                "end": {"line": 0, "character": 25}
+                            }
+                        }]
+                    }])
+                    .into(),
+                    documents: vec![fallback.document.clone()],
+                },
+            },
+        )
+        .unwrap();
+
+        let LanguageResponse::EntityRevisions { revisions } = invoke(
+            &mut kernel,
+            LanguageCommand::IngestDocumentSymbols {
+                observation_id: "lsp-symbols-1".into(),
+                repository_id: "repo-1".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected normalized entity revisions");
+        };
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].provider_id, "rust-analyzer");
+        assert_eq!(revisions[0].provider_epoch, epoch(9));
+        assert_eq!(revisions[0].document, fallback.document);
+        assert!(revisions.iter().all(|revision| revision.body_identity.is_none()));
+        assert!(revisions.iter().all(|revision| revision.facets.body.is_none()));
+        assert!(revisions
+            .iter()
+            .any(|revision| revision.symbol.as_deref() == Some("outer::inner")));
+
+        let LanguageResponse::EntityRevisions {
+            revisions: repeated,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::IngestDocumentSymbols {
+                observation_id: "lsp-symbols-1".into(),
+                repository_id: "repo-1".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected idempotent entity revisions");
+        };
+        assert_eq!(repeated, revisions);
+
+        let LanguageResponse::EntityChanges { page } = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntityChanges {
+                repository_id: "repo-1".into(),
+                after_sequence: 0,
+                limit: 10,
+            },
+        )
+        .unwrap() else {
+            panic!("expected entity change page");
+        };
+        assert_eq!(page.events.len(), 2);
+
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn changed_after_observation() {}\n",
+        )
+        .unwrap();
+        let stale = invoke(
+            &mut kernel,
+            LanguageCommand::IngestDocumentSymbols {
+                observation_id: "lsp-symbols-1".into(),
+                repository_id: "repo-1".into(),
             },
         )
         .unwrap_err();

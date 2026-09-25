@@ -457,6 +457,10 @@ pub enum LanguageCommand {
         observation_id: String,
         fact_id: String,
     },
+    IngestDocumentSymbols {
+        observation_id: String,
+        repository_id: String,
+    },
     RecordEntityLineage {
         repository_id: String,
         lineage: CodeEntityLineage,
@@ -521,6 +525,9 @@ pub enum LanguageResponse {
     },
     EntityRevision {
         revision: Option<CodeEntityRevision>,
+    },
+    EntityRevisions {
+        revisions: Vec<CodeEntityRevision>,
     },
     EntityLineage {
         lineage: Option<CodeEntityLineage>,

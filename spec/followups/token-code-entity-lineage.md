@@ -1,12 +1,12 @@
 # Stable code entity identity and lineage
 
-status: implementation-in-progress
+status: implemented
 
 Tracks #516 slice 7 and `token-efficiency.md`.
 
 ## Gap
 
-Current language intelligence exposes definitions, references, implementations, symbols, diagnostics, and call hierarchy with exact source revisions. Stable logical entity identity and cross-revision lineage exist only in the spec.
+Stable logical identity, lineage, facet revisions, and change delivery are implemented. Standard LSP `DocumentSymbol` observations from providers such as rust-analyzer now have a production normalization path that derives conservative entity revisions from exact workspace-backed observations; unsupported analyzer formats remain adapters rather than identity owners.
 
 ## Implementation progress
 
@@ -19,12 +19,13 @@ Current language intelligence exposes definitions, references, implementations, 
 - [x] Added a durable repository-global entity change stream. Revision/facet changes and the stream cursor commit atomically; paginated consumers survive restart and immutable replay cannot duplicate events.
 - [x] Added explicit identity rebuild orchestration: rebuild snapshots the durable change cursor, concurrent changes force catch-up, and continuity becomes available only after replay through the latest committed sequence.
 - [x] Added an exact provider-fact ingestion boundary: normalized semantic facts must be present in a durable language observation, provider/epoch are inherited from that observation, and stale workspace revisions are rejected before identity state changes.
+- [x] Added production LSP `DocumentSymbol` normalization for rust-analyzer-compatible providers. It derives deterministic entity/name-location/signature identities from the durable observation, publishes no body/relation facets it cannot prove, rejects malformed/ambiguous symbols, and remains revision-checked and idempotent.
 
 ## Required implementation
 
 - [x] Define normalized `LogicalCodeEntity`, revision, relation, and lineage contracts.
 - [x] Keep path/line/name as revision observations, not logical identity.
-- [ ] Reuse rust-analyzer or SCIP facts where practical. (The identity owner can now ingest observation-bound normalized facts safely; a production rust-analyzer/SCIP adapter still needs to emit that fact batch.)
+- [x] Reuse rust-analyzer or SCIP facts where practical. (The first production adapter consumes standard LSP `DocumentSymbol` output used by rust-analyzer from the durable observation boundary. It intentionally leaves body/relation facets absent when the provider result does not prove them; SCIP remains an optional future interchange, not a merge prerequisite.)
 - [x] Add deterministic file/revision fallback when semantic providers are unavailable. (`ReadFileFallback` delegates to the ordinary workspace read service and returns exact file content plus its workspace revision without claiming semantic analyzer coverage.)
 - [x] Preserve identity across confident move/rename cases. (Confirmed move/rename lineage is only valid when it preserves the logical entity ID; revision observations may change path/name independently.)
 - [x] Represent ambiguous extract/split/merge lineage as tentative evidence, not forced identity.
