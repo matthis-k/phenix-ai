@@ -10,7 +10,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
-    CodeEntityFacet, CodeEntityFacetReference, CodeEntityFacetRevisions, CodeEntityRevision,
+    CodeEntityFacet, CodeEntityFacetRevisions, CodeEntityRevision,
     DocumentProvenance, HelperInvocationCommand, HelperInvocationInterface,
     HelperInvocationResponse, LanguageCommand, LanguageDocumentIdentity, LanguageResponse,
     LogicalCodeEntity, MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision,
