@@ -59,6 +59,9 @@ pub enum WorkerTaskState {
         execution_id: String,
         cause: String,
     },
+    Cancelled {
+        cause: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
