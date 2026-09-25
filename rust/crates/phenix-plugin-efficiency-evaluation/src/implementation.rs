@@ -14,6 +14,14 @@ use phenix_sdk::{
 
 pub const EFFICIENCY_EVALUATION_PLUGIN: &str = "phenix.efficiency-evaluation";
 pub const EFFICIENCY_EVALUATION_COMPONENT: &str = "phenix.efficiency-evaluation";
+const PERSISTENCE_READ: &str = "kernel.persistence.read";
+
+fn evidence_read_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse(PERSISTENCE_READ)
+            .expect("static persistence read capability id is valid"),
+    ])
+}
 
 #[must_use]
 pub fn efficiency_evaluation_manifest() -> PluginManifest {
@@ -32,7 +40,7 @@ pub fn efficiency_evaluation_manifest() -> PluginManifest {
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
-        maximum_authority: Authority::default(),
+        maximum_authority: evidence_read_authority(),
     }
 }
 
@@ -54,7 +62,7 @@ pub fn efficiency_evaluation_component_manifest() -> ComponentManifest {
                 interface: StepAttemptInterface::interface_id(),
                 schema: StepAttemptInterface::schema(),
                 required: true,
-                authority: Authority::default(),
+                authority: evidence_read_authority(),
             },
             ComponentImport {
                 interface: EfficiencyOutcomeEvidenceInterface::interface_id(),
@@ -69,7 +77,7 @@ pub fn efficiency_evaluation_component_manifest() -> ComponentManifest {
             priority: 100,
             required_authority: Authority::default(),
         }],
-        maximum_authority: Authority::default(),
+        maximum_authority: evidence_read_authority(),
     }
 }
 
@@ -194,6 +202,7 @@ mod tests {
             StepAttemptInterface::interface_id()
         );
         assert!(manifest.imports[0].required);
+        assert_eq!(manifest.imports[0].authority, evidence_read_authority());
         assert_eq!(
             manifest.imports[1].interface,
             EfficiencyOutcomeEvidenceInterface::interface_id()
@@ -211,5 +220,6 @@ mod tests {
         let manifest = efficiency_evaluation_manifest();
         assert_eq!(manifest.dependencies.len(), 1);
         assert_eq!(manifest.dependencies[0].as_str(), "phenix.execution");
+        assert_eq!(manifest.maximum_authority, evidence_read_authority());
     }
 }
