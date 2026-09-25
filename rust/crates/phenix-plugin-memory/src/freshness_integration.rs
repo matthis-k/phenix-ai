@@ -8,8 +8,9 @@ use phenix_core::{
 use phenix_sdk::{
     helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
-    MemoryCanonicalReference, MemoryCommand, MemoryFreshness, MemoryKind, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope,
+    MemorySourceReference,
 };
 use std::{
     fs,
@@ -194,6 +195,7 @@ fn record(id: &str, kind: MemoryKind, content: &str, created_at: u64) -> MemoryR
             start: None,
             end: None,
         }],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,
@@ -213,6 +215,58 @@ fn mark_needs_validation(kernel: &mut Kernel, id: &str, observed_at: u64) {
         },
     )
     .unwrap();
+}
+
+#[test]
+fn revision_observation_pages_advance_over_the_dependency_index() {
+    let path = temp_db("revision-pages");
+    let mut kernel = kernel_with(&path);
+    let service = ServiceId::parse("phenix.language@1").unwrap();
+    let resource = "entity/entity-1/body".to_owned();
+
+    for id in ["memory-a", "memory-b", "memory-c"] {
+        let mut memory = record(id, MemoryKind::Fact, id, 10);
+        memory
+            .supporting_dependencies
+            .push(MemoryDependencyRevision {
+                service: service.clone(),
+                resource: resource.clone(),
+                revision: Some("body-1".into()),
+            });
+        invoke(&mut kernel, MemoryCommand::Record { record: memory }).unwrap();
+    }
+
+    let mut cursor: Option<MemoryRevisionCursor> = None;
+    let mut affected = Vec::new();
+    loop {
+        let response = invoke(
+            &mut kernel,
+            MemoryCommand::ObserveRevisionPage {
+                service: service.clone(),
+                resource: resource.clone(),
+                revision: "body-2".into(),
+                observed_at: 20,
+                limit: 1,
+                cursor,
+            },
+        )
+        .unwrap();
+        let MemoryResponse::AffectedPage {
+            memory_ids,
+            next_cursor,
+        } = response
+        else {
+            panic!("expected affected page");
+        };
+        affected.extend(memory_ids);
+        cursor = next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    assert_eq!(affected, vec!["memory-a", "memory-b", "memory-c"]);
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -581,6 +635,62 @@ fn semantic_revalidation_uses_the_validate_callable_without_resolve_when_decisiv
         response,
         MemoryResponse::Freshness { state: Some(state) }
             if state.freshness == MemoryFreshness::Current && state.changed_at == 30
+    ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn model_revalidation_cannot_make_changed_exact_support_current() {
+    let path = temp_db("stale-exact-support");
+    let mut kernel = routed_kernel_with(&path);
+    let profile = configure_revalidation_routing(
+        &mut kernel,
+        "stale-support-route",
+        "validate-keep",
+        "unexpected-resolve",
+    );
+    let service = ServiceId::parse("phenix.language@1").unwrap();
+    let resource = "entity/entity-1/body".to_owned();
+    let mut fact = record("stale-support", MemoryKind::Fact, "code claim", 10);
+    fact.supporting_dependencies.push(MemoryDependencyRevision {
+        service: service.clone(),
+        resource: resource.clone(),
+        revision: Some("body-1".into()),
+    });
+    invoke(
+        &mut kernel,
+        MemoryCommand::Record {
+            record: fact.clone(),
+        },
+    )
+    .unwrap();
+    invoke(
+        &mut kernel,
+        MemoryCommand::ObserveRevision {
+            service,
+            resource,
+            revision: "body-2".into(),
+            observed_at: 20,
+            limit: 10,
+        },
+    )
+    .unwrap();
+
+    let response = invoke(
+        &mut kernel,
+        MemoryCommand::Revalidate {
+            id: fact.id,
+            execution_id: EXECUTION.into(),
+            parent_attempt_id: PARENT_ATTEMPT.into(),
+            profile_id: profile,
+            at: 30,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        response,
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::NeedsValidation && state.changed_at == 30
     ));
     let _ = fs::remove_file(path);
 }

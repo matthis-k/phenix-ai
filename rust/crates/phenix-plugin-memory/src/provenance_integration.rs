@@ -47,6 +47,7 @@ fn durable_memory_rejects_summary_only_provenance() {
                 start: None,
                 end: None,
             }],
+            supporting_dependencies: Vec::new(),
             supersedes: Vec::new(),
             valid_from: None,
             valid_until: None,

@@ -1,9 +1,12 @@
 use crate::{
     error::{MemoryError, MemoryResult},
-    freshness::{deterministic_outcome, initial_state, observe_revision_change},
+    freshness::{
+        deterministic_outcome, exact_support_is_current, initial_state, observe_revision_change,
+    },
     persistence::{
         insert_record, insert_record_with_sidecar_secondary_and_updates, load_records,
-        load_secondary_ids, read_record, write_record, write_record_with_secondary_entry,
+        load_secondary_ids, load_secondary_ids_page, read_record, write_record,
+        write_record_with_secondary_entry,
     },
     retrieval,
 };
@@ -23,8 +26,8 @@ use phenix_sdk::{
     MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest,
     MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
     MemoryRankCandidate, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome, MemoryScope,
-    MemorySourceReference,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome,
+    MemoryRevisionCursor, MemoryScope, MemorySourceReference,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -216,6 +219,28 @@ fn handle(context: &MemoryContext<'_, '_>, command: MemoryCommand) -> MemoryResu
         } => Ok(MemoryResponse::Affected {
             memory_ids: observe_revision(context, service, resource, revision, observed_at, limit)?,
         }),
+        MemoryCommand::ObserveRevisionPage {
+            service,
+            resource,
+            revision,
+            observed_at,
+            limit,
+            cursor,
+        } => {
+            let (memory_ids, next_cursor) = observe_revision_page(
+                context,
+                service,
+                resource,
+                revision,
+                observed_at,
+                limit,
+                cursor,
+            )?;
+            Ok(MemoryResponse::AffectedPage {
+                memory_ids,
+                next_cursor,
+            })
+        }
         MemoryCommand::ObserveConflict {
             source,
             affected_ids,
@@ -281,11 +306,14 @@ fn extract_memory(
         ));
     }
     let mut source_refs = Vec::new();
+    let mut supporting_dependencies = Vec::new();
     for observation in &request.observations {
         validate_text("memory extraction observation", &observation.content)?;
         source_refs.extend(observation.source_refs.iter().cloned());
+        supporting_dependencies.extend(observation.supporting_dependencies.iter().cloned());
     }
     normalize_sources(&mut source_refs)?;
+    normalize_supporting_dependencies(&mut supporting_dependencies)?;
     if source_refs.is_empty() {
         return Err(MemoryError::Invalid(
             "memory extraction requires exact durable provenance".into(),
@@ -310,6 +338,7 @@ fn extract_memory(
             scope: request.scope,
             content,
             source_refs,
+            supporting_dependencies,
             supersedes: Vec::new(),
             valid_from: None,
             valid_until: None,
@@ -365,6 +394,11 @@ fn consolidate_memory(
         .flat_map(|record| record.source_refs.iter().cloned())
         .collect::<Vec<_>>();
     normalize_sources(&mut source_refs)?;
+    let mut supporting_dependencies = records
+        .iter()
+        .flat_map(|record| record.supporting_dependencies.iter().cloned())
+        .collect::<Vec<_>>();
+    normalize_supporting_dependencies(&mut supporting_dependencies)?;
     let input =
         serde_json::to_vec(&records).map_err(|error| MemoryError::Provider(error.to_string()))?;
     let content = routed_memory_text(
@@ -384,6 +418,7 @@ fn consolidate_memory(
             scope: first.scope.clone(),
             content,
             source_refs,
+            supporting_dependencies,
             supersedes: ids,
             valid_from: None,
             valid_until: None,
@@ -459,8 +494,73 @@ fn observe_revision(
     }
 
     let entry = dependency_key(&service, &resource);
+    let ids = load_secondary_ids(context, DEPENDENCY_INDEX, &entry, limit as usize)?;
+    observe_revision_ids(context, &service, &resource, &revision, observed_at, ids)
+}
+
+fn observe_revision_page(
+    context: &MemoryContext<'_, '_>,
+    service: ServiceId,
+    resource: String,
+    revision: String,
+    observed_at: u64,
+    limit: u32,
+    cursor: Option<MemoryRevisionCursor>,
+) -> MemoryResult<(Vec<String>, Option<MemoryRevisionCursor>)> {
+    validate_text("source resource", &resource)?;
+    validate_text("source revision", &revision)?;
+    if !(1..=100).contains(&limit) {
+        return Err(MemoryError::Invalid(
+            "revision observation limit must be between 1 and 100".into(),
+        ));
+    }
+    if let Some(cursor) = cursor.as_ref() {
+        if cursor.service != service || cursor.resource != resource || cursor.revision != revision {
+            return Err(MemoryError::Invalid(
+                "revision observation cursor does not match dependency revision".into(),
+            ));
+        }
+        validate_text(
+            "revision observation cursor memory id",
+            &cursor.after_memory_id,
+        )?;
+    }
+
+    let entry = dependency_key(&service, &resource);
+    let (ids, has_more) = load_secondary_ids_page(
+        context,
+        DEPENDENCY_INDEX,
+        &entry,
+        cursor
+            .as_ref()
+            .map(|cursor| cursor.after_memory_id.as_str()),
+        limit as usize,
+    )?;
+    let page_last_id = ids.last().cloned();
+    let affected = observe_revision_ids(context, &service, &resource, &revision, observed_at, ids)?;
+    let next_cursor = if has_more {
+        page_last_id.map(|after_memory_id| MemoryRevisionCursor {
+            service,
+            resource,
+            revision,
+            after_memory_id,
+        })
+    } else {
+        None
+    };
+    Ok((affected, next_cursor))
+}
+
+fn observe_revision_ids(
+    context: &MemoryContext<'_, '_>,
+    service: &ServiceId,
+    resource: &str,
+    revision: &str,
+    observed_at: u64,
+    ids: Vec<String>,
+) -> MemoryResult<Vec<String>> {
     let mut affected = Vec::new();
-    for id in load_secondary_ids(context, DEPENDENCY_INDEX, &entry, limit as usize)? {
+    for id in ids {
         let key = MemoryKey::parse(id.clone())?;
         let record: MemoryRecord = read_record(context, &record_key(&key))?.ok_or_else(|| {
             MemoryError::Persistence(format!("missing dependency-indexed memory {id}"))
@@ -468,7 +568,7 @@ fn observe_revision(
         let state_key = freshness_key(&key);
         let mut state: MemoryFreshnessRecord =
             read_record(context, &state_key)?.unwrap_or_else(|| initial_state(&record, None));
-        if observe_revision_change(&mut state, &service, &resource, &revision, observed_at) {
+        if observe_revision_change(&mut state, service, resource, revision, observed_at) {
             write_record(context, &state_key, &state)?;
             affected.push(id);
         }
@@ -558,34 +658,40 @@ fn revalidate_memory(
         MemoryRevalidationOutcome::Expire => MemoryRevalidationOutcome::Expire,
         MemoryRevalidationOutcome::Supersede => MemoryRevalidationOutcome::Supersede,
         MemoryRevalidationOutcome::NeedsValidation => {
-            let validated = routed_revalidation(
-                context,
-                &execution_id,
-                &parent_attempt_id,
-                &profile_id,
-                memory_validate_callable(),
-                &record,
-                &state,
-            )?;
-            if validated == MemoryRevalidationOutcome::NeedsValidation {
-                routed_revalidation(
+            if !exact_support_is_current(&record, &state) {
+                MemoryRevalidationOutcome::NeedsValidation
+            } else {
+                let validated = routed_revalidation(
                     context,
                     &execution_id,
                     &parent_attempt_id,
                     &profile_id,
-                    memory_resolve_callable(),
+                    memory_validate_callable(),
                     &record,
                     &state,
-                )?
-            } else {
-                validated
+                )?;
+                if validated == MemoryRevalidationOutcome::NeedsValidation {
+                    routed_revalidation(
+                        context,
+                        &execution_id,
+                        &parent_attempt_id,
+                        &profile_id,
+                        memory_resolve_callable(),
+                        &record,
+                        &state,
+                    )?
+                } else {
+                    validated
+                }
             }
         }
     };
 
     match outcome {
-        MemoryRevalidationOutcome::KeepCurrent => state.freshness = MemoryFreshness::Current,
-        MemoryRevalidationOutcome::NeedsValidation => {
+        MemoryRevalidationOutcome::KeepCurrent if exact_support_is_current(&record, &state) => {
+            state.freshness = MemoryFreshness::Current;
+        }
+        MemoryRevalidationOutcome::KeepCurrent | MemoryRevalidationOutcome::NeedsValidation => {
             state.freshness = MemoryFreshness::NeedsValidation;
         }
         MemoryRevalidationOutcome::Supersede
@@ -1043,6 +1149,7 @@ fn promote_memory(
             scope,
             content: source.content,
             source_refs: source.source_refs,
+            supporting_dependencies: source.supporting_dependencies,
             supersedes: Vec::new(),
             valid_from: source.valid_from,
             valid_until: source.valid_until,
@@ -1059,6 +1166,7 @@ fn record_memory(
     validate_scope(&record.scope)?;
     validate_text("memory content", &record.content)?;
     normalize_sources(&mut record.source_refs)?;
+    normalize_supporting_dependencies(&mut record.supporting_dependencies)?;
     if record.source_refs.is_empty() {
         return Err(MemoryError::Invalid(
             "durable memory requires at least one source reference".into(),
@@ -1213,6 +1321,33 @@ fn normalize_sources(sources: &mut Vec<MemorySourceReference>) -> MemoryResult<(
     Ok(())
 }
 
+fn normalize_supporting_dependencies(
+    dependencies: &mut Vec<MemoryDependencyRevision>,
+) -> MemoryResult<()> {
+    for dependency in dependencies.iter() {
+        validate_text(
+            "memory supporting dependency resource",
+            &dependency.resource,
+        )?;
+        let revision = dependency.revision.as_deref().ok_or_else(|| {
+            MemoryError::Invalid("memory supporting dependencies require an exact revision".into())
+        })?;
+        validate_text("memory supporting dependency revision", revision)?;
+        if dependency.service == memory_service()
+            || dependency.service == context_compaction_service()
+            || dependency.service == context_expansion_service()
+        {
+            return Err(MemoryError::Invalid(format!(
+                "memory supporting dependency {} must reference authoritative evidence, not derived memory",
+                dependency.resource
+            )));
+        }
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(())
+}
+
 fn validate_text(label: &str, value: &str) -> MemoryResult<()> {
     if value.trim().is_empty() {
         Err(MemoryError::Invalid(format!("{label} must not be empty")))
@@ -1258,4 +1393,35 @@ fn dependency_key(service: &ServiceId, resource: &str) -> String {
 
 fn node_key(id: &MemoryKey) -> String {
     format!("node/{}", id.as_str())
+}
+
+#[cfg(test)]
+mod supporting_dependency_tests {
+    use super::*;
+
+    fn dependency(revision: Option<&str>) -> MemoryDependencyRevision {
+        MemoryDependencyRevision {
+            service: ServiceId::parse("phenix.language@1").unwrap(),
+            resource: "entity/entity-1/body".into(),
+            revision: revision.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn supporting_dependencies_require_exact_revisions() {
+        let mut dependencies = vec![dependency(None)];
+        assert!(matches!(
+            normalize_supporting_dependencies(&mut dependencies),
+            Err(MemoryError::Invalid(message))
+                if message.contains("require an exact revision")
+        ));
+    }
+
+    #[test]
+    fn supporting_dependencies_are_deduplicated_without_losing_revision() {
+        let exact = dependency(Some("body-revision-1"));
+        let mut dependencies = vec![exact.clone(), exact.clone()];
+        normalize_supporting_dependencies(&mut dependencies).unwrap();
+        assert_eq!(dependencies, vec![exact]);
+    }
 }
