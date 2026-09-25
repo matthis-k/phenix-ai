@@ -315,11 +315,26 @@ fn run_with_retry_route(
     let ExecutionResourceResponse::Remaining { budget: remaining } = remaining else {
         return Err("execution resource service returned a non-remaining response".into());
     };
+    let historical_estimates = match context
+        .sdk
+        .routing
+        .invoke_projected::<ModelCommand, ModelResponse>(&ModelCommand::ListCandidates {
+            profile_id: profile_id.clone(),
+            callable_id: callable_id.clone(),
+        })
+    {
+        Ok(ModelResponse::Candidates { candidates }) => candidates
+            .into_iter()
+            .filter_map(|candidate| candidate.estimate)
+            .collect(),
+        Ok(_) | Err(_) => Vec::new(),
+    };
     let plan = match policy.plan(&UsagePlanningInput {
         task,
         execution_state: execution.state,
         remaining,
         now_ms,
+        historical_estimates,
     }) {
         Ok(plan) => {
             trace_policy_stage(
