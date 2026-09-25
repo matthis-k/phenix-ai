@@ -6,6 +6,8 @@ use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 
 pub const EFFICIENCY_EVALUATION_SERVICE: &str = "phenix.efficiency-evaluation@1";
+pub const EFFICIENCY_OUTCOME_EVIDENCE_SERVICE: &str =
+    "phenix.efficiency-outcome-evidence@1";
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
@@ -104,8 +106,53 @@ pub struct EfficiencyCollectionRequest {
     pub policy_revision: String,
     pub outcome_evaluator_identity: String,
     pub price_revision: String,
-    pub outcome_evidence: EfficiencyOutcomeEvidence,
     pub root_elapsed_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyOutcomeEvidenceRequest {
+    pub task_fixture_revision: String,
+    pub root_execution_id: String,
+    pub evaluator_identity: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EfficiencyOutcomeEvidenceCommand {
+    Resolve {
+        request: EfficiencyOutcomeEvidenceRequest,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EfficiencyOutcomeEvidenceResponse {
+    Evidence {
+        evidence: Option<EfficiencyOutcomeEvidence>,
+    },
+}
+
+pub struct EfficiencyOutcomeEvidenceInterface;
+
+impl ComponentInterface for EfficiencyOutcomeEvidenceInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(EFFICIENCY_OUTCOME_EVIDENCE_SERVICE)
+            .expect("static efficiency outcome evidence interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<
+            EfficiencyOutcomeEvidenceCommand,
+            EfficiencyOutcomeEvidenceResponse,
+        >()
+    }
+}
+
+#[must_use]
+pub fn efficiency_outcome_evidence_service() -> ServiceId {
+    ServiceId::parse(EFFICIENCY_OUTCOME_EVIDENCE_SERVICE)
+        .expect("static efficiency outcome evidence service id is valid")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
