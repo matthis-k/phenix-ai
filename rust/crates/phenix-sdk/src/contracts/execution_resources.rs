@@ -34,6 +34,7 @@ pub enum ExecutionResourceCommand {
         root_execution_id: String,
         reservation_id: String,
     },
+    RunnableDelegated,
     AdmitDelegated {
         root_execution_id: String,
         reservation: BudgetReservationRequest,
@@ -77,6 +78,9 @@ pub enum ExecutionResourceResponse {
     },
     Remaining {
         budget: RemainingBudget,
+    },
+    DelegatedRunnableTasks {
+        task_ids: Vec<String>,
     },
     DelegatedTask {
         task: DelegatedWorkerTaskRecord,
