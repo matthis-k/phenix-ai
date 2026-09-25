@@ -16,8 +16,9 @@ use phenix_sdk::{
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
     ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
     ContextSource, ExactContextReference, ExecutionCommand, ExecutionContextProjection,
-    ExecutionInterface, ExecutionResponse, ExecutionState, ProjectedContextEntry,
-    ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
+    ExecutionInterface, ExecutionResourceCommand, ExecutionResourceInterface,
+    ExecutionResourceResponse, ExecutionResponse, ExecutionState, ProjectedContextEntry,
+    ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource, WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
 
@@ -30,6 +31,7 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
+    resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
 }
 
 type ContextPluginContext<'host, 'runtime> =
@@ -42,6 +44,7 @@ fn context<'host, 'runtime>(
         host,
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
+            resources: SdkClient::new(host, context_component_id()),
         },
         (),
         (),
@@ -180,6 +183,13 @@ fn handle(
                 lifetime,
                 reason,
             )?;
+            Ok(ContextResponse::Loaded {
+                injection,
+                resource,
+            })
+        }
+        ContextCommand::LoadDelegatedResult { task_id } => {
+            let (injection, resource) = load_delegated_result(context, state, task_id)?;
             Ok(ContextResponse::Loaded {
                 injection,
                 resource,
@@ -443,6 +453,56 @@ fn project_file_kind(path: &str) -> Option<ContextResourceKind> {
         "SKILL.md" => Some(ContextResourceKind::Skill),
         _ => None,
     }
+}
+
+fn load_delegated_result(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    task_id: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    validate_identity("delegated task id", &task_id)?;
+    let response: ExecutionResourceResponse = context
+        .sdk
+        .resources
+        .invoke_projected(&ExecutionResourceCommand::GetDelegated {
+            task_id: task_id.clone(),
+        })
+        .map_err(|error| format!("delegated task lookup failed: {error}"))?;
+    let ExecutionResourceResponse::DelegatedTaskLookup {
+        task: Some(record),
+    } = response
+    else {
+        return Err(format!("unknown delegated task: {task_id}"));
+    };
+    if !matches!(record.task.state, WorkerTaskState::Completed { .. }) {
+        return Err(format!("delegated task is not completed: {task_id}"));
+    }
+    let result = record
+        .result
+        .as_ref()
+        .ok_or_else(|| format!("completed delegated task has no result: {task_id}"))?;
+    let draft = result
+        .context_draft(&task_id, &record.binding)
+        .map_err(|error| format!("invalid delegated result: {error:?}"))?;
+    let resource = register_resource(
+        context,
+        draft.resource_id.clone(),
+        ContextResourceKind::External,
+        draft.source,
+        ContextScope::Workspace,
+        draft.content,
+    )?;
+    load_context_once(
+        context,
+        state,
+        format!("delegation-result:{task_id}"),
+        record.task.parent_execution,
+        resource.descriptor.resource_id,
+        resource.descriptor.revision,
+        ContextInjectionRequester::Orchestration,
+        ContextInjectionLifetime::Execution,
+        format!("delegated result {task_id}"),
+    )
 }
 
 fn load_context(
