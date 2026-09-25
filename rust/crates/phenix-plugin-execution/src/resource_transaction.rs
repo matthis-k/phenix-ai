@@ -112,6 +112,10 @@ impl ExecutionResourceState {
         self.delegated.get(task_id)
     }
 
+    pub(crate) fn runnable_delegated_tasks(&self) -> Vec<String> {
+        self.delegated.runnable()
+    }
+
     pub(crate) fn remaining(
         &self,
         root_execution_id: &str,
