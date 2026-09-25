@@ -47,7 +47,10 @@ pub use phenix_plugin_debug::{
 pub use phenix_plugin_efficiency_evaluation::{
     efficiency_evaluation_component_id, efficiency_evaluation_component_manifest,
     efficiency_evaluation_factory, efficiency_evaluation_manifest,
-    EFFICIENCY_EVALUATION_COMPONENT, EFFICIENCY_EVALUATION_PLUGIN,
+    efficiency_evaluation_service, EfficiencyCollectionRequest, EfficiencyEvaluationCommand,
+    EfficiencyEvaluationInterface, EfficiencyEvaluationResponse, EfficiencyOutcomeEvidence,
+    EfficiencyTaskRecord, EFFICIENCY_EVALUATION_COMPONENT, EFFICIENCY_EVALUATION_PLUGIN,
+    EFFICIENCY_EVALUATION_SERVICE,
 };
 pub use phenix_plugin_execution::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
