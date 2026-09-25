@@ -317,7 +317,10 @@ mod tests {
         let first = result.context_draft("task with spaces", &binding).unwrap();
         let replay = result.context_draft("task with spaces", &binding).unwrap();
         assert_eq!(first, replay);
-        assert!(first.resource_id.as_str().starts_with("delegated-result:sha256:"));
+        assert!(first
+            .resource_id
+            .as_str()
+            .starts_with("delegated-result:sha256:"));
         assert_eq!(first.source, "delegation-result:task with spaces");
         let envelope: DelegatedResultContextEnvelope =
             serde_json::from_slice(first.content.as_ref()).unwrap();
