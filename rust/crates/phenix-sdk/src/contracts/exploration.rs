@@ -451,6 +451,18 @@ mod tests {
     }
 
     #[test]
+    fn transcript_dependent_opportunity_stays_in_parent() {
+        let mut opportunity = opportunity();
+        opportunity.requires_parent_transcript = true;
+        assert_eq!(
+            policy().assess(&opportunity),
+            ExplorationDecision::KeepInParent {
+                reason: ExplorationRejection::ParentTranscriptRequired,
+            }
+        );
+    }
+
+    #[test]
     fn finite_cost_policy_rejects_unknown_child_cost_before_admission() {
         let mut opportunity = opportunity();
         opportunity.child_cost_microunits = None;
@@ -510,6 +522,27 @@ mod tests {
             admission.binding.resources.max_result_bytes,
             step_plan().delegation.max_result_bytes
         );
+    }
+
+    #[test]
+    fn delegated_handoff_carries_only_explicit_exact_context_references() {
+        use phenix_core::{ContextResourceId, ContextRevisionId};
+
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        let selected = ExactContextReference {
+            resource_id: ContextResourceId::parse("doc:selected").unwrap(),
+            revision: ContextRevisionId::parse("revision-1").unwrap(),
+        };
+        input.context = vec![selected.clone()];
+
+        let admission =
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0)
+                .unwrap();
+
+        assert_eq!(admission.binding.resources.context, vec![selected]);
+        assert!(!opportunity.requires_parent_transcript);
     }
 
     #[test]
