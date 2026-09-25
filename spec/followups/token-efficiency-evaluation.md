@@ -22,7 +22,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Define task-level success/outcome evidence without creating a second canonical task state; derived task records require a matching evaluator/source evidence identity and revision.
 - [x] Compare policy variants only after validating the same task fixture set.
 - [x] Report marginal effect of independently disableable reduction stages through explicit baseline/variant stage sets and paired cohort comparisons.
-- [ ] Feed historical estimates into routing/UsagePolicy only as derived evidence for later attempts.
+- [x] Feed historical estimates into routing/UsagePolicy only as derived evidence for later attempts. (Routing rebuilds estimates from completed durable evidence; step-runner forwards only historical estimates; UsagePolicy pins the common estimator revision/cutoff into the durable `StepPlan` without overriding hard resource limits.)
 - [x] Keep current-turn outcome out of its own planning/routing decision; step-runner records routing evidence only after dispatch completes/fails, and derived estimates are rebuilt afterward for later selections.
 - [x] Expose unknown/unavailable usage and incomplete monetary accounting explicitly rather than treating them as zero.
 
