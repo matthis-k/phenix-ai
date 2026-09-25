@@ -188,6 +188,81 @@ mod legacy_resources {
     use super::*;
 
     #[test]
+    fn load_once_replays_one_durable_injection_and_rejects_identity_reuse() {
+        let path = temp_db("load-once");
+        let mut kernel = kernel(&path);
+        create_execution(&mut kernel, "exec-1");
+        let registered = invoke(
+            &mut kernel,
+            ContextCommand::Register {
+                resource_id: ContextResourceId::parse("external:delegated-task-1").unwrap(),
+                kind: ContextResourceKind::External,
+                source: "delegation:task-1".into(),
+                scope: ContextScope::Workspace,
+                content: b"bounded delegated finding".to_vec().into(),
+            },
+        )
+        .unwrap();
+        let ContextResponse::Registered { resource } = registered else {
+            panic!("expected registered resource");
+        };
+        let command = ContextCommand::LoadOnce {
+            admission_id: "delegation:task-1:result-1".into(),
+            execution_id: "exec-1".into(),
+            resource_id: resource.descriptor.resource_id.clone(),
+            revision: resource.descriptor.revision.clone(),
+            requester: ContextInjectionRequester::Orchestration,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: "admit delegated finding".into(),
+        };
+
+        let first = invoke(&mut kernel, command.clone()).unwrap();
+        let replay = invoke(&mut kernel, command.clone()).unwrap();
+        assert_eq!(first, replay);
+
+        let projected = invoke(
+            &mut kernel,
+            ContextCommand::Project {
+                execution_id: "exec-1".into(),
+            },
+        )
+        .unwrap();
+        let ContextResponse::Projection { projection } = projected else {
+            panic!("expected projection");
+        };
+        assert_eq!(projection.entries.len(), 1);
+        assert_eq!(projection.entries[0].resource, resource);
+
+        drop(kernel);
+        let mut restored = kernel(&path);
+        let replay_after_restart = invoke(&mut restored, command.clone()).unwrap();
+        assert_eq!(first, replay_after_restart);
+
+        let conflict = invoke(
+            &mut restored,
+            ContextCommand::LoadOnce {
+                reason: "changed meaning".into(),
+                ..command
+            },
+        )
+        .unwrap_err();
+        assert!(conflict.contains("context admission identity reused"));
+
+        let projected = invoke(
+            &mut restored,
+            ContextCommand::Project {
+                execution_id: "exec-1".into(),
+            },
+        )
+        .unwrap();
+        let ContextResponse::Projection { projection } = projected else {
+            panic!("expected projection");
+        };
+        assert_eq!(projection.entries.len(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn resource_load_and_projection_still_use_exact_durable_revision() {
         let path = temp_db("legacy-resource");
         let mut kernel = kernel(&path);
