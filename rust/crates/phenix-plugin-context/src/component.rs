@@ -4,6 +4,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     ContextCompactionInterface, ContextExpansionInterface, ContextInterface, ExecutionInterface,
+    ExecutionResourceInterface,
 };
 
 const CONTEXT_COMPONENT: &str = "phenix.context";
@@ -34,6 +35,12 @@ pub fn context_component_manifest() -> ComponentManifest {
             ComponentImport {
                 interface: ExecutionInterface::interface_id(),
                 schema: ExecutionInterface::schema(),
+                required: true,
+                authority: authority.clone(),
+            },
+            ComponentImport {
+                interface: ExecutionResourceInterface::interface_id(),
+                schema: ExecutionResourceInterface::schema(),
                 required: true,
                 authority: authority.clone(),
             },
