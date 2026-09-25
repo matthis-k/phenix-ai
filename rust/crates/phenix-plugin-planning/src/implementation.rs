@@ -5,8 +5,7 @@ use phenix_core::{
 use phenix_sdk::{
     DecisionRecord, ExplorationCandidate, ExplorationCostEstimate, ExplorationOpportunity,
     ExplorationPolicy, HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep,
-    PlanningCommand,
-    PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
+    PlanningCommand, PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

@@ -123,15 +123,25 @@ pub enum PlanningCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum PlanningResponse {
-    Objective { objective: Option<ObjectiveRecord> },
-    Plan { plan: Option<PlanRecord> },
-    ExplorationOpportunity { opportunity: ExplorationOpportunity },
+    Objective {
+        objective: Option<ObjectiveRecord>,
+    },
+    Plan {
+        plan: Option<PlanRecord>,
+    },
+    ExplorationOpportunity {
+        opportunity: ExplorationOpportunity,
+    },
     ExplorationAssessment {
         opportunity: ExplorationOpportunity,
         decision: ExplorationDecision,
     },
-    Decision { decision: Option<DecisionRecord> },
-    History { entries: Vec<HistoryEntry> },
+    Decision {
+        decision: Option<DecisionRecord>,
+    },
+    History {
+        entries: Vec<HistoryEntry>,
+    },
 }
 
 pub struct PlanningInterface;
