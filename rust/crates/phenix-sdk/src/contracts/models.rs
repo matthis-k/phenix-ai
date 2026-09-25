@@ -256,6 +256,7 @@ pub enum RouteSelectionError {
 pub struct RoutingEvidence {
     pub success: bool,
     pub latency_ms: Option<u64>,
+    pub cost_microunits: Option<u64>,
     pub usage: ModelTurnUsage,
 }
 
