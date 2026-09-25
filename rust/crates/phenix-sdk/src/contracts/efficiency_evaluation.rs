@@ -314,7 +314,7 @@ pub fn compare_efficiency_policies(
                 return None;
             }
             *fixture_counts
-                .entry(record.task_fixture_revision.as_str())
+                .entry(record.task_fixture_revision.clone())
                 .or_default() += 1;
         }
         Some(fixture_counts)
