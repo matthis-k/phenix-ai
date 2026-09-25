@@ -268,7 +268,7 @@ fn layer_wraps_terminal_with_pre_and_post_execution() {
             .unwrap(),
         b"x"
     );
-    assert_eq!(*order.lock().unwrap(), vec!["pre", "terminal", "post"]);
+    assert_eq!(order.lock().unwrap().as_slice(), ["pre", "terminal", "post"]);
 }
 
 #[test]
