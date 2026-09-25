@@ -3,7 +3,7 @@ use super::{
     DelegationResourcePolicy, DelegationTaskBinding, ExactContextReference, ExecutionAuthority,
     ExecutionResourceCommand, RouteDecision, StepPlan, WorkerTaskRecord, WorkerTaskState,
 };
-use phenix_core::ArtifactRevision;
+use phenix_core::{ArtifactRevision, Bytes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -46,6 +46,7 @@ pub struct ExplorationDelegationInput {
     pub parent_policy_revision: String,
     pub originating_attempt_id: Option<String>,
     pub contract_revision: ArtifactRevision,
+    pub contract: Bytes,
     pub target: RouteDecision,
     pub parent_authority: ExecutionAuthority,
     pub delegated_authority: ExecutionAuthority,
@@ -92,6 +93,10 @@ pub enum ExplorationPreparationError {
     TaskMismatch { expected: String, observed: String },
     AuthorityExpanded,
     PolicyRevisionMismatch { expected: String, observed: String },
+    ContractRevisionMismatch {
+        expected: ArtifactRevision,
+        observed: ArtifactRevision,
+    },
     DelegationDisabled,
     ChildLimitReached { current: u32, allowed: u32 },
     ZeroAttempts,
@@ -253,6 +258,13 @@ pub fn prepare_exploration_delegation(
             observed: input.parent_policy_revision.clone(),
         });
     }
+    let observed_contract_revision = ArtifactRevision::from_content(input.contract.as_slice());
+    if observed_contract_revision != input.contract_revision {
+        return Err(ExplorationPreparationError::ContractRevisionMismatch {
+            expected: input.contract_revision.clone(),
+            observed: observed_contract_revision,
+        });
+    }
     if !plan.delegation.enabled {
         return Err(ExplorationPreparationError::DelegationDisabled);
     }
@@ -292,6 +304,7 @@ pub fn prepare_exploration_delegation(
 
     let binding = DelegationTaskBinding {
         contract_revision: input.contract_revision,
+        contract: input.contract,
         parent_policy_revision: input.parent_policy_revision.clone(),
         originating_attempt_id: input.originating_attempt_id,
         resources: DelegatedWorkResources {
@@ -363,6 +376,7 @@ mod tests {
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: Some("attempt-1".into()),
             contract_revision: ArtifactRevision::from_content(b"exploration contract"),
+            contract: b"exploration contract".to_vec().into(),
             target: RouteDecision {
                 target: ModelTarget {
                     provider_plugin: PluginId::parse("provider.fixture").unwrap(),
