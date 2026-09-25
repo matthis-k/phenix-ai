@@ -151,6 +151,14 @@ impl DiagnosticsResult {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct FileRevisionFallback {
+    pub workspace_id: String,
+    pub document: LanguageDocumentIdentity,
+    pub content: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct LanguageObservation {
     pub id: String,
@@ -387,6 +395,10 @@ pub enum LanguageCommand {
         epoch: ProviderEpoch,
         result: LanguageOperationResult,
     },
+    ReadFileFallback {
+        workspace_id: String,
+        path: String,
+    },
     RecordEntityRevision {
         revision: CodeEntityRevision,
     },
@@ -436,6 +448,9 @@ pub enum LanguageResponse {
     },
     Observation {
         observation: Option<LanguageObservation>,
+    },
+    FileFallback {
+        fallback: FileRevisionFallback,
     },
     EntityRevision {
         revision: Option<CodeEntityRevision>,
