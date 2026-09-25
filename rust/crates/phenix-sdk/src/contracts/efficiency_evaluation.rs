@@ -2,7 +2,10 @@ use super::{
     AttemptOutcome, AttemptUsageRecord, StepAttemptPhase, StepAttemptRecord, UsageAggregate,
     UsageQuantity,
 };
+use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
+
+pub const EFFICIENCY_EVALUATION_SERVICE: &str = "phenix.efficiency-evaluation@1";
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
@@ -91,6 +94,49 @@ pub struct EfficiencyDurableTaskEvidence {
     #[serde(default)]
     pub attempts: Vec<StepAttemptRecord>,
     pub root_elapsed_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyCollectionRequest {
+    pub task_fixture_revision: String,
+    pub root_execution_id: String,
+    pub policy_revision: String,
+    pub outcome_evaluator_identity: String,
+    pub price_revision: String,
+    pub outcome_evidence: EfficiencyOutcomeEvidence,
+    pub root_elapsed_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EfficiencyEvaluationCommand {
+    CollectTask { request: EfficiencyCollectionRequest },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EfficiencyEvaluationResponse {
+    Task { record: EfficiencyTaskRecord },
+}
+
+pub struct EfficiencyEvaluationInterface;
+
+impl ComponentInterface for EfficiencyEvaluationInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(EFFICIENCY_EVALUATION_SERVICE)
+            .expect("static efficiency evaluation interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<EfficiencyEvaluationCommand, EfficiencyEvaluationResponse>()
+    }
+}
+
+#[must_use]
+pub fn efficiency_evaluation_service() -> ServiceId {
+    ServiceId::parse(EFFICIENCY_EVALUATION_SERVICE)
+        .expect("static efficiency evaluation service id is valid")
 }
 
 pub fn derive_efficiency_task_record_from_attempts(
