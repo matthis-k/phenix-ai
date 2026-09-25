@@ -117,11 +117,10 @@ pub fn memory_validate_callable() -> CallableId {
     CallableId::parse(MEMORY_VALIDATE_CALLABLE).expect("static memory callable id is valid")
 }
 
-
 #[cfg(test)]
 mod code_dependency_tests {
-    use super::*;
     use super::super::language::{CodeEntityFacet, LogicalCodeEntity};
+    use super::*;
 
     #[test]
     fn relation_facet_dependency_round_trips_without_losing_identity() {
