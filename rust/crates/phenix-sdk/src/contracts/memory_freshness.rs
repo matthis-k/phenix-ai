@@ -138,4 +138,15 @@ mod code_dependency_tests {
 
         assert_eq!(dependency.as_code_facet(), Some(reference));
     }
+
+    #[test]
+    fn non_language_dependency_does_not_decode_as_code_facet() {
+        let dependency = MemoryDependencyRevision {
+            service: ServiceId::parse("fixture.source@1").unwrap(),
+            resource: "code-facet:not-language-owned".into(),
+            revision: Some("revision-1".into()),
+        };
+
+        assert_eq!(dependency.as_code_facet(), None);
+    }
 }
