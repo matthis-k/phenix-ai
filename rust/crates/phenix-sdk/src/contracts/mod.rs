@@ -19,6 +19,7 @@ pub mod model_dispatch;
 pub mod models;
 pub mod options;
 pub mod planning;
+pub mod primitive_agent_export;
 pub mod sessions;
 #[allow(clippy::large_enum_variant)]
 pub mod step_attempt;
@@ -52,6 +53,7 @@ pub use model_dispatch::*;
 pub use models::*;
 pub use options::*;
 pub use planning::*;
+pub use primitive_agent_export::*;
 pub use sessions::*;
 pub use step_attempt::*;
 pub use step_runner::*;
