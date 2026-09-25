@@ -236,7 +236,7 @@ impl DelegatedTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{ArtifactRevision, CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
     use phenix_sdk::{
         BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate,
     };
