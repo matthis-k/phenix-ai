@@ -16,6 +16,7 @@ Tracks #516 slice 5.
 - [x] Accepted exploration decisions now project into the ordinary atomic delegated-admission contract, with deterministic task/reservation identity and pre-admission authority/deadline checks.
 - [x] Planning exposes a typed handoff that packages an explicit exploration candidate plus inline/delegated cost estimates into an `ExplorationOpportunity` without scheduling work.
 - [x] Pending delegated work can be cancelled before start while atomically releasing its unused reservation; started work cannot take this rollback path.
+- [x] Delegated task bindings persist optional originating-attempt identity so later child/retry/reacquisition accounting has a stable parent attribution key.
 
 ## Required implementation
 
