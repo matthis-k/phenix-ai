@@ -189,6 +189,7 @@ fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> 
                         max_output_tokens: Some(16 * 1024),
                     },
                 },
+                cache: Default::default(),
                 optional: BTreeSet::new(),
             },
         },

@@ -32,7 +32,9 @@ pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::{
-    CompactionCommit, CompactionProposal, CompactionValidationError,
+    choose_cache_aware_compaction, CacheCompactionChoice, CacheCompactionCostError,
+    CacheCompactionDecision, CacheCompactionDecisionBasis, CacheCompactionDecisionRequest,
+    CacheCostScenario, CompactionCommit, CompactionProposal, CompactionValidationError,
     ContextCheckpoint as ProjectionCheckpoint, ProjectionRevision, RetentionTransition,
     ToolCallGroupReference,
 };

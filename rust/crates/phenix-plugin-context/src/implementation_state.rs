@@ -10,13 +10,14 @@ use phenix_core::{
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    context_service, AdmittedContextItem, CachePlacement, ContextCandidate, ContextCommand,
-    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
-    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
-    ContextProjectionForm, ContextResourceKind, ContextResourceRevision, ContextResponse,
-    ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
-    ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
+    choose_cache_aware_compaction, context_service, AdmittedContextItem, CachePlacement,
+    ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
+    ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
+    ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
+    ContextSource, ExactContextReference, ExecutionCommand, ExecutionContextProjection,
+    ExecutionInterface, ExecutionResponse, ExecutionState, ProjectedContextEntry,
+    ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -206,6 +207,11 @@ fn handle(
                 expected_projection,
             )?,
         }),
+        ContextCommand::EvaluateCompactionCost { request } => {
+            let decision = choose_cache_aware_compaction(&request)
+                .map_err(|error| format!("cache compaction cost evaluation failed: {error:?}"))?;
+            Ok(ContextResponse::CompactionCostDecision { decision })
+        }
         ContextCommand::GetProjectionState { .. }
         | ContextCommand::Admit { .. }
         | ContextCommand::PrepareCompaction { .. }

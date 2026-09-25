@@ -349,6 +349,7 @@ fn setup(kernel: &mut Kernel) {
                         max_output_tokens: Some(2_000),
                     },
                 },
+                cache: Default::default(),
                 optional: BTreeSet::new(),
             },
         },

@@ -8,10 +8,13 @@ use phenix_plugin_catalog::{
     options_service, AgentDefinition, ExecutionConfigurationCommand,
     ExecutionConfigurationResponse, ModelCommand, ModelResponse, ModelTarget, OptionAssignment,
     OptionCommand, OptionKey, OptionResponse, OptionScope, OptionStartupPrecedence,
-    OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
+    OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile, COMMON_PROVIDERS,
 };
 use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
-use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities};
+use phenix_sdk::{
+    CacheCapabilities, CapabilitySupport, CapacityKnowledge, ContextControl,
+    EffectiveModelCapabilities,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -328,6 +331,38 @@ fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfil
     profile
 }
 
+fn cache_capabilities_for_target(target: &ModelTarget) -> CacheCapabilities {
+    let provider = target.provider_plugin.as_str();
+    let model = target.model.as_str();
+    let Some(preset) = COMMON_PROVIDERS
+        .iter()
+        .find(|preset| preset.id() == provider)
+    else {
+        return CacheCapabilities::default();
+    };
+
+    match preset.id() {
+        "openai-api" if model.starts_with("gpt-5.6") || model.starts_with("gpt-6") => {
+            CacheCapabilities {
+                // Context materialization carries an exact stable-prefix byte boundary.
+                breakpoint_control: CapabilitySupport::Supported,
+                write_policy: CapabilitySupport::Supported,
+                retention_hints: CapabilitySupport::Supported,
+                usage_reporting: CapabilitySupport::Supported,
+            }
+        }
+        "anthropic" => CacheCapabilities {
+            // Anthropic's top-level ephemeral control is representable at request end.
+            breakpoint_control: CapabilitySupport::Supported,
+            write_policy: CapabilitySupport::Supported,
+            retention_hints: CapabilitySupport::Supported,
+            usage_reporting: CapabilitySupport::Supported,
+        },
+        // A compatible protocol or gateway does not establish deployment-specific cache semantics.
+        _ => CacheCapabilities::default(),
+    }
+}
+
 fn publish_routing_profile_runtime_state(
     harness: &mut PhenixHarness,
     profile: &RoutingProfile,
@@ -338,11 +373,13 @@ fn publish_routing_profile_runtime_state(
 
     for target in targets {
         publish_provider_authentication(harness, &target.provider_plugin)?;
+        let cache = cache_capabilities_for_target(&target);
         let capabilities = EffectiveModelCapabilities {
             target,
             generation: CapabilityGenerationId::parse(RUNTIME_CAPABILITY_GENERATION)?,
             context: ContextControl::ReplaceableTurns,
             capacity: CapacityKnowledge::Unknown,
+            cache,
             optional: BTreeSet::new(),
         };
         let response: ModelResponse = invoke_projected(
@@ -447,6 +484,33 @@ mod tests {
             }]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn direct_openai_and_anthropic_publish_only_supported_cache_capabilities() {
+        let target = |provider: &str, model: &str| ModelTarget {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            model: ModelId::parse(model).unwrap(),
+            options: BTreeMap::new(),
+        };
+
+        let openai = cache_capabilities_for_target(&target("openai-api", "gpt-5.6-sol"));
+        assert_eq!(openai.breakpoint_control, CapabilitySupport::Supported);
+        assert_eq!(openai.write_policy, CapabilitySupport::Supported);
+        assert_eq!(openai.retention_hints, CapabilitySupport::Supported);
+        assert_eq!(openai.usage_reporting, CapabilitySupport::Supported);
+
+        let anthropic = cache_capabilities_for_target(&target("anthropic", "claude-sonnet-5"));
+        assert_eq!(anthropic.breakpoint_control, CapabilitySupport::Supported);
+        assert_eq!(anthropic.write_policy, CapabilitySupport::Supported);
+        assert_eq!(anthropic.retention_hints, CapabilitySupport::Supported);
+        assert_eq!(anthropic.usage_reporting, CapabilitySupport::Supported);
+
+        // Wire compatibility alone is not enough to claim provider cache semantics.
+        let gateway = cache_capabilities_for_target(&target("open-router", "gpt-5.6-sol"));
+        assert_eq!(gateway, CacheCapabilities::default());
+        let older_openai = cache_capabilities_for_target(&target("openai-api", "gpt-4.1-mini"));
+        assert_eq!(older_openai, CacheCapabilities::default());
     }
 
     #[test]

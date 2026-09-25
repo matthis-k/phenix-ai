@@ -459,6 +459,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                         max_output_tokens: Some(2_000),
                     },
                 },
+                cache: Default::default(),
                 optional: BTreeSet::new(),
             },
         },

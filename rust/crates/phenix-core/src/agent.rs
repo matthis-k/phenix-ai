@@ -48,12 +48,75 @@ pub struct ModelTurnUsage {
     pub reasoning_tokens: UsageQuantity,
 }
 
+#[derive(
+    phenix_sdk_macros::PhenixValue,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCacheWritePolicy {
+    #[default]
+    ProviderDefault,
+    /// Let the provider select/write an eligible request-end cache point.
+    CacheThroughRequestEnd,
+    /// Cache only through the explicit stable-prefix boundary.
+    ExplicitPrefix,
+}
+
+#[derive(
+    phenix_sdk_macros::PhenixValue,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCacheRetention {
+    #[default]
+    ProviderDefault,
+    FiveMinutes,
+    ThirtyMinutes,
+    OneHour,
+    TwentyFourHours,
+}
+
+#[derive(
+    phenix_sdk_macros::PhenixValue, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCacheControl {
+    pub write: ModelCacheWritePolicy,
+    pub retention: ModelCacheRetention,
+    /// Stable application partition for cache accounting/routing where supported.
+    pub partition_key: Option<String>,
+    /// Byte boundary after the stable model-facing prefix. Effective only with ExplicitPrefix.
+    pub explicit_prefix_bytes: Option<u64>,
+    /// Local diagnostic identity of the materialized prefix. Providers never interpret this field.
+    pub local_prefix_identity: Option<String>,
+    /// Capability generation used when selecting the effective cache controls.
+    pub local_capability_generation: Option<String>,
+    /// Deterministic identity of the caller authority used for this dispatch.
+    pub local_authority_identity: Option<String>,
+}
+
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelInferenceRequest {
     pub model: ModelId,
     pub input: Bytes,
     #[serde(default)]
     pub options: BTreeMap<String, PhenixValue>,
+    #[serde(default)]
+    pub cache: ModelCacheControl,
     /// The complete model-visible tool surface for this inference turn.
     #[serde(default)]
     pub tools: Vec<ModelToolDescriptor>,

@@ -233,6 +233,7 @@ fn capabilities(target: ModelTarget, context_window_tokens: u64) -> EffectiveMod
                 max_output_tokens: Some(512),
             },
         },
+        cache: Default::default(),
         optional: BTreeSet::new(),
     }
 }

@@ -3000,6 +3000,7 @@ mod tests {
             model: phenix_core::ModelId::parse("gpt-fixture").unwrap(),
             input: Bytes::new(b"run the command".to_vec()),
             options: BTreeMap::new(),
+            cache: Default::default(),
             tools,
             continuation: vec![ModelToolTurn {
                 assistant_output: Bytes::new(Vec::new()),
