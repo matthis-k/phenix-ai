@@ -14,10 +14,11 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Cohort reports preserve fresh/cache-read/cache-write/output/reasoning/reacquisition usage categories and reject mixed policy/evaluator/price cohorts.
 - [x] Added paired-policy comparison that rejects mismatched task fixture sets before comparing reports.
 - [x] Added typed task derivation from distinct charged attempt records, rejecting duplicate, cross-root, and cross-policy charges while including helper/delegated work exactly once.
+- [x] Added a stateless derived evaluation service that reads all durable step attempts for one root execution and combines them with explicit typed terminal evaluator evidence; it is wired as an ordinary first-party plugin and does not own source truth.
 
 ## Required implementation
 
-- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Attempt-level derivation and de-duplication are implemented; durable source collection/outcome-evidence integration remains.)
+- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Durable root-attempt collection is implemented. Remaining: join any source facts not already projected into settled attempts, and resolve terminal evidence from a canonical outcome-evaluator provider rather than requiring the caller to supply it.)
 - [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
 - [x] Define task-level success/outcome evidence without creating a second canonical task state; derived task records require a matching evaluator/source evidence identity and revision.
 - [x] Compare policy variants only after validating the same task fixture set.
