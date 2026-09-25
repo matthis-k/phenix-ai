@@ -119,6 +119,7 @@ impl ContextStateService {
             | ContextCommand::List
             | ContextCommand::DiscoverRepository { .. }
             | ContextCommand::Load { .. }
+            | ContextCommand::LoadDelegatedResult { .. }
             | ContextCommand::LoadOnce { .. }
             | ContextCommand::Project { .. }
             | ContextCommand::PrepareInvocation { .. }
