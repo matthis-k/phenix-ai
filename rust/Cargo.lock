@@ -1929,6 +1929,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-efficiency-evaluation"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-frontend"
 version = "0.1.0"
 dependencies = [
