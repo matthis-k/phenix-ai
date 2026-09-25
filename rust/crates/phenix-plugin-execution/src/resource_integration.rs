@@ -83,6 +83,7 @@ fn authority(values: &[&str]) -> ExecutionAuthority {
 fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
     DelegationTaskBinding {
         contract_revision: ArtifactRevision::from_content(b"contract"),
+        contract: b"contract".to_vec().into(),
         parent_policy_revision: "policy-1".into(),
         originating_attempt_id: None,
         resources: DelegatedWorkResources {
@@ -257,6 +258,7 @@ mod exploration_admission {
                 parent_policy_revision: "policy-1".into(),
                 originating_attempt_id: None,
                 contract_revision: ArtifactRevision::from_content(b"exploration-1"),
+                contract: b"exploration-1".to_vec().into(),
                 target: RouteDecision {
                     target: ModelTarget {
                         provider_plugin: PluginId::parse("provider.fixture").unwrap(),
