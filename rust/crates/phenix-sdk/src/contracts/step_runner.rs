@@ -1,5 +1,5 @@
 use super::{
-    BudgetActual, ContextCandidate, ContextDemand, ContextInvocationPreparation,
+    BudgetActual, ContextCandidate, ContextDemand, ContextInvocationPreparation, RouteDecision,
     RouteSelectionPolicy, StepAttemptRecord, TaskRequirements, UsageAttemptKind, UsageAttribution,
     UsagePolicy,
 };
@@ -224,6 +224,10 @@ pub struct PlannedStepRequest {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StepRunnerCommand {
     Run { request: PlannedStepRequest },
+    RunResolved {
+        request: PlannedStepRequest,
+        decision: RouteDecision,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
