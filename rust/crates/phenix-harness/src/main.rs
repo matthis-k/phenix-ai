@@ -192,7 +192,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (context_manifest(), true),
         (execution_manifest(authority.clone()), true),
         (efficiency_evaluation_manifest(), true),
-        (benchmark_outcome_manifest(), true),
+        (benchmark_outcome_manifest(), false),
         (agent_loop_manifest(authority.clone()), true),
         (language_manifest(), true),
         (memory_manifest(), true),
