@@ -6,8 +6,8 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFact,
-    CodeEntityProviderFactBatch, CodeEntityRevision, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
-    CodeIdentityRebuildCheckpoint, DiagnosticsResult,
+    CodeEntityProviderFactBatch, CodeEntityRevision, CodeIdentityContinuityState,
+    CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
@@ -574,11 +574,7 @@ fn store_entity_revision(
     revision: &CodeEntityRevision,
 ) -> Result<(), String> {
     let repository_id = revision.entity.repository_id.as_str();
-    let history_key = entity_revision_key(
-        repository_id,
-        &revision.entity.id,
-        &revision.revision,
-    );
+    let history_key = entity_revision_key(repository_id, &revision.entity.id, &revision.revision);
     let current_key = entity_current_key(repository_id, &revision.entity.id);
     let sequence_key = entity_change_sequence_key(repository_id);
     let encoded = serde_json::to_vec(revision).map_err(|error| error.to_string())?;
@@ -1182,9 +1178,8 @@ mod tests {
     use super::*;
     use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
     use phenix_sdk::{
-        CodeEntityChangePage, CodeEntityFacetChanges, CodeEntityFacetRevisions,
-        CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-        CodeIdentityContinuityState,
+        CodeEntityChangePage, CodeEntityFacetChanges, CodeEntityFacetRevisions, CodeEntityLineage,
+        CodeEntityLineageConfidence, CodeEntityLineageKind, CodeIdentityContinuityState,
         CodeIdentityContinuityStatus, LanguageOperationKind, LanguageOperationResult,
         LogicalCodeEntity,
     };
@@ -1362,8 +1357,7 @@ mod tests {
                 path: "src/lib.rs".into(),
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected exact workspace fallback");
         };
 
@@ -1420,7 +1414,8 @@ mod tests {
                                 "relations": {}
                             }
                         }]
-                    }).into(),
+                    })
+                    .into(),
                     documents: vec![fallback.document.clone()],
                 },
             },
@@ -1445,7 +1440,11 @@ mod tests {
         assert_eq!(revision.provider_epoch, epoch(7));
         assert_eq!(revision.document, fallback.document);
 
-        fs::write(root.join("src/lib.rs"), "fn changed_after_observation() {}\n").unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "fn changed_after_observation() {}\n",
+        )
+        .unwrap();
         let stale = invoke(
             &mut kernel,
             LanguageCommand::IngestEntityFact {
@@ -1635,8 +1634,7 @@ mod tests {
                     limit: 100,
                 },
             )
-            .unwrap()
-            else {
+            .unwrap() else {
                 panic!("expected entity change page");
             };
             assert_eq!(page.events.len(), 1);
