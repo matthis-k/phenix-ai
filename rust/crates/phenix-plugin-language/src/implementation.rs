@@ -4,8 +4,9 @@ use phenix_core::{
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    CodeEntityFacet, CodeEntityFacetChanges, CodeEntityLineage, CodeEntityLineageConfidence,
-    CodeEntityLineageKind, CodeEntityRevision, CodeIdentityContinuityState, DiagnosticsResult,
+    CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
+    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityRevision,
+    CodeIdentityContinuityState, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
@@ -317,6 +318,16 @@ fn handle(
             };
             Ok(LanguageResponse::EntityFacetChanges { changes })
         }
+        LanguageCommand::GetEntityChanges {
+            repository_id,
+            after_sequence,
+            limit,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::EntityChanges {
+                page: read_entity_changes(context, &repository_id, after_sequence, limit)?,
+            })
+        }
         LanguageCommand::SetIdentityContinuity { state } => {
             validate_identity("code repository id", &state.repository_id)?;
             if let Some(reason) = &state.reason {
@@ -429,12 +440,14 @@ fn store_entity_revision(
     context: &LanguageContext<'_, '_, '_>,
     revision: &CodeEntityRevision,
 ) -> Result<(), String> {
+    let repository_id = revision.entity.repository_id.as_str();
     let history_key = entity_revision_key(
-        &revision.entity.repository_id,
+        repository_id,
         &revision.entity.id,
         &revision.revision,
     );
-    let current_key = entity_current_key(&revision.entity.repository_id, &revision.entity.id);
+    let current_key = entity_current_key(repository_id, &revision.entity.id);
+    let sequence_key = entity_change_sequence_key(repository_id);
     let encoded = serde_json::to_vec(revision).map_err(|error| error.to_string())?;
 
     if revision.sequence == 0 {
@@ -454,9 +467,6 @@ fn store_entity_revision(
                 revision.revision
             ));
         }
-        // The history record and current pointer are written atomically below. Replaying an
-        // older immutable revision is therefore already satisfied and must not move current
-        // backwards after a newer revision has been recorded.
         return Ok(());
     }
 
@@ -464,9 +474,13 @@ fn store_entity_revision(
         .kernel
         .read_durable(&language_namespace(), &current_key)
         .map_err(|error| error.to_string())?;
-    if let Some(current_bytes) = current.as_ref() {
-        let current_revision: CodeEntityRevision =
-            serde_json::from_slice(current_bytes).map_err(|error| error.to_string())?;
+    let current_revision = current
+        .as_deref()
+        .map(|bytes| {
+            serde_json::from_slice::<CodeEntityRevision>(bytes).map_err(|error| error.to_string())
+        })
+        .transpose()?;
+    if let Some(current_revision) = &current_revision {
         if revision.sequence <= current_revision.sequence {
             return Err(format!(
                 "code entity revision sequence {} must advance beyond current sequence {}",
@@ -474,6 +488,36 @@ fn store_entity_revision(
             ));
         }
     }
+
+    let sequence_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &sequence_key)
+        .map_err(|error| error.to_string())?;
+    let current_sequence = sequence_bytes
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let change_sequence = current_sequence
+        .checked_add(1)
+        .ok_or_else(|| "code entity change sequence overflow".to_owned())?;
+    let changes = current_revision
+        .as_ref()
+        .map(|previous| CodeEntityFacetChanges::between(&previous.facets, &revision.facets))
+        .unwrap_or_else(|| initial_entity_changes(revision));
+    let event = CodeEntityChangeEvent {
+        sequence: change_sequence,
+        entity: revision.entity.clone(),
+        previous_revision: current_revision
+            .as_ref()
+            .map(|previous| previous.revision.clone()),
+        revision: revision.revision.clone(),
+        changes,
+    };
+    let event_key = entity_change_key(repository_id, change_sequence);
+    let event_bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
+    let next_sequence_bytes =
+        serde_json::to_vec(&change_sequence).map_err(|error| error.to_string())?;
 
     context
         .kernel
@@ -488,6 +532,14 @@ fn store_entity_revision(
                     key: current_key.clone(),
                     expected: current,
                 },
+                TransactionOp::AssertValue {
+                    key: sequence_key.clone(),
+                    expected: sequence_bytes,
+                },
+                TransactionOp::AssertValue {
+                    key: event_key.clone(),
+                    expected: None,
+                },
                 TransactionOp::Put {
                     key: history_key,
                     value: encoded.clone(),
@@ -496,9 +548,88 @@ fn store_entity_revision(
                     key: current_key,
                     value: encoded,
                 },
+                TransactionOp::Put {
+                    key: event_key,
+                    value: event_bytes,
+                },
+                TransactionOp::Put {
+                    key: sequence_key,
+                    value: next_sequence_bytes,
+                },
             ],
         )
         .map_err(|error| error.to_string())
+}
+
+fn initial_entity_changes(revision: &CodeEntityRevision) -> CodeEntityFacetChanges {
+    CodeEntityFacetChanges {
+        existence: true,
+        name_location: true,
+        signature: revision.facets.signature.is_some(),
+        body: revision.facets.body.is_some(),
+        relations: revision.facets.relations.keys().cloned().collect(),
+    }
+}
+
+fn read_entity_changes(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    after_sequence: u64,
+    limit: u32,
+) -> Result<CodeEntityChangePage, String> {
+    if !(1..=100).contains(&limit) {
+        return Err("code entity change page limit must be between 1 and 100".into());
+    }
+    let current_sequence = context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_change_sequence_key(repository_id),
+        )
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    if after_sequence > current_sequence {
+        return Err(format!(
+            "code entity change cursor {after_sequence} is ahead of current sequence {current_sequence}"
+        ));
+    }
+
+    let mut events = Vec::new();
+    let mut sequence = after_sequence.saturating_add(1);
+    while sequence <= current_sequence && events.len() < limit as usize {
+        let bytes = context
+            .kernel
+            .read_durable(
+                &language_namespace(),
+                &entity_change_key(repository_id, sequence),
+            )
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("code entity change stream gap at sequence {sequence}"))?;
+        let event: CodeEntityChangeEvent =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if event.sequence != sequence || event.entity.repository_id != repository_id {
+            return Err(format!(
+                "invalid code entity change event at sequence {sequence}"
+            ));
+        }
+        events.push(event);
+        sequence = sequence.saturating_add(1);
+    }
+    let next_after_sequence = events
+        .last()
+        .map(|event| event.sequence)
+        .unwrap_or(after_sequence);
+    Ok(CodeEntityChangePage {
+        repository_id: repository_id.to_owned(),
+        after_sequence,
+        current_sequence,
+        events,
+        next_after_sequence,
+        caught_up: next_after_sequence >= current_sequence,
+    })
 }
 
 fn store_entity_lineage(
@@ -751,6 +882,14 @@ fn entity_lineage_key_parts(
         "entity/{repository_id}/lineage/{from_entity_id}/{to_entity_id}/{}",
         lineage_kind_key(kind)
     )
+}
+
+fn entity_change_sequence_key(repository_id: &str) -> String {
+    format!("entity/{repository_id}/changes/@sequence")
+}
+
+fn entity_change_key(repository_id: &str, sequence: u64) -> String {
+    format!("entity/{repository_id}/changes/{sequence:020}")
 }
 
 fn entity_current_key(repository_id: &str, entity_id: &str) -> String {
