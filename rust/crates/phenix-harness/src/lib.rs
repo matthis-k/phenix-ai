@@ -11,6 +11,7 @@ use phenix_plugin_catalog::{
     basic_model_component_manifest, basic_model_factory, basic_model_manifest,
     basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
     basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
+    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
     cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
     context_component_manifest, context_factory, context_manifest, debug_component_manifest,
     debug_factory, debug_manifest, debug_runtime_trace_sink,
@@ -184,6 +185,7 @@ impl HarnessBuilder {
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
             efficiency_evaluation_component_manifest(),
+            benchmark_outcome_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
@@ -221,6 +223,7 @@ impl HarnessBuilder {
             context_manifest(),
             execution_manifest(authority.clone()),
             efficiency_evaluation_manifest(),
+            benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
@@ -296,6 +299,11 @@ impl HarnessBuilder {
             &enabled,
             efficiency_evaluation_manifest(),
             efficiency_evaluation_factory,
+        )?;
+        builder.add_selected(
+            &enabled,
+            benchmark_outcome_manifest(),
+            benchmark_outcome_factory,
         )?;
         builder.add_selected(
             &enabled,

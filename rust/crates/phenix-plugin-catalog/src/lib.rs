@@ -45,6 +45,10 @@ pub use phenix_plugin_debug::{
     DiagnosticEntry, DiagnosticSnapshot, DEBUG_SERVICE,
 };
 pub use phenix_plugin_efficiency_evaluation::{
+    benchmark_outcome_component_id, benchmark_outcome_component_manifest, benchmark_outcome_factory,
+    benchmark_outcome_manifest, benchmark_outcome_service, BenchmarkOutcomeCommand,
+    BenchmarkOutcomeInterface, BenchmarkOutcomeRecord, BenchmarkOutcomeResponse,
+    BENCHMARK_OUTCOME_COMPONENT, BENCHMARK_OUTCOME_PLUGIN, BENCHMARK_OUTCOME_SERVICE,
     efficiency_evaluation_component_id, efficiency_evaluation_component_manifest,
     efficiency_evaluation_factory, efficiency_evaluation_manifest, efficiency_evaluation_service,
     efficiency_outcome_evidence_service, EfficiencyCollectionRequest, EfficiencyEvaluationCommand,
