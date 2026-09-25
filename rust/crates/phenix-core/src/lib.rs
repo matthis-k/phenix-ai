@@ -66,10 +66,11 @@ mod third_party_component_regression;
 pub use agent::{
     context_service, model_inference_service, skill_service, tool_service, ContextCommand,
     ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextResponse, ContextScope,
-    ModelInferenceFailure, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
-    ModelToolCall, ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage,
-    SkillCommand, SkillDefinition, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
-    UsageQuantity, CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
+    ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelInferenceFailure,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
+    ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SkillCommand,
+    SkillDefinition, SkillResponse, ToolCommand, ToolDefinition, ToolResponse, UsageQuantity,
+    CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;

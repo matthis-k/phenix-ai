@@ -208,6 +208,7 @@ mod tests {
                 model: ModelId::parse("direct").unwrap(),
                 input: b"hello".to_vec().into(),
                 options: BTreeMap::new(),
+                cache: Default::default(),
                 tools: Vec::new(),
                 continuation: Vec::new(),
             },

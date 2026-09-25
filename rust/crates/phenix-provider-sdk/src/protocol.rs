@@ -1,7 +1,8 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use phenix_core::{
-    CallableId, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
+    CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
     ValueCodec,
 };
@@ -384,6 +385,230 @@ fn take_inference_effort(body: &mut Map<String, Value>) -> Result<Option<Value>,
     }
 }
 
+fn has_effective_cache_controls(cache: &ModelCacheControl) -> bool {
+    cache.write != ModelCacheWritePolicy::ProviderDefault
+        || cache.retention != ModelCacheRetention::ProviderDefault
+        || cache.partition_key.is_some()
+        || cache.explicit_prefix_bytes.is_some()
+}
+
+fn reject_nondefault_cache(cache: &ModelCacheControl, protocol: &str) -> Result<(), ProviderError> {
+    if has_effective_cache_controls(cache) {
+        Err(ProviderError::InvalidRequest {
+            message: format!("{protocol} does not support provider-neutral cache controls"),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn openai_has_explicit_cache_options(model: &str) -> bool {
+    model.starts_with("gpt-5.6") || model.starts_with("gpt-6")
+}
+
+fn explicit_cache_prefix<'a>(
+    text: &'a str,
+    cache: &ModelCacheControl,
+) -> Result<Option<(&'a str, &'a str)>, ProviderError> {
+    if cache.write != ModelCacheWritePolicy::ExplicitPrefix {
+        return Ok(None);
+    }
+    let bytes = cache
+        .explicit_prefix_bytes
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message: "explicit cache prefix policy requires a prefix byte boundary".to_owned(),
+        })?;
+    let boundary = usize::try_from(bytes).map_err(|_| ProviderError::InvalidRequest {
+        message: "cache prefix byte boundary does not fit this platform".to_owned(),
+    })?;
+    if boundary == 0 || boundary > text.len() || !text.is_char_boundary(boundary) {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "cache prefix byte boundary {boundary} is not a valid UTF-8 boundary for {} bytes",
+                text.len()
+            ),
+        });
+    }
+    Ok(Some(text.split_at(boundary)))
+}
+
+fn apply_openai_responses_cache(
+    body: &mut Map<String, Value>,
+    request: &ModelInferenceRequest,
+) -> Result<(), ProviderError> {
+    if let Some(key) = request.cache.partition_key.as_deref() {
+        if body.contains_key("prompt_cache_key") {
+            return Err(ProviderError::InvalidRequest {
+                message: "provider option prompt_cache_key conflicts with typed cache control"
+                    .to_owned(),
+            });
+        }
+        if key.trim().is_empty() {
+            return Err(ProviderError::InvalidRequest {
+                message: "cache partition key must not be empty".to_owned(),
+            });
+        }
+        body.insert("prompt_cache_key".to_owned(), Value::String(key.to_owned()));
+    }
+
+    let needs_options = request.cache.write != ModelCacheWritePolicy::ProviderDefault
+        || request.cache.retention != ModelCacheRetention::ProviderDefault;
+    if needs_options && !openai_has_explicit_cache_options(request.model.as_str()) {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "OpenAI Responses model {} does not support the requested cache controls",
+                request.model
+            ),
+        });
+    }
+    if needs_options && body.contains_key("prompt_cache_options") {
+        return Err(ProviderError::InvalidRequest {
+            message: "provider option prompt_cache_options conflicts with typed cache control"
+                .to_owned(),
+        });
+    }
+
+    let mut options = Map::new();
+    match request.cache.write {
+        ModelCacheWritePolicy::ProviderDefault => {}
+        ModelCacheWritePolicy::CacheThroughRequestEnd => {
+            options.insert("mode".to_owned(), Value::String("implicit".to_owned()));
+        }
+        ModelCacheWritePolicy::ExplicitPrefix => {
+            if request.cache.explicit_prefix_bytes.is_none() {
+                return Err(ProviderError::InvalidRequest {
+                    message: "explicit cache prefix policy requires a prefix byte boundary"
+                        .to_owned(),
+                });
+            }
+            options.insert("mode".to_owned(), Value::String("explicit".to_owned()));
+        }
+    }
+    match request.cache.retention {
+        ModelCacheRetention::ProviderDefault => {}
+        ModelCacheRetention::ThirtyMinutes => {
+            options.insert("ttl".to_owned(), Value::String("30m".to_owned()));
+        }
+        retention => {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "OpenAI Responses does not support requested cache retention {retention:?} for model {}",
+                    request.model
+                ),
+            });
+        }
+    }
+    if !options.is_empty() {
+        body.insert("prompt_cache_options".to_owned(), Value::Object(options));
+    }
+    Ok(())
+}
+
+fn anthropic_cache_control_value(cache: &ModelCacheControl) -> Result<Value, ProviderError> {
+    let mut control = Map::from_iter([("type".to_owned(), Value::String("ephemeral".to_owned()))]);
+    match cache.retention {
+        ModelCacheRetention::ProviderDefault => {}
+        ModelCacheRetention::FiveMinutes => {
+            control.insert("ttl".to_owned(), Value::String("5m".to_owned()));
+        }
+        ModelCacheRetention::OneHour => {
+            control.insert("ttl".to_owned(), Value::String("1h".to_owned()));
+        }
+        retention => {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "Anthropic Messages does not support requested cache retention {retention:?}"
+                ),
+            });
+        }
+    }
+    Ok(Value::Object(control))
+}
+
+fn apply_anthropic_cache(
+    body: &mut Map<String, Value>,
+    cache: &ModelCacheControl,
+) -> Result<(), ProviderError> {
+    if cache.partition_key.is_some() {
+        return Err(ProviderError::InvalidRequest {
+            message: "Anthropic Messages does not support a cache partition key".to_owned(),
+        });
+    }
+
+    match cache.write {
+        ModelCacheWritePolicy::ProviderDefault => {
+            if cache.retention != ModelCacheRetention::ProviderDefault {
+                return Err(ProviderError::InvalidRequest {
+                    message: "Anthropic cache retention requires an explicit cache write policy"
+                        .to_owned(),
+                });
+            }
+        }
+        ModelCacheWritePolicy::CacheThroughRequestEnd => {
+            if body.contains_key("cache_control") {
+                return Err(ProviderError::InvalidRequest {
+                    message: "provider option cache_control conflicts with typed cache control"
+                        .to_owned(),
+                });
+            }
+            body.insert(
+                "cache_control".to_owned(),
+                anthropic_cache_control_value(cache)?,
+            );
+        }
+        ModelCacheWritePolicy::ExplicitPrefix => {
+            if cache.explicit_prefix_bytes.is_none() {
+                return Err(ProviderError::InvalidRequest {
+                    message: "explicit cache prefix policy requires a prefix byte boundary"
+                        .to_owned(),
+                });
+            }
+            if body.contains_key("cache_control") {
+                return Err(ProviderError::InvalidRequest {
+                    message: "provider option cache_control conflicts with typed cache control"
+                        .to_owned(),
+                });
+            }
+            // The cache_control marker is attached to the prefix content block below.
+            let _ = anthropic_cache_control_value(cache)?;
+        }
+    }
+    Ok(())
+}
+
+fn openai_initial_input(text: String, cache: &ModelCacheControl) -> Result<Value, ProviderError> {
+    let Some((prefix, suffix)) = explicit_cache_prefix(&text, cache)? else {
+        return Ok(serde_json::json!({"role": "user", "content": text}));
+    };
+    let mut content = vec![serde_json::json!({
+        "type": "input_text",
+        "text": prefix,
+        "prompt_cache_breakpoint": {"mode": "explicit"}
+    })];
+    if !suffix.is_empty() {
+        content.push(serde_json::json!({"type": "input_text", "text": suffix}));
+    }
+    Ok(serde_json::json!({"role": "user", "content": content}))
+}
+
+fn anthropic_initial_message(
+    text: String,
+    cache: &ModelCacheControl,
+) -> Result<Value, ProviderError> {
+    let Some((prefix, suffix)) = explicit_cache_prefix(&text, cache)? else {
+        return Ok(serde_json::json!({"role": "user", "content": text}));
+    };
+    let mut content = vec![serde_json::json!({
+        "type": "text",
+        "text": prefix,
+        "cache_control": anthropic_cache_control_value(cache)?
+    })];
+    if !suffix.is_empty() {
+        content.push(serde_json::json!({"type": "text", "text": suffix}));
+    }
+    Ok(serde_json::json!({"role": "user", "content": content}))
+}
+
 fn apply_openai_responses_inference(body: &mut Map<String, Value>) -> Result<(), ProviderError> {
     let Some(effort) = take_inference_effort(body)? else {
         return Ok(());
@@ -423,14 +648,17 @@ fn openai_responses_request(
 ) -> Result<ProviderRequest, ProviderError> {
     let (mut body, text) = request_object(request, &["model", "input", "tools"])?;
     apply_openai_responses_inference(&mut body)?;
+    apply_openai_responses_cache(&mut body, request)?;
     body.insert(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
     );
-    if request.continuation.is_empty() {
+    if request.continuation.is_empty()
+        && request.cache.write != ModelCacheWritePolicy::ExplicitPrefix
+    {
         body.insert("input".to_owned(), Value::String(text));
     } else {
-        let mut input = vec![serde_json::json!({"role": "user", "content": text})];
+        let mut input = vec![openai_initial_input(text, &request.cache)?];
         for turn in &request.continuation {
             validate_tool_turn(turn)?;
             let text = assistant_text(turn)?;
@@ -467,6 +695,7 @@ fn openai_chat_request(
 ) -> Result<ProviderRequest, ProviderError> {
     let (mut body, text) = request_object(request, &["model", "messages", "tools"])?;
     apply_openai_chat_inference(&mut body)?;
+    reject_nondefault_cache(&request.cache, "OpenAI Chat Completions")?;
     body.insert(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
@@ -522,7 +751,8 @@ fn anthropic_request(
         "model".to_owned(),
         Value::String(request.model.as_str().to_owned()),
     );
-    let mut messages = vec![serde_json::json!({"role":"user","content":text})];
+    apply_anthropic_cache(&mut body, &request.cache)?;
+    let mut messages = vec![anthropic_initial_message(text, &request.cache)?];
     for turn in &request.continuation {
         validate_tool_turn(turn)?;
         let mut assistant = Vec::new();
@@ -587,23 +817,56 @@ fn parse_arguments(
     Ok(value.into())
 }
 
+const OPENAI_USAGE_MAPPING_REVISION: &str = "openai-inclusive-input-v1";
+const ANTHROPIC_USAGE_MAPPING_REVISION: &str = "anthropic-exclusive-input-v1";
+
 fn reported(value: Option<u64>) -> UsageQuantity {
     value
         .map(|value| UsageQuantity::Reported { value })
         .unwrap_or_default()
 }
 
-fn openai_responses_usage(value: &Value) -> ModelTurnUsage {
+fn inclusive_input_usage(
+    total_input: Option<u64>,
+    cache_read: Option<u64>,
+    cache_write: Option<u64>,
+) -> Result<(UsageQuantity, UsageQuantity, UsageQuantity), ProviderError> {
+    let known_cached = cache_read
+        .unwrap_or(0)
+        .checked_add(cache_write.unwrap_or(0))
+        .ok_or_else(|| ProviderError::Protocol {
+            message: "provider cache usage overflowed input accounting".to_owned(),
+        })?;
+    let fresh_input = match total_input {
+        Some(total) if known_cached <= total => reported(Some(total - known_cached)),
+        Some(total) => {
+            return Err(ProviderError::Protocol {
+                message: format!(
+                    "provider cache usage exceeds total input: total={total}, cache_read={}, cache_write={}",
+                    cache_read.unwrap_or(0),
+                    cache_write.unwrap_or(0)
+                ),
+            });
+        }
+        None => UsageQuantity::Unavailable,
+    };
+    Ok((fresh_input, reported(cache_read), reported(cache_write)))
+}
+
+fn openai_responses_usage(value: &Value) -> Result<ModelTurnUsage, ProviderError> {
     let total_input = value.pointer("/usage/input_tokens").and_then(Value::as_u64);
     let cache_read = value
         .pointer("/usage/input_tokens_details/cached_tokens")
         .and_then(Value::as_u64);
-    ModelTurnUsage {
-        fresh_input_tokens: reported(
-            total_input.map(|total| total.saturating_sub(cache_read.unwrap_or(0))),
-        ),
-        cache_read_tokens: reported(cache_read),
-        cache_write_tokens: UsageQuantity::Unavailable,
+    let cache_write = value
+        .pointer("/usage/input_tokens_details/cache_write_tokens")
+        .and_then(Value::as_u64);
+    let (fresh_input_tokens, cache_read_tokens, cache_write_tokens) =
+        inclusive_input_usage(total_input, cache_read, cache_write)?;
+    Ok(ModelTurnUsage {
+        fresh_input_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
         output_tokens: reported(
             value
                 .pointer("/usage/output_tokens")
@@ -614,22 +877,25 @@ fn openai_responses_usage(value: &Value) -> ModelTurnUsage {
                 .pointer("/usage/output_tokens_details/reasoning_tokens")
                 .and_then(Value::as_u64),
         ),
-    }
+    })
 }
 
-fn openai_chat_usage(value: &Value) -> ModelTurnUsage {
+fn openai_chat_usage(value: &Value) -> Result<ModelTurnUsage, ProviderError> {
     let total_input = value
         .pointer("/usage/prompt_tokens")
         .and_then(Value::as_u64);
     let cache_read = value
         .pointer("/usage/prompt_tokens_details/cached_tokens")
         .and_then(Value::as_u64);
-    ModelTurnUsage {
-        fresh_input_tokens: reported(
-            total_input.map(|total| total.saturating_sub(cache_read.unwrap_or(0))),
-        ),
-        cache_read_tokens: reported(cache_read),
-        cache_write_tokens: UsageQuantity::Unavailable,
+    let cache_write = value
+        .pointer("/usage/prompt_tokens_details/cache_write_tokens")
+        .and_then(Value::as_u64);
+    let (fresh_input_tokens, cache_read_tokens, cache_write_tokens) =
+        inclusive_input_usage(total_input, cache_read, cache_write)?;
+    Ok(ModelTurnUsage {
+        fresh_input_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
         output_tokens: reported(
             value
                 .pointer("/usage/completion_tokens")
@@ -640,7 +906,7 @@ fn openai_chat_usage(value: &Value) -> ModelTurnUsage {
                 .pointer("/usage/completion_tokens_details/reasoning_tokens")
                 .and_then(Value::as_u64),
         ),
-    }
+    })
 }
 
 fn anthropic_usage(value: &Value) -> ModelTurnUsage {
@@ -670,6 +936,7 @@ fn response_with_content(
     text: String,
     tool_calls: Vec<ModelToolCall>,
     usage: ModelTurnUsage,
+    usage_mapping_revision: &str,
 ) -> ModelInferenceResponse {
     let mut provider_metadata = BTreeMap::new();
     if let Some(id) = value.get("id").cloned() {
@@ -678,6 +945,10 @@ fn response_with_content(
     if let Some(raw_usage) = value.get("usage").cloned() {
         provider_metadata.insert("usage".to_owned(), raw_usage.into());
     }
+    provider_metadata.insert(
+        "usage_mapping_revision".to_owned(),
+        Value::String(usage_mapping_revision.to_owned()).into(),
+    );
     ModelInferenceResponse {
         output: text.into_bytes().into(),
         provider_metadata,
@@ -751,7 +1022,8 @@ fn openai_responses_response(
         &value,
         text,
         tool_calls,
-        openai_responses_usage(&value),
+        openai_responses_usage(&value)?,
+        OPENAI_USAGE_MAPPING_REVISION,
     ))
 }
 
@@ -823,7 +1095,8 @@ fn openai_chat_response(
         &value,
         text,
         tool_calls,
-        openai_chat_usage(&value),
+        openai_chat_usage(&value)?,
+        OPENAI_USAGE_MAPPING_REVISION,
     ))
 }
 
@@ -881,6 +1154,7 @@ fn anthropic_response(
         text,
         tool_calls,
         anthropic_usage(&value),
+        ANTHROPIC_USAGE_MAPPING_REVISION,
     ))
 }
 
@@ -950,6 +1224,7 @@ mod tests {
             model: phenix_core::ModelId::parse("test-model").unwrap(),
             input: b"hello".to_vec().into(),
             options: BTreeMap::new(),
+            cache: ModelCacheControl::default(),
             tools: Vec::new(),
             continuation: Vec::new(),
         }
@@ -1012,6 +1287,260 @@ mod tests {
         let body: Value = serde_json::from_slice(&encoded.body).unwrap();
         assert_eq!(body["reasoning_effort"], "medium");
         assert!(body.get("inference").is_none());
+    }
+
+    #[test]
+    fn openai_responses_maps_typed_cache_controls_for_supported_models() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request_for_model("gpt-5.6-sol");
+        request.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::CacheThroughRequestEnd,
+            retention: ModelCacheRetention::ThirtyMinutes,
+            partition_key: Some("workspace-1".into()),
+            explicit_prefix_bytes: None,
+            local_prefix_identity: None,
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+
+        let encoded = Protocol::OpenAiResponses
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["prompt_cache_key"], "workspace-1");
+        assert_eq!(body["prompt_cache_options"]["mode"], "implicit");
+        assert_eq!(body["prompt_cache_options"]["ttl"], "30m");
+    }
+
+    #[test]
+    fn openai_responses_places_explicit_breakpoint_at_stable_prefix_boundary() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request_for_model("gpt-5.6-sol");
+        request.input = b"stablevolatile".to_vec().into();
+        request.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::ExplicitPrefix,
+            retention: ModelCacheRetention::ThirtyMinutes,
+            partition_key: None,
+            explicit_prefix_bytes: Some(6),
+            local_prefix_identity: Some("sha256:prefix".into()),
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+
+        let encoded = Protocol::OpenAiResponses
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["prompt_cache_options"]["mode"], "explicit");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(body["input"][0]["content"][0]["text"], "stable");
+        assert_eq!(
+            body["input"][0]["content"][0]["prompt_cache_breakpoint"]["mode"],
+            "explicit"
+        );
+        assert_eq!(body["input"][0]["content"][1]["text"], "volatile");
+    }
+
+    #[test]
+    fn anthropic_places_cache_control_on_explicit_prefix_block() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request_for_model("claude-sonnet-5");
+        request.input = b"stablevolatile".to_vec().into();
+        request.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::ExplicitPrefix,
+            retention: ModelCacheRetention::OneHour,
+            partition_key: None,
+            explicit_prefix_bytes: Some(6),
+            local_prefix_identity: Some("sha256:prefix".into()),
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+
+        let encoded = Protocol::AnthropicMessages
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert!(body.get("cache_control").is_none());
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "stable");
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["ttl"],
+            "1h"
+        );
+        assert_eq!(body["messages"][0]["content"][1]["text"], "volatile");
+    }
+
+    #[test]
+    fn explicit_prefix_requires_a_valid_utf8_boundary() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request_for_model("gpt-5.6-sol");
+        request.input = "évolatile".as_bytes().to_vec().into();
+        request.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::ExplicitPrefix,
+            retention: ModelCacheRetention::ProviderDefault,
+            partition_key: None,
+            explicit_prefix_bytes: Some(1),
+            local_prefix_identity: None,
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+
+        assert!(matches!(
+            Protocol::OpenAiResponses.encode(&endpoint, &request),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn anthropic_maps_request_end_cache_control_and_ttl() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request_for_model("claude-sonnet-5");
+        request.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::CacheThroughRequestEnd,
+            retention: ModelCacheRetention::OneHour,
+            partition_key: None,
+            explicit_prefix_bytes: None,
+            local_prefix_identity: None,
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+
+        let encoded = Protocol::AnthropicMessages
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["cache_control"]["type"], "ephemeral");
+        assert_eq!(body["cache_control"]["ttl"], "1h");
+    }
+
+    #[test]
+    fn unsupported_cache_controls_fail_instead_of_being_ignored() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+
+        let mut anthropic = request_for_model("claude-sonnet-5");
+        anthropic.cache = ModelCacheControl {
+            write: ModelCacheWritePolicy::CacheThroughRequestEnd,
+            retention: ModelCacheRetention::ThirtyMinutes,
+            partition_key: None,
+            explicit_prefix_bytes: None,
+            local_prefix_identity: None,
+            local_capability_generation: None,
+            local_authority_identity: None,
+        };
+        assert!(matches!(
+            Protocol::AnthropicMessages.encode(&endpoint, &anthropic),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+
+        let mut chat = request_for_model("legacy-chat-model");
+        chat.cache.write = ModelCacheWritePolicy::CacheThroughRequestEnd;
+        assert!(matches!(
+            Protocol::OpenAiChatCompletions.encode(&endpoint, &chat),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn inclusive_cache_usage_separates_fresh_reads_and_writes() {
+        let (fresh, reads, writes) =
+            inclusive_input_usage(Some(1_000), Some(600), Some(100)).unwrap();
+        assert_eq!(fresh.value(), Some(300));
+        assert_eq!(reads.value(), Some(600));
+        assert_eq!(writes.value(), Some(100));
+    }
+
+    #[test]
+    fn inclusive_cache_usage_rejects_impossible_subsets() {
+        assert!(matches!(
+            inclusive_input_usage(Some(100), Some(90), Some(20)),
+            Err(ProviderError::Protocol { .. })
+        ));
+    }
+
+    #[test]
+    fn absent_cache_breakdown_stays_unavailable() {
+        let (fresh, reads, writes) = inclusive_input_usage(Some(300), None, None).unwrap();
+        assert_eq!(fresh.value(), Some(300));
+        assert_eq!(reads, UsageQuantity::Unavailable);
+        assert_eq!(writes, UsageQuantity::Unavailable);
+    }
+
+    #[test]
+    fn openai_cache_usage_treats_cached_tokens_as_inclusive_input_subset() {
+        let decoded = Protocol::OpenAiResponses
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "output":[{"content":[{"type":"output_text","text":"ok"}]}],
+                    "usage":{
+                        "input_tokens":1000,
+                        "input_tokens_details":{"cached_tokens":600,"cache_write_tokens":100},
+                        "output_tokens":1
+                    }
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(decoded.usage.fresh_input_tokens.value(), Some(300));
+        assert_eq!(decoded.usage.cache_read_tokens.value(), Some(600));
+        assert_eq!(decoded.usage.cache_write_tokens.value(), Some(100));
+        assert_eq!(
+            decoded.provider_metadata["usage_mapping_revision"],
+            PhenixValue::String(OPENAI_USAGE_MAPPING_REVISION.into())
+        );
+        assert!(decoded.provider_metadata.contains_key("usage"));
+    }
+
+    #[test]
+    fn anthropic_cache_usage_keeps_fresh_input_exclusive() {
+        let decoded = Protocol::AnthropicMessages
+            .decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "content":[{"type":"text","text":"ok"}],
+                    "usage":{
+                        "input_tokens":300,
+                        "cache_read_input_tokens":600,
+                        "cache_creation_input_tokens":100,
+                        "output_tokens":1
+                    }
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(decoded.usage.fresh_input_tokens.value(), Some(300));
+        assert_eq!(decoded.usage.cache_read_tokens.value(), Some(600));
+        assert_eq!(decoded.usage.cache_write_tokens.value(), Some(100));
+        assert_eq!(
+            decoded.provider_metadata["usage_mapping_revision"],
+            PhenixValue::String(ANTHROPIC_USAGE_MAPPING_REVISION.into())
+        );
+        assert!(decoded.provider_metadata.contains_key("usage"));
+    }
+
+    #[test]
+    fn openai_cache_usage_rejects_cached_tokens_above_total_input() {
+        assert!(matches!(
+            Protocol::OpenAiResponses.decode(&response(
+                200,
+                &[],
+                serde_json::json!({
+                    "output":[{"content":[{"type":"output_text","text":"ok"}]}],
+                    "usage":{
+                        "input_tokens":100,
+                        "input_tokens_details":{"cached_tokens":101},
+                        "output_tokens":1
+                    }
+                }),
+            )),
+            Err(ProviderError::Protocol { .. })
+        ));
     }
 
     #[test]

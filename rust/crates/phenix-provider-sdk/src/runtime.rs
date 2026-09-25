@@ -5,8 +5,9 @@ use crate::{
     ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
-    model_inference_service, ComponentInterface, ModelInferenceInterface, ModelInferenceRequest,
-    ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
+    model_inference_service, ArtifactRevision, ComponentInterface, ModelInferenceInterface,
+    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginHost,
+    PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use std::{
@@ -127,7 +128,9 @@ impl ProviderPlugin {
         &self,
         request: ModelInferenceRequest,
     ) -> Result<ModelInferenceResponse, ProviderError> {
+        let cache_compatibility_identity = cache_compatibility_identity(&self.spec, &request)?;
         let mut outgoing = self.spec.protocol.encode(&self.spec.endpoint, &request)?;
+        let cache_request = request.cache.clone();
         let auth = self.resolve_auth()?;
         apply_auth(&self.spec, &mut outgoing.headers, auth.as_ref())?;
 
@@ -149,6 +152,18 @@ impl ProviderPlugin {
                 "endpoint".to_owned(),
                 PhenixValue::String(endpoint.as_str().to_owned()),
             );
+            decoded.provider_metadata.insert(
+                "cache_request".to_owned(),
+                serde_json::to_value(cache_request)
+                    .expect("model cache control serializes")
+                    .into(),
+            );
+            if let Some(identity) = cache_compatibility_identity {
+                decoded.provider_metadata.insert(
+                    "cache_compatibility_identity".to_owned(),
+                    PhenixValue::String(identity),
+                );
+            }
             if !limits.is_empty() {
                 decoded.provider_metadata.insert(
                     "rate_limits".to_owned(),
@@ -269,6 +284,63 @@ impl PluginInstance for ProviderPlugin {
     }
 }
 
+fn cache_compatibility_identity(
+    spec: &ProviderSpec,
+    request: &ModelInferenceRequest,
+) -> Result<Option<String>, ProviderError> {
+    let Some(prefix) = request.cache.local_prefix_identity.as_deref() else {
+        return Ok(None);
+    };
+    cache_compatibility_identity_from_parts(CacheCompatibilityIdentityParts {
+        prefix,
+        provider: spec.id.as_str(),
+        model: request.model.as_str(),
+        protocol: spec.protocol.name(),
+        endpoint: spec.endpoint.as_str(),
+        capability_generation: request.cache.local_capability_generation.as_deref(),
+        authority_identity: request.cache.local_authority_identity.as_deref(),
+        options: &request.options,
+    })
+    .map(Some)
+}
+
+struct CacheCompatibilityIdentityParts<'a> {
+    prefix: &'a str,
+    provider: &'a str,
+    model: &'a str,
+    protocol: &'a str,
+    endpoint: &'a str,
+    capability_generation: Option<&'a str>,
+    authority_identity: Option<&'a str>,
+    options: &'a BTreeMap<String, PhenixValue>,
+}
+
+fn cache_compatibility_identity_from_parts(
+    parts: CacheCompatibilityIdentityParts<'_>,
+) -> Result<String, ProviderError> {
+    let options = serde_json::to_vec(parts.options).map_err(|error| ProviderError::Protocol {
+        message: format!("cannot encode cache compatibility options: {error}"),
+    })?;
+    let fields = [
+        parts.prefix,
+        parts.provider,
+        parts.model,
+        parts.protocol,
+        parts.endpoint,
+        parts.capability_generation.unwrap_or_default(),
+        parts.authority_identity.unwrap_or_default(),
+    ];
+    let mut material = Vec::new();
+    for field in fields {
+        let field = field.as_bytes();
+        material.extend_from_slice(&(field.len() as u64).to_be_bytes());
+        material.extend_from_slice(field);
+    }
+    material.extend_from_slice(&(options.len() as u64).to_be_bytes());
+    material.extend_from_slice(&options);
+    Ok(ArtifactRevision::from_content(&material).to_string())
+}
+
 fn apply_auth(
     spec: &ProviderSpec,
     headers: &mut BTreeMap<String, String>,
@@ -386,4 +458,124 @@ async fn send_http(
         headers,
         body,
     })
+}
+
+#[cfg(test)]
+mod cache_identity_tests {
+    use super::*;
+
+    fn identity(
+        provider: &str,
+        model: &str,
+        capability_generation: &str,
+        authority_identity: &str,
+        options: BTreeMap<String, PhenixValue>,
+    ) -> String {
+        cache_compatibility_identity_from_parts(CacheCompatibilityIdentityParts {
+            prefix: "sha256:prefix",
+            provider,
+            model,
+            protocol: "openai_responses",
+            endpoint: "https://api.example.com/v1/",
+            capability_generation: Some(capability_generation),
+            authority_identity: Some(authority_identity),
+            options: &options,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn compatibility_identity_is_stable_for_identical_inputs() {
+        let options = BTreeMap::from([(
+            "inference".to_owned(),
+            serde_json::json!({"effort": "medium"}).into(),
+        )]);
+        assert_eq!(
+            identity(
+                "provider.openai",
+                "gpt-5.6-sol",
+                "generation-1",
+                "authority-1",
+                options.clone()
+            ),
+            identity(
+                "provider.openai",
+                "gpt-5.6-sol",
+                "generation-1",
+                "authority-1",
+                options
+            )
+        );
+    }
+
+    #[test]
+    fn model_provider_and_configuration_changes_invalidate_local_identity() {
+        let base = identity(
+            "provider.openai",
+            "gpt-5.6-sol",
+            "generation-1",
+            "authority-1",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "medium"}).into(),
+            )]),
+        );
+        let model = identity(
+            "provider.openai",
+            "gpt-5.6-luna",
+            "generation-1",
+            "authority-1",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "medium"}).into(),
+            )]),
+        );
+        let provider = identity(
+            "provider.other",
+            "gpt-5.6-sol",
+            "generation-1",
+            "authority-1",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "medium"}).into(),
+            )]),
+        );
+        let options = identity(
+            "provider.openai",
+            "gpt-5.6-sol",
+            "generation-1",
+            "authority-1",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "high"}).into(),
+            )]),
+        );
+
+        let generation = identity(
+            "provider.openai",
+            "gpt-5.6-sol",
+            "generation-2",
+            "authority-1",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "medium"}).into(),
+            )]),
+        );
+        let authority = identity(
+            "provider.openai",
+            "gpt-5.6-sol",
+            "generation-1",
+            "authority-2",
+            BTreeMap::from([(
+                "inference".to_owned(),
+                serde_json::json!({"effort": "medium"}).into(),
+            )]),
+        );
+
+        assert_ne!(base, model);
+        assert_ne!(base, provider);
+        assert_ne!(base, options);
+        assert_ne!(base, generation);
+        assert_ne!(base, authority);
+    }
 }

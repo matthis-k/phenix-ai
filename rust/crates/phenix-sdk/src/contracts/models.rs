@@ -1,7 +1,8 @@
 use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelCapabilities, ModelTurnUsage};
 pub use phenix_core::{
-    model_inference_service, ModelInferenceInterface, ModelInferenceRequest,
-    ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
+    model_inference_service, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
     CallableId, CapabilityGenerationId, ComponentInterface, EventTypeId, InterfaceId, ModelId,
@@ -57,6 +58,8 @@ pub enum ModelDiagnosticEvent {
         provider_plugin: String,
         model: String,
         request_bytes: usize,
+        requested_cache: ModelCacheControl,
+        effective_cache: ModelCacheControl,
     },
     DispatchInvocationStarted {
         provider_plugin: String,
@@ -452,6 +455,7 @@ mod tests {
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity,
+            cache: Default::default(),
             optional: BTreeSet::new(),
         }
     }
