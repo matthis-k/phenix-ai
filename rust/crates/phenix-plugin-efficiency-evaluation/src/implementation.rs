@@ -173,7 +173,7 @@ impl PluginInstance for EfficiencyEvaluationPlugin {
                     outcome: outcome_evidence.outcome,
                     outcome_evidence,
                     attempts,
-                    root_elapsed_ms: request.root_elapsed_ms,
+                    root_elapsed_ms: None,
                 };
                 let record = derive_efficiency_task_record_from_attempts(&durable)
                     .map_err(|error| format!("efficiency evidence invalid: {error:?}"))?;
