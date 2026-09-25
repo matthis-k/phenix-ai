@@ -1,5 +1,6 @@
 use super::{
-    BudgetReservation, ContextDemand, DelegationResourcePolicy, ExecutionState, RoutingRequirements,
+    BudgetReservation, ContextDemand, DelegationResourcePolicy, ExecutionState, RoutingEstimate,
+    RoutingRequirements,
 };
 use phenix_core::{CallableId, SkillId};
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,8 @@ pub struct UsagePlanningInput {
     pub execution_state: ExecutionState,
     pub remaining: RemainingBudget,
     pub now_ms: u64,
+    #[serde(default)]
+    pub historical_estimates: Vec<RoutingEstimate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -292,6 +295,7 @@ mod tests {
                 attempts: 3,
             },
             now_ms: 1_000,
+            historical_estimates: Vec::new(),
         }
     }
 
