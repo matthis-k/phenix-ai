@@ -1,3 +1,4 @@
+use super::language::{CodeEntityFacetReference, LANGUAGE_SERVICE};
 use phenix_core::{CallableId, ServiceId};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,25 @@ pub struct MemoryDependencyRevision {
     pub service: ServiceId,
     pub resource: String,
     pub revision: Option<String>,
+}
+
+impl MemoryDependencyRevision {
+    #[must_use]
+    pub fn for_code_facet(reference: &CodeEntityFacetReference) -> Self {
+        Self {
+            service: ServiceId::parse(LANGUAGE_SERVICE).expect("static language service id is valid"),
+            resource: reference.resource(),
+            revision: Some(reference.revision.clone()),
+        }
+    }
+
+    #[must_use]
+    pub fn as_code_facet(&self) -> Option<CodeEntityFacetReference> {
+        if self.service.as_str() != LANGUAGE_SERVICE {
+            return None;
+        }
+        CodeEntityFacetReference::from_resource(&self.resource, self.revision.clone()?)
+    }
 }
 
 #[derive(
