@@ -1,12 +1,15 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, Exact, PhenixValue, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResourceNamespace, ServiceContribution, ServiceId, TransactionOp, Type, ValueCodec, ValueError,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
+    ServiceId, TransactionOp,
 };
-use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, num::NonZeroU64};
+use phenix_sdk::{
+    CodeEntityFacet, CodeEntityFacetChanges, CodeEntityRevision, CodeIdentityContinuityState,
+    DiagnosticsResult, DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
+    LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, LANGUAGE_SERVICE,
+};
+use std::collections::BTreeMap;
 
-pub const LANGUAGE_SERVICE: &str = "phenix.language@1";
 const LANGUAGE_PLUGIN: &str = "phenix.language";
 const LANGUAGE_NAMESPACE: &str = "phenix.language.state";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
@@ -27,197 +30,6 @@ fn context<'host, 'runtime, 'state>(
     state: &'state mut LanguageState,
 ) -> LanguageContext<'host, 'runtime, 'state> {
     PluginContext::new(host, (), (), state)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(rename_all = "snake_case")]
-pub enum LanguageOperationKind {
-    Definition,
-    References,
-    Implementations,
-    Hover,
-    DocumentSymbols,
-    WorkspaceSymbols,
-    Diagnostics,
-    CallHierarchy,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(rename_all = "snake_case")]
-pub enum DocumentProvenance {
-    WorkspaceBacked,
-    FrontendUnsaved,
-    MixedOrUnknown,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct LanguageDocumentIdentity {
-    pub path: String,
-    pub file_version: Option<String>,
-    pub provenance: DocumentProvenance,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
-pub struct ProviderEpoch(NonZeroU64);
-
-impl ProviderEpoch {
-    pub fn new(value: u64) -> Result<Self, &'static str> {
-        value.try_into()
-    }
-
-    #[must_use]
-    pub fn get(self) -> u64 {
-        self.0.get()
-    }
-}
-
-impl TryFrom<u64> for ProviderEpoch {
-    type Error = &'static str;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        NonZeroU64::new(value)
-            .map(Self)
-            .ok_or("language provider epoch must be non-zero")
-    }
-}
-
-impl From<ProviderEpoch> for u64 {
-    fn from(value: ProviderEpoch) -> Self {
-        value.get()
-    }
-}
-
-impl ValueCodec for ProviderEpoch {
-    fn phenix_type() -> Type {
-        <u64 as ValueCodec>::phenix_type()
-    }
-
-    fn to_value(&self) -> PhenixValue {
-        <u64 as ValueCodec>::to_value(&self.get())
-    }
-
-    fn from_value(value: &PhenixValue) -> Result<Self, ValueError> {
-        let value = <u64 as ValueCodec>::from_value(value)?;
-        Self::try_from(value).map_err(|error| ValueError::InvalidValue(error.into()))
-    }
-
-    fn project_from_value(value: &PhenixValue) -> Result<Self, ValueError> {
-        let value = <u64 as ValueCodec>::project_from_value(value)?;
-        Self::try_from(value).map_err(|error| ValueError::InvalidValue(error.into()))
-    }
-}
-
-impl From<&ProviderEpoch> for PhenixValue {
-    fn from(value: &ProviderEpoch) -> Self {
-        value.to_value()
-    }
-}
-
-impl<'value> TryFrom<Exact<&'value PhenixValue>> for ProviderEpoch {
-    type Error = ValueError;
-
-    fn try_from(value: Exact<&'value PhenixValue>) -> Result<Self, Self::Error> {
-        Self::from_value(value.0)
-    }
-}
-
-impl<'value> TryFrom<Project<&'value PhenixValue>> for ProviderEpoch {
-    type Error = ValueError;
-
-    fn try_from(value: Project<&'value PhenixValue>) -> Result<Self, Self::Error> {
-        Self::project_from_value(value.0)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct LanguageProviderEpoch {
-    pub workspace_id: String,
-    pub provider_id: String,
-    pub epoch: ProviderEpoch,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct LanguageOperationResult {
-    pub operation: LanguageOperationKind,
-    pub payload: PhenixValue,
-    pub documents: Vec<LanguageDocumentIdentity>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-pub enum DiagnosticsResult {
-    Diagnostics {
-        payload: PhenixValue,
-        documents: Vec<LanguageDocumentIdentity>,
-    },
-}
-
-impl DiagnosticsResult {
-    fn documents(&self) -> &[LanguageDocumentIdentity] {
-        match self {
-            Self::Diagnostics { documents, .. } => documents,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-pub struct LanguageObservation {
-    pub id: String,
-    pub execution_id: String,
-    pub workspace_id: String,
-    pub provider_id: String,
-    pub provider_epoch: ProviderEpoch,
-    pub result: LanguageOperationResult,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-pub enum LanguageCommand {
-    ActivateProvider {
-        workspace_id: String,
-        provider_id: String,
-        epoch: ProviderEpoch,
-    },
-    EndProvider {
-        workspace_id: String,
-        provider_id: String,
-        epoch: ProviderEpoch,
-    },
-    PublishDiagnostics {
-        workspace_id: String,
-        provider_id: String,
-        epoch: ProviderEpoch,
-        result: DiagnosticsResult,
-    },
-    CurrentDiagnostics {
-        workspace_id: String,
-    },
-    Consume {
-        observation_id: String,
-        execution_id: String,
-        workspace_id: String,
-        provider_id: String,
-        epoch: ProviderEpoch,
-        result: LanguageOperationResult,
-    },
-    GetObservation {
-        observation_id: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case")]
-pub enum LanguageResponse {
-    Provider {
-        epoch: Option<LanguageProviderEpoch>,
-    },
-    Diagnostics {
-        result: Option<DiagnosticsResult>,
-    },
-    Observation {
-        observation: Option<LanguageObservation>,
-    },
 }
 
 #[must_use]
@@ -371,6 +183,71 @@ fn handle(
                 observation: Some(observation),
             })
         }
+        LanguageCommand::RecordEntityRevision { revision } => {
+            validate_code_entity_revision(&revision)?;
+            store_entity_revision(context, &revision)?;
+            Ok(LanguageResponse::EntityRevision {
+                revision: Some(revision),
+            })
+        }
+        LanguageCommand::GetEntityRevision {
+            repository_id,
+            entity_id,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            Ok(LanguageResponse::EntityRevision {
+                revision: read_entity_revision(context, &repository_id, &entity_id)?,
+            })
+        }
+        LanguageCommand::GetEntityFacet {
+            repository_id,
+            entity_id,
+            facet,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            if let CodeEntityFacet::Relation { name } = &facet {
+                validate_identity("relation facet", name)?;
+            }
+            let reference = read_entity_revision(context, &repository_id, &entity_id)?
+                .and_then(|revision| revision.facet_reference(facet));
+            Ok(LanguageResponse::EntityFacet { reference })
+        }
+        LanguageCommand::GetEntityFacetChanges {
+            repository_id,
+            entity_id,
+            from_revision,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &from_revision)?;
+            let current = read_entity_revision(context, &repository_id, &entity_id)?;
+            let previous =
+                read_entity_revision_version(context, &repository_id, &entity_id, &from_revision)?;
+            let changes = match (previous, current) {
+                (Some(previous), Some(current)) => Some(CodeEntityFacetChanges::between(
+                    &previous.facets,
+                    &current.facets,
+                )),
+                _ => None,
+            };
+            Ok(LanguageResponse::EntityFacetChanges { changes })
+        }
+        LanguageCommand::SetIdentityContinuity { state } => {
+            validate_identity("code repository id", &state.repository_id)?;
+            if let Some(reason) = &state.reason {
+                validate_identity("identity continuity reason", reason)?;
+            }
+            store_identity_continuity(context, &state)?;
+            Ok(LanguageResponse::IdentityContinuity { state: Some(state) })
+        }
+        LanguageCommand::GetIdentityContinuity { repository_id } => {
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::IdentityContinuity {
+                state: read_identity_continuity(context, &repository_id)?,
+            })
+        }
         LanguageCommand::GetObservation { observation_id } => {
             validate_identity("language observation id", &observation_id)?;
             Ok(LanguageResponse::Observation {
@@ -465,6 +342,186 @@ fn read_observation(
         .transpose()
 }
 
+fn store_entity_revision(
+    context: &LanguageContext<'_, '_, '_>,
+    revision: &CodeEntityRevision,
+) -> Result<(), String> {
+    let history_key = entity_revision_key(
+        &revision.entity.repository_id,
+        &revision.entity.id,
+        &revision.revision,
+    );
+    let current_key = entity_current_key(&revision.entity.repository_id, &revision.entity.id);
+    let encoded = serde_json::to_vec(revision).map_err(|error| error.to_string())?;
+
+    if revision.sequence == 0 {
+        return Err("code entity revision sequence must be non-zero".into());
+    }
+
+    if let Some(existing) = context
+        .kernel
+        .read_durable(&language_namespace(), &history_key)
+        .map_err(|error| error.to_string())?
+    {
+        let existing: CodeEntityRevision =
+            serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+        if existing != *revision {
+            return Err(format!(
+                "logical entity revision {} already exists with different content",
+                revision.revision
+            ));
+        }
+        // The history record and current pointer are written atomically below. Replaying an
+        // older immutable revision is therefore already satisfied and must not move current
+        // backwards after a newer revision has been recorded.
+        return Ok(());
+    }
+
+    let current = context
+        .kernel
+        .read_durable(&language_namespace(), &current_key)
+        .map_err(|error| error.to_string())?;
+    if let Some(current_bytes) = current.as_ref() {
+        let current_revision: CodeEntityRevision =
+            serde_json::from_slice(current_bytes).map_err(|error| error.to_string())?;
+        if revision.sequence <= current_revision.sequence {
+            return Err(format!(
+                "code entity revision sequence {} must advance beyond current sequence {}",
+                revision.sequence, current_revision.sequence
+            ));
+        }
+    }
+
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: history_key.clone(),
+                    expected: None,
+                },
+                TransactionOp::AssertValue {
+                    key: current_key.clone(),
+                    expected: current,
+                },
+                TransactionOp::Put {
+                    key: history_key,
+                    value: encoded.clone(),
+                },
+                TransactionOp::Put {
+                    key: current_key,
+                    value: encoded,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn read_entity_revision(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+) -> Result<Option<CodeEntityRevision>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_current_key(repository_id, entity_id),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn read_entity_revision_version(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+) -> Result<Option<CodeEntityRevision>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_revision_key(repository_id, entity_id, revision),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn store_identity_continuity(
+    context: &LanguageContext<'_, '_, '_>,
+    state: &CodeIdentityContinuityState,
+) -> Result<(), String> {
+    let encoded = serde_json::to_vec(state).map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[TransactionOp::Put {
+                key: identity_continuity_key(&state.repository_id),
+                value: encoded,
+            }],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn read_identity_continuity(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+) -> Result<Option<CodeIdentityContinuityState>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &identity_continuity_key(repository_id),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn validate_code_entity_revision(revision: &CodeEntityRevision) -> Result<(), String> {
+    validate_identity("logical code entity id", &revision.entity.id)?;
+    validate_identity("code repository id", &revision.entity.repository_id)?;
+    validate_identity("code entity revision", &revision.revision)?;
+    validate_identity("code entity name", &revision.name)?;
+    validate_identity("language provider id", &revision.provider_id)?;
+    validate_documents(std::slice::from_ref(&revision.document))?;
+    for (label, value) in [
+        (
+            "existence facet revision",
+            revision.facets.existence.as_str(),
+        ),
+        (
+            "name/location facet revision",
+            revision.facets.name_location.as_str(),
+        ),
+    ] {
+        validate_identity(label, value)?;
+    }
+    for (label, value) in [
+        ("signature identity", revision.signature_identity.as_deref()),
+        ("body identity", revision.body_identity.as_deref()),
+        (
+            "signature facet revision",
+            revision.facets.signature.as_deref(),
+        ),
+        ("body facet revision", revision.facets.body.as_deref()),
+    ] {
+        if let Some(value) = value {
+            validate_identity(label, value)?;
+        }
+    }
+    for (relation, facet_revision) in &revision.facets.relations {
+        validate_identity("relation facet", relation)?;
+        validate_identity("relation facet revision", facet_revision)?;
+    }
+    Ok(())
+}
+
 fn validate_documents(documents: &[LanguageDocumentIdentity]) -> Result<(), String> {
     for document in documents {
         validate_identity("language document path", &document.path)?;
@@ -489,10 +546,28 @@ fn observation_key(id: &str) -> String {
     format!("observation/{id}")
 }
 
+fn identity_continuity_key(repository_id: &str) -> String {
+    format!("entity/{repository_id}/continuity")
+}
+
+fn entity_current_key(repository_id: &str, entity_id: &str) -> String {
+    format!("entity/{repository_id}/{entity_id}/current")
+}
+
+fn entity_revision_key(repository_id: &str, entity_id: &str, revision: &str) -> String {
+    format!("entity/{repository_id}/{entity_id}/revision/{revision}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, LocalPersistence};
+    use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
+    use phenix_sdk::{
+        CodeEntityFacetChanges, CodeEntityFacetRevisions, CodeEntityLineage,
+        CodeEntityLineageConfidence, CodeEntityLineageKind, CodeIdentityContinuityState,
+        CodeIdentityContinuityStatus, LanguageOperationKind, LanguageOperationResult,
+        LogicalCodeEntity,
+    };
     use std::{
         fs,
         path::PathBuf,
@@ -575,6 +650,452 @@ mod tests {
                 provenance: DocumentProvenance::WorkspaceBacked,
             }],
         }
+    }
+
+    #[test]
+    fn logical_entity_revision_map_survives_restart_and_provider_change() {
+        let path = temp_db("entity-revision-map");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let revision = CodeEntityRevision {
+            entity: entity.clone(),
+            revision: "revision-1".into(),
+            sequence: 1,
+            document: LanguageDocumentIdentity {
+                path: "src/old.rs".into(),
+                file_version: Some("sha256:old".into()),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::old_name".into()),
+            name: "old_name".into(),
+            signature_identity: Some("signature-1".into()),
+            body_identity: Some("body-1".into()),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: "existence-1".into(),
+                name_location: "location-1".into(),
+                signature: Some("signature-facet-1".into()),
+                body: Some("body-facet-1".into()),
+                relations: BTreeMap::new(),
+            },
+        };
+
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: revision.clone(),
+                },
+            )
+            .unwrap();
+        }
+
+        let mut kernel = kernel_with(&path);
+        let loaded = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntityRevision {
+                repository_id: entity.repository_id.clone(),
+                entity_id: entity.id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            loaded,
+            LanguageResponse::EntityRevision {
+                revision: Some(revision.clone()),
+            }
+        );
+
+        let mut renamed = revision;
+        renamed.revision = "revision-2".into();
+        renamed.sequence = 2;
+        renamed.document.path = "src/new.rs".into();
+        renamed.name = "new_name".into();
+        renamed.provider_id = "scip".into();
+        renamed.provider_epoch = epoch(2);
+        renamed.facets.name_location = "location-2".into();
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: renamed.clone(),
+            },
+        )
+        .unwrap();
+
+        let loaded = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntityRevision {
+                repository_id: entity.repository_id,
+                entity_id: entity.id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            loaded,
+            LanguageResponse::EntityRevision {
+                revision: Some(renamed),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unavailable_identity_continuity_survives_restart() {
+        let path = temp_db("identity-continuity");
+        let state = CodeIdentityContinuityState {
+            repository_id: "repo-1".into(),
+            status: CodeIdentityContinuityStatus::Unavailable,
+            reason: Some("durable identity map was lost".into()),
+        };
+        {
+            let mut kernel = kernel_with(&path);
+            assert_eq!(
+                invoke(
+                    &mut kernel,
+                    LanguageCommand::SetIdentityContinuity {
+                        state: state.clone(),
+                    },
+                )
+                .unwrap(),
+                LanguageResponse::IdentityContinuity {
+                    state: Some(state.clone()),
+                }
+            );
+        }
+
+        let mut kernel = kernel_with(&path);
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetIdentityContinuity {
+                    repository_id: "repo-1".into(),
+                },
+            )
+            .unwrap(),
+            LanguageResponse::IdentityContinuity { state: Some(state) }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn entity_facets_are_queryable_as_typed_current_references() {
+        let path = temp_db("entity-facet-query");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let revision = CodeEntityRevision {
+            entity: entity.clone(),
+            revision: "revision-1".into(),
+            sequence: 1,
+            document: LanguageDocumentIdentity {
+                path: "src/lib.rs".into(),
+                file_version: Some("sha256:file".into()),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::run".into()),
+            name: "run".into(),
+            signature_identity: Some("signature-1".into()),
+            body_identity: Some("body-1".into()),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: "existence-1".into(),
+                name_location: "location-1".into(),
+                signature: Some("signature-1".into()),
+                body: Some("body-1".into()),
+                relations: BTreeMap::from([("callers".into(), "callers-1".into())]),
+            },
+        };
+        let mut kernel = kernel_with(&path);
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: revision.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityFacet {
+                    repository_id: entity.repository_id.clone(),
+                    entity_id: entity.id.clone(),
+                    facet: CodeEntityFacet::Body,
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityFacet {
+                reference: Some(revision.facet_reference(CodeEntityFacet::Body).unwrap()),
+            }
+        );
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityFacet {
+                    repository_id: entity.repository_id,
+                    entity_id: entity.id,
+                    facet: CodeEntityFacet::Relation {
+                        name: "implementations".into(),
+                    },
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityFacet { reference: None }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn facet_change_query_only_reports_changed_neighborhoods() {
+        let path = temp_db("entity-facet-changes");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let make =
+            |revision: &str, sequence: u64, location: &str, callers: &str| CodeEntityRevision {
+                entity: entity.clone(),
+                revision: revision.into(),
+                sequence,
+                document: LanguageDocumentIdentity {
+                    path: location.into(),
+                    file_version: Some(format!("sha256:{revision}")),
+                    provenance: DocumentProvenance::WorkspaceBacked,
+                },
+                symbol: Some("crate::run".into()),
+                name: "run".into(),
+                signature_identity: Some("signature-stable".into()),
+                body_identity: Some("body-stable".into()),
+                provider_id: "rust-analyzer".into(),
+                provider_epoch: epoch(1),
+                facets: CodeEntityFacetRevisions {
+                    existence: "existence-stable".into(),
+                    name_location: format!("location-{sequence}"),
+                    signature: Some("signature-stable".into()),
+                    body: Some("body-stable".into()),
+                    relations: BTreeMap::from([("callers".into(), callers.into())]),
+                },
+            };
+        let first = make("revision-1", 1, "src/old.rs", "callers-1");
+        let second = make("revision-2", 2, "src/new.rs", "callers-2");
+        let mut kernel = kernel_with(&path);
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: first.clone(),
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision { revision: second },
+        )
+        .unwrap();
+
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityFacetChanges {
+                    repository_id: entity.repository_id,
+                    entity_id: entity.id,
+                    from_revision: first.revision,
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityFacetChanges {
+                changes: Some(CodeEntityFacetChanges {
+                    existence: false,
+                    name_location: true,
+                    signature: false,
+                    body: false,
+                    relations: vec!["callers".into()],
+                }),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn out_of_order_new_revision_cannot_replace_current_entity_revision() {
+        let path = temp_db("entity-sequence");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let make = |id: &str, sequence: u64| CodeEntityRevision {
+            entity: entity.clone(),
+            revision: id.into(),
+            sequence,
+            document: LanguageDocumentIdentity {
+                path: "src/lib.rs".into(),
+                file_version: Some(format!("sha256:{id}")),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::run".into()),
+            name: "run".into(),
+            signature_identity: Some(format!("signature-{id}")),
+            body_identity: Some(format!("body-{id}")),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: format!("existence-{id}"),
+                name_location: format!("location-{id}"),
+                signature: Some(format!("signature-{id}")),
+                body: Some(format!("body-{id}")),
+                relations: BTreeMap::new(),
+            },
+        };
+        let mut kernel = kernel_with(&path);
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: make("revision-2", 2),
+            },
+        )
+        .unwrap();
+
+        let error = invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: make("revision-1-late", 1),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("must advance beyond current sequence 2"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn replaying_historical_revision_does_not_roll_back_current_entity_revision() {
+        let path = temp_db("entity-revision-replay");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let revision = |name: &str, id: &str| CodeEntityRevision {
+            entity: entity.clone(),
+            revision: id.into(),
+            sequence: if id == "revision-1" { 1 } else { 2 },
+            document: LanguageDocumentIdentity {
+                path: format!("src/{name}.rs"),
+                file_version: Some(format!("sha256:{id}")),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some(format!("crate::{name}")),
+            name: name.into(),
+            signature_identity: Some(format!("signature-{id}")),
+            body_identity: Some(format!("body-{id}")),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: format!("existence-{id}"),
+                name_location: format!("location-{id}"),
+                signature: Some(format!("signature-facet-{id}")),
+                body: Some(format!("body-facet-{id}")),
+                relations: BTreeMap::new(),
+            },
+        };
+        let first = revision("old_name", "revision-1");
+        let second = revision("new_name", "revision-2");
+        let mut kernel = kernel_with(&path);
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: first.clone(),
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: second.clone(),
+            },
+        )
+        .unwrap();
+
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision { revision: first },
+        )
+        .unwrap();
+
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityRevision {
+                    repository_id: entity.repository_id,
+                    entity_id: entity.id,
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityRevision {
+                revision: Some(second),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn logical_entity_identity_is_independent_of_revision_location_and_name() {
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let facets = CodeEntityFacetRevisions {
+            existence: "existence-1".into(),
+            name_location: "location-1".into(),
+            signature: Some("signature-1".into()),
+            body: Some("body-1".into()),
+            relations: BTreeMap::new(),
+        };
+        let before = CodeEntityRevision {
+            entity: entity.clone(),
+            revision: "revision-1".into(),
+            sequence: 1,
+            document: LanguageDocumentIdentity {
+                path: "src/old.rs".into(),
+                file_version: Some("sha256:old".into()),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::old_name".into()),
+            name: "old_name".into(),
+            signature_identity: Some("signature".into()),
+            body_identity: Some("body".into()),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: facets.clone(),
+        };
+        let mut after = before.clone();
+        after.revision = "revision-2".into();
+        after.sequence = 2;
+        after.document.path = "src/new.rs".into();
+        after.name = "new_name".into();
+        after.facets.name_location = "location-2".into();
+
+        assert_eq!(before.entity, after.entity);
+        assert_ne!(before.revision, after.revision);
+        assert_ne!(before.document.path, after.document.path);
+        assert_ne!(before.name, after.name);
+    }
+
+    #[test]
+    fn ambiguous_lineage_can_remain_tentative_without_forcing_identity() {
+        let lineage = CodeEntityLineage {
+            from_entity_id: "entity-1".into(),
+            to_entity_id: "entity-2".into(),
+            kind: CodeEntityLineageKind::Split,
+            confidence: CodeEntityLineageConfidence::Tentative,
+            evidence_observation_ids: vec!["language-1".into()],
+        };
+
+        assert_ne!(lineage.from_entity_id, lineage.to_entity_id);
+        assert_eq!(lineage.confidence, CodeEntityLineageConfidence::Tentative);
     }
 
     #[test]

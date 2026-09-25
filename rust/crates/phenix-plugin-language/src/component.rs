@@ -1,23 +1,11 @@
-use crate::{language_manifest, LANGUAGE_SERVICE};
+use crate::language_manifest;
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
-    PluginId,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginId,
 };
+pub use phenix_sdk::LanguageInterface;
 
 const LANGUAGE_COMPONENT: &str = "phenix.language";
 const LANGUAGE_PLUGIN: &str = "phenix.language";
-
-pub struct LanguageInterface;
-
-impl ComponentInterface for LanguageInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(LANGUAGE_SERVICE).expect("static language interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<crate::LanguageCommand, crate::LanguageResponse>()
-    }
-}
 
 #[must_use]
 pub fn language_component_id() -> ComponentId {
