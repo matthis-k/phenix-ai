@@ -1,7 +1,7 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
-    ServiceId, TransactionOp,
+    ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
