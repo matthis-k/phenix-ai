@@ -119,7 +119,10 @@ fn parse_sections(input: &str) -> Vec<ParsedSection> {
 
     for line in input.lines() {
         if let Some((kind, source)) = parse_header(line) {
-            if let Some(section) = current.take() {
+            if let Some(mut section) = current.take() {
+                if section.content.ends_with('\n') {
+                    section.content.pop();
+                }
                 sections.push(section);
             }
             current = Some(ParsedSection {
