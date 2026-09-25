@@ -332,10 +332,12 @@ pub fn compare_efficiency_policies(
     let baseline = evaluate_efficiency_cohort(baseline)?;
     let candidate = evaluate_efficiency_cohort(candidate)?;
     if baseline.outcome_evaluator_identity != candidate.outcome_evaluator_identity {
-        return Err(EfficiencyEvaluationError::ComparisonOutcomeEvaluatorMismatch {
-            baseline: baseline.outcome_evaluator_identity,
-            candidate: candidate.outcome_evaluator_identity,
-        });
+        return Err(
+            EfficiencyEvaluationError::ComparisonOutcomeEvaluatorMismatch {
+                baseline: baseline.outcome_evaluator_identity,
+                candidate: candidate.outcome_evaluator_identity,
+            },
+        );
     }
     if baseline.price_revision != candidate.price_revision {
         return Err(EfficiencyEvaluationError::ComparisonPriceRevisionMismatch {
