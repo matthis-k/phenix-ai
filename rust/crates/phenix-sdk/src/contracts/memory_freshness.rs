@@ -116,3 +116,27 @@ pub enum MemoryRevalidationOutcome {
 pub fn memory_validate_callable() -> CallableId {
     CallableId::parse(MEMORY_VALIDATE_CALLABLE).expect("static memory callable id is valid")
 }
+
+
+#[cfg(test)]
+mod code_dependency_tests {
+    use super::*;
+    use super::super::language::{CodeEntityFacet, LogicalCodeEntity};
+
+    #[test]
+    fn relation_facet_dependency_round_trips_without_losing_identity() {
+        let reference = CodeEntityFacetReference {
+            entity: LogicalCodeEntity {
+                id: "entity-1".into(),
+                repository_id: "repo-1".into(),
+            },
+            facet: CodeEntityFacet::Relation {
+                name: "callers".into(),
+            },
+            revision: "callers-revision-7".into(),
+        };
+        let dependency = MemoryDependencyRevision::for_code_facet(&reference);
+
+        assert_eq!(dependency.as_code_facet(), Some(reference));
+    }
+}
