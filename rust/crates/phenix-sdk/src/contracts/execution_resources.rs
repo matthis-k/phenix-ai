@@ -48,6 +48,10 @@ pub enum ExecutionResourceCommand {
         execution_id: String,
         now_ms: u64,
     },
+    CancelDelegatedBeforeStart {
+        task_id: String,
+        cause: String,
+    },
     CompleteDelegated {
         task_id: String,
         execution_id: String,
