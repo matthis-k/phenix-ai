@@ -376,6 +376,33 @@ mod tests {
     }
 
     #[test]
+    fn historical_estimates_are_derived_inputs_not_hard_constraint_overrides() {
+        let request = input(ContextDemand {
+            mandatory_input_tokens: 800,
+            reducible_input_tokens: 500,
+            output_reserve_tokens: 200,
+            required_capabilities: BTreeSet::new(),
+        });
+        let baseline = policy().plan(&request).unwrap();
+
+        let mut with_history = request;
+        with_history.historical_estimates = vec![RoutingEstimate {
+            source: super::super::RoutingEstimateSource::Historical,
+            expected_quality_millis: Some(1_000),
+            expected_latency_ms: Some(1),
+            expected_cost_microunits: Some(1),
+            confidence_millis: Some(1_000),
+            estimator_snapshot_revision: Some("routing-evidence/7".into()),
+            evidence_cutoff_sequence: Some(7),
+        }];
+        let planned = policy().plan(&with_history).unwrap();
+
+        assert_eq!(planned, baseline);
+        assert_eq!(planned.context.mandatory_input_tokens, 800);
+        assert_eq!(planned.reservation.input_tokens, 1_000);
+    }
+
+    #[test]
     fn root_budget_clamps_policy_budget() {
         let mut request = input(ContextDemand {
             mandatory_input_tokens: 400,
