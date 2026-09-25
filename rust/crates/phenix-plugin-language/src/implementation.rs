@@ -8,7 +8,8 @@ use phenix_sdk::{
     CodeEntityLineageKind, CodeEntityRevision, CodeIdentityContinuityState, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE, WORKSPACE_SERVICE,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
+    WORKSPACE_SERVICE,
 };
 use std::collections::BTreeMap;
 
@@ -220,7 +221,9 @@ fn handle(
                 ));
             }
             let WorkspaceFileVersion::Present { content_hash } = version else {
-                return Err(format!("workspace file fallback is unavailable for absent path {path}"));
+                return Err(format!(
+                    "workspace file fallback is unavailable for absent path {path}"
+                ));
             };
             Ok(LanguageResponse::FileFallback {
                 fallback: FileRevisionFallback {
@@ -628,8 +631,10 @@ fn validate_code_entity_lineage(
     for observation_id in &lineage.evidence_observation_ids {
         validate_identity("lineage evidence observation id", observation_id)?;
     }
-    if matches!(lineage.kind, CodeEntityLineageKind::Rename | CodeEntityLineageKind::Move)
-        && lineage.confidence == CodeEntityLineageConfidence::Confirmed
+    if matches!(
+        lineage.kind,
+        CodeEntityLineageKind::Rename | CodeEntityLineageKind::Move
+    ) && lineage.confidence == CodeEntityLineageConfidence::Confirmed
         && lineage.from_entity_id != lineage.to_entity_id
     {
         return Err("confirmed rename/move lineage must preserve logical entity identity".into());
@@ -642,7 +647,9 @@ fn validate_code_entity_lineage(
             | CodeEntityLineageKind::Merge
     ) && lineage.from_entity_id == lineage.to_entity_id
     {
-        return Err("replacement/extract/split/merge lineage requires a distinct target identity".into());
+        return Err(
+            "replacement/extract/split/merge lineage requires a distinct target identity".into(),
+        );
     }
     Ok(())
 }
@@ -800,8 +807,10 @@ mod tests {
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
         let persistence = LocalPersistence::open(path).unwrap();
-        let mut kernel =
-            Kernel::with_persistence(KernelConfig::new([language, workspace]).unwrap(), persistence);
+        let mut kernel = Kernel::with_persistence(
+            KernelConfig::new([language, workspace]).unwrap(),
+            persistence,
+        );
         kernel
             .register_embedded_factory(language_id, language_factory)
             .unwrap();
@@ -897,10 +906,17 @@ mod tests {
         };
         assert_eq!(fallback.workspace_id, "workspace");
         assert_eq!(fallback.document.path, "src/lib.rs");
-        assert_eq!(fallback.document.provenance, DocumentProvenance::WorkspaceBacked);
-        assert!(fallback.document.file_version.as_deref().is_some_and(|revision| {
-            revision.starts_with("sha256:") && revision.len() > "sha256:".len()
-        }));
+        assert_eq!(
+            fallback.document.provenance,
+            DocumentProvenance::WorkspaceBacked
+        );
+        assert!(fallback
+            .document
+            .file_version
+            .as_deref()
+            .is_some_and(|revision| {
+                revision.starts_with("sha256:") && revision.len() > "sha256:".len()
+            }));
         assert_eq!(fallback.content, "fn fallback() {}\n");
 
         let _ = fs::remove_file(path);

@@ -1969,6 +1969,7 @@ name = "phenix-plugin-language"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",
  "serde",
