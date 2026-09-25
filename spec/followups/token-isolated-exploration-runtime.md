@@ -14,10 +14,11 @@ Tracks #516 slice 5.
 - [x] Unknown actual cost retains the conservative reserved charge.
 - [x] Delegated result validation measures the actual serialized result and cannot be bypassed by an underreported byte count.
 - [x] Accepted exploration decisions now project into the ordinary atomic delegated-admission contract, with deterministic task/reservation identity and pre-admission authority/deadline checks.
+- [x] Planning exposes a typed handoff that packages an explicit exploration candidate plus inline/delegated cost estimates into an `ExplorationOpportunity` without scheduling work.
 
 ## Required implementation
 
-- [ ] Add the planner/context handoff that creates an `ExplorationOpportunity`.
+- [x] Add the planner/context handoff that creates an `ExplorationOpportunity`.
 - [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
 - [ ] Create the child through the existing delegation/worker path.
 - [ ] Give the child selected exact references and attenuated authority, not the parent transcript.
