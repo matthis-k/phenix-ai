@@ -23,7 +23,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Compare policy variants only after validating the same task fixture set.
 - [x] Report marginal effect of independently disableable reduction stages through explicit baseline/variant stage sets and paired cohort comparisons.
 - [ ] Feed historical estimates into routing/UsagePolicy only as derived evidence for later attempts.
-- [ ] Keep current-turn outcome out of its own planning/routing decision.
+- [x] Keep current-turn outcome out of its own planning/routing decision; step-runner records routing evidence only after dispatch completes/fails, and derived estimates are rebuilt afterward for later selections.
 - [x] Expose unknown/unavailable usage and incomplete monetary accounting explicitly rather than treating them as zero.
 
 ## Acceptance
@@ -33,7 +33,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Delegated/helper work appears in total task cost when supplied as distinct charged attempt records; duplicate/cross-root charges are rejected.
 - [x] Reacquisition caused by prior reduction is attributable when causal evidence exists; evaluator records preserve `cause_identity` and originating attempt instead of only totals.
 - [x] Evaluation can compare baseline vs one optimization at a time and combined profiles; variant-set reports preserve active/added/removed stage identities.
-- [ ] Derived estimates can be deleted/rebuilt without losing canonical execution history.
+- [x] Derived routing estimates can be deleted/rebuilt without losing evidence: the estimate map is omitted from durable routing snapshots and deterministically rebuilt from durable completed evidence on restore.
 
 ## Ownership
 
