@@ -110,6 +110,7 @@ pub enum ReducerValidationError {
     MissingRecoveryReference { item_id: String },
     DuplicateSummary { item_id: String },
     SummaryWithoutExactSource { item_id: String },
+    SummaryMissingEligibleRecovery { item_id: String },
     OutputBudgetExceeded { requested: u64, allowed: u64 },
 }
 
@@ -192,6 +193,16 @@ impl ContextReducerProposal {
                 return Err(ReducerValidationError::SummaryWithoutExactSource {
                     item_id: summary.item_id.clone(),
                 });
+            }
+            if let Some(expected) = eligible
+                .get(summary.item_id.as_str())
+                .and_then(|item| item.recovery.as_ref())
+            {
+                if !summary.exact_sources.contains(expected) {
+                    return Err(ReducerValidationError::SummaryMissingEligibleRecovery {
+                        item_id: summary.item_id.clone(),
+                    });
+                }
             }
         }
         Ok(())
@@ -405,6 +416,32 @@ mod tests {
             proposal.validate_against(&request, &request.expected_projection),
             Err(ReducerValidationError::OutputBudgetExceeded { .. })
         ));
+    }
+
+    #[test]
+    fn reducer_summary_must_reference_the_eligible_items_exact_recovery() {
+        let request = reducer_request();
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: vec!["history-1".into()],
+            omitted_item_ids: Vec::new(),
+            summaries: vec![DerivedReductionSummary {
+                item_id: "history-1".into(),
+                content: Bytes::from(b"summary".to_vec()),
+                exact_sources: vec![exact("context:other")],
+            }],
+            encoded_output_bytes: 10,
+        };
+
+        assert_eq!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::SummaryMissingEligibleRecovery {
+                item_id: "history-1".into(),
+            })
+        );
     }
 
     #[test]
