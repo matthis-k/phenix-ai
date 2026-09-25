@@ -382,14 +382,6 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
     );
     assert_eq!(frontends["response"], "providers");
 
-    let hooks = invoke(
-        &mut harness,
-        "phenix.hooks@1",
-        json!({"operation": "get_configuration", "revision": "missing"}),
-    );
-    assert_eq!(hooks["response"], "configuration");
-    assert!(hooks["configuration"].is_null());
-
     let workspace = invoke(
         &mut harness,
         "phenix.workspace@1",
@@ -603,19 +595,18 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
 }
 
 #[test]
-fn hook_behavior_is_omittable_and_replaceable_through_harness_composition() {
+fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
     let hook_service = ServiceId::parse("phenix.hooks@1").unwrap();
-    let selected = BTreeSet::new();
 
-    let mut without_hooks = HarnessBuilder::with_selected_suite(&selected)
+    let mut default = HarnessBuilder::with_default_suite()
         .unwrap()
         .build()
         .unwrap();
-    without_hooks.activate().unwrap();
+    default.activate().unwrap();
     let request = HookCommand::GetConfiguration {
         revision: "missing".into(),
     };
-    let error = without_hooks
+    let error = default
         .invoke(
             &hook_service,
             &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
@@ -625,6 +616,7 @@ fn hook_behavior_is_omittable_and_replaceable_through_harness_composition() {
         .unwrap_err();
     assert!(error.to_string().contains("no eligible provider"));
 
+    let selected = BTreeSet::new();
     let mut replacement_builder = HarnessBuilder::with_selected_suite(&selected).unwrap();
     replacement_builder
         .add_embedded(
