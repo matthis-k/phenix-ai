@@ -236,6 +236,28 @@ pub enum CodeEntityFacet {
     Relation { name: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityChangeEvent {
+    pub sequence: u64,
+    pub entity: LogicalCodeEntity,
+    pub previous_revision: Option<String>,
+    pub revision: String,
+    pub changes: CodeEntityFacetChanges,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityChangePage {
+    pub repository_id: String,
+    pub after_sequence: u64,
+    pub current_sequence: u64,
+    #[serde(default)]
+    pub events: Vec<CodeEntityChangeEvent>,
+    pub next_after_sequence: u64,
+    pub caught_up: bool,
+}
+
 pub const CODE_ENTITY_FACET_RESOURCE_PREFIX: &str = "code-facet:";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -426,6 +448,11 @@ pub enum LanguageCommand {
         entity_id: String,
         from_revision: String,
     },
+    GetEntityChanges {
+        repository_id: String,
+        after_sequence: u64,
+        limit: u32,
+    },
     SetIdentityContinuity {
         state: CodeIdentityContinuityState,
     },
@@ -463,6 +490,9 @@ pub enum LanguageResponse {
     },
     EntityFacetChanges {
         changes: Option<CodeEntityFacetChanges>,
+    },
+    EntityChanges {
+        page: CodeEntityChangePage,
     },
     IdentityContinuity {
         state: Option<CodeIdentityContinuityState>,
