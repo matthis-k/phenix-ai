@@ -488,6 +488,7 @@ fn setup(kernel: &mut Kernel) {
                     },
                 },
                 optional: BTreeSet::new(),
+                cache: Default::default(),
             },
         },
     );
