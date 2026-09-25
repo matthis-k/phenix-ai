@@ -16,13 +16,14 @@ Tracks #516 slice 5.
 - [x] Accepted exploration decisions now project into the ordinary atomic delegated-admission contract, with deterministic task/reservation identity and pre-admission authority/deadline checks.
 - [x] Planning exposes a typed handoff that packages an explicit exploration candidate plus inline/delegated cost estimates into an `ExplorationOpportunity` without scheduling work.
 - [x] Pending delegated work can be cancelled before start while atomically releasing its unused reservation; started work cannot take this rollback path.
+- [x] Durably admitted delegated tasks expose a read-only runnable projection for scheduler/recovery discovery; starting a task removes it from that projection without creating a second task store.
 - [x] Delegated task bindings persist optional originating-attempt identity so later child/retry/reacquisition accounting has a stable parent attribution key.
 
 ## Required implementation
 
 - [x] Add the planner/context handoff that creates an `ExplorationOpportunity`.
 - [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
-- [ ] Create the child through the existing delegation/worker path.
+- [ ] Create the child through the existing delegation/worker path. (Durable runnable-task discovery is now exposed by the resource owner; a production generic worker executor/consumer is still missing.)
 - [x] Give the child selected exact references and attenuated authority, not the parent transcript.
 - [x] Return bounded typed findings plus exact evidence references.
 - [ ] Re-admit findings through ordinary context admission.
