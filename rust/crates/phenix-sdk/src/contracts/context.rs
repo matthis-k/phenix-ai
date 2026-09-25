@@ -129,6 +129,15 @@ pub enum ContextCommand {
         lifetime: ContextInjectionLifetime,
         reason: String,
     },
+    LoadOnce {
+        admission_id: String,
+        execution_id: String,
+        resource_id: ContextResourceId,
+        revision: ContextRevisionId,
+        requester: ContextInjectionRequester,
+        lifetime: ContextInjectionLifetime,
+        reason: String,
+    },
     Project {
         execution_id: String,
     },
