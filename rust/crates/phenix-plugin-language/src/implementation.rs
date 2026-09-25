@@ -5,9 +5,9 @@ use phenix_core::{
 };
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
-    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityRevision,
-    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
-    DiagnosticsResult,
+    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFact,
+    CodeEntityRevision, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
+    CodeIdentityRebuildCheckpoint, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
@@ -246,6 +246,16 @@ fn handle(
                 revision: Some(revision),
             })
         }
+        LanguageCommand::IngestEntityFact {
+            observation_id,
+            fact,
+        } => {
+            validate_identity("language observation id", &observation_id)?;
+            let revision = ingest_entity_fact(context, &observation_id, fact)?;
+            Ok(LanguageResponse::EntityRevision {
+                revision: Some(revision),
+            })
+        }
         LanguageCommand::RecordEntityLineage {
             repository_id,
             lineage,
@@ -459,6 +469,93 @@ fn read_observation(
         .map_err(|error| error.to_string())?
         .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
         .transpose()
+}
+
+fn ingest_entity_fact(
+    context: &LanguageContext<'_, '_, '_>,
+    observation_id: &str,
+    fact: CodeEntityProviderFact,
+) -> Result<CodeEntityRevision, String> {
+    let observation = read_observation(context, observation_id)?
+        .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
+    if !matches!(
+        observation.result.operation,
+        phenix_sdk::LanguageOperationKind::Definition
+            | phenix_sdk::LanguageOperationKind::References
+            | phenix_sdk::LanguageOperationKind::Implementations
+            | phenix_sdk::LanguageOperationKind::DocumentSymbols
+            | phenix_sdk::LanguageOperationKind::WorkspaceSymbols
+            | phenix_sdk::LanguageOperationKind::CallHierarchy
+    ) {
+        return Err("language observation does not contain reusable semantic code facts".into());
+    }
+
+    let document_index = usize::try_from(fact.document_index)
+        .map_err(|_| "provider fact document index is out of range".to_owned())?;
+    let document = observation
+        .result
+        .documents
+        .get(document_index)
+        .cloned()
+        .ok_or_else(|| "provider fact document index is out of range".to_owned())?;
+    if document.provenance != DocumentProvenance::WorkspaceBacked {
+        return Err("provider fact requires workspace-backed source provenance".into());
+    }
+    let expected_version = document
+        .file_version
+        .as_deref()
+        .ok_or_else(|| "provider fact requires an exact workspace source revision".to_owned())?;
+    verify_workspace_document_revision(context, &document.path, expected_version)?;
+
+    let revision = CodeEntityRevision {
+        entity: fact.entity,
+        revision: fact.revision,
+        sequence: fact.sequence,
+        document,
+        symbol: fact.symbol,
+        name: fact.name,
+        signature_identity: fact.signature_identity,
+        body_identity: fact.body_identity,
+        provider_id: observation.provider_id,
+        provider_epoch: observation.provider_epoch,
+        facets: fact.facets,
+    };
+    validate_code_entity_revision(&revision)?;
+    store_entity_revision(context, &revision)?;
+    Ok(revision)
+}
+
+fn verify_workspace_document_revision(
+    context: &LanguageContext<'_, '_, '_>,
+    path: &str,
+    expected_version: &str,
+) -> Result<(), String> {
+    let input = context
+        .kernel
+        .encode_value(&WorkspaceCommand::Read {
+            path: path.to_owned(),
+        })
+        .map_err(|error| error.to_string())?;
+    let output = context
+        .kernel
+        .invoke_service_abi(&workspace_service(), &input, context.call.authority, None)
+        .map_err(|error| error.to_string())?;
+    let response = context
+        .kernel
+        .decode_projected::<WorkspaceResponse>(&WorkspaceInterface::interface_id(), &output)
+        .map_err(|error| error.to_string())?;
+    let WorkspaceResponse::Read { version, .. } = response else {
+        return Err("workspace returned a non-read response while validating provider fact".into());
+    };
+    let WorkspaceFileVersion::Present { content_hash } = version else {
+        return Err(format!("provider fact source path is absent: {path}"));
+    };
+    if content_hash != expected_version {
+        return Err(format!(
+            "provider fact source revision is stale: expected {expected_version}, current {content_hash}"
+        ));
+    }
+    Ok(())
 }
 
 fn store_entity_revision(
