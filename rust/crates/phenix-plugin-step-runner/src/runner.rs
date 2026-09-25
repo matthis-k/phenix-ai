@@ -7,17 +7,16 @@ use phenix_core::{
 };
 use phenix_sdk::{
     select_route, step_runner_service, AttemptOutcome, AttemptUsageRecord, BudgetActual,
-    BudgetReservationPurpose,
-    BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInterface,
-    ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ModelCommand, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
-    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest,
-    ProjectionRevision, RouteDecision, RouteSelection, RoutingEvidence, StepAttemptCommand,
-    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
-    StepRunnerInterface,
-    StepRunnerResponse, StepSettlementBasis, StepTransactionCommand, StepTransactionInterface,
-    StepTransactionResponse, UsageAttemptKind, UsageAttribution, UsagePlanningInput,
+    BudgetReservationPurpose, BudgetReservationRequest, ContextAdmissionRequest, ContextCommand,
+    ContextInterface, ContextResponse, ExecutionCommand, ExecutionInterface,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    ExecutionResponse, ExecutionState, ModelCommand, ModelDispatchCommand, ModelDispatchFailure,
+    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
+    PlannedStepRequest, ProjectionRevision, RouteDecision, RouteSelection, RoutingEvidence,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan,
+    StepRunnerCommand, StepRunnerInterface, StepRunnerResponse, StepSettlementBasis,
+    StepTransactionCommand, StepTransactionInterface, StepTransactionResponse, UsageAttemptKind,
+    UsageAttribution, UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -321,8 +320,7 @@ fn run_with_retry_route(
         .invoke_projected::<ModelCommand, ModelResponse>(&ModelCommand::ListCandidates {
             profile_id: profile_id.clone(),
             callable_id: callable_id.clone(),
-        })
-    {
+        }) {
         Ok(ModelResponse::Candidates { candidates }) => candidates
             .into_iter()
             .filter_map(|candidate| candidate.estimate)

@@ -103,58 +103,57 @@ pub fn derive_efficiency_task_record_from_attempts(
                 attempt_id: attempt.attribution.attempt_id.clone(),
             });
         }
-        let (record, known_cost_microunits, cost_complete) =
-            if let Some(usage) = &attempt.usage {
-                let cost = attempt
+        let (record, known_cost_microunits, cost_complete) = if let Some(usage) = &attempt.usage {
+            let cost = attempt
+                .settled_actual
+                .as_ref()
+                .and_then(|actual| actual.cost_microunits);
+            (usage.clone(), cost.unwrap_or(0), cost.is_some())
+        } else if attempt.dispatch_id.is_none() {
+            (
+                AttemptUsageRecord {
+                    attribution: attempt.attribution.clone(),
+                    usage: phenix_core::ModelTurnUsage {
+                        fresh_input_tokens: UsageQuantity::Reported { value: 0 },
+                        cache_read_tokens: UsageQuantity::Reported { value: 0 },
+                        cache_write_tokens: UsageQuantity::Reported { value: 0 },
+                        output_tokens: UsageQuantity::Reported { value: 0 },
+                        reasoning_tokens: UsageQuantity::Reported { value: 0 },
+                    },
+                    latency_ms: None,
+                    tool_input_bytes: 0,
+                    tool_result_bytes: 0,
+                    outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                    reacquisition: Vec::new(),
+                },
+                0,
+                true,
+            )
+        } else {
+            (
+                AttemptUsageRecord {
+                    attribution: attempt.attribution.clone(),
+                    usage: phenix_core::ModelTurnUsage {
+                        fresh_input_tokens: UsageQuantity::Unavailable,
+                        cache_read_tokens: UsageQuantity::Unavailable,
+                        cache_write_tokens: UsageQuantity::Unavailable,
+                        output_tokens: UsageQuantity::Unavailable,
+                        reasoning_tokens: UsageQuantity::Unavailable,
+                    },
+                    latency_ms: None,
+                    tool_input_bytes: 0,
+                    tool_result_bytes: 0,
+                    outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                    reacquisition: Vec::new(),
+                },
+                attempt
                     .settled_actual
                     .as_ref()
-                    .and_then(|actual| actual.cost_microunits);
-                (usage.clone(), cost.unwrap_or(0), cost.is_some())
-            } else if attempt.dispatch_id.is_none() {
-                (
-                    AttemptUsageRecord {
-                        attribution: attempt.attribution.clone(),
-                        usage: phenix_core::ModelTurnUsage {
-                            fresh_input_tokens: UsageQuantity::Reported { value: 0 },
-                            cache_read_tokens: UsageQuantity::Reported { value: 0 },
-                            cache_write_tokens: UsageQuantity::Reported { value: 0 },
-                            output_tokens: UsageQuantity::Reported { value: 0 },
-                            reasoning_tokens: UsageQuantity::Reported { value: 0 },
-                        },
-                        latency_ms: None,
-                        tool_input_bytes: 0,
-                        tool_result_bytes: 0,
-                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
-                        reacquisition: Vec::new(),
-                    },
-                    0,
-                    true,
-                )
-            } else {
-                (
-                    AttemptUsageRecord {
-                        attribution: attempt.attribution.clone(),
-                        usage: phenix_core::ModelTurnUsage {
-                            fresh_input_tokens: UsageQuantity::Unavailable,
-                            cache_read_tokens: UsageQuantity::Unavailable,
-                            cache_write_tokens: UsageQuantity::Unavailable,
-                            output_tokens: UsageQuantity::Unavailable,
-                            reasoning_tokens: UsageQuantity::Unavailable,
-                        },
-                        latency_ms: None,
-                        tool_input_bytes: 0,
-                        tool_result_bytes: 0,
-                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
-                        reacquisition: Vec::new(),
-                    },
-                    attempt
-                        .settled_actual
-                        .as_ref()
-                        .and_then(|actual| actual.cost_microunits)
-                        .unwrap_or(0),
-                    false,
-                )
-            };
+                    .and_then(|actual| actual.cost_microunits)
+                    .unwrap_or(0),
+                false,
+            )
+        };
         charges.push(EfficiencyAttemptCharge {
             record,
             known_cost_microunits,
@@ -891,24 +890,22 @@ mod tests {
             )
             .unwrap();
 
-        let record = derive_efficiency_task_record_from_attempts(
-            &EfficiencyDurableTaskEvidence {
-                task_fixture_revision: "task-1@1".into(),
-                root_execution_id: "root-1".into(),
-                policy_revision: "policy-1".into(),
-                outcome_evaluator_identity: "tests-v1".into(),
-                price_revision: "prices-v1".into(),
+        let record = derive_efficiency_task_record_from_attempts(&EfficiencyDurableTaskEvidence {
+            task_fixture_revision: "task-1@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests/task-1".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
                 outcome: EvaluationOutcome::Succeeded,
-                outcome_evidence: EfficiencyOutcomeEvidence {
-                    source_identity: "tests/task-1".into(),
-                    evaluator_identity: "tests-v1".into(),
-                    evidence_revision: "result-v1".into(),
-                    outcome: EvaluationOutcome::Succeeded,
-                },
-                attempts: vec![attempt],
-                root_elapsed_ms: Some(30),
             },
-        )
+            attempts: vec![attempt],
+            root_elapsed_ms: Some(30),
+        })
         .unwrap();
 
         assert_eq!(record.known_cost_microunits, 123);

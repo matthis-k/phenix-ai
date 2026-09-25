@@ -145,10 +145,7 @@ mod tests {
             optional: BTreeSet::new(),
         };
         let mut state = RoutingServiceState::default();
-        state
-            .runtime
-            .publish_capabilities(capabilities)
-            .unwrap();
+        state.runtime.publish_capabilities(capabilities).unwrap();
         state
             .runtime
             .record_evidence(

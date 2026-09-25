@@ -66,22 +66,17 @@ impl RoutingRuntimeState {
             let total = u64::try_from(records.len()).unwrap_or(u64::MAX);
             let successes = u64::try_from(records.iter().filter(|record| record.success).count())
                 .unwrap_or(u64::MAX);
-            let expected_quality_millis = Some(
-                u32::try_from(successes.saturating_mul(1_000) / total)
-                    .unwrap_or(u32::MAX),
-            );
+            let expected_quality_millis =
+                Some(u32::try_from(successes.saturating_mul(1_000) / total).unwrap_or(u32::MAX));
             let latency = records
                 .iter()
                 .filter_map(|record| record.latency_ms)
                 .fold((0_u64, 0_u64), |(sum, count), value| {
                     (sum.saturating_add(value), count.saturating_add(1))
                 });
-            let expected_latency_ms =
-                (latency.1 != 0).then(|| latency.0 / latency.1);
-            let confidence_millis = Some(
-                u16::try_from(total.saturating_mul(100).min(1_000))
-                    .unwrap_or(1_000),
-            );
+            let expected_latency_ms = (latency.1 != 0).then(|| latency.0 / latency.1);
+            let confidence_millis =
+                Some(u16::try_from(total.saturating_mul(100).min(1_000)).unwrap_or(1_000));
             self.estimates.insert(
                 target.clone(),
                 RoutingEstimate {
