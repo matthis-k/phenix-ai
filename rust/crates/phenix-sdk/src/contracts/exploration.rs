@@ -90,18 +90,30 @@ impl ExplorationDelegationAdmission {
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExplorationPreparationError {
     NotDelegated,
-    TaskMismatch { expected: String, observed: String },
+    TaskMismatch {
+        expected: String,
+        observed: String,
+    },
     AuthorityExpanded,
-    PolicyRevisionMismatch { expected: String, observed: String },
+    PolicyRevisionMismatch {
+        expected: String,
+        observed: String,
+    },
     ContractRevisionMismatch {
         expected: ArtifactRevision,
         observed: ArtifactRevision,
     },
     DelegationDisabled,
-    ChildLimitReached { current: u32, allowed: u32 },
+    ChildLimitReached {
+        current: u32,
+        allowed: u32,
+    },
     ZeroAttempts,
     DepthUnavailable,
-    DeadlineNotFuture { deadline_at_ms: u64, now_ms: u64 },
+    DeadlineNotFuture {
+        deadline_at_ms: u64,
+        now_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -572,7 +584,10 @@ mod tests {
             admission.binding.resources.max_result_bytes,
             step_plan().delegation.max_result_bytes
         );
-        assert_eq!(admission.binding.contract.as_slice(), b"exploration contract");
+        assert_eq!(
+            admission.binding.contract.as_slice(),
+            b"exploration contract"
+        );
         assert_eq!(
             admission.binding.contract_revision,
             ArtifactRevision::from_content(admission.binding.contract.as_slice())
@@ -590,10 +605,7 @@ mod tests {
 
         assert_eq!(
             prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0),
-            Err(ExplorationPreparationError::ContractRevisionMismatch {
-                expected,
-                observed,
-            })
+            Err(ExplorationPreparationError::ContractRevisionMismatch { expected, observed })
         );
     }
 

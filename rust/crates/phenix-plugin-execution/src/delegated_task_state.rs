@@ -14,17 +14,27 @@ pub(crate) struct DelegatedTaskStore {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DelegatedTaskStoreError {
-    DuplicateTask { task_id: String },
-    UnknownTask { task_id: String },
+    DuplicateTask {
+        task_id: String,
+    },
+    UnknownTask {
+        task_id: String,
+    },
     AuthorityExpanded,
     BindingAuthorityMismatch,
     ContractRevisionMismatch {
         expected: ArtifactRevision,
         observed: ArtifactRevision,
     },
-    NotRunnable { task_id: String },
-    InvalidState { task_id: String },
-    ExecutionMismatch { task_id: String },
+    NotRunnable {
+        task_id: String,
+    },
+    InvalidState {
+        task_id: String,
+    },
+    ExecutionMismatch {
+        task_id: String,
+    },
     Admission(DelegationAdmissionError),
 }
 
@@ -315,10 +325,7 @@ mod tests {
                 &policy(),
                 0
             ),
-            Err(DelegatedTaskStoreError::ContractRevisionMismatch {
-                expected,
-                observed,
-            })
+            Err(DelegatedTaskStoreError::ContractRevisionMismatch { expected, observed })
         );
     }
 
