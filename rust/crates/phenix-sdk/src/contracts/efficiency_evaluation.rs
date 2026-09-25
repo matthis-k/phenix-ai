@@ -26,11 +26,22 @@ pub struct ReacquisitionCauseAggregate {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
+pub struct EfficiencyOutcomeEvidence {
+    pub source_identity: String,
+    pub evaluator_identity: String,
+    pub evidence_revision: String,
+    pub outcome: EvaluationOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
 pub struct EfficiencyTaskRecord {
     pub task_fixture_revision: String,
     pub root_execution_id: String,
     pub policy_revision: String,
     pub outcome_evaluator_identity: String,
+    pub outcome_evidence_identity: String,
+    pub outcome_evidence_revision: String,
     pub price_revision: String,
     pub outcome: EvaluationOutcome,
     pub usage: UsageAggregate,
@@ -58,6 +69,7 @@ pub struct EfficiencyTaskEvidence {
     pub outcome_evaluator_identity: String,
     pub price_revision: String,
     pub outcome: EvaluationOutcome,
+    pub outcome_evidence: EfficiencyOutcomeEvidence,
     #[serde(default)]
     pub attempts: Vec<EfficiencyAttemptCharge>,
     pub root_elapsed_ms: Option<u64>,
@@ -66,6 +78,24 @@ pub struct EfficiencyTaskEvidence {
 pub fn derive_efficiency_task_record(
     evidence: &EfficiencyTaskEvidence,
 ) -> Result<EfficiencyTaskRecord, EfficiencyEvaluationError> {
+    if evidence.outcome_evidence.source_identity.trim().is_empty()
+        || evidence.outcome_evidence.evidence_revision.trim().is_empty()
+    {
+        return Err(EfficiencyEvaluationError::InvalidOutcomeEvidence);
+    }
+    if evidence.outcome_evidence.evaluator_identity != evidence.outcome_evaluator_identity {
+        return Err(EfficiencyEvaluationError::OutcomeEvidenceEvaluatorMismatch {
+            expected: evidence.outcome_evaluator_identity.clone(),
+            observed: evidence.outcome_evidence.evaluator_identity.clone(),
+        });
+    }
+    if evidence.outcome_evidence.outcome != evidence.outcome {
+        return Err(EfficiencyEvaluationError::OutcomeEvidenceOutcomeMismatch {
+            expected: evidence.outcome,
+            observed: evidence.outcome_evidence.outcome,
+        });
+    }
+
     let mut seen_attempts = std::collections::BTreeSet::new();
     let mut usage = UsageAggregate::default();
     let mut reacquisition_causes =
@@ -129,6 +159,8 @@ pub fn derive_efficiency_task_record(
         root_execution_id: evidence.root_execution_id.clone(),
         policy_revision: evidence.policy_revision.clone(),
         outcome_evaluator_identity: evidence.outcome_evaluator_identity.clone(),
+        outcome_evidence_identity: evidence.outcome_evidence.source_identity.clone(),
+        outcome_evidence_revision: evidence.outcome_evidence.evidence_revision.clone(),
         price_revision: evidence.price_revision.clone(),
         outcome: evidence.outcome,
         usage,
@@ -180,6 +212,15 @@ pub struct EfficiencyCohortReport {
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EfficiencyEvaluationError {
     EmptyCohort,
+    InvalidOutcomeEvidence,
+    OutcomeEvidenceEvaluatorMismatch {
+        expected: String,
+        observed: String,
+    },
+    OutcomeEvidenceOutcomeMismatch {
+        expected: EvaluationOutcome,
+        observed: EvaluationOutcome,
+    },
     MixedPolicyRevision {
         expected: String,
         observed: String,
@@ -524,6 +565,8 @@ mod tests {
             root_execution_id: format!("execution-{id}"),
             policy_revision: "policy-1".into(),
             outcome_evaluator_identity: "tests-v1".into(),
+            outcome_evidence_identity: format!("tests-v1/task-{id}"),
+            outcome_evidence_revision: "result-v1".into(),
             price_revision: "prices-v1".into(),
             outcome,
             usage: UsageAggregate::default(),
@@ -588,6 +631,12 @@ mod tests {
             outcome_evaluator_identity: "tests-v1".into(),
             price_revision: "prices-v1".into(),
             outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests-v1/task-0".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
             attempts: vec![
                 attempt(
                     "root-1",
@@ -624,6 +673,39 @@ mod tests {
     }
 
     #[test]
+    fn task_derivation_requires_matching_terminal_outcome_evidence() {
+        let mut evidence = EfficiencyTaskEvidence {
+            task_fixture_revision: "task-0@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests-v1/task-0".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
+            attempts: Vec::new(),
+            root_elapsed_ms: Some(250),
+        };
+        assert!(derive_efficiency_task_record(&evidence).is_ok());
+
+        evidence.outcome_evidence.evaluator_identity = "other-evaluator".into();
+        assert!(matches!(
+            derive_efficiency_task_record(&evidence),
+            Err(EfficiencyEvaluationError::OutcomeEvidenceEvaluatorMismatch { .. })
+        ));
+        evidence.outcome_evidence.evaluator_identity = "tests-v1".into();
+        evidence.outcome_evidence.outcome = EvaluationOutcome::Failed;
+        assert!(matches!(
+            derive_efficiency_task_record(&evidence),
+            Err(EfficiencyEvaluationError::OutcomeEvidenceOutcomeMismatch { .. })
+        ));
+    }
+
+    #[test]
     fn task_derivation_preserves_reacquisition_cause_attribution() {
         let mut charged = attempt(
             "root-1",
@@ -647,6 +729,12 @@ mod tests {
             outcome_evaluator_identity: "tests-v1".into(),
             price_revision: "prices-v1".into(),
             outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests-v1/task-0".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
             attempts: vec![charged],
             root_elapsed_ms: Some(250),
         };
@@ -678,6 +766,12 @@ mod tests {
             outcome_evaluator_identity: "tests-v1".into(),
             price_revision: "prices-v1".into(),
             outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests-v1/task-0".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
             attempts: vec![duplicated.clone(), duplicated],
             root_elapsed_ms: Some(100),
         };
@@ -706,6 +800,12 @@ mod tests {
             outcome_evaluator_identity: "tests-v1".into(),
             price_revision: "prices-v1".into(),
             outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests-v1/task-0".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
             attempts: vec![wrong_root.clone()],
             root_elapsed_ms: Some(100),
         };
