@@ -316,6 +316,20 @@ pub struct CodeEntityRevision {
     pub facets: CodeEntityFacetRevisions,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderFact {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub sequence: u64,
+    pub document_index: u32,
+    pub symbol: Option<String>,
+    pub name: String,
+    pub signature_identity: Option<String>,
+    pub body_identity: Option<String>,
+    pub facets: CodeEntityFacetRevisions,
+}
+
 impl CodeEntityRevision {
     #[must_use]
     pub fn facet_reference(&self, facet: CodeEntityFacet) -> Option<CodeEntityFacetReference> {
@@ -430,6 +444,10 @@ pub enum LanguageCommand {
     },
     RecordEntityRevision {
         revision: CodeEntityRevision,
+    },
+    IngestEntityFact {
+        observation_id: String,
+        fact: CodeEntityProviderFact,
     },
     RecordEntityLineage {
         repository_id: String,
