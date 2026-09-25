@@ -85,6 +85,7 @@ fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
         contract_revision: ArtifactRevision::from_content(b"contract"),
         contract: b"contract".to_vec().into(),
         parent_policy_revision: "policy-1".into(),
+        parent_plan: Some(step_plan(2)),
         originating_attempt_id: None,
         resources: DelegatedWorkResources {
             target: RouteDecision {
