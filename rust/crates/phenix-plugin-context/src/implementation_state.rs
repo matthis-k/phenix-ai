@@ -185,6 +185,31 @@ fn handle(
                 resource,
             })
         }
+        ContextCommand::LoadOnce {
+            admission_id,
+            execution_id,
+            resource_id,
+            revision,
+            requester,
+            lifetime,
+            reason,
+        } => {
+            let (injection, resource) = load_context_once(
+                context,
+                state,
+                admission_id,
+                execution_id,
+                resource_id,
+                revision,
+                requester,
+                lifetime,
+                reason,
+            )?;
+            Ok(ContextResponse::Loaded {
+                injection,
+                resource,
+            })
+        }
         ContextCommand::Project { execution_id } => Ok(ContextResponse::Projection {
             projection: project_context(context, execution_id)?,
         }),
@@ -430,11 +455,89 @@ fn load_context(
     lifetime: ContextInjectionLifetime,
     reason: String,
 ) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    load_context_internal(
+        context,
+        state,
+        None,
+        execution_id,
+        resource_id,
+        revision,
+        requester,
+        lifetime,
+        reason,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_context_once(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    admission_id: String,
+    execution_id: String,
+    resource_id: ContextResourceId,
+    revision: ContextRevisionId,
+    requester: ContextInjectionRequester,
+    lifetime: ContextInjectionLifetime,
+    reason: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    validate_identity("context admission id", &admission_id)?;
+    load_context_internal(
+        context,
+        state,
+        Some(admission_id),
+        execution_id,
+        resource_id,
+        revision,
+        requester,
+        lifetime,
+        reason,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_context_internal(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    admission_id: Option<String>,
+    execution_id: String,
+    resource_id: ContextResourceId,
+    revision: ContextRevisionId,
+    requester: ContextInjectionRequester,
+    lifetime: ContextInjectionLifetime,
+    reason: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
     validate_identity("execution id", &execution_id)?;
     validate_identity("context load reason", &reason)?;
     require_active_execution(context, &execution_id)?;
     let resource = read_resource(context, &resource_id, &revision)?
         .ok_or_else(|| format!("unknown context revision: {resource_id}@{revision}"))?;
+    let source = ExactContextReference {
+        resource_id,
+        revision,
+    };
+
+    let receipt = admission_id
+        .as_deref()
+        .map(|admission_id| injection_admission_key(&execution_id, admission_id));
+    if let Some(receipt_key) = receipt.as_deref() {
+        if let Some(existing) = read_raw(context, receipt_key)? {
+            let existing: ContextInjection =
+                serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+            if existing.execution_id != execution_id
+                || existing.source != source
+                || existing.requester != requester
+                || existing.lifetime != lifetime
+                || existing.reason != reason
+            {
+                return Err(format!(
+                    "context admission identity reused with changed injection: {}",
+                    admission_id.as_deref().expect("receipt implies admission id")
+                ));
+            }
+            return Ok((existing, resource));
+        }
+    }
+
     let key = injections_key(&execution_id);
     let old_injections = read_raw(context, &key)?;
     let mut injections = decode_injections(old_injections.as_deref())?;
@@ -444,10 +547,7 @@ fn load_context(
     let injection = ContextInjection {
         sequence,
         execution_id: execution_id.clone(),
-        source: ExactContextReference {
-            resource_id,
-            revision,
-        },
+        source,
         requester,
         lifetime,
         reason,
@@ -475,6 +575,16 @@ fn load_context(
             value: serde_json::to_vec(&injections).map_err(|error| error.to_string())?,
         },
     ];
+    if let Some(receipt_key) = receipt {
+        operations.push(TransactionOp::AssertValue {
+            key: receipt_key.clone(),
+            expected: None,
+        });
+        operations.push(TransactionOp::Put {
+            key: receipt_key,
+            value: serde_json::to_vec(&injection).map_err(|error| error.to_string())?,
+        });
+    }
     if let Some(next_state_bytes) = next_state_bytes {
         operations.push(TransactionOp::AssertValue {
             key: CONTEXT_PROJECTION_STATE_KEY.into(),
@@ -756,6 +866,10 @@ fn resource_key(resource_id: &ContextResourceId, revision: &ContextRevisionId) -
 
 fn injections_key(execution_id: &str) -> String {
     format!("injections/{execution_id}")
+}
+
+fn injection_admission_key(execution_id: &str, admission_id: &str) -> String {
+    format!("injection-admission/{execution_id}/{admission_id}")
 }
 
 fn validate_identity(label: &str, value: &str) -> Result<(), String> {
