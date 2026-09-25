@@ -1,7 +1,7 @@
 use super::{
     BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest, DelegatedWorkResources,
     DelegationResourcePolicy, DelegationTaskBinding, ExactContextReference, ExecutionAuthority,
-    ExecutionResourceCommand, RouteDecision, WorkerTaskRecord, WorkerTaskState,
+    ExecutionResourceCommand, RouteDecision, StepPlan, WorkerTaskRecord, WorkerTaskState,
 };
 use phenix_core::ArtifactRevision;
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,7 @@ pub struct ExplorationDelegationInput {
     pub deadline_at_ms: u64,
     pub depth: u32,
     pub attempts: u32,
+    pub existing_children: u32,
     #[serde(default)]
     pub depends_on: BTreeSet<String>,
 }
@@ -65,22 +66,19 @@ pub struct ExplorationDelegationAdmission {
     pub task: WorkerTaskRecord,
     pub binding: DelegationTaskBinding,
     pub parent_authority: ExecutionAuthority,
+    pub policy: DelegationResourcePolicy,
 }
 
 impl ExplorationDelegationAdmission {
     #[must_use]
-    pub fn into_resource_command(
-        self,
-        policy: DelegationResourcePolicy,
-        now_ms: u64,
-    ) -> ExecutionResourceCommand {
+    pub fn into_resource_command(self, now_ms: u64) -> ExecutionResourceCommand {
         ExecutionResourceCommand::AdmitDelegated {
             root_execution_id: self.root_execution_id,
             reservation: self.reservation,
             task: self.task,
             binding: self.binding,
             parent_authority: self.parent_authority,
-            policy,
+            policy: self.policy,
             now_ms,
         }
     }
@@ -92,7 +90,11 @@ pub enum ExplorationPreparationError {
     NotDelegated,
     TaskMismatch { expected: String, observed: String },
     AuthorityExpanded,
+    PolicyRevisionMismatch { expected: String, observed: String },
+    DelegationDisabled,
+    ChildLimitReached { current: u32, allowed: u32 },
     ZeroAttempts,
+    DepthUnavailable,
     DeadlineNotFuture { deadline_at_ms: u64, now_ms: u64 },
 }
 
@@ -213,6 +215,7 @@ pub fn prepare_exploration_delegation(
     opportunity: &ExplorationOpportunity,
     decision: &ExplorationDecision,
     input: ExplorationDelegationInput,
+    plan: &StepPlan,
     now_ms: u64,
 ) -> Result<ExplorationDelegationAdmission, ExplorationPreparationError> {
     let ExplorationDecision::Delegate {
@@ -230,15 +233,39 @@ pub fn prepare_exploration_delegation(
             observed: task_id.clone(),
         });
     }
-    if input.attempts == 0 {
+    if plan.policy_revision != input.parent_policy_revision {
+        return Err(ExplorationPreparationError::PolicyRevisionMismatch {
+            expected: plan.policy_revision.clone(),
+            observed: input.parent_policy_revision.clone(),
+        });
+    }
+    if !plan.delegation.enabled {
+        return Err(ExplorationPreparationError::DelegationDisabled);
+    }
+    if input.existing_children >= plan.delegation.max_children {
+        return Err(ExplorationPreparationError::ChildLimitReached {
+            current: input.existing_children,
+            allowed: plan.delegation.max_children,
+        });
+    }
+    let attempts = input.attempts.min(plan.delegation.max_attempts);
+    if attempts == 0 {
         return Err(ExplorationPreparationError::ZeroAttempts);
     }
-    if input.deadline_at_ms <= now_ms {
+    let depth = input.depth.min(plan.delegation.max_depth);
+    if depth == 0 && input.depth > 0 {
+        return Err(ExplorationPreparationError::DepthUnavailable);
+    }
+    let deadline_at_ms = plan
+        .deadline_at_ms
+        .map_or(input.deadline_at_ms, |deadline| deadline.min(input.deadline_at_ms));
+    if deadline_at_ms <= now_ms {
         return Err(ExplorationPreparationError::DeadlineNotFuture {
-            deadline_at_ms: input.deadline_at_ms,
+            deadline_at_ms,
             now_ms,
         });
     }
+    let max_result_bytes = (*max_result_bytes).min(plan.delegation.max_result_bytes);
     if !input
         .delegated_authority
         .capabilities
@@ -255,10 +282,10 @@ pub fn prepare_exploration_delegation(
             authority: input.delegated_authority.clone(),
             context: input.context,
             budget: reservation.clone(),
-            deadline_at_ms: input.deadline_at_ms,
-            depth: input.depth,
-            attempts: input.attempts,
-            max_result_bytes: *max_result_bytes,
+            deadline_at_ms,
+            depth,
+            attempts,
+            max_result_bytes,
         },
     };
     Ok(ExplorationDelegationAdmission {
@@ -266,10 +293,10 @@ pub fn prepare_exploration_delegation(
         reservation: BudgetReservationRequest {
             reservation_id: format!("exploration/{task_id}"),
             parent_reservation_id: input.parent_reservation_id,
-            policy_revision: input.parent_policy_revision,
+            policy_revision: plan.policy_revision.clone(),
             purpose: BudgetReservationPurpose::Delegation,
             budget: reservation.clone(),
-            attempts: input.attempts,
+            attempts,
         },
         task: WorkerTaskRecord {
             id: task_id.clone(),
@@ -282,6 +309,7 @@ pub fn prepare_exploration_delegation(
         },
         binding,
         parent_authority: input.parent_authority,
+        policy: plan.delegation.clone(),
     })
 }
 
@@ -334,7 +362,55 @@ mod tests {
             deadline_at_ms: 10_000,
             depth: 1,
             attempts: 1,
+            existing_children: 0,
             depends_on: BTreeSet::new(),
+        }
+    }
+
+    fn step_plan() -> StepPlan {
+        use crate::contracts::{
+            ContextDemand, ReasoningBudget, RetryBudget, RoutingRequirements, SkillProvisionBudget,
+            ToolProvisionBudget,
+        };
+
+        StepPlan {
+            policy_revision: "policy-1".into(),
+            routing: RoutingRequirements {
+                context: ContextDemand::default(),
+                required_capabilities: BTreeSet::new(),
+                require_known_capacity: false,
+            },
+            context: ContextDemand::default(),
+            reasoning: ReasoningBudget::BackendDefault,
+            tools: ToolProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_schemas: 0,
+                max_result_bytes: 0,
+            },
+            skills: SkillProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_loaded: 0,
+            },
+            delegation: DelegationResourcePolicy {
+                enabled: true,
+                max_depth: 2,
+                max_children: 2,
+                max_attempts: 2,
+                max_result_bytes: 32 * 1024,
+            },
+            retry: RetryBudget {
+                max_attempts: 1,
+                reserved_attempts: 1,
+            },
+            reservation: BudgetReservation {
+                input_tokens: 10_000,
+                output_tokens: 2_000,
+                cost_microunits: Some(10_000),
+            },
+            deadline_at_ms: Some(8_000),
+            reducible_input_dropped_tokens: 0,
         }
     }
 
@@ -403,7 +479,7 @@ mod tests {
         let opportunity = opportunity();
         let decision = policy().assess(&opportunity);
         let admission =
-            prepare_exploration_delegation(&opportunity, &decision, delegation_input(), 0).unwrap();
+            prepare_exploration_delegation(&opportunity, &decision, delegation_input(), &step_plan(), 0).unwrap();
 
         assert_eq!(admission.task.id, opportunity.task_id);
         assert_eq!(
@@ -424,7 +500,7 @@ mod tests {
         );
         assert_eq!(
             admission.binding.resources.max_result_bytes,
-            policy().max_result_bytes
+            step_plan().delegation.max_result_bytes
         );
     }
 
@@ -436,8 +512,62 @@ mod tests {
         input.delegated_authority = ExecutionAuthority::new(["workspace.read", "network.admin"]);
 
         assert_eq!(
-            prepare_exploration_delegation(&opportunity, &decision, input, 0),
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0),
             Err(ExplorationPreparationError::AuthorityExpanded)
+        );
+    }
+
+    #[test]
+    fn parent_step_plan_clamps_child_deadline_attempts_depth_and_result_size() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        input.deadline_at_ms = 10_000;
+        input.attempts = 7;
+        input.depth = 7;
+        let admission = prepare_exploration_delegation(
+            &opportunity,
+            &decision,
+            input,
+            &step_plan(),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(admission.binding.resources.deadline_at_ms, 8_000);
+        assert_eq!(admission.binding.resources.attempts, 2);
+        assert_eq!(admission.binding.resources.depth, 2);
+        assert_eq!(admission.binding.resources.max_result_bytes, 32 * 1024);
+        assert_eq!(admission.reservation.attempts, 2);
+        assert_eq!(admission.policy, step_plan().delegation);
+    }
+
+    #[test]
+    fn exhausted_parent_child_limit_prevents_exploration_admission() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        input.existing_children = 2;
+
+        assert_eq!(
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0),
+            Err(ExplorationPreparationError::ChildLimitReached {
+                current: 2,
+                allowed: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn disabled_parent_delegation_prevents_exploration_admission() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut plan = step_plan();
+        plan.delegation.enabled = false;
+
+        assert_eq!(
+            prepare_exploration_delegation(&opportunity, &decision, delegation_input(), &plan, 0),
+            Err(ExplorationPreparationError::DelegationDisabled)
         );
     }
 
