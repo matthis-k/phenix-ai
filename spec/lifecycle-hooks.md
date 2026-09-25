@@ -1,6 +1,6 @@
 # Lifecycle hooks
 
-status: legacy compatibility
+status: partial
 coverage:
   - rust/crates/phenix-plugin-hooks/src/implementation.rs
   - spec/kernel-hooks.md
