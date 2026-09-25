@@ -255,14 +255,7 @@ pub struct ContinuationProjectionCandidate {
 }
 
 #[derive(
-    Clone,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    phenix_sdk_macros::PhenixValue,
+    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
 )]
 #[serde(deny_unknown_fields)]
 pub struct ContinuationSourceState {
@@ -297,10 +290,9 @@ pub fn assemble_continuation_candidates(
     state: &ContinuationSourceState,
 ) -> Result<Vec<ContinuationProjectionCandidate>, ContinuationSourceStateError> {
     let mut candidates = Vec::new();
-    let mut append = |
-        candidate: &ContinuationProjectionCandidate,
-        expected: ContinuationItemKind,
-    | -> Result<(), ContinuationSourceStateError> {
+    let mut append = |candidate: &ContinuationProjectionCandidate,
+                      expected: ContinuationItemKind|
+     -> Result<(), ContinuationSourceStateError> {
         if candidate.item.kind != expected {
             return Err(ContinuationSourceStateError::KindMismatch {
                 item_id: candidate.item.id.clone(),
@@ -880,7 +872,14 @@ mod tests {
                 .iter()
                 .map(|candidate| candidate.item.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["goal", "constraint", "decision", "blocker", "memory", "code"]
+            vec![
+                "goal",
+                "constraint",
+                "decision",
+                "blocker",
+                "memory",
+                "code"
+            ]
         );
     }
 
