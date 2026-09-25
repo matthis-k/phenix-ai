@@ -440,7 +440,10 @@ mod tests {
         );
         let admitted = request.admit().unwrap();
         assert_eq!(admitted.admitted.len(), 1);
-        assert_eq!(admitted.admitted[0].form, crate::contracts::ContextProjectionForm::Full);
+        assert_eq!(
+            admitted.admitted[0].form,
+            crate::contracts::ContextProjectionForm::Full
+        );
     }
 
     #[test]
