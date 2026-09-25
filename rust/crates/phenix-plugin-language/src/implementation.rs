@@ -1324,6 +1324,150 @@ mod tests {
     }
 
     #[test]
+    fn identity_rebuild_requires_catch_up_through_latest_change_sequence() {
+        let path = temp_db("identity-rebuild-catch-up");
+        let entity = LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        };
+        let revision = |id: &str, sequence: u64, location: &str| CodeEntityRevision {
+            entity: entity.clone(),
+            revision: id.into(),
+            sequence,
+            document: LanguageDocumentIdentity {
+                path: location.into(),
+                file_version: Some(format!("sha256:{id}")),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::run".into()),
+            name: "run".into(),
+            signature_identity: Some("signature".into()),
+            body_identity: Some(format!("body-{id}")),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: "existence".into(),
+                name_location: format!("location-{location}"),
+                signature: Some("signature".into()),
+                body: Some(format!("body-{id}")),
+                relations: BTreeMap::new(),
+            },
+        };
+
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: revision("revision-1", 1, "src/lib.rs"),
+                },
+            )
+            .unwrap();
+
+            assert_eq!(
+                invoke(
+                    &mut kernel,
+                    LanguageCommand::BeginIdentityRebuild {
+                        repository_id: "repo-1".into(),
+                    },
+                )
+                .unwrap(),
+                LanguageResponse::IdentityRebuild {
+                    checkpoint: CodeIdentityRebuildCheckpoint {
+                        repository_id: "repo-1".into(),
+                        required_through_sequence: 1,
+                    },
+                }
+            );
+
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: revision("revision-2", 2, "src/moved.rs"),
+                },
+            )
+            .unwrap();
+
+            let error = invoke(
+                &mut kernel,
+                LanguageCommand::CompleteIdentityRebuild {
+                    repository_id: "repo-1".into(),
+                    applied_through_sequence: 1,
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("not caught up"));
+            assert!(error.contains("current sequence is 2"));
+
+            let LanguageResponse::EntityChanges { page } = invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityChanges {
+                    repository_id: "repo-1".into(),
+                    after_sequence: 1,
+                    limit: 100,
+                },
+            )
+            .unwrap()
+            else {
+                panic!("expected entity change page");
+            };
+            assert_eq!(page.events.len(), 1);
+            assert_eq!(page.events[0].sequence, 2);
+            assert!(page.caught_up);
+
+            assert_eq!(
+                invoke(
+                    &mut kernel,
+                    LanguageCommand::CompleteIdentityRebuild {
+                        repository_id: "repo-1".into(),
+                        applied_through_sequence: 2,
+                    },
+                )
+                .unwrap(),
+                LanguageResponse::IdentityRebuild {
+                    checkpoint: CodeIdentityRebuildCheckpoint {
+                        repository_id: "repo-1".into(),
+                        required_through_sequence: 2,
+                    },
+                }
+            );
+        }
+
+        let mut restored = kernel_with(&path);
+        assert_eq!(
+            invoke(
+                &mut restored,
+                LanguageCommand::GetIdentityContinuity {
+                    repository_id: "repo-1".into(),
+                },
+            )
+            .unwrap(),
+            LanguageResponse::IdentityContinuity {
+                state: Some(CodeIdentityContinuityState {
+                    repository_id: "repo-1".into(),
+                    status: CodeIdentityContinuityStatus::Available,
+                    reason: None,
+                }),
+            }
+        );
+
+        let error = invoke(
+            &mut restored,
+            LanguageCommand::SetIdentityContinuity {
+                state: CodeIdentityContinuityState {
+                    repository_id: "repo-1".into(),
+                    status: CodeIdentityContinuityStatus::Rebuilding,
+                    reason: None,
+                },
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("BeginIdentityRebuild"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn unavailable_identity_continuity_survives_restart() {
         let path = temp_db("identity-continuity");
         let state = CodeIdentityContinuityState {
