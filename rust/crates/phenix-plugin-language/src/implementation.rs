@@ -1231,6 +1231,113 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_move_lineage_preserves_identity_and_survives_restart() {
+        let path = temp_db("entity-confirmed-move-lineage");
+        let lineage = CodeEntityLineage {
+            from_entity_id: "entity-1".into(),
+            to_entity_id: "entity-1".into(),
+            kind: CodeEntityLineageKind::Move,
+            confidence: CodeEntityLineageConfidence::Confirmed,
+            evidence_observation_ids: vec!["language-move-1".into()],
+        };
+        {
+            let mut kernel = kernel_with(&path);
+            assert_eq!(
+                invoke(
+                    &mut kernel,
+                    LanguageCommand::RecordEntityLineage {
+                        repository_id: "repo-1".into(),
+                        lineage: lineage.clone(),
+                    },
+                )
+                .unwrap(),
+                LanguageResponse::EntityLineage {
+                    lineage: Some(lineage.clone()),
+                }
+            );
+            let invalid = invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityLineage {
+                    repository_id: "repo-1".into(),
+                    lineage: CodeEntityLineage {
+                        to_entity_id: "entity-2".into(),
+                        ..lineage.clone()
+                    },
+                },
+            )
+            .unwrap_err();
+            assert!(invalid.contains("must preserve logical entity identity"));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert_eq!(
+            invoke(
+                &mut restored,
+                LanguageCommand::GetEntityLineage {
+                    repository_id: "repo-1".into(),
+                    from_entity_id: "entity-1".into(),
+                    to_entity_id: "entity-1".into(),
+                    kind: CodeEntityLineageKind::Move,
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityLineage {
+                lineage: Some(lineage),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn replacement_lineage_requires_and_preserves_distinct_identity() {
+        let path = temp_db("entity-replacement-lineage");
+        let lineage = CodeEntityLineage {
+            from_entity_id: "entity-old".into(),
+            to_entity_id: "entity-new".into(),
+            kind: CodeEntityLineageKind::Replacement,
+            confidence: CodeEntityLineageConfidence::Confirmed,
+            evidence_observation_ids: vec!["language-replacement-1".into()],
+        };
+        let mut kernel = kernel_with(&path);
+        invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityLineage {
+                repository_id: "repo-1".into(),
+                lineage: lineage.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityLineage {
+                    repository_id: "repo-1".into(),
+                    from_entity_id: "entity-old".into(),
+                    to_entity_id: "entity-new".into(),
+                    kind: CodeEntityLineageKind::Replacement,
+                },
+            )
+            .unwrap(),
+            LanguageResponse::EntityLineage {
+                lineage: Some(lineage.clone()),
+            }
+        );
+        let invalid = invoke(
+            &mut kernel,
+            LanguageCommand::RecordEntityLineage {
+                repository_id: "repo-1".into(),
+                lineage: CodeEntityLineage {
+                    to_entity_id: "entity-old".into(),
+                    ..lineage
+                },
+            },
+        )
+        .unwrap_err();
+        assert!(invalid.contains("requires a distinct target identity"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn ambiguous_lineage_can_remain_tentative_without_forcing_identity() {
         let lineage = CodeEntityLineage {
             from_entity_id: "entity-1".into(),
