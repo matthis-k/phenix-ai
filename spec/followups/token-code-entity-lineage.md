@@ -17,6 +17,7 @@ Current language intelligence exposes definitions, references, implementations, 
 - [x] Added durable repository continuity state so rebuild/lost-map flows can explicitly publish available, rebuilding, or unavailable continuity.
 - [x] Added deterministic current-vs-revision facet deltas so downstream consumers can revalidate only changed entity/relation neighborhoods.
 - [x] Added a durable repository-global entity change stream. Revision/facet changes and the stream cursor commit atomically; paginated consumers survive restart and immutable replay cannot duplicate events.
+- [x] Added explicit identity rebuild orchestration: rebuild snapshots the durable change cursor, concurrent changes force catch-up, and continuity becomes available only after replay through the latest committed sequence.
 
 ## Required implementation
 
@@ -35,7 +36,7 @@ Current language intelligence exposes definitions, references, implementations, 
 - [x] Semantic replacement creates a new identity or explicit replacement lineage. (Durable replacement lineage rejects same-ID replacement.)
 - [x] Dirty/stale analyzer state keeps exact source revision provenance. (Workspace-backed observations require exact file revisions; unsaved frontend provenance remains explicit; stale provider epochs cannot record successful observations.)
 - [x] No analyzer still permits file-based work without false semantic guarantees. (Providerless fallback returns a file-only exact revision contract, not semantic entity results.)
-- [ ] Index rebuilds preserve stable identities using the durable identity map; lost mappings report unavailable continuity. (Durable map/restart preservation and explicit persisted continuity state are implemented; rebuild orchestration remains.)
+- [x] Index rebuilds preserve stable identities using the durable identity map; lost mappings report unavailable continuity. (Rebuilds replay the durable repository change stream under an explicit checkpoint; completion is rejected until the latest sequence is applied, and continuity state survives restart.)
 
 ## Ownership
 
