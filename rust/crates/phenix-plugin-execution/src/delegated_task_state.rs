@@ -22,6 +22,12 @@ pub(crate) enum DelegatedTaskStoreError {
     },
     AuthorityExpanded,
     BindingAuthorityMismatch,
+    MissingParentPlan,
+    ParentPolicyRevisionMismatch {
+        expected: String,
+        observed: String,
+    },
+    ParentDelegationPolicyMismatch,
     ContractRevisionMismatch {
         expected: ArtifactRevision,
         observed: ArtifactRevision,
@@ -60,6 +66,19 @@ impl DelegatedTaskStore {
                 expected: binding.contract_revision.clone(),
                 observed: observed_contract_revision,
             });
+        }
+        let parent_plan = binding
+            .parent_plan
+            .as_ref()
+            .ok_or(DelegatedTaskStoreError::MissingParentPlan)?;
+        if parent_plan.policy_revision != binding.parent_policy_revision {
+            return Err(DelegatedTaskStoreError::ParentPolicyRevisionMismatch {
+                expected: binding.parent_policy_revision.clone(),
+                observed: parent_plan.policy_revision.clone(),
+            });
+        }
+        if &parent_plan.delegation != policy {
+            return Err(DelegatedTaskStoreError::ParentDelegationPolicyMismatch);
         }
         if !task
             .delegated_authority
@@ -248,7 +267,9 @@ mod tests {
     use super::*;
     use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
     use phenix_sdk::{
-        BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate,
+        BudgetReservation, ContextDemand, DelegatedWorkResources, ModelTarget, ReasoningBudget,
+        RetryBudget, RouteDecision, RoutingEstimate, RoutingRequirements, SkillProvisionBudget,
+        StepPlan, ToolProvisionBudget,
     };
     use std::collections::BTreeMap;
 
@@ -261,6 +282,7 @@ mod tests {
             contract_revision: ArtifactRevision::from_content(b"contract"),
             contract: b"contract".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
             originating_attempt_id: None,
             resources: DelegatedWorkResources {
                 target: RouteDecision {
@@ -296,6 +318,42 @@ mod tests {
             max_children: 2,
             max_attempts: 2,
             max_result_bytes: 64 * 1024,
+        }
+    }
+
+    fn step_plan() -> StepPlan {
+        StepPlan {
+            policy_revision: "policy-1".into(),
+            routing: RoutingRequirements {
+                context: ContextDemand::default(),
+                required_capabilities: BTreeSet::new(),
+                require_known_capacity: false,
+            },
+            context: ContextDemand::default(),
+            reasoning: ReasoningBudget::BackendDefault,
+            tools: ToolProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_schemas: 0,
+                max_result_bytes: 0,
+            },
+            skills: SkillProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_loaded: 0,
+            },
+            delegation: policy(),
+            retry: RetryBudget {
+                max_attempts: 1,
+                reserved_attempts: 1,
+            },
+            reservation: BudgetReservation {
+                input_tokens: 1_000,
+                output_tokens: 200,
+                cost_microunits: None,
+            },
+            deadline_at_ms: Some(10_000),
+            reducible_input_dropped_tokens: 0,
         }
     }
 
