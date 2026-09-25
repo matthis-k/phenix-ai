@@ -124,13 +124,6 @@ pub enum ExecutionCommand {
         depends_on: BTreeSet<String>,
         requested_authority: ExecutionAuthority,
     },
-    CreateDelegatedTask {
-        id: String,
-        parent_execution: String,
-        description: String,
-        depends_on: BTreeSet<String>,
-        binding: DelegationTaskBinding,
-    },
     RunnableTasks,
     StartTask {
         task_id: String,
@@ -141,20 +134,12 @@ pub enum ExecutionCommand {
         execution_id: String,
         result_refs: Vec<String>,
     },
-    CompleteDelegatedTask {
-        task_id: String,
-        execution_id: String,
-        result: DelegatedWorkerResult,
-    },
     FailTask {
         task_id: String,
         execution_id: String,
         cause: String,
     },
     GetTask {
-        id: String,
-    },
-    GetDelegatedTask {
         id: String,
     },
 }
@@ -179,12 +164,6 @@ pub enum ExecutionResponse {
     },
     TaskLookup {
         task: Option<WorkerTaskRecord>,
-    },
-    DelegatedTask {
-        task: DelegatedWorkerTaskRecord,
-    },
-    DelegatedTaskLookup {
-        task: Option<DelegatedWorkerTaskRecord>,
     },
     RunnableTasks {
         task_ids: Vec<String>,
