@@ -1031,6 +1031,28 @@ mod tests {
     }
 
     #[test]
+    fn derived_delta_round_trips_pure_item_reordering() {
+        let mut base = packet();
+        base.items.push(ContinuationItem {
+            id: "decision".into(),
+            kind: ContinuationItemKind::Decision,
+            content: "continue".into(),
+            freshness: ContinuationFreshness::Current,
+            evidence: Vec::new(),
+        });
+        base.refresh_digest().unwrap();
+
+        let mut target = base.clone();
+        target.source_snapshot = "snapshot-2".into();
+        target.base_packet_digest = Some(base.packet_digest.clone());
+        target.items.swap(0, 1);
+        target.refresh_digest().unwrap();
+
+        let delta = derive_continuation_delta(&base, &target).unwrap();
+        assert_eq!(delta.apply_to(&base).unwrap(), target);
+    }
+
+    #[test]
     fn derived_delta_round_trips_exact_target_packet() {
         let mut base = packet();
         base.refresh_digest().unwrap();
