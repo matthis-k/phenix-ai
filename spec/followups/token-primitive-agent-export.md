@@ -17,7 +17,7 @@ Phenix can persist task/context/memory state internally, but it cannot yet proje
 ## Required implementation
 
 - [x] Define a budgeted continuation-packet contract.
-- [ ] Include goal, fixed constraints, decisions, blockers, selected fresh memory, and relevant code entities when available.
+- [x] Include goal, fixed constraints, decisions, blockers, selected fresh memory, and relevant code entities when available.
 - [x] Include only exact references validated against the recipient's concrete resolver binding, or inline required evidence; context requires matching resolver binding plus a verified digest.
 - [x] Inline bounded required evidence when a reference cannot be resolved remotely; missing fallback fails required items and explicitly omits optional ones.
 - [x] Support a deterministic delta packet from an exact prior packet digest.
