@@ -10,6 +10,8 @@ coverage:
 
 Allow Plugins to interpose on an operation without replacing the complete terminal implementation.
 
+Layers are the canonical kernel-owned lowering for synchronous hooks. A hook that must run before an operation, wrap it, deny it, or inspect its result is a Layer on the semantic service boundary.
+
 A resolved invocation chain contains zero or more ordered Layers and one Terminal Provider. The resolver constructs the chain before activation and pins it to one Graph Generation.
 
 This document extends `plugin-resolution.md` and `plugin-contributions.md`.
