@@ -366,13 +366,41 @@ pub struct EfficiencyPolicyComparison {
     pub candidate: EfficiencyCohortReport,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyPolicyVariant {
+    pub label: String,
+    #[serde(default)]
+    pub active_reduction_stages: std::collections::BTreeSet<String>,
+    pub records: Vec<EfficiencyTaskRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyVariantComparison {
+    pub label: String,
+    pub active_reduction_stages: std::collections::BTreeSet<String>,
+    pub added_stages: std::collections::BTreeSet<String>,
+    pub removed_stages: std::collections::BTreeSet<String>,
+    pub comparison: EfficiencyPolicyComparison,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyVariantSetReport {
+    pub baseline_label: String,
+    pub baseline_stages: std::collections::BTreeSet<String>,
+    pub baseline: EfficiencyCohortReport,
+    pub variants: Vec<EfficiencyVariantComparison>,
+}
+
 pub fn compare_efficiency_policies(
     baseline: &[EfficiencyTaskRecord],
     candidate: &[EfficiencyTaskRecord],
 ) -> Result<EfficiencyPolicyComparison, EfficiencyEvaluationError> {
     let cohort_shape = |records: &[EfficiencyTaskRecord]| {
         let mut roots = std::collections::BTreeSet::new();
-        let mut fixture_counts = std::collections::BTreeMap::<&str, u32>::new();
+        let mut fixture_counts = std::collections::BTreeMap::<String, u32>::new();
         for record in records {
             if !roots.insert(record.root_execution_id.as_str()) {
                 return None;
@@ -413,6 +441,40 @@ pub fn compare_efficiency_policies(
     Ok(EfficiencyPolicyComparison {
         baseline,
         candidate,
+    })
+}
+
+pub fn compare_efficiency_variant_set(
+    baseline: &EfficiencyPolicyVariant,
+    variants: &[EfficiencyPolicyVariant],
+) -> Result<EfficiencyVariantSetReport, EfficiencyEvaluationError> {
+    let baseline_report = evaluate_efficiency_cohort(&baseline.records)?;
+    let mut comparisons = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let comparison = compare_efficiency_policies(&baseline.records, &variant.records)?;
+        let added_stages = variant
+            .active_reduction_stages
+            .difference(&baseline.active_reduction_stages)
+            .cloned()
+            .collect();
+        let removed_stages = baseline
+            .active_reduction_stages
+            .difference(&variant.active_reduction_stages)
+            .cloned()
+            .collect();
+        comparisons.push(EfficiencyVariantComparison {
+            label: variant.label.clone(),
+            active_reduction_stages: variant.active_reduction_stages.clone(),
+            added_stages,
+            removed_stages,
+            comparison,
+        });
+    }
+    Ok(EfficiencyVariantSetReport {
+        baseline_label: baseline.label.clone(),
+        baseline_stages: baseline.active_reduction_stages.clone(),
+        baseline: baseline_report,
+        variants: comparisons,
     })
 }
 
@@ -470,6 +532,51 @@ mod tests {
             cost_complete: true,
             root_elapsed_ms: Some(1_000),
         }
+    }
+
+    #[test]
+    fn variant_set_reports_one_stage_and_combined_profiles_explicitly() {
+        let baseline = EfficiencyPolicyVariant {
+            label: "baseline".into(),
+            active_reduction_stages: std::collections::BTreeSet::new(),
+            records: vec![task(0, EvaluationOutcome::Succeeded, 10)],
+        };
+        let lazy_tools = EfficiencyPolicyVariant {
+            label: "lazy-tools".into(),
+            active_reduction_stages: std::collections::BTreeSet::from(["lazy_tools".into()]),
+            records: vec![{
+                let mut record = task(0, EvaluationOutcome::Succeeded, 8);
+                record.policy_revision = "policy-lazy-tools".into();
+                record
+            }],
+        };
+        let combined = EfficiencyPolicyVariant {
+            label: "combined".into(),
+            active_reduction_stages: std::collections::BTreeSet::from([
+                "lazy_tools".into(),
+                "cache_retention".into(),
+            ]),
+            records: vec![{
+                let mut record = task(0, EvaluationOutcome::Succeeded, 7);
+                record.policy_revision = "policy-combined".into();
+                record
+            }],
+        };
+
+        let report =
+            compare_efficiency_variant_set(&baseline, &[lazy_tools, combined]).unwrap();
+        assert_eq!(report.variants.len(), 2);
+        assert_eq!(
+            report.variants[0].added_stages,
+            std::collections::BTreeSet::from(["lazy_tools".into()])
+        );
+        assert_eq!(
+            report.variants[1].added_stages,
+            std::collections::BTreeSet::from([
+                "cache_retention".into(),
+                "lazy_tools".into()
+            ])
+        );
     }
 
     #[test]
