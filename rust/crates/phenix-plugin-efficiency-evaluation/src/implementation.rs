@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
     PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
