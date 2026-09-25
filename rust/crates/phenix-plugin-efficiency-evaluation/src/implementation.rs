@@ -17,10 +17,8 @@ pub const EFFICIENCY_EVALUATION_COMPONENT: &str = "phenix.efficiency-evaluation"
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 
 fn evidence_read_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse(PERSISTENCE_READ)
-            .expect("static persistence read capability id is valid"),
-    ])
+    Authority::new([CapabilityId::parse(PERSISTENCE_READ)
+        .expect("static persistence read capability id is valid")])
 }
 
 #[must_use]
