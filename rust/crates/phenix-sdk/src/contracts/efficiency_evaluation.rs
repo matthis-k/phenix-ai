@@ -675,6 +675,63 @@ mod tests {
         }
     }
 
+    fn durable_plan() -> super::super::StepPlan {
+        let context = super::super::ContextDemand {
+            mandatory_input_tokens: 10,
+            reducible_input_tokens: 0,
+            output_reserve_tokens: 5,
+            required_capabilities: std::collections::BTreeSet::new(),
+        };
+        super::super::StepPlan {
+            policy_revision: "policy-1".into(),
+            routing: super::super::RoutingRequirements {
+                context: context.clone(),
+                required_capabilities: std::collections::BTreeSet::new(),
+                require_known_capacity: false,
+            },
+            context,
+            reasoning: super::super::ReasoningBudget::BackendDefault,
+            tools: super::super::ToolProvisionBudget {
+                initial: std::collections::BTreeSet::new(),
+                expandable: std::collections::BTreeSet::new(),
+                max_schemas: 0,
+                max_result_bytes: 0,
+            },
+            skills: super::super::SkillProvisionBudget {
+                initial: std::collections::BTreeSet::new(),
+                expandable: std::collections::BTreeSet::new(),
+                max_loaded: 0,
+            },
+            delegation: super::super::DelegationResourcePolicy::default(),
+            retry: super::super::RetryBudget {
+                max_attempts: 1,
+                reserved_attempts: 1,
+            },
+            reservation: super::super::BudgetReservation {
+                input_tokens: 10,
+                output_tokens: 5,
+                cost_microunits: Some(123),
+            },
+            deadline_at_ms: None,
+            reducible_input_dropped_tokens: 0,
+        }
+    }
+
+    fn durable_route() -> super::super::RouteDecision {
+        super::super::RouteDecision {
+            target: super::super::ModelTarget {
+                provider_plugin: phenix_core::PluginId::parse("provider.fixture").unwrap(),
+                model: phenix_core::ModelId::parse("model.fixture").unwrap(),
+                options: std::collections::BTreeMap::new(),
+            },
+            capability_generation: phenix_core::CapabilityGenerationId::parse("generation-1")
+                .unwrap(),
+            policy_revision: "route-policy-1".into(),
+            candidate_ordinal: 0,
+            estimate: None,
+        }
+    }
+
     fn task(id: usize, outcome: EvaluationOutcome, cost: u64) -> EfficiencyTaskRecord {
         EfficiencyTaskRecord {
             task_fixture_revision: format!("task-{id}@1"),
@@ -795,15 +852,10 @@ mod tests {
             kind: super::super::UsageAttemptKind::Root,
             task_id: Some("task-1".into()),
         };
-        let mut attempt = super::super::StepAttemptRecord::new(
-            attribution.clone(),
-            super::super::tests::fixture_step_plan_for_efficiency(),
-        )
-        .unwrap();
+        let mut attempt =
+            super::super::StepAttemptRecord::new(attribution.clone(), durable_plan()).unwrap();
         attempt.bind_reservation("reservation-1".into()).unwrap();
-        attempt
-            .bind_route(super::super::tests::fixture_route_decision_for_efficiency())
-            .unwrap();
+        attempt.bind_route(durable_route()).unwrap();
         attempt
             .bind_projection(super::super::ProjectionRevision {
                 revision: 3,
