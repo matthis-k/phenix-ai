@@ -582,13 +582,7 @@ mod tests {
         input.parent_policy_revision = "other-policy".into();
 
         assert_eq!(
-            prepare_exploration_delegation(
-                &opportunity,
-                &decision,
-                input,
-                &step_plan(),
-                0,
-            ),
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0,),
             Err(ExplorationPreparationError::PolicyRevisionMismatch {
                 expected: "policy-1".into(),
                 observed: "other-policy".into(),
