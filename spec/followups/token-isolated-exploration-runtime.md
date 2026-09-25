@@ -18,6 +18,7 @@ Tracks #516 slice 5.
 - [x] Pending delegated work can be cancelled before start while atomically releasing its unused reservation; started work cannot take this rollback path.
 - [x] Durably admitted delegated tasks expose a read-only runnable projection for scheduler/recovery discovery; starting a task removes it from that projection without creating a second task store.
 - [x] Delegated task bindings persist optional originating-attempt identity so later child/retry/reacquisition accounting has a stable parent attribution key.
+- [x] Removed the dead delegated-task variants from the generic execution API; the execution-resource service is the single durable owner of delegated task admission/lifecycle state.
 
 ## Required implementation
 
