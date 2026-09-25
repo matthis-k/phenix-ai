@@ -306,26 +306,26 @@ pub fn compare_efficiency_policies(
     baseline: &[EfficiencyTaskRecord],
     candidate: &[EfficiencyTaskRecord],
 ) -> Result<EfficiencyPolicyComparison, EfficiencyEvaluationError> {
-    let baseline_keys = baseline
-        .iter()
-        .map(|record| (&record.task_fixture_revision, &record.root_execution_id))
-        .collect::<std::collections::BTreeSet<_>>();
-    let candidate_keys = candidate
-        .iter()
-        .map(|record| (&record.task_fixture_revision, &record.root_execution_id))
-        .collect::<std::collections::BTreeSet<_>>();
-    if baseline.len() != baseline_keys.len()
-        || candidate.len() != candidate_keys.len()
-        || baseline_keys.len() != candidate_keys.len()
-        || baseline_keys
-            .iter()
-            .map(|(task, _)| *task)
-            .collect::<std::collections::BTreeSet<_>>()
-            != candidate_keys
-                .iter()
-                .map(|(task, _)| *task)
-                .collect::<std::collections::BTreeSet<_>>()
-    {
+    let cohort_shape = |records: &[EfficiencyTaskRecord]| {
+        let mut roots = std::collections::BTreeSet::new();
+        let mut fixture_counts = std::collections::BTreeMap::<&str, u32>::new();
+        for record in records {
+            if !roots.insert(record.root_execution_id.as_str()) {
+                return None;
+            }
+            *fixture_counts
+                .entry(record.task_fixture_revision.as_str())
+                .or_default() += 1;
+        }
+        Some(fixture_counts)
+    };
+    let Some(baseline_shape) = cohort_shape(baseline) else {
+        return Err(EfficiencyEvaluationError::MismatchedTaskSet);
+    };
+    let Some(candidate_shape) = cohort_shape(candidate) else {
+        return Err(EfficiencyEvaluationError::MismatchedTaskSet);
+    };
+    if baseline_shape != candidate_shape {
         return Err(EfficiencyEvaluationError::MismatchedTaskSet);
     }
 
@@ -554,6 +554,28 @@ mod tests {
             task(0, EvaluationOutcome::Succeeded, 8),
             task(2, EvaluationOutcome::Succeeded, 8),
         ];
+
+        assert_eq!(
+            compare_efficiency_policies(&baseline, &candidate),
+            Err(EfficiencyEvaluationError::MismatchedTaskSet)
+        );
+    }
+
+    #[test]
+    fn paired_comparison_requires_matching_repetition_counts_per_fixture() {
+        let mut baseline = vec![
+            task(0, EvaluationOutcome::Succeeded, 10),
+            task(1, EvaluationOutcome::Succeeded, 10),
+            task(2, EvaluationOutcome::Succeeded, 10),
+        ];
+        baseline[1].task_fixture_revision = baseline[0].task_fixture_revision.clone();
+
+        let mut candidate = vec![
+            task(0, EvaluationOutcome::Succeeded, 8),
+            task(1, EvaluationOutcome::Succeeded, 8),
+            task(2, EvaluationOutcome::Succeeded, 8),
+        ];
+        candidate[2].task_fixture_revision = candidate[1].task_fixture_revision.clone();
 
         assert_eq!(
             compare_efficiency_policies(&baseline, &candidate),
