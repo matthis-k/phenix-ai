@@ -30,9 +30,9 @@ Tracks #516 slice 5.
 
 ## Acceptance
 
-- [ ] Context pressure alone cannot spawn a child.
-- [ ] A non-separable task stays in the parent.
-- [ ] A delegated explorer has no implicit parent-transcript access.
+- [x] Context pressure alone cannot spawn a child.
+- [x] A non-separable task stays in the parent.
+- [x] A delegated explorer has no implicit parent-transcript access.
 - [x] Child results cannot exceed the reserved result bound.
 - [ ] Benchmarking compares total task work against the inline-parent baseline.
 
