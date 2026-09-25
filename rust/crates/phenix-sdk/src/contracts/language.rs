@@ -267,15 +267,6 @@ pub struct CodeEntityChangePage {
     pub caught_up: bool,
 }
 
-pub const CODE_ENTITY_FACET_RESOURCE_PREFIX: &str = "code-facet:";
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
-#[serde(deny_unknown_fields)]
-pub struct CodeEntityFacetResource {
-    pub entity: LogicalCodeEntity,
-    pub facet: CodeEntityFacet,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntityFacetReference {
