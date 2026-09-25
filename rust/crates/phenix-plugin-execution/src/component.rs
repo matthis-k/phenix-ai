@@ -199,9 +199,7 @@ fn persistence_authority() -> Authority {
 }
 
 fn attempt_read_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-    ])
+    Authority::new([CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid")])
 }
 
 fn workspace_write_authority() -> Authority {
