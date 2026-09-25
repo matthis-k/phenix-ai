@@ -1,4 +1,4 @@
-use super::ExplorationOpportunity;
+use super::{ExplorationDecision, ExplorationOpportunity, ExplorationPolicy};
 use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
@@ -92,6 +92,11 @@ pub enum PlanningCommand {
         candidate: ExplorationCandidate,
         estimate: ExplorationCostEstimate,
     },
+    AssessExplorationOpportunity {
+        candidate: ExplorationCandidate,
+        estimate: ExplorationCostEstimate,
+        policy: ExplorationPolicy,
+    },
     RecordDecision {
         id: String,
         objective_id: String,
@@ -121,6 +126,10 @@ pub enum PlanningResponse {
     Objective { objective: Option<ObjectiveRecord> },
     Plan { plan: Option<PlanRecord> },
     ExplorationOpportunity { opportunity: ExplorationOpportunity },
+    ExplorationAssessment {
+        opportunity: ExplorationOpportunity,
+        decision: ExplorationDecision,
+    },
     Decision { decision: Option<DecisionRecord> },
     History { entries: Vec<HistoryEntry> },
 }
