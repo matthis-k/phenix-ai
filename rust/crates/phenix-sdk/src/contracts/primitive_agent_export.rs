@@ -103,7 +103,9 @@ pub enum ContinuationDeltaOperation {
         item: ContinuationItem,
         target_index: u64,
     },
-    Remove { item_id: String },
+    Remove {
+        item_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -585,9 +587,7 @@ pub fn derive_continuation_delta(
     for (target_index, item) in target.items.iter().enumerate() {
         if base_items
             .get(item.id.as_str())
-            .is_none_or(|(base_index, base_item)| {
-                *base_index != target_index || *base_item != item
-            })
+            .is_none_or(|(base_index, base_item)| *base_index != target_index || *base_item != item)
         {
             operations.push(ContinuationDeltaOperation::Upsert {
                 item: item.clone(),
