@@ -552,7 +552,6 @@ fn ingest_entity_fact(
     Ok(revision)
 }
 
-
 #[derive(Clone, Debug, serde::Deserialize)]
 struct LspPosition {
     line: u32,
@@ -596,10 +595,9 @@ fn ingest_document_symbol_observation(
     if document.provenance != DocumentProvenance::WorkspaceBacked {
         return Err("document-symbol ingestion requires workspace-backed source provenance".into());
     }
-    let source_revision = document
-        .file_version
-        .as_deref()
-        .ok_or_else(|| "document-symbol ingestion requires an exact workspace source revision".to_owned())?;
+    let source_revision = document.file_version.as_deref().ok_or_else(|| {
+        "document-symbol ingestion requires an exact workspace source revision".to_owned()
+    })?;
     verify_workspace_document_revision(context, &document.path, source_revision)?;
 
     let symbols = parse_lsp_document_symbols(&observation.result.payload)?;
@@ -736,14 +734,12 @@ fn ingest_lsp_document_symbol(
             return Ok(());
         }
     }
-    let sequence = current
-        .as_ref()
-        .map_or(Ok(1), |current| {
-            current
-                .sequence
-                .checked_add(1)
-                .ok_or_else(|| "code entity revision sequence overflow".to_owned())
-        })?;
+    let sequence = current.as_ref().map_or(Ok(1), |current| {
+        current
+            .sequence
+            .checked_add(1)
+            .ok_or_else(|| "code entity revision sequence overflow".to_owned())
+    })?;
     let revision = CodeEntityRevision {
         entity: entity.clone(),
         revision: revision_id,
@@ -758,7 +754,11 @@ fn ingest_lsp_document_symbol(
         facets: CodeEntityFacetRevisions {
             existence: digest_identity(
                 "code-existence",
-                &[repository_id.to_owned(), entity.id.clone(), "present".into()],
+                &[
+                    repository_id.to_owned(),
+                    entity.id.clone(),
+                    "present".into(),
+                ],
             ),
             name_location,
             signature: signature_identity,
@@ -1772,7 +1772,6 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-
     #[test]
     fn lsp_document_symbols_ingest_conservative_entity_revisions() {
         let path = temp_db("lsp-document-symbol-ingestion");
@@ -1861,8 +1860,12 @@ mod tests {
         assert_eq!(revisions[0].provider_id, "rust-analyzer");
         assert_eq!(revisions[0].provider_epoch, epoch(9));
         assert_eq!(revisions[0].document, fallback.document);
-        assert!(revisions.iter().all(|revision| revision.body_identity.is_none()));
-        assert!(revisions.iter().all(|revision| revision.facets.body.is_none()));
+        assert!(revisions
+            .iter()
+            .all(|revision| revision.body_identity.is_none()));
+        assert!(revisions
+            .iter()
+            .all(|revision| revision.facets.body.is_none()));
         assert!(revisions
             .iter()
             .any(|revision| revision.symbol.as_deref() == Some("outer::inner")));
@@ -1876,7 +1879,8 @@ mod tests {
                 repository_id: "repo-1".into(),
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected idempotent entity revisions");
         };
         assert_eq!(repeated, revisions);
