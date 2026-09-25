@@ -1,4 +1,6 @@
-use super::{AttemptOutcome, BudgetActual, RootBudgetLedger, StepAttemptRecord};
+use super::{
+    AttemptOutcome, AttemptUsageRecord, BudgetActual, RootBudgetLedger, StepAttemptRecord,
+};
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +15,7 @@ pub enum StepTransactionCommand {
         actual: BudgetActual,
         attempt_id: String,
         outcome: AttemptOutcome,
+        usage: AttemptUsageRecord,
     },
     AbortBeforeDispatch {
         root_execution_id: String,

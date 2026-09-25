@@ -103,6 +103,7 @@ fn plan(input_tokens: u64) -> StepPlan {
     };
     StepPlan {
         policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
             required_capabilities: BTreeSet::new(),

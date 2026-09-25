@@ -3,9 +3,9 @@ use phenix_core::{
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan, UsageAttemptKind,
-    UsageAttribution,
+    step_attempt_service, AttemptOutcome, AttemptUsageRecord, BudgetActual, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan,
+    UsageAttemptKind, UsageAttribution,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -151,6 +151,20 @@ impl AttemptLedger {
         self.mutate(attempt_id, |attempt| {
             attempt
                 .settle(outcome)
+                .map_err(|error| format!("attempt settlement failed: {error:?}"))
+        })
+    }
+
+    pub(crate) fn settle_with_usage(
+        &mut self,
+        attempt_id: &str,
+        outcome: AttemptOutcome,
+        actual: BudgetActual,
+        usage: AttemptUsageRecord,
+    ) -> Result<StepAttemptRecord, String> {
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .settle_with_usage(outcome, actual, usage)
                 .map_err(|error| format!("attempt settlement failed: {error:?}"))
         })
     }

@@ -64,17 +64,18 @@ fn handle(
             actual,
             attempt_id,
             outcome,
+            usage,
         } => {
             let resource_old = read_resource_state(context)?;
             let mut resources = resource_service::restore(resource_old.as_deref())?;
             let ledger = resources
-                .settle_reservation(&root_execution_id, &reservation_id, actual)
+                .settle_reservation(&root_execution_id, &reservation_id, actual.clone())
                 .map_err(|error| format!("root budget settlement failed: {error:?}"))?;
             let resource_operations = resource_operations(resource_old, &resources)?;
 
             let attempt_old = read_attempt_state(context)?;
             let mut attempts = attempt_service::restore(attempt_old.as_deref())?;
-            let attempt = attempts.settle(&attempt_id, outcome)?;
+            let attempt = attempts.settle_with_usage(&attempt_id, outcome, actual, usage)?;
             let attempt_operations = attempt_operations(attempt_old, &attempts)?;
 
             let resource_namespace = resource_service::execution_resource_namespace();
