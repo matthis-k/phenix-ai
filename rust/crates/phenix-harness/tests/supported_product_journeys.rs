@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, CapabilityGenerationId, ComponentManifest, ContextResourceId, ContextResourceKind,
-    ContextScope, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginExecution,
+    ContextScope, Key, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
     ServiceContribution, ServiceId, SessionId, ValueError,
 };
@@ -741,9 +741,12 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     );
 
     let visible_tool = ModelToolDescriptor {
-        id: phenix_core::CallableId::parse("fixture.inspect").unwrap(),
-        description: "Inspect a fixture value".into(),
-        input_schema: PhenixSchema::Any,
+        id: phenix_core::CallableId::parse("bash").unwrap(),
+        description: "Run a shell command in the configured Phenix workspace".into(),
+        input_schema: PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("command").unwrap(),
+            PhenixSchema::String,
+        )])),
         output_schema: PhenixSchema::Any,
     };
     let tool_id = visible_tool.id.clone();
@@ -798,7 +801,15 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
 
     assert_eq!(report.model, "fixture-introspection");
     assert_eq!(report.tools.len(), 1);
-    assert_eq!(report.tools[0].id, "fixture.inspect");
+    assert_eq!(report.tools[0].id, "bash");
+    assert_eq!(
+        report.tools[0].input_schema,
+        serde_json::to_value(PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("command").unwrap(),
+            PhenixSchema::String,
+        )])))
+        .unwrap()
+    );
     assert_eq!(report.skills.len(), 1);
     assert_eq!(
         report.skills[0].source,
