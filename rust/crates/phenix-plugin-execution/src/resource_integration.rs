@@ -370,6 +370,40 @@ mod pre_start_cancellation {
     }
 
     #[test]
+    fn admitted_child_is_visible_to_scheduler_until_started() {
+        let path = temp_db("delegated-runnable");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+
+        let runnable = invoke(&mut kernel, ExecutionResourceCommand::RunnableDelegated).unwrap();
+        assert_eq!(
+            runnable,
+            ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: vec!["task-1".into()],
+            }
+        );
+
+        invoke(
+            &mut kernel,
+            ExecutionResourceCommand::StartDelegated {
+                task_id: "task-1".into(),
+                execution_id: "child-execution".into(),
+                now_ms: 1,
+            },
+        )
+        .unwrap();
+        let runnable = invoke(&mut kernel, ExecutionResourceCommand::RunnableDelegated).unwrap();
+        assert_eq!(
+            runnable,
+            ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: Vec::new(),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn pending_child_cancellation_releases_reserved_budget_atomically() {
         let path = temp_db("pre-start-cancel");
         let mut kernel = kernel(&path);
