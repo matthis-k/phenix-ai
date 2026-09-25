@@ -255,6 +255,7 @@ mod exploration_admission {
                 graph_generation: "generation-1".into(),
                 parent_reservation_id: None,
                 parent_policy_revision: "policy-1".into(),
+                originating_attempt_id: None,
                 contract_revision: ArtifactRevision::from_content(b"exploration-1"),
                 target: RouteDecision {
                     target: ModelTarget {
