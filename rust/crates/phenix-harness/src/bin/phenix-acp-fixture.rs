@@ -216,9 +216,7 @@ fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> 
             },
         )? {
             ModelResponse::Capabilities { .. } => {}
-            other => {
-                return Err(format!("fixture capability publication failed: {other:?}").into())
-            }
+            other => return Err(format!("fixture capability publication failed: {other:?}").into()),
         }
     }
     match invoke_model(

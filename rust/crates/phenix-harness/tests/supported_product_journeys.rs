@@ -275,7 +275,9 @@ impl PluginInstance for IntrospectionModelProvider {
         _host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         if service != &model_inference_service() {
-            return Err(format!("unsupported introspection model service: {service}"));
+            return Err(format!(
+                "unsupported introspection model service: {service}"
+            ));
         }
         let value: PhenixValue =
             serde_json::from_slice(input).map_err(|error| error.to_string())?;
@@ -798,7 +800,10 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     assert_eq!(report.tools.len(), 1);
     assert_eq!(report.tools[0].id, "fixture.inspect");
     assert_eq!(report.skills.len(), 1);
-    assert_eq!(report.skills[0].source, "skills/introspection-check/SKILL.md");
+    assert_eq!(
+        report.skills[0].source,
+        "skills/introspection-check/SKILL.md"
+    );
     assert_eq!(report.skills[0].content, "fixture skill body");
     assert!(report
         .instructions
