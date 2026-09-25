@@ -986,7 +986,7 @@ fn unavailable_code_owner_never_admits_exact_code_support_as_current() {
     assert!(matches!(
         invoke(
             &mut kernel,
-            MemoryCommand::GetFreshness { id: memory.id },
+            MemoryCommand::GetFreshness { id: memory.id.clone() },
         )
         .unwrap(),
         MemoryResponse::Freshness { state: Some(state) }
