@@ -531,7 +531,9 @@ fn load_context_internal(
             {
                 return Err(format!(
                     "context admission identity reused with changed injection: {}",
-                    admission_id.as_deref().expect("receipt implies admission id")
+                    admission_id
+                        .as_deref()
+                        .expect("receipt implies admission id")
                 ));
             }
             return Ok((existing, resource));
