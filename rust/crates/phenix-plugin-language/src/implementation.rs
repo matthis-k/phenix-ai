@@ -1514,7 +1514,7 @@ mod tests {
     };
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -1542,7 +1542,7 @@ mod tests {
         kernel
     }
 
-    fn kernel_with_workspace(path: &PathBuf, root: &PathBuf) -> Kernel {
+    fn kernel_with_workspace(path: &PathBuf, root: &Path) -> Kernel {
         let language = language_manifest();
         let language_id = language.id.clone();
         let workspace = phenix_plugin_workspace::workspace_manifest();
@@ -1555,7 +1555,7 @@ mod tests {
         kernel
             .register_embedded_factory(language_id, language_factory)
             .unwrap();
-        let root = root.clone();
+        let root = root.to_path_buf();
         kernel
             .register_embedded_factory(workspace_id, move || {
                 phenix_plugin_workspace::workspace_factory_for(root.clone())
