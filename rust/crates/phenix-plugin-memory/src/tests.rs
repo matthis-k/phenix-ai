@@ -97,6 +97,7 @@ fn fact(id: &str, session: &str, content: &str, created_at: u64) -> MemoryRecord
         scope: scope(session),
         content: content.into(),
         source_refs: vec![source(&format!("turn/{id}"))],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,

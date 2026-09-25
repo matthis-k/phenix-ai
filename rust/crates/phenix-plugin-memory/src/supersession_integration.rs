@@ -65,6 +65,7 @@ fn record(id: &str, content: &str, created_at: u64) -> MemoryRecord {
             start: None,
             end: None,
         }],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,

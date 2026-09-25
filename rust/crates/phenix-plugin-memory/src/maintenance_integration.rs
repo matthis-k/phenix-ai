@@ -174,6 +174,7 @@ fn fact(id: &str, content: &str, resource: &str, created_at: u64) -> MemoryRecor
         scope: scope(),
         content: content.into(),
         source_refs: vec![source(resource)],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,
@@ -199,6 +200,7 @@ fn extraction_uses_helper_profile_and_keeps_caller_owned_exact_provenance() {
                 observations: vec![MemoryExtractionObservation {
                     content: "raw retained observation".into(),
                     source_refs: vec![expected_source.clone()],
+                    supporting_dependencies: Vec::new(),
                 }],
                 created_at: 10,
             },
