@@ -99,7 +99,10 @@ pub struct ContinuationPacket {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContinuationDeltaOperation {
-    Upsert { item: ContinuationItem },
+    Upsert {
+        item: ContinuationItem,
+        target_index: u64,
+    },
     Remove { item_id: String },
 }
 
@@ -125,6 +128,7 @@ pub enum ContinuationDeltaError {
     ResolverMismatch,
     BasePacketMismatch { expected: String, observed: String },
     RemoveMissingItem { item_id: String },
+    UpsertPositionOutOfBounds { target_index: u64, len: u64 },
     TargetDigestMismatch { expected: String, observed: String },
     Encoding { message: String },
 }
@@ -561,7 +565,8 @@ pub fn derive_continuation_delta(
     let base_items = base
         .items
         .iter()
-        .map(|item| (item.id.as_str(), item))
+        .enumerate()
+        .map(|(index, item)| (item.id.as_str(), (index, item)))
         .collect::<BTreeMap<_, _>>();
     let target_items = target
         .items
@@ -577,12 +582,17 @@ pub fn derive_continuation_delta(
             });
         }
     }
-    for item in &target.items {
+    for (target_index, item) in target.items.iter().enumerate() {
         if base_items
             .get(item.id.as_str())
-            .is_none_or(|base_item| *base_item != item)
+            .is_none_or(|(base_index, base_item)| {
+                *base_index != target_index || *base_item != item
+            })
         {
-            operations.push(ContinuationDeltaOperation::Upsert { item: item.clone() });
+            operations.push(ContinuationDeltaOperation::Upsert {
+                item: item.clone(),
+                target_index: u64::try_from(target_index).unwrap_or(u64::MAX),
+            });
         }
     }
 
@@ -721,12 +731,23 @@ impl ContinuationDelta {
         let mut items = base.items.clone();
         for operation in &self.operations {
             match operation {
-                ContinuationDeltaOperation::Upsert { item } => {
+                ContinuationDeltaOperation::Upsert { item, target_index } => {
                     if let Some(index) = items.iter().position(|current| current.id == item.id) {
-                        items[index] = item.clone();
-                    } else {
-                        items.push(item.clone());
+                        items.remove(index);
                     }
+                    let target_index_usize = usize::try_from(*target_index).map_err(|_| {
+                        ContinuationDeltaError::UpsertPositionOutOfBounds {
+                            target_index: *target_index,
+                            len: u64::try_from(items.len()).unwrap_or(u64::MAX),
+                        }
+                    })?;
+                    if target_index_usize > items.len() {
+                        return Err(ContinuationDeltaError::UpsertPositionOutOfBounds {
+                            target_index: *target_index,
+                            len: u64::try_from(items.len()).unwrap_or(u64::MAX),
+                        });
+                    }
+                    items.insert(target_index_usize, item.clone());
                 }
                 ContinuationDeltaOperation::Remove { item_id } => {
                     let Some(index) = items.iter().position(|item| item.id == *item_id) else {
@@ -1425,6 +1446,7 @@ mod tests {
                 },
                 ContinuationDeltaOperation::Upsert {
                     item: target.items[0].clone(),
+                    target_index: 0,
                 },
             ],
             omitted_item_ids: target.omitted_item_ids.clone(),
