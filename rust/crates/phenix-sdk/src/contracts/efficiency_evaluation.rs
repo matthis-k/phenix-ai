@@ -15,6 +15,17 @@ pub enum EvaluationOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
+pub struct ReacquisitionCauseAggregate {
+    pub cause_identity: String,
+    pub source_attempt_id: Option<String>,
+    pub fresh_input_tokens: super::UsageMetricAggregate,
+    pub tool_result_bytes: u64,
+    pub model_calls: u32,
+    pub tool_calls: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
 pub struct EfficiencyTaskRecord {
     pub task_fixture_revision: String,
     pub root_execution_id: String,
@@ -23,6 +34,8 @@ pub struct EfficiencyTaskRecord {
     pub price_revision: String,
     pub outcome: EvaluationOutcome,
     pub usage: UsageAggregate,
+    #[serde(default)]
+    pub reacquisition_causes: Vec<ReacquisitionCauseAggregate>,
     pub known_cost_microunits: u64,
     pub cost_complete: bool,
     pub root_elapsed_ms: Option<u64>,
@@ -55,6 +68,8 @@ pub fn derive_efficiency_task_record(
 ) -> Result<EfficiencyTaskRecord, EfficiencyEvaluationError> {
     let mut seen_attempts = std::collections::BTreeSet::new();
     let mut usage = UsageAggregate::default();
+    let mut reacquisition_causes =
+        std::collections::BTreeMap::<(String, Option<String>), ReacquisitionCauseAggregate>::new();
     let mut known_cost_microunits = 0_u64;
     let mut cost_complete = true;
 
@@ -81,6 +96,30 @@ pub fn derive_efficiency_task_record(
         }
 
         usage.observe(&charge.record);
+        for reacquisition in &charge.record.reacquisition {
+            let key = (
+                reacquisition.cause_identity.clone(),
+                reacquisition.source_attempt_id.clone(),
+            );
+            let aggregate = reacquisition_causes
+                .entry(key.clone())
+                .or_insert_with(|| ReacquisitionCauseAggregate {
+                    cause_identity: key.0,
+                    source_attempt_id: key.1,
+                    fresh_input_tokens: super::UsageMetricAggregate::default(),
+                    tool_result_bytes: 0,
+                    model_calls: 0,
+                    tool_calls: 0,
+                });
+            aggregate
+                .fresh_input_tokens
+                .observe(&reacquisition.fresh_input_tokens);
+            aggregate.tool_result_bytes = aggregate
+                .tool_result_bytes
+                .saturating_add(reacquisition.tool_result_bytes);
+            aggregate.model_calls = aggregate.model_calls.saturating_add(reacquisition.model_calls);
+            aggregate.tool_calls = aggregate.tool_calls.saturating_add(reacquisition.tool_calls);
+        }
         known_cost_microunits = known_cost_microunits.saturating_add(charge.known_cost_microunits);
         cost_complete &= charge.cost_complete;
     }
@@ -93,6 +132,7 @@ pub fn derive_efficiency_task_record(
         price_revision: evidence.price_revision.clone(),
         outcome: evidence.outcome,
         usage,
+        reacquisition_causes: reacquisition_causes.into_values().collect(),
         known_cost_microunits,
         cost_complete,
         root_elapsed_ms: evidence.root_elapsed_ms,
@@ -130,6 +170,8 @@ pub struct EfficiencyCohortReport {
     pub known_cost_microunits: u64,
     pub incomplete_cost_records: u32,
     pub usage: UsageAggregate,
+    #[serde(default)]
+    pub reacquisition_causes: Vec<ReacquisitionCauseAggregate>,
     pub cost_per_success: Option<CostPerSuccess>,
     pub rollout_comparable: bool,
 }
@@ -191,6 +233,8 @@ pub fn evaluate_efficiency_cohort(
     let mut incomplete_cost_records = 0_u32;
     let mut known_cost_microunits = 0_u64;
     let mut usage = UsageAggregate::default();
+    let mut reacquisition_causes =
+        std::collections::BTreeMap::<(String, Option<String>), ReacquisitionCauseAggregate>::new();
 
     for record in records {
         if record.policy_revision != first.policy_revision {
@@ -213,6 +257,25 @@ pub fn evaluate_efficiency_cohort(
         }
         known_cost_microunits = known_cost_microunits.saturating_add(record.known_cost_microunits);
         merge_usage(&mut usage, &record.usage);
+        for source in &record.reacquisition_causes {
+            let key = (source.cause_identity.clone(), source.source_attempt_id.clone());
+            let target = reacquisition_causes
+                .entry(key.clone())
+                .or_insert_with(|| ReacquisitionCauseAggregate {
+                    cause_identity: key.0,
+                    source_attempt_id: key.1,
+                    fresh_input_tokens: super::UsageMetricAggregate::default(),
+                    tool_result_bytes: 0,
+                    model_calls: 0,
+                    tool_calls: 0,
+                });
+            merge_metric(&mut target.fresh_input_tokens, &source.fresh_input_tokens);
+            target.tool_result_bytes = target
+                .tool_result_bytes
+                .saturating_add(source.tool_result_bytes);
+            target.model_calls = target.model_calls.saturating_add(source.model_calls);
+            target.tool_calls = target.tool_calls.saturating_add(source.tool_calls);
+        }
         if !record.cost_complete {
             incomplete_cost_records = incomplete_cost_records.saturating_add(1);
         }
@@ -257,6 +320,7 @@ pub fn evaluate_efficiency_cohort(
         known_cost_microunits,
         incomplete_cost_records,
         usage,
+        reacquisition_causes: reacquisition_causes.into_values().collect(),
         cost_per_success,
         rollout_comparable,
     })
@@ -401,6 +465,7 @@ mod tests {
             price_revision: "prices-v1".into(),
             outcome,
             usage: UsageAggregate::default(),
+            reacquisition_causes: Vec::new(),
             known_cost_microunits: cost,
             cost_complete: true,
             root_elapsed_ms: Some(1_000),
@@ -449,6 +514,45 @@ mod tests {
         assert_eq!(record.usage.fresh_input_tokens.reported, 30);
         assert_eq!(record.usage.output_tokens.reported, 15);
         assert!(record.cost_complete);
+    }
+
+    #[test]
+    fn task_derivation_preserves_reacquisition_cause_attribution() {
+        let mut charged = attempt(
+            "root-1",
+            "retry-attempt",
+            super::super::UsageAttemptKind::Retry,
+            super::super::AttemptOutcome::Succeeded,
+            3,
+        );
+        charged.record.reacquisition.push(super::super::ReacquisitionUsage {
+            cause_identity: "context-reduction:checkpoint-7".into(),
+            source_attempt_id: Some("root-attempt".into()),
+            fresh_input_tokens: super::super::UsageQuantity::Reported { value: 11 },
+            tool_result_bytes: 120,
+            model_calls: 1,
+            tool_calls: 2,
+        });
+        let evidence = EfficiencyTaskEvidence {
+            task_fixture_revision: "task-0@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            attempts: vec![charged],
+            root_elapsed_ms: Some(250),
+        };
+
+        let record = derive_efficiency_task_record(&evidence).unwrap();
+        assert_eq!(record.reacquisition_causes.len(), 1);
+        let cause = &record.reacquisition_causes[0];
+        assert_eq!(cause.cause_identity, "context-reduction:checkpoint-7");
+        assert_eq!(cause.source_attempt_id.as_deref(), Some("root-attempt"));
+        assert_eq!(cause.fresh_input_tokens.reported, 11);
+        assert_eq!(cause.tool_result_bytes, 120);
+        assert_eq!(cause.model_calls, 1);
+        assert_eq!(cause.tool_calls, 2);
     }
 
     #[test]
