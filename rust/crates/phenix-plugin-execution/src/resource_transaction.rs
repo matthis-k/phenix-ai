@@ -174,6 +174,27 @@ impl ExecutionResourceState {
         Ok(record)
     }
 
+    pub(crate) fn cancel_delegated_before_start(
+        &mut self,
+        task_id: &str,
+        cause: String,
+    ) -> Result<DelegatedWorkerTaskRecord, ExecutionResourceError> {
+        let reservation = self.task_reservation(task_id)?.clone();
+        let mut ledger = self.ledger(&reservation.root_execution_id)?.clone();
+        let mut delegated = self.delegated.clone();
+        let record = delegated
+            .cancel_pending(task_id, cause)
+            .map_err(ExecutionResourceError::Task)?
+            .clone();
+        ledger
+            .release(&reservation.reservation_id)
+            .map_err(ExecutionResourceError::Budget)?;
+        self.ledgers
+            .insert(reservation.root_execution_id.clone(), ledger);
+        self.delegated = delegated;
+        Ok(record)
+    }
+
     pub(crate) fn start_delegated(
         &mut self,
         task_id: &str,
