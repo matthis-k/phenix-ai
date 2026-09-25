@@ -147,27 +147,13 @@ pub enum ExecutionCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum ExecutionResponse {
-    Execution {
-        execution: ExecutionRecord,
-    },
-    ExecutionLookup {
-        execution: Option<ExecutionRecord>,
-    },
-    Callable {
-        callable: CallableRecord,
-    },
-    Invocation {
-        output: Vec<u8>,
-    },
-    Task {
-        task: WorkerTaskRecord,
-    },
-    TaskLookup {
-        task: Option<WorkerTaskRecord>,
-    },
-    RunnableTasks {
-        task_ids: Vec<String>,
-    },
+    Execution { execution: ExecutionRecord },
+    ExecutionLookup { execution: Option<ExecutionRecord> },
+    Callable { callable: CallableRecord },
+    Invocation { output: Vec<u8> },
+    Task { task: WorkerTaskRecord },
+    TaskLookup { task: Option<WorkerTaskRecord> },
+    RunnableTasks { task_ids: Vec<String> },
 }
 
 pub struct ExecutionInterface;
