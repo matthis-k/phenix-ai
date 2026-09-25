@@ -18,12 +18,13 @@ Current language intelligence exposes definitions, references, implementations, 
 - [x] Added deterministic current-vs-revision facet deltas so downstream consumers can revalidate only changed entity/relation neighborhoods.
 - [x] Added a durable repository-global entity change stream. Revision/facet changes and the stream cursor commit atomically; paginated consumers survive restart and immutable replay cannot duplicate events.
 - [x] Added explicit identity rebuild orchestration: rebuild snapshots the durable change cursor, concurrent changes force catch-up, and continuity becomes available only after replay through the latest committed sequence.
+- [x] Added an exact provider-fact ingestion boundary: normalized semantic facts must be present in a durable language observation, provider/epoch are inherited from that observation, and stale workspace revisions are rejected before identity state changes.
 
 ## Required implementation
 
 - [x] Define normalized `LogicalCodeEntity`, revision, relation, and lineage contracts.
 - [x] Keep path/line/name as revision observations, not logical identity.
-- [ ] Reuse rust-analyzer or SCIP facts where practical.
+- [ ] Reuse rust-analyzer or SCIP facts where practical. (The identity owner can now ingest observation-bound normalized facts safely; a production rust-analyzer/SCIP adapter still needs to emit that fact batch.)
 - [x] Add deterministic file/revision fallback when semantic providers are unavailable. (`ReadFileFallback` delegates to the ordinary workspace read service and returns exact file content plus its workspace revision without claiming semantic analyzer coverage.)
 - [x] Preserve identity across confident move/rename cases. (Confirmed move/rename lineage is only valid when it preserves the logical entity ID; revision observations may change path/name independently.)
 - [x] Represent ambiguous extract/split/merge lineage as tentative evidence, not forced identity.
