@@ -258,7 +258,9 @@ pub fn prepare_exploration_delegation(
     }
     let deadline_at_ms = plan
         .deadline_at_ms
-        .map_or(input.deadline_at_ms, |deadline| deadline.min(input.deadline_at_ms));
+        .map_or(input.deadline_at_ms, |deadline| {
+            deadline.min(input.deadline_at_ms)
+        });
     if deadline_at_ms <= now_ms {
         return Err(ExplorationPreparationError::DeadlineNotFuture {
             deadline_at_ms,
@@ -478,8 +480,14 @@ mod tests {
     fn accepted_exploration_prepares_one_ordinary_delegation_admission() {
         let opportunity = opportunity();
         let decision = policy().assess(&opportunity);
-        let admission =
-            prepare_exploration_delegation(&opportunity, &decision, delegation_input(), &step_plan(), 0).unwrap();
+        let admission = prepare_exploration_delegation(
+            &opportunity,
+            &decision,
+            delegation_input(),
+            &step_plan(),
+            0,
+        )
+        .unwrap();
 
         assert_eq!(admission.task.id, opportunity.task_id);
         assert_eq!(
@@ -525,14 +533,9 @@ mod tests {
         input.deadline_at_ms = 10_000;
         input.attempts = 7;
         input.depth = 7;
-        let admission = prepare_exploration_delegation(
-            &opportunity,
-            &decision,
-            input,
-            &step_plan(),
-            0,
-        )
-        .unwrap();
+        let admission =
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0)
+                .unwrap();
 
         assert_eq!(admission.binding.resources.deadline_at_ms, 8_000);
         assert_eq!(admission.binding.resources.attempts, 2);
