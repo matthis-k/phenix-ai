@@ -173,7 +173,10 @@ impl PluginInstance for StepRunnerPlugin {
             .decode_projected::<StepRunnerCommand>(&StepRunnerInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
         let response = match command {
-            StepRunnerCommand::Run { request } => run(&context, request)?,
+            StepRunnerCommand::Run { request } => run(&context, request, None)?,
+            StepRunnerCommand::RunResolved { request, decision } => {
+                run(&context, request, Some(decision))?
+            }
         };
         context
             .kernel
@@ -191,14 +194,21 @@ enum RetryRouteStrategy {
 fn run(
     context: &StepRunnerContext<'_, '_>,
     request: PlannedStepRequest,
+    resolved_route: Option<RouteDecision>,
 ) -> Result<StepRunnerResponse, String> {
-    run_with_retry_route(context, request, RetryRouteStrategy::PreferFallback)
+    run_with_retry_route(
+        context,
+        request,
+        RetryRouteStrategy::PreferFallback,
+        resolved_route,
+    )
 }
 
 fn run_with_retry_route(
     context: &StepRunnerContext<'_, '_>,
     request: PlannedStepRequest,
     retry_route_strategy: RetryRouteStrategy,
+    resolved_route: Option<RouteDecision>,
 ) -> Result<StepRunnerResponse, String> {
     let retry_template = request.clone();
     let PlannedStepRequest {
@@ -465,18 +475,49 @@ fn run_with_retry_route(
         );
     }
 
-    let routed: ModelResponse = match resolve_model_route(
-        context,
-        &attribution,
-        profile_id,
-        callable_id,
-        &plan,
-        route_policy,
-        retry_route_strategy,
-    ) {
-        Ok(response) => response,
-        Err(error) => {
-            let reason = format!("model routing failed: {error}");
+    let decision = if let Some(decision) = resolved_route.clone() {
+        trace_policy_stage(
+            context,
+            "model_routing",
+            "pinned",
+            Some(&plan.policy_revision),
+            Some(format!(
+                "using admitted delegated route candidate {}",
+                decision.candidate_ordinal
+            )),
+        );
+        decision
+    } else {
+        let routed: ModelResponse = match resolve_model_route(
+            context,
+            &attribution,
+            profile_id,
+            callable_id,
+            &plan,
+            route_policy,
+            retry_route_strategy,
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                let reason = format!("model routing failed: {error}");
+                trace_policy_stage(
+                    context,
+                    "model_routing",
+                    "denied",
+                    Some(&plan.policy_revision),
+                    Some(reason.clone()),
+                );
+                return fail_before_dispatch(
+                    context,
+                    &attribution.root_execution_id,
+                    &attribution.attempt_id,
+                    Some(&reservation_id),
+                    reason,
+                );
+            }
+        };
+        let ModelResponse::Decision { selection } = routed else {
+            let reason = "model routing returned a non-decision response".to_owned();
             trace_policy_stage(
                 context,
                 "model_routing",
@@ -491,33 +532,16 @@ fn run_with_retry_route(
                 Some(&reservation_id),
                 reason,
             );
-        }
-    };
-    let ModelResponse::Decision { selection } = routed else {
-        let reason = "model routing returned a non-decision response".to_owned();
+        };
         trace_policy_stage(
             context,
             "model_routing",
-            "denied",
+            "allowed",
             Some(&plan.policy_revision),
-            Some(reason.clone()),
+            None,
         );
-        return fail_before_dispatch(
-            context,
-            &attribution.root_execution_id,
-            &attribution.attempt_id,
-            Some(&reservation_id),
-            reason,
-        );
+        selection.decision
     };
-    trace_policy_stage(
-        context,
-        "model_routing",
-        "allowed",
-        Some(&plan.policy_revision),
-        None,
-    );
-    let decision = selection.decision;
     if let Err(error) = bind_attempt(
         context,
         StepAttemptCommand::BindRoute {
@@ -815,6 +839,7 @@ fn run_with_retry_route(
                     recovery_request,
                     &attribution,
                     RetryRouteStrategy::PreserveParent,
+                    resolved_route.clone(),
                 );
             }
             if failure.retryable() && retry_available(context, &attribution, &plan)? {
@@ -1055,6 +1080,7 @@ fn retry_step(
     mut request: PlannedStepRequest,
     parent: &UsageAttribution,
     retry_route_strategy: RetryRouteStrategy,
+    resolved_route: Option<RouteDecision>,
 ) -> Result<StepRunnerResponse, String> {
     let allocated: StepAttemptResponse = context
         .sdk
@@ -1071,7 +1097,7 @@ fn retry_step(
         return Err("step attempt service returned a non-attribution retry allocation".into());
     };
     request.attribution = attribution;
-    run_with_retry_route(context, request, retry_route_strategy)
+    run_with_retry_route(context, request, retry_route_strategy, resolved_route)
 }
 
 fn is_supported_attempt_kind(kind: UsageAttemptKind) -> bool {
