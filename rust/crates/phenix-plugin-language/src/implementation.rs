@@ -1330,6 +1330,111 @@ mod tests {
     }
 
     #[test]
+    fn provider_fact_ingestion_reuses_exact_language_observation_and_rejects_stale_source() {
+        let path = temp_db("provider-fact-ingestion");
+        let root = std::env::temp_dir().join(format!(
+            "phenix-language-provider-fact-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        let mut kernel = kernel_with_workspace(&path, &root);
+
+        let LanguageResponse::FileFallback { fallback } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadFileFallback {
+                workspace_id: "workspace".into(),
+                path: "src/lib.rs".into(),
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected exact workspace fallback");
+        };
+
+        activate(&mut kernel, 7);
+        invoke(
+            &mut kernel,
+            LanguageCommand::Consume {
+                observation_id: "symbols-1".into(),
+                execution_id: "execution-1".into(),
+                workspace_id: "workspace".into(),
+                provider_id: "rust-analyzer".into(),
+                epoch: epoch(7),
+                result: LanguageOperationResult {
+                    operation: LanguageOperationKind::DocumentSymbols,
+                    payload: serde_json::json!({"symbols": [{"name": "observed"}]}).into(),
+                    documents: vec![fallback.document.clone()],
+                },
+            },
+        )
+        .unwrap();
+
+        let fact = CodeEntityProviderFact {
+            entity: LogicalCodeEntity {
+                id: "entity-observed".into(),
+                repository_id: "repo-1".into(),
+            },
+            revision: "revision-1".into(),
+            sequence: 1,
+            document_index: 0,
+            symbol: Some("crate::observed".into()),
+            name: "observed".into(),
+            signature_identity: Some("signature-1".into()),
+            body_identity: Some("body-1".into()),
+            facets: CodeEntityFacetRevisions {
+                existence: "existence-1".into(),
+                name_location: "location-1".into(),
+                signature: Some("signature-1".into()),
+                body: Some("body-1".into()),
+                relations: BTreeMap::from([("callers".into(), "callers-1".into())]),
+            },
+        };
+        let response = invoke(
+            &mut kernel,
+            LanguageCommand::IngestEntityFact {
+                observation_id: "symbols-1".into(),
+                fact: fact.clone(),
+            },
+        )
+        .unwrap();
+        let LanguageResponse::EntityRevision {
+            revision: Some(revision),
+        } = response
+        else {
+            panic!("expected ingested entity revision");
+        };
+        assert_eq!(revision.provider_id, "rust-analyzer");
+        assert_eq!(revision.provider_epoch, epoch(7));
+        assert_eq!(revision.document, fallback.document);
+
+        fs::write(root.join("src/lib.rs"), "fn changed_after_observation() {}\n").unwrap();
+        let stale = invoke(
+            &mut kernel,
+            LanguageCommand::IngestEntityFact {
+                observation_id: "symbols-1".into(),
+                fact: CodeEntityProviderFact {
+                    entity: LogicalCodeEntity {
+                        id: "entity-stale".into(),
+                        repository_id: "repo-1".into(),
+                    },
+                    revision: "revision-stale".into(),
+                    ..fact
+                },
+            },
+        )
+        .unwrap_err();
+        assert!(stale.contains("source revision is stale"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn logical_entity_revision_map_survives_restart_and_provider_change() {
         let path = temp_db("entity-revision-map");
         let entity = LogicalCodeEntity {
