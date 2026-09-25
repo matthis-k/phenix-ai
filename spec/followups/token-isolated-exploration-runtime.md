@@ -23,7 +23,7 @@ Tracks #516 slice 5.
 - [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
 - [ ] Create the child through the existing delegation/worker path.
 - [x] Give the child selected exact references and attenuated authority, not the parent transcript.
-- [ ] Return bounded typed findings plus exact evidence references.
+- [x] Return bounded typed findings plus exact evidence references.
 - [ ] Re-admit findings through ordinary context admission.
 - [ ] Attribute child cost, retries, and later parent reacquisition to the originating attempt.
 - [x] Keep automatic exploration disabled until benchmarked.
