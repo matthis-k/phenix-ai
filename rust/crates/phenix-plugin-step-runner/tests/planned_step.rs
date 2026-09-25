@@ -1,5 +1,6 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, ComponentInterface, InvocationOutcome, Kernel, KernelConfig,
+    ArtifactRevision, Authority, CapabilityGenerationId, ComponentInterface, InvocationOutcome,
+    Kernel, KernelConfig,
     LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
@@ -17,15 +18,17 @@ use phenix_plugin_step_runner::{
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
 };
 use phenix_sdk::{
-    execution_resource_service, execution_service, model_routing_service, step_attempt_service,
-    step_runner_service, AttemptOutcome, CapacityKnowledge, ContextCandidate, ContextControl,
-    ContextDemand, ContextRetention, ContextSource, DelegationResourcePolicy,
+    delegated_worker_service, execution_resource_service, execution_service, model_routing_service,
+    step_attempt_service, step_runner_service, AttemptOutcome, BudgetReservation,
+    BudgetReservationPurpose, BudgetReservationRequest, CapacityKnowledge, ContextCandidate,
+    ContextControl, ContextDemand, ContextRetention, ContextSource, DelegatedWorkerCommand,
+    DelegatedWorkerResponse, DelegationResourcePolicy, DelegationTaskBinding, DelegatedWorkResources,
     EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand,
     ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelLimits, ModelResponse,
     ModelTarget, PlannedStepRequest, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
-    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse,
-    StepRunnerCommand, StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind,
-    UsageAttribution, UsagePolicy,
+    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepRunnerCommand,
+    StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind, UsageAttribution,
+    UsagePolicy, WorkerTaskRecord, WorkerTaskState,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -679,6 +682,165 @@ mod retry_budget {
         assert!(error.contains("exceeds attempt limit"));
         assert!(lookup_attempt(&mut kernel, "attempt-3").is_none());
         assert_eq!(remaining(&mut kernel).attempts, 4);
+        let _ = fs::remove_file(path);
+    }
+}
+
+
+mod delegated_worker_runtime {
+    use super::*;
+
+    #[test]
+    fn admitted_delegated_task_runs_on_pinned_route_and_reenters_parent_context() {
+        let path = temp_db("delegated-worker-runtime");
+        let mut kernel = kernel(&path);
+        setup_root(&mut kernel);
+        setup_routing(&mut kernel, true, true);
+
+        let mut root_request = request(3_000);
+        root_request.attribution.attempt_id = "root-attempt".into();
+        root_request.task.context.mandatory_input_tokens = 2_000;
+        root_request.task.context.reducible_input_tokens = 0;
+        let root_response: StepRunnerResponse = invoke(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run {
+                request: root_request,
+            },
+        )
+        .unwrap();
+        let StepRunnerResponse::Completed {
+            attempt: root_attempt,
+            ..
+        } = root_response;
+        let parent_plan = root_attempt.plan.clone();
+        let route = root_attempt.route.clone().expect("root route is pinned");
+
+        let root_execution: ExecutionResponse = invoke(
+            &mut kernel,
+            execution_service(),
+            &ExecutionCommand::GetExecution { id: "root".into() },
+        )
+        .unwrap();
+        let ExecutionResponse::ExecutionLookup {
+            execution: Some(root_execution),
+        } = root_execution
+        else {
+            panic!("root execution must exist");
+        };
+
+        let budget = BudgetReservation {
+            input_tokens: 1_000,
+            output_tokens: 128,
+            cost_microunits: Some(1_000),
+        };
+        let authority = ExecutionAuthority::new(Vec::<String>::new());
+        let contract: phenix_core::Bytes = b"inspect delegated subsystem".to_vec().into();
+        let binding = DelegationTaskBinding {
+            contract_revision: ArtifactRevision::from_content(contract.as_slice()),
+            contract,
+            parent_policy_revision: parent_plan.policy_revision.clone(),
+            parent_plan: Some(parent_plan),
+            originating_attempt_id: Some(root_attempt.attribution.attempt_id.clone()),
+            resources: DelegatedWorkResources {
+                target: route,
+                authority: authority.clone(),
+                context: Vec::new(),
+                budget: budget.clone(),
+                deadline_at_ms: 10_000,
+                depth: 1,
+                attempts: 1,
+                max_result_bytes: 64 * 1024,
+            },
+        };
+        let task = WorkerTaskRecord {
+            id: "delegated-task-1".into(),
+            parent_execution: "root".into(),
+            graph_generation: root_execution.graph_generation,
+            description: "inspect delegated subsystem".into(),
+            depends_on: BTreeSet::new(),
+            delegated_authority: authority.clone(),
+            state: WorkerTaskState::Pending,
+        };
+        let policy = DelegationResourcePolicy {
+            enabled: true,
+            max_depth: 2,
+            max_children: 2,
+            max_attempts: 2,
+            max_result_bytes: 64 * 1024,
+        };
+        let admitted: ExecutionResourceResponse = invoke(
+            &mut kernel,
+            execution_resource_service(),
+            &ExecutionResourceCommand::AdmitDelegated {
+                root_execution_id: "root".into(),
+                reservation: BudgetReservationRequest {
+                    reservation_id: "delegation/delegated-task-1".into(),
+                    parent_reservation_id: None,
+                    policy_revision: "policy-1".into(),
+                    purpose: BudgetReservationPurpose::Delegation,
+                    budget,
+                    attempts: 1,
+                },
+                task,
+                binding,
+                parent_authority: root_execution.authority,
+                policy,
+                now_ms: 2_000,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            admitted,
+            ExecutionResourceResponse::DelegatedTask { .. }
+        ));
+
+        let worked: DelegatedWorkerResponse = invoke(
+            &mut kernel,
+            delegated_worker_service(),
+            &DelegatedWorkerCommand::RunNext { now_ms: 2_000 },
+        )
+        .unwrap();
+        let DelegatedWorkerResponse::Processed {
+            task,
+            parent_admitted,
+        } = worked
+        else {
+            panic!("expected one delegated task to run");
+        };
+        assert!(matches!(task.task.state, WorkerTaskState::Completed { .. }));
+        assert!(parent_admitted);
+        let result = task.result.expect("completed delegated task has a result");
+        assert_eq!(result.findings.len(), 1);
+        assert!(result.findings[0]
+            .summary
+            .contains("inspect delegated subsystem"));
+
+        let attempts: StepAttemptResponse = invoke(
+            &mut kernel,
+            step_attempt_service(),
+            &StepAttemptCommand::ListRoot {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attempts { attempts } = attempts else {
+            panic!("expected root attempt list");
+        };
+        assert!(attempts.iter().any(|attempt| {
+            attempt.attribution.kind == UsageAttemptKind::Delegated
+                && attempt.attribution.task_id.as_deref() == Some("delegated-task-1")
+                && attempt.attribution.parent_attempt_id.as_deref() == Some("root-attempt")
+                && attempt.outcome == Some(AttemptOutcome::Succeeded)
+        }));
+
+        let idle: DelegatedWorkerResponse = invoke(
+            &mut kernel,
+            delegated_worker_service(),
+            &DelegatedWorkerCommand::RunNext { now_ms: 2_001 },
+        )
+        .unwrap();
+        assert_eq!(idle, DelegatedWorkerResponse::Idle);
         let _ = fs::remove_file(path);
     }
 }
