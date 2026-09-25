@@ -22,11 +22,11 @@ Tracks #516 slice 5.
 - [x] Add the planner/context handoff that creates an `ExplorationOpportunity`.
 - [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
 - [ ] Create the child through the existing delegation/worker path.
-- [ ] Give the child selected exact references and attenuated authority, not the parent transcript.
+- [x] Give the child selected exact references and attenuated authority, not the parent transcript.
 - [ ] Return bounded typed findings plus exact evidence references.
 - [ ] Re-admit findings through ordinary context admission.
 - [ ] Attribute child cost, retries, and later parent reacquisition to the originating attempt.
-- [ ] Keep automatic exploration disabled until benchmarked.
+- [x] Keep automatic exploration disabled until benchmarked.
 
 ## Acceptance
 
