@@ -8,7 +8,8 @@ use phenix_harness::{default_suite_authority, HarnessBuilder, PhenixHarness};
 use phenix_plugin_catalog::{
     adapter_acp_manifest, agent_loop_manifest, artifact_manifest, basic_context_manifest,
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, cli_manifest,
-    context_manifest, debug_manifest, execution_manifest, frontend_manifest, hook_manifest,
+    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
+    frontend_manifest, hook_manifest,
     job_manifest, language_manifest, memory_manifest, model_routing_manifest, options_manifest,
     planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
     session_tree_manifest, workspace_manifest, OptionStartupPrecedence,
@@ -189,6 +190,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (cli_manifest(authority.clone()), true),
         (context_manifest(), true),
         (execution_manifest(authority.clone()), true),
+        (efficiency_evaluation_manifest(), true),
         (agent_loop_manifest(authority.clone()), true),
         (language_manifest(), true),
         (memory_manifest(), true),
