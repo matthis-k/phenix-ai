@@ -21,13 +21,14 @@ use phenix_sdk::{
     memory_validate_callable, ContextCheckpoint, ContextCompactionCommand,
     ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
-    HelperInvocationRequest, HelperInvocationResponse, MemoryCanonicalReference, MemoryCommand,
+    HelperInvocationRequest, HelperInvocationResponse, LanguageCommand, LanguageInterface,
+    LanguageResponse, MemoryCanonicalReference, MemoryCommand,
     MemoryConsolidationRequest, MemoryDependencyRevision, MemoryEmbeddingInterface,
     MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest,
     MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
     MemoryRankCandidate, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
     MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome,
-    MemoryRevisionCursor, MemoryScope, MemorySourceReference,
+    MemoryRevisionCursor, MemoryScope, MemorySourceReference, LANGUAGE_SERVICE,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -47,6 +48,7 @@ pub(crate) struct MemorySdk<'host, 'runtime> {
     invocation: SdkClient<'host, 'runtime, HelperInvocationInterface>,
     embed: SdkClient<'host, 'runtime, MemoryEmbeddingInterface>,
     rank: SdkClient<'host, 'runtime, MemoryRankInterface>,
+    language: SdkClient<'host, 'runtime, LanguageInterface>,
 }
 
 pub(crate) type MemoryContext<'host, 'runtime> =
@@ -113,6 +115,7 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> MemoryContext<
             invocation: SdkClient::new(host, crate::memory_component_id()),
             embed: SdkClient::new(host, crate::memory_component_id()),
             rank: SdkClient::new(host, crate::memory_component_id()),
+            language: SdkClient::new(host, crate::memory_component_id()),
         },
         (),
         (),
@@ -651,6 +654,9 @@ fn revalidate_memory(
     let state_key = freshness_key(&id);
     let mut state: MemoryFreshnessRecord =
         read_record(context, &state_key)?.unwrap_or_else(|| initial_state(&record, None));
+    if synchronize_code_support(context, &record, &mut state, at)? {
+        write_record(context, &state_key, &state)?;
+    }
 
     let outcome = match deterministic_outcome(&record, &state, at) {
         MemoryRevalidationOutcome::KeepCurrent => return Ok(state),
@@ -793,6 +799,9 @@ fn recall_memory(
         let state_key = freshness_key(&id);
         let mut state: MemoryFreshnessRecord =
             read_record(context, &state_key)?.unwrap_or_else(|| initial_state(&record, None));
+        if synchronize_code_support(context, &record, &mut state, query.at)? {
+            write_record(context, &state_key, &state)?;
+        }
         match deterministic_outcome(&record, &state, query.at) {
             MemoryRevalidationOutcome::KeepCurrent => current.push(record),
             MemoryRevalidationOutcome::Expire => {
@@ -1211,7 +1220,8 @@ fn record_memory(
         superseded_states.push((state_key, state));
     }
 
-    let freshness = initial_state(&record, None);
+    let mut freshness = initial_state(&record, None);
+    synchronize_code_support(context, &record, &mut freshness, record.created_at)?;
     let freshness_key = freshness_key(&id);
     let dependencies = freshness
         .dependencies
@@ -1333,6 +1343,12 @@ fn normalize_supporting_dependencies(
             MemoryError::Invalid("memory supporting dependencies require an exact revision".into())
         })?;
         validate_text("memory supporting dependency revision", revision)?;
+        if dependency.service.as_str() == LANGUAGE_SERVICE && dependency.as_code_facet().is_none() {
+            return Err(MemoryError::Invalid(format!(
+                "language dependency {} must be a typed code facet resource",
+                dependency.resource
+            )));
+        }
         if dependency.service == memory_service()
             || dependency.service == context_compaction_service()
             || dependency.service == context_expansion_service()
@@ -1346,6 +1362,56 @@ fn normalize_supporting_dependencies(
     dependencies.sort();
     dependencies.dedup();
     Ok(())
+}
+
+fn synchronize_code_support(
+    context: &MemoryContext<'_, '_>,
+    record: &MemoryRecord,
+    state: &mut MemoryFreshnessRecord,
+    observed_at: u64,
+) -> MemoryResult<bool> {
+    let before = state.clone();
+    for support in &record.supporting_dependencies {
+        let Some(reference) = support.as_code_facet() else {
+            continue;
+        };
+        let response: Result<LanguageResponse, _> = context.sdk.language.invoke_projected(
+            &LanguageCommand::GetEntityFacet {
+                repository_id: reference.entity.repository_id.clone(),
+                entity_id: reference.entity.id.clone(),
+                facet: reference.facet.clone(),
+            },
+        );
+        let observed_revision = match response {
+            Ok(LanguageResponse::EntityFacet {
+                reference: Some(current),
+            }) => Some(current.revision),
+            Ok(LanguageResponse::EntityFacet { reference: None }) | Err(_) => None,
+            Ok(_) => None,
+        };
+
+        if let Some(observed) = state.dependencies.iter_mut().find(|dependency| {
+            dependency.service == support.service && dependency.resource == support.resource
+        }) {
+            observed.revision = observed_revision.clone();
+        } else {
+            state.dependencies.push(MemoryDependencyRevision {
+                service: support.service.clone(),
+                resource: support.resource.clone(),
+                revision: observed_revision.clone(),
+            });
+        }
+
+        if observed_revision.as_deref() != support.revision.as_deref()
+            && state.freshness == MemoryFreshness::Current
+        {
+            state.freshness = MemoryFreshness::NeedsValidation;
+            state.changed_at = observed_at;
+        }
+    }
+    state.dependencies.sort();
+    state.dependencies.dedup();
+    Ok(*state != before)
 }
 
 fn validate_text(label: &str, value: &str) -> MemoryResult<()> {
