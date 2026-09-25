@@ -33,7 +33,9 @@ pub struct BenchmarkOutcomeRecord {
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchmarkOutcomeCommand {
-    Publish { record: BenchmarkOutcomeRecord },
+    Publish {
+        record: BenchmarkOutcomeRecord,
+    },
     Get {
         task_fixture_revision: String,
         root_execution_id: String,
@@ -44,8 +46,12 @@ pub enum BenchmarkOutcomeCommand {
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchmarkOutcomeResponse {
-    Published { evidence: EfficiencyOutcomeEvidence },
-    Lookup { record: Option<BenchmarkOutcomeRecord> },
+    Published {
+        evidence: EfficiencyOutcomeEvidence,
+    },
+    Lookup {
+        record: Option<BenchmarkOutcomeRecord>,
+    },
 }
 
 pub struct BenchmarkOutcomeInterface;
@@ -330,11 +336,7 @@ fn record_key(
         root_execution_id.as_bytes(),
         evaluator_identity.as_bytes(),
     ] {
-        bytes.extend_from_slice(
-            &u64::try_from(part.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        );
+        bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
         bytes.extend_from_slice(part);
     }
     ArtifactRevision::from_content(&bytes).to_string()
@@ -489,12 +491,7 @@ mod tests {
 
         let mut restored = kernel(&path);
         assert_eq!(
-            resolve(
-                &mut restored,
-                "fixture-revision-1",
-                "root-1",
-                "tests-v1"
-            ),
+            resolve(&mut restored, "fixture-revision-1", "root-1", "tests-v1"),
             EfficiencyOutcomeEvidenceResponse::Evidence {
                 evidence: Some(expected)
             }
@@ -517,7 +514,12 @@ mod tests {
         assert!(unresolved.contains("terminal outcomes only"));
 
         assert_eq!(
-            resolve(&mut kernel, "fixture-revision-1", "unknown-root", "tests-v1"),
+            resolve(
+                &mut kernel,
+                "fixture-revision-1",
+                "unknown-root",
+                "tests-v1"
+            ),
             EfficiencyOutcomeEvidenceResponse::Evidence { evidence: None }
         );
         let _ = fs::remove_file(path);
