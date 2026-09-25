@@ -1,22 +1,28 @@
 use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
-    Authority, Bytes, ContextResourceId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
-    PluginState, Project, ResolvedHarness, ResolvedHarnessActivation,
+    ArtifactRevision, Authority, Bytes, CapabilityGenerationId, ContextResourceId, Kernel,
+    KernelConfig, LocalPersistence, ModelId, PhenixValue, PluginId, PluginState, Project,
+    ResolvedHarness, ResolvedHarnessActivation,
 };
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
 };
 use phenix_sdk::{
-    context_service, execution_service, BudgetReservation, CachePlacement, CompactionProposal,
+    context_service, execution_resource_service, execution_service, BudgetActual,
+    BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest, CachePlacement,
+    CompactionProposal,
     ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDemand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
-    ContextRetention, ContextScope, ContextSource, DelegationResourcePolicy, ExecutionAuthority,
-    ExecutionCommand, ProjectionCheckpoint, ProjectionRevision, ReasoningBudget,
-    RetentionTransition, RetryBudget, RoutingRequirements, SkillProvisionBudget, StepPlan,
-    ToolCallGroupReference, ToolProvisionBudget,
+    ContextRetention, ContextScope, ContextSource, DelegatedFinding, DelegatedWorkResources,
+    DelegatedWorkerResult, DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority,
+    ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse, ModelTarget,
+    ModelTurnUsage, ProjectionCheckpoint, ProjectionRevision, ReasoningBudget, RetentionTransition,
+    RetryBudget, RootBudgetLedger, RootBudgetLimits, RouteDecision, RoutingEstimate,
+    RoutingRequirements, SkillProvisionBudget, StepPlan, ToolCallGroupReference,
+    ToolProvisionBudget, WorkerTaskRecord, WorkerTaskState,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -77,6 +83,18 @@ fn invoke(kernel: &mut Kernel, command: ContextCommand) -> Result<ContextRespons
         .map_err(|error| error.to_string())?;
     let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
     ContextResponse::try_from(Project(&output)).map_err(|error| error.to_string())
+}
+
+fn invoke_resources(
+    kernel: &mut Kernel,
+    command: ExecutionResourceCommand,
+) -> Result<ExecutionResourceResponse, String> {
+    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = kernel
+        .invoke(&execution_resource_service(), &input, &authority(), None)
+        .map_err(|error| error.to_string())?;
+    let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+    ExecutionResourceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
 }
 
 fn create_execution(kernel: &mut Kernel, id: &str) {
@@ -466,4 +484,198 @@ mod injection_invalidation {
         assert!(error.contains("UnknownPreparedCheckpoint"));
         let _ = fs::remove_file(path);
     }
+}
+
+
+#[test]
+fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admission() {
+    let path = temp_db("delegated-result-readmission");
+    let mut kernel = kernel(&path);
+    create_execution(&mut kernel, "root");
+
+    let policy = DelegationResourcePolicy {
+        enabled: true,
+        max_depth: 2,
+        max_children: 2,
+        max_attempts: 2,
+        max_result_bytes: 64 * 1024,
+    };
+    let mut parent_plan = plan(8 * 1024);
+    parent_plan.policy_revision = "policy-1".into();
+    parent_plan.delegation = policy.clone();
+    parent_plan.deadline_at_ms = Some(10_000);
+
+    invoke_resources(
+        &mut kernel,
+        ExecutionResourceCommand::RegisterRootBudget {
+            ledger: RootBudgetLedger {
+                root_execution_id: "root".into(),
+                limits: RootBudgetLimits {
+                    fresh_input_tokens: 16_000,
+                    output_tokens: 4_000,
+                    cost_microunits: None,
+                    attempts: 4,
+                },
+                reservations: BTreeMap::new(),
+            },
+        },
+    )
+    .unwrap();
+
+    let delegated_authority = ExecutionAuthority::new(Vec::<String>::new());
+    let binding = DelegationTaskBinding {
+        contract_revision: ArtifactRevision::from_content(b"inspect"),
+        contract: b"inspect".to_vec().into(),
+        parent_policy_revision: parent_plan.policy_revision.clone(),
+        parent_plan: Some(parent_plan.clone()),
+        originating_attempt_id: Some("attempt-parent".into()),
+        resources: DelegatedWorkResources {
+            target: RouteDecision {
+                target: ModelTarget {
+                    provider_plugin: PluginId::parse("provider.fixture").unwrap(),
+                    model: ModelId::parse("model.fixture").unwrap(),
+                    options: BTreeMap::new(),
+                },
+                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                policy_revision: "route-1".into(),
+                candidate_ordinal: 0,
+                estimate: None::<RoutingEstimate>,
+            },
+            authority: delegated_authority.clone(),
+            context: Vec::new(),
+            budget: BudgetReservation {
+                input_tokens: 2_000,
+                output_tokens: 400,
+                cost_microunits: None,
+            },
+            deadline_at_ms: 10_000,
+            depth: 1,
+            attempts: 1,
+            max_result_bytes: 64 * 1024,
+        },
+    };
+    let task = WorkerTaskRecord {
+        id: "task-result".into(),
+        parent_execution: "root".into(),
+        graph_generation: "generation-1".into(),
+        description: "inspect delegated evidence".into(),
+        depends_on: BTreeSet::new(),
+        delegated_authority,
+        state: WorkerTaskState::Pending,
+    };
+    invoke_resources(
+        &mut kernel,
+        ExecutionResourceCommand::AdmitDelegated {
+            root_execution_id: "root".into(),
+            reservation: BudgetReservationRequest {
+                reservation_id: "reservation-result".into(),
+                parent_reservation_id: None,
+                policy_revision: "policy-1".into(),
+                purpose: BudgetReservationPurpose::Delegation,
+                budget: binding.resources.budget.clone(),
+                attempts: 1,
+            },
+            task,
+            binding,
+            parent_authority: ExecutionAuthority::new(Vec::<String>::new()),
+            policy,
+            now_ms: 1,
+        },
+    )
+    .unwrap();
+    invoke_resources(
+        &mut kernel,
+        ExecutionResourceCommand::StartDelegated {
+            task_id: "task-result".into(),
+            execution_id: "child-result".into(),
+            now_ms: 2,
+        },
+    )
+    .unwrap();
+    invoke_resources(
+        &mut kernel,
+        ExecutionResourceCommand::CompleteDelegated {
+            task_id: "task-result".into(),
+            execution_id: "child-result".into(),
+            result: DelegatedWorkerResult {
+                findings: vec![DelegatedFinding {
+                    kind: "finding".into(),
+                    summary: "delegated summary".into(),
+                    evidence: Vec::new(),
+                }],
+                evidence: Vec::new(),
+                escalation: None,
+                usage: ModelTurnUsage::default(),
+                encoded_result_bytes: 0,
+            },
+            actual: BudgetActual {
+                fresh_input_tokens: 0,
+                output_tokens: 0,
+                cost_microunits: None,
+                attempts: 1,
+            },
+        },
+    )
+    .unwrap();
+
+    let loaded = invoke(
+        &mut kernel,
+        ContextCommand::LoadDelegatedResult {
+            task_id: "task-result".into(),
+        },
+    )
+    .unwrap();
+    let ContextResponse::Loaded { resource, .. } = loaded else {
+        panic!("expected delegated result to load as exact context");
+    };
+    assert_eq!(resource.descriptor.kind, ContextResourceKind::External);
+    assert!(String::from_utf8_lossy(resource.content.as_ref()).contains("delegated summary"));
+
+    let prepared = invoke(
+        &mut kernel,
+        ContextCommand::PrepareInvocation {
+            execution_id: "root".into(),
+            input: b"continue".to_vec().into(),
+        },
+    )
+    .unwrap();
+    let ContextResponse::InvocationPrepared { preparation } = prepared else {
+        panic!("expected invocation preparation");
+    };
+    assert!(preparation.candidates.iter().any(|candidate| {
+        matches!(candidate.source, ContextSource::Exact { .. })
+            && candidate.content.as_ref()
+                == resource.content.as_ref()
+    }));
+
+    let admitted = invoke(
+        &mut kernel,
+        ContextCommand::Admit {
+            request: ContextAdmissionRequest {
+                execution_id: "root".into(),
+                step_plan: parent_plan,
+                candidates: preparation.candidates,
+                cache_epoch: preparation.projection.cache_epoch,
+            },
+        },
+    )
+    .unwrap();
+    let ContextResponse::Admission { projection, .. } = admitted else {
+        panic!("expected ordinary context admission");
+    };
+    let materialized = invoke(
+        &mut kernel,
+        ContextCommand::MaterializeInvocation {
+            execution_id: "root".into(),
+            input: b"continue".to_vec().into(),
+            expected_projection: projection,
+        },
+    )
+    .unwrap();
+    let ContextResponse::InvocationMaterialized { materialization } = materialized else {
+        panic!("expected materialized invocation");
+    };
+    assert!(String::from_utf8_lossy(materialization.input.as_ref()).contains("delegated summary"));
+
+    let _ = fs::remove_file(path);
 }
