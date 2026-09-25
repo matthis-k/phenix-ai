@@ -2060,7 +2060,7 @@ fn start_prompt(
             return;
         }
     };
-    let tools = match model_tool_surface(service, &request.session_id, runtime_model_tools()) {
+    let tools = match application_model_tool_surface(service, &request.session_id) {
         Ok(tools) => tools,
         Err(error) => {
             invocation.respond(Err(error));
@@ -2598,6 +2598,13 @@ fn normalize_model_tool_table(
         );
     }
     Ok(PhenixValue::Table(normalized))
+}
+
+fn application_model_tool_surface(
+    service: &SdkApplicationService,
+    session_id: &SessionId,
+) -> Result<Vec<ModelToolDescriptor>, ApplicationError> {
+    model_tool_surface(service, session_id, runtime_model_tools())
 }
 
 fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
