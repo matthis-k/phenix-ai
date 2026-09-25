@@ -575,6 +575,28 @@ mod tests {
     }
 
     #[test]
+    fn parent_policy_revision_mismatch_is_rejected_before_admission() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        input.parent_policy_revision = "other-policy".into();
+
+        assert_eq!(
+            prepare_exploration_delegation(
+                &opportunity,
+                &decision,
+                input,
+                &step_plan(),
+                0,
+            ),
+            Err(ExplorationPreparationError::PolicyRevisionMismatch {
+                expected: "policy-1".into(),
+                observed: "other-policy".into(),
+            })
+        );
+    }
+
+    #[test]
     fn bounded_separable_work_can_delegate() {
         assert!(matches!(
             policy().assess(&opportunity()),
