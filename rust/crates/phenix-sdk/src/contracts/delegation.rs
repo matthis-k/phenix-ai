@@ -1,7 +1,7 @@
 use super::{
     BudgetReservation, ExactContextReference, ExecutionAuthority, ModelTurnUsage, RouteDecision,
 };
-use phenix_core::ArtifactRevision;
+use phenix_core::{ArtifactRevision, Bytes, ContextResourceId};
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -68,6 +68,25 @@ pub struct DelegatedWorkerResult {
     pub escalation: Option<DelegationEscalation>,
     pub usage: ModelTurnUsage,
     pub encoded_result_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedResultContextEnvelope {
+    pub task_id: String,
+    #[serde(default)]
+    pub findings: Vec<DelegatedFinding>,
+    #[serde(default)]
+    pub evidence: Vec<ExactContextReference>,
+    pub escalation: Option<DelegationEscalation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedResultContextDraft {
+    pub resource_id: ContextResourceId,
+    pub source: String,
+    pub content: Bytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -138,6 +157,30 @@ impl DelegatedWorkerResult {
         } else {
             Ok(())
         }
+    }
+
+    pub fn context_draft(
+        &self,
+        task_id: &str,
+        binding: &DelegationTaskBinding,
+    ) -> Result<DelegatedResultContextDraft, DelegationAdmissionError> {
+        self.validate_against(binding)?;
+        let envelope = DelegatedResultContextEnvelope {
+            task_id: task_id.to_owned(),
+            findings: self.findings.clone(),
+            evidence: self.evidence.clone(),
+            escalation: self.escalation.clone(),
+        };
+        let content = serde_json::to_vec(&envelope)
+            .expect("delegated result context envelope has deterministic JSON encoding");
+        let task_identity = ArtifactRevision::from_content(task_id.as_bytes());
+        let resource_id = ContextResourceId::parse(format!("delegated-result:{task_identity}"))
+            .expect("artifact revisions form valid context resource identities");
+        Ok(DelegatedResultContextDraft {
+            resource_id,
+            source: format!("delegation-result:{task_id}"),
+            content: content.into(),
+        })
     }
 }
 
@@ -243,6 +286,44 @@ mod tests {
         assert_eq!(result.findings[0].kind, "summary");
         assert_eq!(result.findings[0].evidence, vec![evidence.clone()]);
         assert_eq!(result.evidence, vec![evidence]);
+    }
+
+    #[test]
+    fn bounded_result_projects_to_deterministic_external_context_draft() {
+        use phenix_core::{ContextResourceId, ContextRevisionId};
+
+        let binding = DelegationTaskBinding {
+            contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            parent_policy_revision: "policy-1".into(),
+            originating_attempt_id: Some("attempt-1".into()),
+            resources: resources(),
+        };
+        let evidence = ExactContextReference {
+            resource_id: ContextResourceId::parse("doc:evidence").unwrap(),
+            revision: ContextRevisionId::parse("revision-1").unwrap(),
+        };
+        let result = DelegatedWorkerResult {
+            findings: vec![DelegatedFinding {
+                kind: "fact".into(),
+                summary: "bounded finding".into(),
+                evidence: vec![evidence.clone()],
+            }],
+            evidence: vec![evidence],
+            escalation: None,
+            usage: ModelTurnUsage::default(),
+            encoded_result_bytes: 0,
+        };
+
+        let first = result.context_draft("task with spaces", &binding).unwrap();
+        let replay = result.context_draft("task with spaces", &binding).unwrap();
+        assert_eq!(first, replay);
+        assert!(first.resource_id.as_str().starts_with("delegated-result:sha256:"));
+        assert_eq!(first.source, "delegation-result:task with spaces");
+        let envelope: DelegatedResultContextEnvelope =
+            serde_json::from_slice(first.content.as_ref()).unwrap();
+        assert_eq!(envelope.task_id, "task with spaces");
+        assert_eq!(envelope.findings[0].kind, "fact");
+        assert_eq!(envelope.findings[0].evidence.len(), 1);
     }
 
     #[test]
