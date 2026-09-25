@@ -318,6 +318,7 @@ pub fn prepare_exploration_delegation(
         contract_revision: input.contract_revision,
         contract: input.contract,
         parent_policy_revision: input.parent_policy_revision.clone(),
+        parent_plan: Some(plan.clone()),
         originating_attempt_id: input.originating_attempt_id,
         resources: DelegatedWorkResources {
             target: input.target,
