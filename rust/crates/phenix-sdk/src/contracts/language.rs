@@ -579,4 +579,3 @@ mod code_entity_facet_resource_tests {
         assert!(CodeEntityFacetReference::from_resource("turn/1", "revision-1".into()).is_none());
     }
 }
-
