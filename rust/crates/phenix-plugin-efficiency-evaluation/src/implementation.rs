@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
-    ServiceContribution, ServiceId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
     derive_efficiency_task_record_from_attempts, efficiency_evaluation_service,
@@ -20,7 +20,7 @@ pub fn efficiency_evaluation_manifest() -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: vec![
-            PluginId::parse("phenix.execution").expect("static execution plugin id is valid"),
+            PluginId::parse("phenix.execution").expect("static execution plugin id is valid")
         ],
         services: vec![ServiceContribution {
             role: phenix_core::ServiceRole::Terminal,
@@ -102,7 +102,9 @@ impl PluginInstance for EfficiencyEvaluationPlugin {
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         if service != &efficiency_evaluation_service() {
-            return Err(format!("unsupported efficiency evaluation service: {service}"));
+            return Err(format!(
+                "unsupported efficiency evaluation service: {service}"
+            ));
         }
         let context = context(host);
         let command = context

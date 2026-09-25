@@ -111,7 +111,9 @@ pub struct EfficiencyCollectionRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EfficiencyEvaluationCommand {
-    CollectTask { request: EfficiencyCollectionRequest },
+    CollectTask {
+        request: EfficiencyCollectionRequest,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -129,7 +131,8 @@ impl ComponentInterface for EfficiencyEvaluationInterface {
     }
 
     fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<EfficiencyEvaluationCommand, EfficiencyEvaluationResponse>()
+        phenix_core::InterfaceSchema::of::<EfficiencyEvaluationCommand, EfficiencyEvaluationResponse>(
+        )
     }
 }
 

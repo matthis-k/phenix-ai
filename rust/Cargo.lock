@@ -1855,6 +1855,7 @@ dependencies = [
  "phenix-plugin-command-toolbelt",
  "phenix-plugin-context",
  "phenix-plugin-debug",
+ "phenix-plugin-efficiency-evaluation",
  "phenix-plugin-execution",
  "phenix-plugin-frontend",
  "phenix-plugin-hooks",
@@ -1915,6 +1916,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-efficiency-evaluation"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-execution"
 version = "0.1.0"
 dependencies = [
@@ -1926,14 +1935,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
-]
-
-[[package]]
-name = "phenix-plugin-efficiency-evaluation"
-version = "0.1.0"
-dependencies = [
- "phenix-core",
- "phenix-sdk",
 ]
 
 [[package]]

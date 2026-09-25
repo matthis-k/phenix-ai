@@ -9,10 +9,10 @@ use phenix_plugin_catalog::{
     adapter_acp_manifest, agent_loop_manifest, artifact_manifest, basic_context_manifest,
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, cli_manifest,
     context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
-    frontend_manifest, hook_manifest,
-    job_manifest, language_manifest, memory_manifest, model_routing_manifest, options_manifest,
-    planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, workspace_manifest, OptionStartupPrecedence,
+    frontend_manifest, hook_manifest, job_manifest, language_manifest, memory_manifest,
+    model_routing_manifest, options_manifest, planning_manifest, repository_worker_manifest,
+    sdk_manifest, session_manifest, session_tree_manifest, workspace_manifest,
+    OptionStartupPrecedence,
 };
 use serde_json::json;
 use std::{
