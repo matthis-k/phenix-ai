@@ -84,6 +84,7 @@ fn is_mutation(command: &ExecutionResourceCommand) -> bool {
             | ExecutionResourceCommand::RemainingWithin { .. }
             | ExecutionResourceCommand::RunnableDelegated
             | ExecutionResourceCommand::GetDelegated { .. }
+            | ExecutionResourceCommand::GetDelegatedReservation { .. }
     )
 }
 
@@ -111,6 +112,11 @@ fn read(
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),
+            })
+        }
+        ExecutionResourceCommand::GetDelegatedReservation { task_id } => {
+            Ok(ExecutionResourceResponse::DelegatedReservation {
+                reservation: state.delegated_reservation(&task_id),
             })
         }
         _ => Err("mutating execution resource command reached read path".into()),
@@ -213,7 +219,8 @@ fn mutate(
         ExecutionResourceCommand::Remaining { .. }
         | ExecutionResourceCommand::RemainingWithin { .. }
         | ExecutionResourceCommand::RunnableDelegated
-        | ExecutionResourceCommand::GetDelegated { .. } => {
+        | ExecutionResourceCommand::GetDelegated { .. }
+        | ExecutionResourceCommand::GetDelegatedReservation { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
     };
