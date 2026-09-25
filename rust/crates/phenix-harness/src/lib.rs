@@ -185,6 +185,7 @@ impl HarnessBuilder {
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
             efficiency_evaluation_component_manifest(),
+            benchmark_outcome_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
@@ -857,6 +858,10 @@ mod tests {
             .manifests
             .iter()
             .any(|manifest| manifest.id.as_str() == benchmark));
+        assert!(selected
+            .components
+            .iter()
+            .any(|component| component.owner.as_str() == benchmark));
     }
 
     #[test]
