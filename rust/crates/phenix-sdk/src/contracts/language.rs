@@ -228,12 +228,46 @@ pub enum CodeEntityFacet {
     Relation { name: String },
 }
 
+pub const CODE_ENTITY_FACET_RESOURCE_PREFIX: &str = "code-facet:";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityFacetResource {
+    pub entity: LogicalCodeEntity,
+    pub facet: CodeEntityFacet,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntityFacetReference {
     pub entity: LogicalCodeEntity,
     pub facet: CodeEntityFacet,
     pub revision: String,
+}
+
+impl CodeEntityFacetReference {
+    #[must_use]
+    pub fn resource(&self) -> String {
+        let resource = CodeEntityFacetResource {
+            entity: self.entity.clone(),
+            facet: self.facet.clone(),
+        };
+        format!(
+            "{CODE_ENTITY_FACET_RESOURCE_PREFIX}{}",
+            serde_json::to_string(&resource).expect("code facet resource is serializable")
+        )
+    }
+
+    #[must_use]
+    pub fn from_resource(resource: &str, revision: String) -> Option<Self> {
+        let encoded = resource.strip_prefix(CODE_ENTITY_FACET_RESOURCE_PREFIX)?;
+        let resource: CodeEntityFacetResource = serde_json::from_str(encoded).ok()?;
+        Some(Self {
+            entity: resource.entity,
+            facet: resource.facet,
+            revision,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -405,4 +439,28 @@ pub enum LanguageResponse {
     IdentityContinuity {
         state: Option<CodeIdentityContinuityState>,
     },
+}
+
+#[cfg(test)]
+mod code_entity_facet_resource_tests {
+    use super::*;
+
+    #[test]
+    fn facet_resource_round_trip_is_revision_independent_and_lossless() {
+        let reference = CodeEntityFacetReference {
+            entity: LogicalCodeEntity {
+                id: "entity/with:delimiters".into(),
+                repository_id: "repo/with:delimiters".into(),
+            },
+            facet: CodeEntityFacet::Relation {
+                name: "callers/transitive".into(),
+            },
+            revision: "relation-revision-1".into(),
+        };
+        let resource = reference.resource();
+        assert_eq!(
+            CodeEntityFacetReference::from_resource(&resource, reference.revision.clone()),
+            Some(reference)
+        );
+    }
 }
