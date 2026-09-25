@@ -390,6 +390,16 @@ pub enum LanguageCommand {
     RecordEntityRevision {
         revision: CodeEntityRevision,
     },
+    RecordEntityLineage {
+        repository_id: String,
+        lineage: CodeEntityLineage,
+    },
+    GetEntityLineage {
+        repository_id: String,
+        from_entity_id: String,
+        to_entity_id: String,
+        kind: CodeEntityLineageKind,
+    },
     GetEntityRevision {
         repository_id: String,
         entity_id: String,
@@ -429,6 +439,9 @@ pub enum LanguageResponse {
     },
     EntityRevision {
         revision: Option<CodeEntityRevision>,
+    },
+    EntityLineage {
+        lineage: Option<CodeEntityLineage>,
     },
     EntityFacet {
         reference: Option<CodeEntityFacetReference>,
