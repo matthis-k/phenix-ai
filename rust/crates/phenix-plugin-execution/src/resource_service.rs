@@ -82,6 +82,7 @@ fn is_mutation(command: &ExecutionResourceCommand) -> bool {
         command,
         ExecutionResourceCommand::Remaining { .. }
             | ExecutionResourceCommand::RemainingWithin { .. }
+            | ExecutionResourceCommand::RunnableDelegated
             | ExecutionResourceCommand::GetDelegated { .. }
     )
 }
@@ -102,6 +103,11 @@ fn read(
             .remaining_within(&root_execution_id, &reservation_id)
             .map(|budget| ExecutionResourceResponse::Remaining { budget })
             .map_err(|error| format!("execution resource nested remaining failed: {error:?}")),
+        ExecutionResourceCommand::RunnableDelegated => {
+            Ok(ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: state.runnable_delegated_tasks(),
+            })
+        }
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),
@@ -206,6 +212,7 @@ fn mutate(
         }
         ExecutionResourceCommand::Remaining { .. }
         | ExecutionResourceCommand::RemainingWithin { .. }
+        | ExecutionResourceCommand::RunnableDelegated
         | ExecutionResourceCommand::GetDelegated { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
