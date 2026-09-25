@@ -295,7 +295,7 @@ fn run_with_retry_route(
         None,
     );
 
-    let parent_reservation_id = helper_parent_reservation(context, &attribution)?;
+    let parent_reservation_id = parent_reservation(context, &attribution)?;
     let remaining_command = match &parent_reservation_id {
         Some(reservation_id) => ExecutionResourceCommand::RemainingWithin {
             root_execution_id: attribution.root_execution_id.clone(),
@@ -1028,7 +1028,17 @@ fn retry_available(
         let attempt = attempts
             .get(&attempt_id)
             .ok_or_else(|| format!("unknown planned retry attempt: {attempt_id}"))?;
-        if !matches!(
+        if let Some(task_id) = attribution.task_id.as_deref() {
+            if attempt.attribution.task_id.as_deref() != Some(task_id) {
+                break;
+            }
+            if !matches!(
+                attempt.attribution.kind,
+                UsageAttemptKind::Delegated | UsageAttemptKind::Retry
+            ) {
+                return Ok(false);
+            }
+        } else if !matches!(
             attempt.attribution.kind,
             UsageAttemptKind::Root | UsageAttemptKind::Retry
         ) {
@@ -1069,6 +1079,7 @@ fn is_supported_attempt_kind(kind: UsageAttemptKind) -> bool {
         kind,
         UsageAttemptKind::Root
             | UsageAttemptKind::Retry
+            | UsageAttemptKind::Delegated
             | UsageAttemptKind::Helper
             | UsageAttemptKind::Verification
             | UsageAttemptKind::RecoveryClassifier
@@ -1088,6 +1099,7 @@ fn reservation_purpose(kind: UsageAttemptKind) -> Result<BudgetReservationPurpos
     match kind {
         UsageAttemptKind::Root => Ok(BudgetReservationPurpose::RootStep),
         UsageAttemptKind::Retry => Ok(BudgetReservationPurpose::Retry),
+        UsageAttemptKind::Delegated => Ok(BudgetReservationPurpose::Delegation),
         UsageAttemptKind::Helper => Ok(BudgetReservationPurpose::Helper),
         UsageAttemptKind::Verification => Ok(BudgetReservationPurpose::Verification),
         UsageAttemptKind::RecoveryClassifier => Ok(BudgetReservationPurpose::RecoveryClassifier),
@@ -1095,39 +1107,67 @@ fn reservation_purpose(kind: UsageAttemptKind) -> Result<BudgetReservationPurpos
     }
 }
 
-fn helper_parent_reservation(
+fn parent_reservation(
     context: &StepRunnerContext<'_, '_>,
     attribution: &UsageAttribution,
 ) -> Result<Option<String>, String> {
-    if !is_helper_attempt(attribution.kind) {
-        return Ok(None);
+    if is_helper_attempt(attribution.kind) {
+        let parent_attempt_id = attribution
+            .parent_attempt_id
+            .as_ref()
+            .ok_or_else(|| "helper attempt requires a parent attempt".to_owned())?;
+        let response: StepAttemptResponse = context
+            .sdk
+            .attempts
+            .invoke_projected(&StepAttemptCommand::Get {
+                attempt_id: parent_attempt_id.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        let StepAttemptResponse::AttemptLookup {
+            attempt: Some(parent),
+        } = response
+        else {
+            return Err(format!(
+                "unknown helper parent attempt: {parent_attempt_id}"
+            ));
+        };
+        if parent.attribution.root_execution_id != attribution.root_execution_id {
+            return Err("helper parent belongs to a different root execution".into());
+        }
+        return parent
+            .reservation_id
+            .ok_or_else(|| "helper parent attempt has no active budget reservation".to_owned())
+            .map(Some);
     }
-    let parent_attempt_id = attribution
-        .parent_attempt_id
-        .as_ref()
-        .ok_or_else(|| "helper attempt requires a parent attempt".to_owned())?;
-    let response: StepAttemptResponse = context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::Get {
-            attempt_id: parent_attempt_id.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-    let StepAttemptResponse::AttemptLookup {
-        attempt: Some(parent),
-    } = response
-    else {
-        return Err(format!(
-            "unknown helper parent attempt: {parent_attempt_id}"
-        ));
-    };
-    if parent.attribution.root_execution_id != attribution.root_execution_id {
-        return Err("helper parent belongs to a different root execution".into());
+
+    if matches!(
+        attribution.kind,
+        UsageAttemptKind::Delegated | UsageAttemptKind::Retry
+    ) {
+        if let Some(task_id) = attribution.task_id.as_ref() {
+            let response: ExecutionResourceResponse = context
+                .sdk
+                .resources
+                .invoke_projected(&ExecutionResourceCommand::GetDelegatedReservation {
+                    task_id: task_id.clone(),
+                })
+                .map_err(|error| error.to_string())?;
+            let ExecutionResourceResponse::DelegatedReservation {
+                reservation: Some(reservation),
+            } = response
+            else {
+                return Err(format!(
+                    "delegated task has no budget reservation: {task_id}"
+                ));
+            };
+            if reservation.root_execution_id != attribution.root_execution_id {
+                return Err("delegated reservation belongs to a different root execution".into());
+            }
+            return Ok(Some(reservation.reservation_id));
+        }
     }
-    parent
-        .reservation_id
-        .ok_or_else(|| "helper parent attempt has no active budget reservation".to_owned())
-        .map(Some)
+
+    Ok(None)
 }
 
 fn validate_tools(tools: &[ModelToolDescriptor], plan: &StepPlan) -> Result<(), String> {
