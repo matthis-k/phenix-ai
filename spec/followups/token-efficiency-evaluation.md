@@ -14,11 +14,12 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] Cohort reports preserve fresh/cache-read/cache-write/output/reasoning/reacquisition usage categories and reject mixed policy/evaluator/price cohorts.
 - [x] Added paired-policy comparison that rejects mismatched task fixture sets before comparing reports.
 - [x] Added typed task derivation from distinct charged attempt records, rejecting duplicate, cross-root, and cross-policy charges while including helper/delegated work exactly once.
-- [x] Added a stateless derived evaluation service that reads all durable step attempts for one root execution and combines them with explicit typed terminal evaluator evidence; it is wired as an ordinary first-party plugin and does not own source truth.
+- [x] Added a stateless derived evaluation service that reads all durable step attempts for one root execution; it is wired as an ordinary first-party plugin and does not own source truth.
+- [x] Collection resolves terminal task evidence through a replaceable typed outcome-evidence provider keyed by task fixture, root execution, and evaluator identity; caller-supplied success evidence is no longer accepted.
 
 ## Required implementation
 
-- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Durable root-attempt collection is implemented. Remaining: join any source facts not already projected into settled attempts, and resolve terminal evidence from a canonical outcome-evaluator provider rather than requiring the caller to supply it.)
+- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Settled attempts already normalize plan/route/context projection/actual usage and durable root-attempt collection is implemented. Terminal evidence is provider-resolved rather than caller-supplied. Remaining: ship at least one canonical benchmark/runtime outcome provider and include delegated attempts once the delegated worker path in #593 is active.)
 - [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
 - [x] Define task-level success/outcome evidence without creating a second canonical task state; derived task records require a matching evaluator/source evidence identity and revision.
 - [x] Compare policy variants only after validating the same task fixture set.
