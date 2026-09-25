@@ -147,6 +147,7 @@ impl HarnessBuilder {
             efficiency_evaluation_manifest(),
             efficiency_evaluation_factory,
         )?;
+        builder.add_embedded(benchmark_outcome_manifest(), benchmark_outcome_factory)?;
         builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
         let application_agent_tools = builder.application_agent_tools.clone();
         builder.add_embedded(
