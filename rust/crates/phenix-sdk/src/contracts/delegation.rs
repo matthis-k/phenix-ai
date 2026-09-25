@@ -212,6 +212,37 @@ mod tests {
     }
 
     #[test]
+    fn bounded_typed_findings_preserve_exact_evidence_references() {
+        use phenix_core::{ContextResourceId, ContextRevisionId};
+
+        let binding = DelegationTaskBinding {
+            contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            parent_policy_revision: "policy-1".into(),
+            resources: resources(),
+        };
+        let evidence = ExactContextReference {
+            resource_id: ContextResourceId::parse("doc:evidence").unwrap(),
+            revision: ContextRevisionId::parse("revision-1").unwrap(),
+        };
+        let result = DelegatedWorkerResult {
+            findings: vec![DelegatedFinding {
+                kind: "summary".into(),
+                summary: "bounded finding".into(),
+                evidence: vec![evidence.clone()],
+            }],
+            evidence: vec![evidence.clone()],
+            escalation: None,
+            usage: ModelTurnUsage::default(),
+            encoded_result_bytes: 0,
+        };
+
+        result.validate_against(&binding).unwrap();
+        assert_eq!(result.findings[0].kind, "summary");
+        assert_eq!(result.findings[0].evidence, vec![evidence.clone()]);
+        assert_eq!(result.evidence, vec![evidence]);
+    }
+
+    #[test]
     fn admission_rejects_resource_expansion_before_worker_start() {
         let policy = DelegationResourcePolicy {
             enabled: true,
