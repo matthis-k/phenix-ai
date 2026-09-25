@@ -39,6 +39,8 @@ pub struct DelegationTaskBinding {
     pub contract: Bytes,
     pub parent_policy_revision: String,
     #[serde(default)]
+    pub parent_plan: Option<StepPlan>,
+    #[serde(default)]
     pub originating_attempt_id: Option<String>,
     pub resources: DelegatedWorkResources,
 }
@@ -100,6 +102,7 @@ pub enum DelegationAdmissionError {
     AttemptLimitExceeded { requested: u32, allowed: u32 },
     ResultLimitExceeded { requested: u64, allowed: u64 },
     DeadlineExceeded { deadline_at_ms: u64, now_ms: u64 },
+    MissingParentPlan,
 }
 
 impl DelegatedWorkResources {
@@ -191,10 +194,13 @@ impl DelegatedWorkerResult {
         task_id: &str,
         binding: &DelegationTaskBinding,
         execution_id: impl Into<String>,
-        step_plan: StepPlan,
         cache_epoch: u64,
     ) -> Result<ContextAdmissionRequest, DelegationAdmissionError> {
         let draft = self.context_draft(task_id, binding)?;
+        let step_plan = binding
+            .parent_plan
+            .clone()
+            .ok_or(DelegationAdmissionError::MissingParentPlan)?;
         let content_identity = ArtifactRevision::from_content(draft.content.as_slice()).to_string();
         let estimated_tokens = u64::try_from(draft.content.as_slice().len()).unwrap_or(u64::MAX);
         Ok(ContextAdmissionRequest {
@@ -310,6 +316,7 @@ mod tests {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
             contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
             originating_attempt_id: None,
             resources,
         };
@@ -342,6 +349,7 @@ mod tests {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
             contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
             originating_attempt_id: None,
             resources: resources(),
         };
@@ -375,6 +383,7 @@ mod tests {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
             contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
             originating_attempt_id: Some("attempt-1".into()),
             resources: resources(),
         };
@@ -415,6 +424,7 @@ mod tests {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
             contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
             originating_attempt_id: Some("attempt-1".into()),
             resources: resources(),
         };
@@ -430,7 +440,7 @@ mod tests {
             encoded_result_bytes: 0,
         };
         let request = result
-            .context_admission("task-1", &binding, "parent-execution", step_plan(), 7)
+            .context_admission("task-1", &binding, "parent-execution", 7)
             .unwrap();
 
         assert_eq!(request.execution_id, "parent-execution");
