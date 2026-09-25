@@ -1,3 +1,8 @@
+//! Deterministic model fixture for inspecting the exact surface presented at inference time.
+//!
+//! Reports only model-visible request state: structured tools plus materialized prompt sections.
+//! It deliberately does not query plugin registries or other out-of-band runtime state.
+
 use phenix_core::{ModelInferenceRequest, ModelInferenceResponse, PhenixSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
