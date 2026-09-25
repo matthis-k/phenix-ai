@@ -843,6 +843,23 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_outcomes_are_opt_in_but_selectable() {
+        let benchmark = benchmark_outcome_manifest().id.as_str().to_owned();
+        let default = HarnessBuilder::with_default_suite().unwrap();
+        assert!(!default
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == benchmark));
+
+        let selected =
+            HarnessBuilder::with_selected_suite(&BTreeSet::from([benchmark.clone()])).unwrap();
+        assert!(selected
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == benchmark));
+    }
+
+    #[test]
     fn selected_efficiency_evaluation_pulls_in_execution_source() {
         let evaluation = efficiency_evaluation_manifest().id.as_str().to_owned();
         let execution = execution_manifest(default_suite_authority())
