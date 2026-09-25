@@ -172,6 +172,16 @@ fn mutate(
             .start_delegated(&task_id, execution_id, now_ms)
             .map(|task| ExecutionResourceResponse::DelegatedTask { task })
             .map_err(|error| format!("delegated resource start failed: {error:?}"))?,
+        ExecutionResourceCommand::CancelDelegatedBeforeStart { task_id, cause } => {
+            if cause.trim().is_empty() {
+                return Err("delegated pre-start cancellation cause must not be empty".into());
+            }
+            next.cancel_delegated_before_start(&task_id, cause)
+                .map(|task| ExecutionResourceResponse::DelegatedTask { task })
+                .map_err(|error| {
+                    format!("delegated resource pre-start cancellation failed: {error:?}")
+                })?
+        }
         ExecutionResourceCommand::CompleteDelegated {
             task_id,
             execution_id,
