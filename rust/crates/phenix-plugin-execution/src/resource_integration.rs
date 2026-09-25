@@ -84,6 +84,7 @@ fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
     DelegationTaskBinding {
         contract_revision: ArtifactRevision::from_content(b"contract"),
         parent_policy_revision: "policy-1".into(),
+        originating_attempt_id: None,
         resources: DelegatedWorkResources {
             target: RouteDecision {
                 target: ModelTarget {
