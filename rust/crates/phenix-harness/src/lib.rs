@@ -801,7 +801,10 @@ mod tests {
 
     #[test]
     fn efficiency_collection_requires_terminal_outcome_provider() {
-        let mut harness = HarnessBuilder::with_default_suite().unwrap().build().unwrap();
+        let mut harness = HarnessBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
         harness.activate().unwrap();
 
         let command = EfficiencyEvaluationCommand::CollectTask {
