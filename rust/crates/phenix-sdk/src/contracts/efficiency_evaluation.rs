@@ -1,4 +1,7 @@
-use super::{AttemptUsageRecord, UsageAggregate};
+use super::{
+    AttemptOutcome, AttemptUsageRecord, StepAttemptPhase, StepAttemptRecord, UsageAggregate,
+    UsageQuantity,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -73,6 +76,103 @@ pub struct EfficiencyTaskEvidence {
     #[serde(default)]
     pub attempts: Vec<EfficiencyAttemptCharge>,
     pub root_elapsed_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyDurableTaskEvidence {
+    pub task_fixture_revision: String,
+    pub root_execution_id: String,
+    pub policy_revision: String,
+    pub outcome_evaluator_identity: String,
+    pub price_revision: String,
+    pub outcome: EvaluationOutcome,
+    pub outcome_evidence: EfficiencyOutcomeEvidence,
+    #[serde(default)]
+    pub attempts: Vec<StepAttemptRecord>,
+    pub root_elapsed_ms: Option<u64>,
+}
+
+pub fn derive_efficiency_task_record_from_attempts(
+    durable: &EfficiencyDurableTaskEvidence,
+) -> Result<EfficiencyTaskRecord, EfficiencyEvaluationError> {
+    let mut charges = Vec::with_capacity(durable.attempts.len());
+    for attempt in &durable.attempts {
+        if attempt.phase != StepAttemptPhase::Settled {
+            return Err(EfficiencyEvaluationError::UnsettledAttempt {
+                attempt_id: attempt.attribution.attempt_id.clone(),
+            });
+        }
+        let (record, known_cost_microunits, cost_complete) =
+            if let Some(usage) = &attempt.usage {
+                let cost = attempt
+                    .settled_actual
+                    .as_ref()
+                    .and_then(|actual| actual.cost_microunits);
+                (usage.clone(), cost.unwrap_or(0), cost.is_some())
+            } else if attempt.dispatch_id.is_none() {
+                (
+                    AttemptUsageRecord {
+                        attribution: attempt.attribution.clone(),
+                        usage: phenix_core::ModelTurnUsage {
+                            fresh_input_tokens: UsageQuantity::Reported { value: 0 },
+                            cache_read_tokens: UsageQuantity::Reported { value: 0 },
+                            cache_write_tokens: UsageQuantity::Reported { value: 0 },
+                            output_tokens: UsageQuantity::Reported { value: 0 },
+                            reasoning_tokens: UsageQuantity::Reported { value: 0 },
+                        },
+                        latency_ms: None,
+                        tool_input_bytes: 0,
+                        tool_result_bytes: 0,
+                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                        reacquisition: Vec::new(),
+                    },
+                    0,
+                    true,
+                )
+            } else {
+                (
+                    AttemptUsageRecord {
+                        attribution: attempt.attribution.clone(),
+                        usage: phenix_core::ModelTurnUsage {
+                            fresh_input_tokens: UsageQuantity::Unavailable,
+                            cache_read_tokens: UsageQuantity::Unavailable,
+                            cache_write_tokens: UsageQuantity::Unavailable,
+                            output_tokens: UsageQuantity::Unavailable,
+                            reasoning_tokens: UsageQuantity::Unavailable,
+                        },
+                        latency_ms: None,
+                        tool_input_bytes: 0,
+                        tool_result_bytes: 0,
+                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                        reacquisition: Vec::new(),
+                    },
+                    attempt
+                        .settled_actual
+                        .as_ref()
+                        .and_then(|actual| actual.cost_microunits)
+                        .unwrap_or(0),
+                    false,
+                )
+            };
+        charges.push(EfficiencyAttemptCharge {
+            record,
+            known_cost_microunits,
+            cost_complete,
+        });
+    }
+
+    derive_efficiency_task_record(&EfficiencyTaskEvidence {
+        task_fixture_revision: durable.task_fixture_revision.clone(),
+        root_execution_id: durable.root_execution_id.clone(),
+        policy_revision: durable.policy_revision.clone(),
+        outcome_evaluator_identity: durable.outcome_evaluator_identity.clone(),
+        price_revision: durable.price_revision.clone(),
+        outcome: durable.outcome,
+        outcome_evidence: durable.outcome_evidence.clone(),
+        attempts: charges,
+        root_elapsed_ms: durable.root_elapsed_ms,
+    })
 }
 
 pub fn derive_efficiency_task_record(
@@ -264,6 +364,9 @@ pub enum EfficiencyEvaluationError {
         attempt_id: String,
     },
     DuplicateAttempt {
+        attempt_id: String,
+    },
+    UnsettledAttempt {
         attempt_id: String,
     },
 }
@@ -679,6 +782,87 @@ mod tests {
         assert_eq!(record.usage.fresh_input_tokens.reported, 30);
         assert_eq!(record.usage.output_tokens.reported, 15);
         assert!(record.cost_complete);
+    }
+
+    #[test]
+    fn durable_attempt_derivation_uses_atomic_route_projection_usage_and_cost_facts() {
+        let attribution = super::super::UsageAttribution {
+            root_execution_id: "root-1".into(),
+            execution_id: "root-1".into(),
+            attempt_id: "attempt-1".into(),
+            parent_attempt_id: None,
+            policy_revision: "policy-1".into(),
+            kind: super::super::UsageAttemptKind::Root,
+            task_id: Some("task-1".into()),
+        };
+        let mut attempt = super::super::StepAttemptRecord::new(
+            attribution.clone(),
+            super::super::tests::fixture_step_plan_for_efficiency(),
+        )
+        .unwrap();
+        attempt.bind_reservation("reservation-1".into()).unwrap();
+        attempt
+            .bind_route(super::super::tests::fixture_route_decision_for_efficiency())
+            .unwrap();
+        attempt
+            .bind_projection(super::super::ProjectionRevision {
+                revision: 3,
+                cache_epoch: 2,
+            })
+            .unwrap();
+        attempt.mark_dispatched("dispatch-1".into()).unwrap();
+        let usage = AttemptUsageRecord {
+            attribution,
+            usage: phenix_core::ModelTurnUsage {
+                fresh_input_tokens: UsageQuantity::Reported { value: 10 },
+                cache_read_tokens: UsageQuantity::Reported { value: 20 },
+                cache_write_tokens: UsageQuantity::Reported { value: 0 },
+                output_tokens: UsageQuantity::Reported { value: 5 },
+                reasoning_tokens: UsageQuantity::Reported { value: 2 },
+            },
+            latency_ms: Some(30),
+            tool_input_bytes: 0,
+            tool_result_bytes: 0,
+            outcome: AttemptOutcome::Succeeded,
+            reacquisition: Vec::new(),
+        };
+        attempt
+            .settle_with_usage(
+                AttemptOutcome::Succeeded,
+                super::super::BudgetActual {
+                    fresh_input_tokens: 10,
+                    output_tokens: 5,
+                    cost_microunits: Some(123),
+                    attempts: 1,
+                },
+                usage,
+            )
+            .unwrap();
+
+        let record = derive_efficiency_task_record_from_attempts(
+            &EfficiencyDurableTaskEvidence {
+                task_fixture_revision: "task-1@1".into(),
+                root_execution_id: "root-1".into(),
+                policy_revision: "policy-1".into(),
+                outcome_evaluator_identity: "tests-v1".into(),
+                price_revision: "prices-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+                outcome_evidence: EfficiencyOutcomeEvidence {
+                    source_identity: "tests/task-1".into(),
+                    evaluator_identity: "tests-v1".into(),
+                    evidence_revision: "result-v1".into(),
+                    outcome: EvaluationOutcome::Succeeded,
+                },
+                attempts: vec![attempt],
+                root_elapsed_ms: Some(30),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(record.known_cost_microunits, 123);
+        assert!(record.cost_complete);
+        assert_eq!(record.usage.fresh_input_tokens.reported, 10);
+        assert_eq!(record.usage.cache_read_tokens.reported, 20);
     }
 
     #[test]
