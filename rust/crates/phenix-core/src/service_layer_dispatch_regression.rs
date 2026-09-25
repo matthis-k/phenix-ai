@@ -5,7 +5,7 @@ use crate::{
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 fn plugin(value: &str) -> PluginId {
@@ -178,6 +178,97 @@ fn kernel_with_layer(
         .unwrap();
     kernel.activate_all().unwrap();
     kernel
+}
+
+struct AroundLayer {
+    order: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl PluginInstance for AroundLayer {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke_layer(
+        &mut self,
+        _service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<LayerResult, String> {
+        self.order.lock().unwrap().push("pre");
+        let output = host
+            .continue_service(input, host.authority())
+            .map_err(|error| error.to_string())?;
+        self.order.lock().unwrap().push("post");
+        Ok(LayerResult::Handled(output))
+    }
+}
+
+struct OrderedTerminal {
+    order: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl PluginInstance for OrderedTerminal {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        _service: &ServiceId,
+        input: &[u8],
+        _host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.order.lock().unwrap().push("terminal");
+        Ok(input.to_vec())
+    }
+}
+
+#[test]
+fn layer_wraps_terminal_with_pre_and_post_execution() {
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let layer_manifest = manifest("layer", ServiceRole::Layer, 100, Authority::default());
+    let terminal_manifest = manifest("terminal", ServiceRole::Terminal, 1, Authority::default());
+    let layer_id = layer_manifest.id.clone();
+    let terminal_id = terminal_manifest.id.clone();
+    let config = KernelConfig::new([layer_manifest, terminal_manifest])
+        .unwrap()
+        .with_layer_policy(
+            service(),
+            vec![LayerPolicy {
+                plugin: layer_id.clone(),
+                priority: 100,
+                required: true,
+                enabled: true,
+            }],
+        )
+        .unwrap();
+    let mut kernel = Kernel::new(config);
+    let layer_order = Arc::clone(&order);
+    kernel
+        .register_embedded_factory(layer_id, move || {
+            Box::new(AroundLayer {
+                order: Arc::clone(&layer_order),
+            })
+        })
+        .unwrap();
+    let terminal_order = Arc::clone(&order);
+    kernel
+        .register_embedded_factory(terminal_id, move || {
+            Box::new(OrderedTerminal {
+                order: Arc::clone(&terminal_order),
+            })
+        })
+        .unwrap();
+    kernel.activate_all().unwrap();
+
+    assert_eq!(
+        kernel
+            .invoke(&service(), b"x", &Authority::default(), None)
+            .unwrap(),
+        b"x"
+    );
+    assert_eq!(*order.lock().unwrap(), vec!["pre", "terminal", "post"]);
 }
 
 #[test]
