@@ -17,21 +17,21 @@ Tracks #516 slice 8. Depends on the stable code entity/lineage tracker.
 
 ## Required implementation
 
-- [ ] Add code-entity and code-relation dependency references to derived memory.
+- [x] Add code-entity and code-relation dependency references to derived memory. (Language-owned entity facets, including named relation facets, round-trip through exact `MemoryDependencyRevision` references.)
 - [x] Record the exact supporting entity/relation revisions used by a claim.
 - [x] Route changed dependencies into the existing `current -> needs_validation -> historical` lifecycle.
-- [ ] Preserve current memory across move/rename only when every declared supporting facet remains verified unchanged.
+- [x] Preserve current memory across move/rename only when every declared supporting facet remains verified unchanged. (Verified-move coverage keeps body-only claims current while name/location claims require validation.)
 - [x] Revalidate/transition only dependency-indexed memories, with revision-bound pagination for large reverse indexes.
 - [x] Model-backed revalidation cannot restore a claim to current after exact supporting revisions changed; a superseding claim must record new exact support.
-- [ ] Keep code dependencies separate from fallback workspace-association identity.
+- [x] Keep code dependencies separate from fallback workspace-association identity. (`supporting_dependencies` are exact language-owned facet revisions; workspace/source association remains separate provenance.)
 - [x] Use deterministic checks before `memory.validate` or `memory.resolve`; changed exact support now blocks model revalidation from restoring current state.
 
 ## Acceptance
 
-- [ ] Moving a function preserves location-independent claims with unchanged support and invalidates claims that depend on its old location/name.
+- [x] Moving a function preserves location-independent claims with unchanged support and invalidates claims that depend on its old location/name.
 - [x] Changing a relied-on dependency revision marks only reverse-indexed dependent memories for validation; facet-specific code wiring remains in #594.
-- [ ] Deleted/replaced entities cannot remain silently current.
-- [ ] Rebuild/restart preserves dependency provenance and freshness state.
+- [x] Deleted/replaced entities cannot remain silently current. (Missing current facets transition dependent memory out of `Current`.)
+- [x] Rebuild/restart preserves dependency provenance and freshness state. (Restart coverage reloads exact support and rechecks current code facets.)
 - [x] No code-memory record becomes canonical source state.
 
 ## Ownership
