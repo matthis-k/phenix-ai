@@ -1,21 +1,21 @@
 use crate::{memory_component_manifest, memory_factory, memory_manifest};
-use phenix_plugin_language::{
-    language_component_manifest, language_factory, language_manifest, language_service,
-};
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     KernelConfig, LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
+use phenix_plugin_language::{
+    language_component_manifest, language_factory, language_manifest, language_service,
+};
 use phenix_sdk::{
     helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
-    CodeEntityFacet, CodeEntityFacetRevisions, CodeEntityRevision,
-    DocumentProvenance, HelperInvocationCommand, HelperInvocationInterface,
-    HelperInvocationResponse, LanguageCommand, LanguageDocumentIdentity, LanguageResponse,
-    LogicalCodeEntity, MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision,
-    MemoryFreshness, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
-    MemoryRevisionCursor, MemoryScope, MemorySourceReference, ProviderEpoch,
+    CodeEntityFacet, CodeEntityFacetRevisions, CodeEntityRevision, DocumentProvenance,
+    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse, LanguageCommand,
+    LanguageDocumentIdentity, LanguageResponse, LogicalCodeEntity, MemoryCanonicalReference,
+    MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind, MemoryRecallQuery,
+    MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope, MemorySourceReference,
+    ProviderEpoch,
 };
 use std::{
     collections::BTreeMap,
@@ -206,7 +206,10 @@ fn invoke(kernel: &mut Kernel, command: MemoryCommand) -> Result<MemoryResponse,
     output.project().map_err(|error| error.to_string())
 }
 
-fn invoke_language(kernel: &mut Kernel, command: LanguageCommand) -> Result<LanguageResponse, String> {
+fn invoke_language(
+    kernel: &mut Kernel,
+    command: LanguageCommand,
+) -> Result<LanguageResponse, String> {
     let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
     let output = kernel
         .invoke(
@@ -290,7 +293,10 @@ fn code_revision(
     }
 }
 
-fn code_dependency(revision: &CodeEntityRevision, facet: CodeEntityFacet) -> MemoryDependencyRevision {
+fn code_dependency(
+    revision: &CodeEntityRevision,
+    facet: CodeEntityFacet,
+) -> MemoryDependencyRevision {
     MemoryDependencyRevision::for_code_facet(
         &revision
             .facet_reference(facet)
@@ -866,7 +872,13 @@ fn deterministic_expiry_revalidation_does_not_invoke_a_model() {
 fn verified_move_preserves_body_claim_and_invalidates_name_location_claim() {
     let path = temp_db("code-facet-move");
     let mut kernel = code_kernel_with(&path);
-    let first = code_revision(1, "src/old.rs", "old_name", "name-location-1", Some("body-stable"));
+    let first = code_revision(
+        1,
+        "src/old.rs",
+        "old_name",
+        "name-location-1",
+        Some("body-stable"),
+    );
     invoke_language(
         &mut kernel,
         LanguageCommand::RecordEntityRevision {
@@ -894,7 +906,13 @@ fn verified_move_preserves_body_claim_and_invalidates_name_location_claim() {
         ));
     }
 
-    let second = code_revision(2, "src/new.rs", "new_name", "name-location-2", Some("body-stable"));
+    let second = code_revision(
+        2,
+        "src/new.rs",
+        "new_name",
+        "name-location-2",
+        Some("body-stable"),
+    );
     invoke_language(
         &mut kernel,
         LanguageCommand::RecordEntityRevision { revision: second },
@@ -914,7 +932,12 @@ fn verified_move_preserves_body_claim_and_invalidates_name_location_claim() {
         },
     )
     .unwrap();
-    assert_eq!(recalled, MemoryResponse::Recall { records: vec![body.clone()] });
+    assert_eq!(
+        recalled,
+        MemoryResponse::Recall {
+            records: vec![body.clone()]
+        }
+    );
     assert!(matches!(
         invoke(
             &mut kernel,
@@ -943,11 +966,22 @@ fn unavailable_code_owner_never_admits_exact_code_support_as_current() {
     let path = temp_db("code-owner-unavailable");
     let mut kernel = kernel_with(&path);
     let revision = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
-    let mut memory = record("unverified-code", MemoryKind::Fact, "unverified code claim", 10);
+    let mut memory = record(
+        "unverified-code",
+        MemoryKind::Fact,
+        "unverified code claim",
+        10,
+    );
     memory
         .supporting_dependencies
         .push(code_dependency(&revision, CodeEntityFacet::Body));
-    invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+    invoke(
+        &mut kernel,
+        MemoryCommand::Record {
+            record: memory.clone(),
+        },
+    )
+    .unwrap();
 
     assert!(matches!(
         invoke(
@@ -978,7 +1012,13 @@ fn missing_current_code_facet_cannot_remain_silently_current() {
     memory
         .supporting_dependencies
         .push(code_dependency(&first, CodeEntityFacet::Body));
-    invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+    invoke(
+        &mut kernel,
+        MemoryCommand::Record {
+            record: memory.clone(),
+        },
+    )
+    .unwrap();
 
     let removed = code_revision(2, "src/lib.rs", "run", "name-1", None);
     invoke_language(
@@ -1029,7 +1069,13 @@ fn restart_preserves_code_dependency_provenance_and_rechecks_current_facets() {
         memory
             .supporting_dependencies
             .push(code_dependency(&first, CodeEntityFacet::Body));
-        invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+        invoke(
+            &mut kernel,
+            MemoryCommand::Record {
+                record: memory.clone(),
+            },
+        )
+        .unwrap();
         memory
     };
 

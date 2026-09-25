@@ -22,13 +22,13 @@ use phenix_sdk::{
     ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
     HelperInvocationRequest, HelperInvocationResponse, LanguageCommand, LanguageInterface,
-    LanguageResponse, MemoryCanonicalReference, MemoryCommand,
-    MemoryConsolidationRequest, MemoryDependencyRevision, MemoryEmbeddingInterface,
-    MemoryEmbeddingRequest, MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest,
-    MemoryFreshness, MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode,
-    MemoryRankCandidate, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevalidationOutcome,
-    MemoryRevisionCursor, MemoryScope, MemorySourceReference, LANGUAGE_SERVICE,
+    LanguageResponse, MemoryCanonicalReference, MemoryCommand, MemoryConsolidationRequest,
+    MemoryDependencyRevision, MemoryEmbeddingInterface, MemoryEmbeddingRequest,
+    MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
+    MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
+    MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
+    MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope,
+    MemorySourceReference, LANGUAGE_SERVICE,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -1375,13 +1375,15 @@ fn synchronize_code_support(
         let Some(reference) = support.as_code_facet() else {
             continue;
         };
-        let response: Result<LanguageResponse, _> = context.sdk.language.invoke_projected(
-            &LanguageCommand::GetEntityFacet {
-                repository_id: reference.entity.repository_id.clone(),
-                entity_id: reference.entity.id.clone(),
-                facet: reference.facet.clone(),
-            },
-        );
+        let response: Result<LanguageResponse, _> =
+            context
+                .sdk
+                .language
+                .invoke_projected(&LanguageCommand::GetEntityFacet {
+                    repository_id: reference.entity.repository_id.clone(),
+                    entity_id: reference.entity.id.clone(),
+                    facet: reference.facet.clone(),
+                });
         let observed_revision = match response {
             Ok(LanguageResponse::EntityFacet {
                 reference: Some(current),
