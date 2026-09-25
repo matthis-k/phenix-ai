@@ -39,6 +39,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 mod invocation_defaults;
+pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
 

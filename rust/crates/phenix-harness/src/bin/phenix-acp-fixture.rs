@@ -8,8 +8,8 @@ use phenix_core::{
     RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_harness::{
-    application::serve_configured_application, default_suite_authority, HarnessBuilder,
-    PhenixHarness,
+    application::serve_configured_application, default_suite_authority,
+    model_surface_fixture::model_surface_response, HarnessBuilder, PhenixHarness,
 };
 use phenix_sdk::{
     model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelCapabilities,
@@ -26,7 +26,10 @@ use std::{
 const FIXTURE_PROVIDER: &str = "fixture.deterministic-provider";
 const FIXTURE_MODEL: &str = "fixture-model";
 const FIXTURE_PROFILE: &str = "fixture.deterministic";
+const FIXTURE_INTROSPECTION_MODEL: &str = "fixture-introspection";
+const FIXTURE_INTROSPECTION_PROFILE: &str = "fixture.introspection";
 const FIXTURE_GENERATION: &str = "fixture-generation";
+const FIXTURE_INTROSPECTION_GENERATION: &str = "fixture-introspection-generation";
 
 struct FixtureProvider;
 
@@ -52,7 +55,10 @@ impl PluginInstance for FixtureProvider {
                 input,
             )
             .map_err(|error| error.to_string())?;
-        if request.model.as_str() != FIXTURE_MODEL {
+        if !matches!(
+            request.model.as_str(),
+            FIXTURE_MODEL | FIXTURE_INTROSPECTION_MODEL
+        ) {
             return Err(format!(
                 "fixture provider received unexpected model {}",
                 request.model
@@ -68,16 +74,21 @@ impl PluginInstance for FixtureProvider {
                 ));
             }
         }
-        let response = env::var("PHENIX_FIXTURE_RESPONSE")
-            .unwrap_or_else(|_| "phenix deterministic fixture response".to_owned());
-        context
-            .kernel
-            .encode_value(&ModelInferenceResponse {
+        let response = if request.model.as_str() == FIXTURE_INTROSPECTION_MODEL {
+            model_surface_response(&request).map_err(|error| error.to_string())?
+        } else {
+            let response = env::var("PHENIX_FIXTURE_RESPONSE")
+                .unwrap_or_else(|_| "phenix deterministic fixture response".to_owned());
+            ModelInferenceResponse {
                 output: Bytes::new(response.into_bytes()),
                 provider_metadata: BTreeMap::new(),
                 usage: Default::default(),
                 tool_calls: Vec::new(),
-            })
+            }
+        };
+        context
+            .kernel
+            .encode_value(&response)
             .map_err(|error| error.to_string())
     }
 }
@@ -119,10 +130,10 @@ fn fixture_component() -> ComponentManifest {
     }
 }
 
-fn fixture_target() -> ModelTarget {
+fn fixture_target(model: &str) -> ModelTarget {
     ModelTarget {
         provider_plugin: fixture_provider_id(),
-        model: ModelId::parse(FIXTURE_MODEL).expect("static fixture model id is valid"),
+        model: ModelId::parse(model).expect("static fixture model id is valid"),
         options: BTreeMap::new(),
     }
 }
@@ -143,13 +154,19 @@ fn invoke_model(
 }
 
 fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> {
-    let target = fixture_target();
+    let target = fixture_target(FIXTURE_MODEL);
+    let introspection_target = fixture_target(FIXTURE_INTROSPECTION_MODEL);
     // Session snapshots resolve the default route before the frontend can select
-    // the named fixture route. Both must be valid in this standalone runtime.
-    for profile_id in ["default", FIXTURE_PROFILE] {
+    // a named fixture route. Keep the deterministic route as the default and expose
+    // introspection separately so existing product fixtures retain their behavior.
+    for (profile_id, profile_target) in [
+        ("default", target.clone()),
+        (FIXTURE_PROFILE, target.clone()),
+        (FIXTURE_INTROSPECTION_PROFILE, introspection_target.clone()),
+    ] {
         let profile = RoutingProfile {
             id: RoutingProfileId::parse(profile_id)?,
-            default_target: target.clone(),
+            default_target: profile_target,
             fallback_targets: Vec::new(),
             callable_targets: BTreeMap::new(),
         };
@@ -176,26 +193,31 @@ fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> 
             other => return Err(format!("fixture profile lookup failed: {other:?}").into()),
         }
     }
-    match invoke_model(
-        harness,
-        &ModelCommand::PublishCapabilities {
-            capabilities: EffectiveModelCapabilities {
-                target,
-                generation: CapabilityGenerationId::parse(FIXTURE_GENERATION)?,
-                context: ContextControl::ReplaceableTurns,
-                capacity: CapacityKnowledge::Known {
-                    limits: ModelLimits {
-                        context_window_tokens: 128 * 1024,
-                        max_output_tokens: Some(16 * 1024),
+    for (target, generation) in [
+        (target, FIXTURE_GENERATION),
+        (introspection_target, FIXTURE_INTROSPECTION_GENERATION),
+    ] {
+        match invoke_model(
+            harness,
+            &ModelCommand::PublishCapabilities {
+                capabilities: EffectiveModelCapabilities {
+                    target,
+                    generation: CapabilityGenerationId::parse(generation)?,
+                    context: ContextControl::ReplaceableTurns,
+                    capacity: CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 128 * 1024,
+                            max_output_tokens: Some(16 * 1024),
+                        },
                     },
+                    cache: Default::default(),
+                    optional: BTreeSet::new(),
                 },
-                cache: Default::default(),
-                optional: BTreeSet::new(),
             },
-        },
-    )? {
-        ModelResponse::Capabilities { .. } => {}
-        other => return Err(format!("fixture capability publication failed: {other:?}").into()),
+        )? {
+            ModelResponse::Capabilities { .. } => {}
+            other => return Err(format!("fixture capability publication failed: {other:?}").into()),
+        }
     }
     match invoke_model(
         harness,
