@@ -577,14 +577,12 @@ pub fn derive_continuation_delta(
             });
         }
     }
-    for (item_id, item) in &target_items {
+    for item in &target.items {
         if base_items
-            .get(item_id)
-            .is_none_or(|base_item| *base_item != *item)
+            .get(item.id.as_str())
+            .is_none_or(|base_item| *base_item != item)
         {
-            operations.push(ContinuationDeltaOperation::Upsert {
-                item: (*item).clone(),
-            });
+            operations.push(ContinuationDeltaOperation::Upsert { item: item.clone() });
         }
     }
 
@@ -720,23 +718,23 @@ impl ContinuationDelta {
             });
         }
 
-        let mut items = base
-            .items
-            .iter()
-            .cloned()
-            .map(|item| (item.id.clone(), item))
-            .collect::<BTreeMap<_, _>>();
+        let mut items = base.items.clone();
         for operation in &self.operations {
             match operation {
                 ContinuationDeltaOperation::Upsert { item } => {
-                    items.insert(item.id.clone(), item.clone());
+                    if let Some(index) = items.iter().position(|current| current.id == item.id) {
+                        items[index] = item.clone();
+                    } else {
+                        items.push(item.clone());
+                    }
                 }
                 ContinuationDeltaOperation::Remove { item_id } => {
-                    if items.remove(item_id).is_none() {
+                    let Some(index) = items.iter().position(|item| item.id == *item_id) else {
                         return Err(ContinuationDeltaError::RemoveMissingItem {
                             item_id: item_id.clone(),
                         });
-                    }
+                    };
+                    items.remove(index);
                 }
             }
         }
@@ -748,7 +746,7 @@ impl ContinuationDelta {
             resolver_binding: self.resolver_binding.clone(),
             base_packet_digest: Some(self.base_packet_digest.clone()),
             packet_digest: String::new(),
-            items: items.into_values().collect(),
+            items,
             omitted_item_ids: self.omitted_item_ids.clone(),
         };
         let observed_target = packet
@@ -982,6 +980,33 @@ mod tests {
                 item_id: "optional-memory".into()
             }
         );
+    }
+
+    #[test]
+    fn derived_delta_preserves_target_order_for_new_items() {
+        let mut base = packet();
+        base.refresh_digest().unwrap();
+        let mut target = base.clone();
+        target.source_snapshot = "snapshot-2".into();
+        target.base_packet_digest = Some(base.packet_digest.clone());
+        target.items.push(ContinuationItem {
+            id: "z-last".into(),
+            kind: ContinuationItemKind::Decision,
+            content: "first appended item".into(),
+            freshness: ContinuationFreshness::Current,
+            evidence: Vec::new(),
+        });
+        target.items.push(ContinuationItem {
+            id: "a-first".into(),
+            kind: ContinuationItemKind::Decision,
+            content: "second appended item".into(),
+            freshness: ContinuationFreshness::Current,
+            evidence: Vec::new(),
+        });
+        target.refresh_digest().unwrap();
+
+        let delta = derive_continuation_delta(&base, &target).unwrap();
+        assert_eq!(delta.apply_to(&base).unwrap(), target);
     }
 
     #[test]
