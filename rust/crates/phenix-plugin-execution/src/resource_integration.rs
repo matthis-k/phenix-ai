@@ -346,6 +346,127 @@ mod transaction_rollback {
     }
 }
 
+mod pre_start_cancellation {
+    use super::*;
+
+    fn admit(kernel: &mut Kernel) {
+        let child = authority(&["workspace.read"]);
+        let binding = binding(child.clone());
+        invoke(
+            kernel,
+            ExecutionResourceCommand::AdmitDelegated {
+                root_execution_id: "root".into(),
+                reservation: reservation("reservation-1", &binding),
+                task: task("task-1", child.clone()),
+                binding,
+                parent_authority: child,
+                policy: policy(2),
+                now_ms: 0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn pending_child_cancellation_releases_reserved_budget_atomically() {
+        let path = temp_db("pre-start-cancel");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+
+        let cancelled = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::CancelDelegatedBeforeStart {
+                task_id: "task-1".into(),
+                cause: "scheduler unavailable".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            cancelled,
+            ExecutionResourceResponse::DelegatedTask { ref task }
+                if matches!(
+                    task.task.state,
+                    WorkerTaskState::Cancelled { ref cause }
+                        if cause == "scheduler unavailable"
+                )
+        ));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 10_000);
+        assert_eq!(budget.output_tokens, 2_000);
+        assert_eq!(budget.cost_microunits, Some(10_000));
+        assert_eq!(budget.attempts, 4);
+
+        let lookup = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::GetDelegated {
+                task_id: "task-1".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            lookup,
+            ExecutionResourceResponse::DelegatedTaskLookup {
+                task: Some(ref task)
+            } if matches!(task.task.state, WorkerTaskState::Cancelled { .. })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn running_child_cannot_use_pre_start_cancellation() {
+        let path = temp_db("pre-start-cancel-running");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+        invoke(
+            &mut kernel,
+            ExecutionResourceCommand::StartDelegated {
+                task_id: "task-1".into(),
+                execution_id: "child-execution".into(),
+                now_ms: 1,
+            },
+        )
+        .unwrap();
+
+        let error = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::CancelDelegatedBeforeStart {
+                task_id: "task-1".into(),
+                cause: "too late".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("InvalidState"));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 8_000);
+        assert_eq!(budget.output_tokens, 1_600);
+        assert_eq!(budget.cost_microunits, Some(8_000));
+        assert_eq!(budget.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
 mod delegation_policy {
     use super::*;
 
