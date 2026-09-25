@@ -572,6 +572,29 @@ mod tests {
             admission.binding.resources.max_result_bytes,
             step_plan().delegation.max_result_bytes
         );
+        assert_eq!(admission.binding.contract.as_slice(), b"exploration contract");
+        assert_eq!(
+            admission.binding.contract_revision,
+            ArtifactRevision::from_content(admission.binding.contract.as_slice())
+        );
+    }
+
+    #[test]
+    fn mismatched_executable_contract_revision_is_rejected() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        let expected = input.contract_revision.clone();
+        input.contract = b"different contract".to_vec().into();
+        let observed = ArtifactRevision::from_content(input.contract.as_slice());
+
+        assert_eq!(
+            prepare_exploration_delegation(&opportunity, &decision, input, &step_plan(), 0),
+            Err(ExplorationPreparationError::ContractRevisionMismatch {
+                expected,
+                observed,
+            })
+        );
     }
 
     #[test]
