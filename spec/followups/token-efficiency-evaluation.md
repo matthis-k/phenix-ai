@@ -31,7 +31,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 - [x] A policy with cheaper successful work but more expensive failures can score worse in success-normalized cost.
 - [x] Cached and fresh input remain distinct in cohort reports.
 - [x] Delegated/helper work appears in total task cost when supplied as distinct charged attempt records; duplicate/cross-root charges are rejected.
-- [ ] Reacquisition caused by prior reduction is attributable when causal evidence exists.
+- [x] Reacquisition caused by prior reduction is attributable when causal evidence exists; evaluator records preserve `cause_identity` and originating attempt instead of only totals.
 - [ ] Evaluation can compare baseline vs one optimization at a time and combined profiles.
 - [ ] Derived estimates can be deleted/rebuilt without losing canonical execution history.
 
