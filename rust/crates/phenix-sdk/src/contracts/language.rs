@@ -387,6 +387,13 @@ pub struct CodeIdentityContinuityState {
     pub reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeIdentityRebuildCheckpoint {
+    pub repository_id: String,
+    pub required_through_sequence: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
@@ -456,6 +463,13 @@ pub enum LanguageCommand {
     SetIdentityContinuity {
         state: CodeIdentityContinuityState,
     },
+    BeginIdentityRebuild {
+        repository_id: String,
+    },
+    CompleteIdentityRebuild {
+        repository_id: String,
+        applied_through_sequence: u64,
+    },
     GetIdentityContinuity {
         repository_id: String,
     },
@@ -496,6 +510,9 @@ pub enum LanguageResponse {
     },
     IdentityContinuity {
         state: Option<CodeIdentityContinuityState>,
+    },
+    IdentityRebuild {
+        checkpoint: CodeIdentityRebuildCheckpoint,
     },
 }
 
