@@ -26,7 +26,7 @@ Tracks #516 slice 5.
 
 - [x] Add the planner/context handoff that creates an `ExplorationOpportunity`.
 - [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
-- [ ] Create the child through the existing delegation/worker path. (Durable runnable-task discovery is now exposed by the resource owner; a production generic worker executor/consumer is still missing.)
+- [x] Create the child through the existing delegation/worker path. (`phenix.delegated-worker@1` consumes the durable runnable projection, creates/reuses the attenuated child execution, runs the pinned route through the ordinary step runner, settles the delegated reservation, and re-admits completed findings through context.)
 - [x] Give the child selected exact references and attenuated authority, not the parent transcript.
 - [x] Return bounded typed findings plus exact evidence references.
 - [x] Re-admit findings through ordinary context admission. (`ContextCommand::AdmitDelegatedResult` owns exact result injection and current-parent re-admission; retries re-admit current context without duplicating the delegated-result injection.)
