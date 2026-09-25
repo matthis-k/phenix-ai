@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn child_work_must_not_erase_parent_token_savings() {
         let mut opportunity = opportunity();
-        opportunity.expected_result_input_tokens = 2_500;
+        opportunity.expected_result_input_tokens = 4_000;
 
         assert_eq!(
             policy().assess(&opportunity),
