@@ -6,7 +6,8 @@ pub use implementation::*;
 pub use phenix_sdk::{
     CodeEntityFacet, CodeEntityFacetReference, CodeEntityFacetRevisions, CodeEntityLineage,
     CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityRevision, DiagnosticsResult,
-    DocumentProvenance, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
+    DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
+    LanguageObservation,
     LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch, LanguageResponse,
     LogicalCodeEntity, ProviderEpoch, LANGUAGE_SERVICE,
 };
