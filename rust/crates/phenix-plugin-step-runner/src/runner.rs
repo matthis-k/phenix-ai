@@ -929,6 +929,7 @@ fn record_routing_evidence(
         evidence: RoutingEvidence {
             success,
             latency_ms: None,
+            cost_microunits: None,
             usage: usage.cloned().unwrap_or_else(unavailable_usage),
         },
     };
@@ -1311,7 +1312,6 @@ fn abort_before_dispatch(
             reservation_id: reservation_id.map(str::to_owned),
             attempt_id: attempt_id.to_owned(),
             outcome,
-            usage,
         })
         .map_err(|error| error.to_string())?;
     match response {
@@ -1340,6 +1340,7 @@ fn settle_step(
             actual,
             attempt_id: attempt_id.to_owned(),
             outcome,
+            usage,
         })
         .map_err(|error| error.to_string())?;
     match response {
