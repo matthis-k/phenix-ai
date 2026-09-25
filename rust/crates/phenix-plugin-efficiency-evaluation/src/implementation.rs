@@ -6,7 +6,10 @@ use phenix_core::{
 use phenix_sdk::{
     derive_efficiency_task_record_from_attempts, efficiency_evaluation_service,
     EfficiencyDurableTaskEvidence, EfficiencyEvaluationCommand, EfficiencyEvaluationInterface,
-    EfficiencyEvaluationResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptResponse,
+    EfficiencyEvaluationResponse, EfficiencyOutcomeEvidenceCommand,
+    EfficiencyOutcomeEvidenceInterface, EfficiencyOutcomeEvidenceRequest,
+    EfficiencyOutcomeEvidenceResponse, StepAttemptCommand, StepAttemptInterface,
+    StepAttemptResponse,
 };
 
 pub const EFFICIENCY_EVALUATION_PLUGIN: &str = "phenix.efficiency-evaluation";
@@ -46,12 +49,20 @@ pub fn efficiency_evaluation_component_manifest() -> ComponentManifest {
         id: efficiency_evaluation_component_id(),
         owner: PluginId::parse(EFFICIENCY_EVALUATION_PLUGIN)
             .expect("static efficiency evaluation plugin id is valid"),
-        imports: vec![ComponentImport {
-            interface: StepAttemptInterface::interface_id(),
-            schema: StepAttemptInterface::schema(),
-            required: true,
-            authority: Authority::default(),
-        }],
+        imports: vec![
+            ComponentImport {
+                interface: StepAttemptInterface::interface_id(),
+                schema: StepAttemptInterface::schema(),
+                required: true,
+                authority: Authority::default(),
+            },
+            ComponentImport {
+                interface: EfficiencyOutcomeEvidenceInterface::interface_id(),
+                schema: EfficiencyOutcomeEvidenceInterface::schema(),
+                required: false,
+                authority: Authority::default(),
+            },
+        ],
         exports: vec![ComponentExport {
             interface: EfficiencyEvaluationInterface::interface_id(),
             schema: EfficiencyEvaluationInterface::schema(),
@@ -69,6 +80,7 @@ pub fn efficiency_evaluation_factory() -> Box<dyn PluginInstance> {
 
 struct EvaluationSdk<'host, 'runtime> {
     attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
+    outcomes: SdkClient<'host, 'runtime, EfficiencyOutcomeEvidenceInterface>,
 }
 
 type EvaluationContext<'host, 'runtime> =
@@ -81,7 +93,8 @@ fn context<'host, 'runtime>(
     PluginContext::new(
         host,
         EvaluationSdk {
-            attempts: SdkClient::new(host, component),
+            attempts: SdkClient::new(host, component.clone()),
+            outcomes: SdkClient::new(host, component),
         },
         (),
         (),
@@ -126,14 +139,33 @@ impl PluginInstance for EfficiencyEvaluationPlugin {
                 let StepAttemptResponse::Attempts { attempts } = listed else {
                     return Err("attempt service returned a non-list response".into());
                 };
+
+                let outcome: EfficiencyOutcomeEvidenceResponse = context
+                    .sdk
+                    .outcomes
+                    .invoke_projected(&EfficiencyOutcomeEvidenceCommand::Resolve {
+                        request: EfficiencyOutcomeEvidenceRequest {
+                            task_fixture_revision: request.task_fixture_revision.clone(),
+                            root_execution_id: request.root_execution_id.clone(),
+                            evaluator_identity: request.outcome_evaluator_identity.clone(),
+                        },
+                    })
+                    .map_err(|error| format!("terminal outcome evidence unavailable: {error}"))?;
+                let EfficiencyOutcomeEvidenceResponse::Evidence {
+                    evidence: Some(outcome_evidence),
+                } = outcome
+                else {
+                    return Err("terminal outcome evidence is unresolved".into());
+                };
+
                 let durable = EfficiencyDurableTaskEvidence {
                     task_fixture_revision: request.task_fixture_revision,
                     root_execution_id: request.root_execution_id,
                     policy_revision: request.policy_revision,
                     outcome_evaluator_identity: request.outcome_evaluator_identity,
                     price_revision: request.price_revision,
-                    outcome: request.outcome_evidence.outcome,
-                    outcome_evidence: request.outcome_evidence,
+                    outcome: outcome_evidence.outcome,
+                    outcome_evidence,
                     attempts,
                     root_elapsed_ms: request.root_elapsed_ms,
                 };
@@ -156,12 +188,17 @@ mod tests {
     #[test]
     fn component_reads_attempts_and_exports_only_derived_evaluation() {
         let manifest = efficiency_evaluation_component_manifest();
-        assert_eq!(manifest.imports.len(), 1);
+        assert_eq!(manifest.imports.len(), 2);
         assert_eq!(
             manifest.imports[0].interface,
             StepAttemptInterface::interface_id()
         );
         assert!(manifest.imports[0].required);
+        assert_eq!(
+            manifest.imports[1].interface,
+            EfficiencyOutcomeEvidenceInterface::interface_id()
+        );
+        assert!(!manifest.imports[1].required);
         assert_eq!(manifest.exports.len(), 1);
         assert_eq!(
             manifest.exports[0].interface,
