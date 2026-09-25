@@ -324,9 +324,7 @@ fn run_with_retry_route(
         Ok(ModelResponse::Candidates { candidates }) => candidates
             .into_iter()
             .filter_map(|candidate| candidate.estimate)
-            .filter(|estimate| {
-                estimate.source == phenix_sdk::RoutingEstimateSource::Historical
-            })
+            .filter(|estimate| estimate.source == phenix_sdk::RoutingEstimateSource::Historical)
             .collect(),
         Ok(_) | Err(_) => Vec::new(),
     };

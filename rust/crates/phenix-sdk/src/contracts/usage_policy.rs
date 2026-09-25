@@ -116,11 +116,16 @@ fn historical_estimator_snapshot(
         revision: first.estimator_snapshot_revision.clone()?,
         evidence_cutoff_sequence: first.evidence_cutoff_sequence?,
     };
-    estimates.iter().skip(1).all(|estimate| {
-        estimate.source == RoutingEstimateSource::Historical
-            && estimate.estimator_snapshot_revision.as_deref() == Some(snapshot.revision.as_str())
-            && estimate.evidence_cutoff_sequence == Some(snapshot.evidence_cutoff_sequence)
-    }).then_some(snapshot)
+    estimates
+        .iter()
+        .skip(1)
+        .all(|estimate| {
+            estimate.source == RoutingEstimateSource::Historical
+                && estimate.estimator_snapshot_revision.as_deref()
+                    == Some(snapshot.revision.as_str())
+                && estimate.evidence_cutoff_sequence == Some(snapshot.evidence_cutoff_sequence)
+        })
+        .then_some(snapshot)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
