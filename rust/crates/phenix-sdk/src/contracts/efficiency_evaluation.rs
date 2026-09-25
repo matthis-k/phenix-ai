@@ -6,8 +6,7 @@ use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 
 pub const EFFICIENCY_EVALUATION_SERVICE: &str = "phenix.efficiency-evaluation@1";
-pub const EFFICIENCY_OUTCOME_EVIDENCE_SERVICE: &str =
-    "phenix.efficiency-outcome-evidence@1";
+pub const EFFICIENCY_OUTCOME_EVIDENCE_SERVICE: &str = "phenix.efficiency-outcome-evidence@1";
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,

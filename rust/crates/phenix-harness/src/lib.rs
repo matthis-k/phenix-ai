@@ -804,8 +804,7 @@ mod tests {
             .id
             .as_str()
             .to_owned();
-        let builder =
-            HarnessBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
+        let builder = HarnessBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
 
         assert!(builder
             .manifests
