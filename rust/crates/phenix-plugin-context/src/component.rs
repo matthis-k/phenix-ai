@@ -103,6 +103,18 @@ mod tests {
             &execution_component_manifest(authority()).id
         );
         assert_eq!(handle.effective_authority(), &authority());
+        let resource_handle = graph
+            .import_handle(
+                &context_component_id(),
+                &ExecutionResourceInterface::interface_id(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resource_handle.exporter(),
+            &execution_component_manifest(authority()).id
+        );
+        assert_eq!(resource_handle.effective_authority(), &authority());
         assert!(graph
             .import_handle(
                 &context_component_id(),
