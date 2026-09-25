@@ -15,7 +15,7 @@ pub enum StepTransactionCommand {
         actual: BudgetActual,
         attempt_id: String,
         outcome: AttemptOutcome,
-        usage: AttemptUsageRecord,
+        usage: Box<AttemptUsageRecord>,
     },
     AbortBeforeDispatch {
         root_execution_id: String,

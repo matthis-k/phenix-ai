@@ -653,7 +653,6 @@ mod tests {
                     attempt_id: attempt_id.into(),
                     parent_attempt_id: None,
                     policy_revision: "policy-1".into(),
-                    historical_estimator_snapshot: None,
                     kind,
                     task_id: Some("task-0".into()),
                 },
@@ -684,6 +683,7 @@ mod tests {
         };
         super::super::StepPlan {
             policy_revision: "policy-1".into(),
+            historical_estimator_snapshot: None,
             routing: super::super::RoutingRequirements {
                 context: context.clone(),
                 required_capabilities: std::collections::BTreeSet::new(),

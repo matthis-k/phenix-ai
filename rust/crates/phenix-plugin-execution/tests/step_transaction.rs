@@ -319,7 +319,7 @@ fn settle(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
             actual: actual(),
             attempt_id: "attempt-1".into(),
             outcome: AttemptOutcome::Succeeded,
-            usage: usage(),
+            usage: Box::new(usage()),
         },
     )
 }

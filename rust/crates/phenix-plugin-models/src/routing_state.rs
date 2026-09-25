@@ -284,6 +284,7 @@ mod tests {
                 RoutingEvidence {
                     success: false,
                     latency_ms: Some(200),
+                    cost_microunits: None,
                     usage: unavailable_usage(),
                 },
             )
@@ -294,6 +295,7 @@ mod tests {
                 RoutingEvidence {
                     success: true,
                     latency_ms: Some(50),
+                    cost_microunits: None,
                     usage: unavailable_usage(),
                 },
             )

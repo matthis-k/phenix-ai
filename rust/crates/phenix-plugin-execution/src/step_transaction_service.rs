@@ -75,7 +75,8 @@ fn handle(
 
             let attempt_old = read_attempt_state(context)?;
             let mut attempts = attempt_service::restore(attempt_old.as_deref())?;
-            let attempt = attempts.settle_with_usage(&attempt_id, outcome, actual, usage)?;
+            let attempt =
+                attempts.settle_with_usage(&attempt_id, outcome, actual, *usage)?;
             let attempt_operations = attempt_operations(attempt_old, &attempts)?;
 
             let resource_namespace = resource_service::execution_resource_namespace();

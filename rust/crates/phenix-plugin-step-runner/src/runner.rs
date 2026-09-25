@@ -1353,7 +1353,7 @@ fn settle_step(
             actual,
             attempt_id: attempt_id.to_owned(),
             outcome,
-            usage,
+            usage: Box::new(usage),
         })
         .map_err(|error| error.to_string())?;
     match response {

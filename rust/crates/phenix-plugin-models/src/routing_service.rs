@@ -146,6 +146,7 @@ mod tests {
                     max_output_tokens: Some(2_000),
                 },
             },
+            cache: Default::default(),
             optional: BTreeSet::new(),
         };
         let mut state = RoutingServiceState::default();
@@ -163,6 +164,7 @@ mod tests {
                 phenix_sdk::RoutingEvidence {
                     success: true,
                     latency_ms: Some(25),
+                    cost_microunits: None,
                     usage: phenix_core::ModelTurnUsage {
                         fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
                         cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
