@@ -574,11 +574,13 @@ mod tests {
         ServiceContribution, ServiceId, ServiceRole, SessionId,
     };
     use phenix_plugin_catalog::{
-        artifact_manifest, artifact_service, context_manifest, context_service, memory_service,
-        planning_manifest, planning_service, repository_work_queue_service, session_manifest,
-        session_service, ArtifactCommand, ArtifactProvenance, ArtifactResponse, ContextCommand,
-        ContextDescriptor, ContextResourceKind, ContextResponse, ContextScope, PlanningCommand,
-        PlanningResponse, RepositoryWorkSnapshot, SessionCommand, SessionResponse,
+        artifact_manifest, artifact_service, context_manifest, context_service,
+        efficiency_evaluation_service, memory_service, planning_manifest, planning_service,
+        repository_work_queue_service, session_manifest, session_service, ArtifactCommand,
+        ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
+        ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
+        EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
+        SessionCommand, SessionResponse,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -795,6 +797,40 @@ mod tests {
 
         assert_eq!(generation(true), generation(true));
         assert_ne!(generation(true), generation(false));
+    }
+
+    #[test]
+    fn efficiency_collection_requires_terminal_outcome_provider() {
+        let mut harness = HarnessBuilder::with_default_suite().unwrap().build().unwrap();
+        harness.activate().unwrap();
+
+        let command = EfficiencyEvaluationCommand::CollectTask {
+            request: EfficiencyCollectionRequest {
+                task_fixture_revision: "fixture-1".into(),
+                root_execution_id: "root-without-outcome-provider".into(),
+                policy_revision: "policy-1".into(),
+                outcome_evaluator_identity: "fixture.tests".into(),
+                price_revision: "prices-1".into(),
+                root_elapsed_ms: Some(10),
+            },
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+        let error = harness
+            .invoke(
+                &efficiency_evaluation_service(),
+                &input,
+                &Authority::default(),
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("terminal outcome evidence unavailable")
+                || error.contains("unresolved")
+                || error.contains("provider"),
+            "unexpected evaluation error: {error}"
+        );
     }
 
     #[test]
