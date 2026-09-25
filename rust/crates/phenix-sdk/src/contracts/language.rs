@@ -319,6 +319,7 @@ pub struct CodeEntityRevision {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntityProviderFact {
+    pub id: String,
     pub entity: LogicalCodeEntity,
     pub revision: String,
     pub sequence: u64,
@@ -328,6 +329,13 @@ pub struct CodeEntityProviderFact {
     pub signature_identity: Option<String>,
     pub body_identity: Option<String>,
     pub facets: CodeEntityFacetRevisions,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderFactBatch {
+    #[serde(default)]
+    pub facts: Vec<CodeEntityProviderFact>,
 }
 
 impl CodeEntityRevision {
@@ -447,7 +455,7 @@ pub enum LanguageCommand {
     },
     IngestEntityFact {
         observation_id: String,
-        fact: CodeEntityProviderFact,
+        fact_id: String,
     },
     RecordEntityLineage {
         repository_id: String,
