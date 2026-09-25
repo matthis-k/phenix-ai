@@ -858,6 +858,7 @@ fn run_with_retry_route(
                     retry_template,
                     &attribution,
                     RetryRouteStrategy::PreferFallback,
+                    resolved_route.clone(),
                 );
             }
             return Err(format!(
