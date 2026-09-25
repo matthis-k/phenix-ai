@@ -1,4 +1,7 @@
 use crate::{memory_component_manifest, memory_factory, memory_manifest};
+use phenix_plugin_language::{
+    language_component_manifest, language_factory, language_manifest, language_service,
+};
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     KernelConfig, LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId,
@@ -7,12 +10,15 @@ use phenix_core::{
 };
 use phenix_sdk::{
     helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
-    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse,
-    MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope,
-    MemorySourceReference,
+    CodeEntityFacet, CodeEntityFacetReference, CodeEntityFacetRevisions, CodeEntityRevision,
+    DocumentProvenance, HelperInvocationCommand, HelperInvocationInterface,
+    HelperInvocationResponse, LanguageCommand, LanguageDocumentIdentity, LanguageResponse,
+    LogicalCodeEntity, MemoryCanonicalReference, MemoryCommand, MemoryDependencyRevision,
+    MemoryFreshness, MemoryKind, MemoryRecallQuery, MemoryRecord, MemoryResponse,
+    MemoryRevisionCursor, MemoryScope, MemorySourceReference, ProviderEpoch,
 };
 use std::{
+    collections::BTreeMap,
     fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -65,6 +71,38 @@ fn routed_kernel_with(path: &PathBuf) -> Kernel {
         .unwrap();
     kernel
         .register_embedded_factory(helper.id, || Box::new(RevalidationProvider))
+        .unwrap();
+    kernel.activate_all().unwrap();
+    kernel
+}
+
+fn code_kernel_with(path: &PathBuf) -> Kernel {
+    let memory = memory_manifest();
+    let helper = helper_manifest();
+    let language = language_manifest();
+    let authority = memory.maximum_authority.clone();
+    let resolved = ResolvedHarness::resolve(
+        [memory.clone(), helper.clone(), language.clone()],
+        [
+            memory_component_manifest(),
+            helper_component_manifest(),
+            language_component_manifest(),
+        ],
+        [],
+        &authority,
+    )
+    .unwrap();
+    let persistence = LocalPersistence::open(path).unwrap();
+    let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
+    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel
+        .register_embedded_factory(memory.id, memory_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(helper.id, || Box::new(RevalidationProvider))
+        .unwrap();
+    kernel
+        .register_embedded_factory(language.id, language_factory)
         .unwrap();
     kernel.activate_all().unwrap();
     kernel
@@ -168,6 +206,20 @@ fn invoke(kernel: &mut Kernel, command: MemoryCommand) -> Result<MemoryResponse,
     output.project().map_err(|error| error.to_string())
 }
 
+fn invoke_language(kernel: &mut Kernel, command: LanguageCommand) -> Result<LanguageResponse, String> {
+    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = kernel
+        .invoke(
+            &language_service(),
+            &input,
+            &language_manifest().maximum_authority,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+    let output: PhenixValue = serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+    output.project().map_err(|error| error.to_string())
+}
+
 fn configure_revalidation_routing(
     _kernel: &mut Kernel,
     profile: &str,
@@ -203,6 +255,49 @@ fn record(id: &str, kind: MemoryKind, content: &str, created_at: u64) -> MemoryR
     }
 }
 
+fn code_revision(
+    sequence: u64,
+    path: &str,
+    name: &str,
+    name_location_revision: &str,
+    body_revision: Option<&str>,
+) -> CodeEntityRevision {
+    CodeEntityRevision {
+        entity: LogicalCodeEntity {
+            id: "entity-1".into(),
+            repository_id: "repo-1".into(),
+        },
+        revision: format!("entity-revision-{sequence}"),
+        sequence,
+        document: LanguageDocumentIdentity {
+            path: path.into(),
+            file_version: Some(format!("sha256:file-{sequence}")),
+            provenance: DocumentProvenance::WorkspaceBacked,
+        },
+        symbol: Some(format!("crate::{name}")),
+        name: name.into(),
+        signature_identity: Some("signature-stable".into()),
+        body_identity: body_revision.map(str::to_owned),
+        provider_id: "fixture-analyzer".into(),
+        provider_epoch: ProviderEpoch::new(1).unwrap(),
+        facets: CodeEntityFacetRevisions {
+            existence: "existence-stable".into(),
+            name_location: name_location_revision.into(),
+            signature: Some("signature-stable".into()),
+            body: body_revision.map(str::to_owned),
+            relations: BTreeMap::from([("callers".into(), "callers-stable".into())]),
+        },
+    }
+}
+
+fn code_dependency(revision: &CodeEntityRevision, facet: CodeEntityFacet) -> MemoryDependencyRevision {
+    MemoryDependencyRevision::for_code_facet(
+        &revision
+            .facet_reference(facet)
+            .expect("fixture facet must exist"),
+    )
+}
+
 fn mark_needs_validation(kernel: &mut Kernel, id: &str, observed_at: u64) {
     invoke(
         kernel,
@@ -221,18 +316,14 @@ fn mark_needs_validation(kernel: &mut Kernel, id: &str, observed_at: u64) {
 fn revision_observation_pages_advance_over_the_dependency_index() {
     let path = temp_db("revision-pages");
     let mut kernel = kernel_with(&path);
-    let service = ServiceId::parse("phenix.language@1").unwrap();
-    let resource = "entity/entity-1/body".to_owned();
+    let revision = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
+    let dependency = code_dependency(&revision, CodeEntityFacet::Body);
+    let service = dependency.service.clone();
+    let resource = dependency.resource.clone();
 
     for id in ["memory-a", "memory-b", "memory-c"] {
         let mut memory = record(id, MemoryKind::Fact, id, 10);
-        memory
-            .supporting_dependencies
-            .push(MemoryDependencyRevision {
-                service: service.clone(),
-                resource: resource.clone(),
-                revision: Some("body-1".into()),
-            });
+        memory.supporting_dependencies.push(dependency.clone());
         invoke(&mut kernel, MemoryCommand::Record { record: memory }).unwrap();
     }
 
@@ -649,14 +740,12 @@ fn model_revalidation_cannot_make_changed_exact_support_current() {
         "validate-keep",
         "unexpected-resolve",
     );
-    let service = ServiceId::parse("phenix.language@1").unwrap();
-    let resource = "entity/entity-1/body".to_owned();
+    let revision = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
+    let dependency = code_dependency(&revision, CodeEntityFacet::Body);
+    let service = dependency.service.clone();
+    let resource = dependency.resource.clone();
     let mut fact = record("stale-support", MemoryKind::Fact, "code claim", 10);
-    fact.supporting_dependencies.push(MemoryDependencyRevision {
-        service: service.clone(),
-        resource: resource.clone(),
-        revision: Some("body-1".into()),
-    });
+    fact.supporting_dependencies.push(dependency);
     invoke(
         &mut kernel,
         MemoryCommand::Record {
@@ -769,6 +858,223 @@ fn deterministic_expiry_revalidation_does_not_invoke_a_model() {
         response,
         MemoryResponse::Freshness { state: Some(state) }
             if state.freshness == MemoryFreshness::Historical && state.changed_at == 20
+    ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn verified_move_preserves_body_claim_and_invalidates_name_location_claim() {
+    let path = temp_db("code-facet-move");
+    let mut kernel = code_kernel_with(&path);
+    let first = code_revision(1, "src/old.rs", "old_name", "name-location-1", Some("body-stable"));
+    invoke_language(
+        &mut kernel,
+        LanguageCommand::RecordEntityRevision {
+            revision: first.clone(),
+        },
+    )
+    .unwrap();
+
+    let mut body = record("body-claim", MemoryKind::Fact, "body claim", 10);
+    body.supporting_dependencies
+        .push(code_dependency(&first, CodeEntityFacet::Body));
+    let mut location = record("location-claim", MemoryKind::Fact, "location claim", 10);
+    location
+        .supporting_dependencies
+        .push(code_dependency(&first, CodeEntityFacet::NameLocation));
+    for memory in [body.clone(), location.clone()] {
+        invoke(&mut kernel, MemoryCommand::Record { record: memory }).unwrap();
+    }
+
+    for id in [&body.id, &location.id] {
+        assert!(matches!(
+            invoke(&mut kernel, MemoryCommand::GetFreshness { id: id.clone() }).unwrap(),
+            MemoryResponse::Freshness { state: Some(state) }
+                if state.freshness == MemoryFreshness::Current
+        ));
+    }
+
+    let second = code_revision(2, "src/new.rs", "new_name", "name-location-2", Some("body-stable"));
+    invoke_language(
+        &mut kernel,
+        LanguageCommand::RecordEntityRevision { revision: second },
+    )
+    .unwrap();
+
+    let recalled = invoke(
+        &mut kernel,
+        MemoryCommand::Recall {
+            query: MemoryRecallQuery {
+                scopes: vec![scope()],
+                kinds: vec![MemoryKind::Fact],
+                query: "claim".into(),
+                at: 20,
+                limit: 10,
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(recalled, MemoryResponse::Recall { records: vec![body.clone()] });
+    assert!(matches!(
+        invoke(
+            &mut kernel,
+            MemoryCommand::GetFreshness {
+                id: location.id.clone(),
+            },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::NeedsValidation
+    ));
+    assert!(matches!(
+        invoke(
+            &mut kernel,
+            MemoryCommand::GetFreshness { id: body.id },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::Current
+    ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn unavailable_code_owner_never_admits_exact_code_support_as_current() {
+    let path = temp_db("code-owner-unavailable");
+    let mut kernel = kernel_with(&path);
+    let revision = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
+    let mut memory = record("unverified-code", MemoryKind::Fact, "unverified code claim", 10);
+    memory
+        .supporting_dependencies
+        .push(code_dependency(&revision, CodeEntityFacet::Body));
+    invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+
+    assert!(matches!(
+        invoke(
+            &mut kernel,
+            MemoryCommand::GetFreshness { id: memory.id },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::NeedsValidation
+                && !super::freshness::exact_support_is_current(&memory, &state)
+    ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn missing_current_code_facet_cannot_remain_silently_current() {
+    let path = temp_db("code-facet-missing");
+    let mut kernel = code_kernel_with(&path);
+    let first = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
+    invoke_language(
+        &mut kernel,
+        LanguageCommand::RecordEntityRevision {
+            revision: first.clone(),
+        },
+    )
+    .unwrap();
+    let mut memory = record("body-dependent", MemoryKind::Fact, "body dependent", 10);
+    memory
+        .supporting_dependencies
+        .push(code_dependency(&first, CodeEntityFacet::Body));
+    invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+
+    let removed = code_revision(2, "src/lib.rs", "run", "name-1", None);
+    invoke_language(
+        &mut kernel,
+        LanguageCommand::RecordEntityRevision { revision: removed },
+    )
+    .unwrap();
+    let _ = invoke(
+        &mut kernel,
+        MemoryCommand::Recall {
+            query: MemoryRecallQuery {
+                scopes: vec![scope()],
+                kinds: vec![MemoryKind::Fact],
+                query: "body".into(),
+                at: 20,
+                limit: 10,
+            },
+        },
+    )
+    .unwrap();
+
+    assert!(matches!(
+        invoke(
+            &mut kernel,
+            MemoryCommand::GetFreshness { id: memory.id },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::NeedsValidation
+    ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn restart_preserves_code_dependency_provenance_and_rechecks_current_facets() {
+    let path = temp_db("code-facet-restart");
+    let first = code_revision(1, "src/lib.rs", "run", "name-1", Some("body-1"));
+    let memory = {
+        let mut kernel = code_kernel_with(&path);
+        invoke_language(
+            &mut kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: first.clone(),
+            },
+        )
+        .unwrap();
+        let mut memory = record("restart-code", MemoryKind::Fact, "restart code claim", 10);
+        memory
+            .supporting_dependencies
+            .push(code_dependency(&first, CodeEntityFacet::Body));
+        invoke(&mut kernel, MemoryCommand::Record { record: memory.clone() }).unwrap();
+        memory
+    };
+
+    let mut restored = code_kernel_with(&path);
+    assert!(matches!(
+        invoke(
+            &mut restored,
+            MemoryCommand::GetFreshness {
+                id: memory.id.clone(),
+            },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::Current
+                && state.dependencies.iter().any(|dependency|
+                    dependency == &memory.supporting_dependencies[0])
+    ));
+
+    let changed = code_revision(2, "src/lib.rs", "run", "name-1", Some("body-2"));
+    invoke_language(
+        &mut restored,
+        LanguageCommand::RecordEntityRevision { revision: changed },
+    )
+    .unwrap();
+    let _ = invoke(
+        &mut restored,
+        MemoryCommand::Recall {
+            query: MemoryRecallQuery {
+                scopes: vec![scope()],
+                kinds: vec![MemoryKind::Fact],
+                query: "restart".into(),
+                at: 20,
+                limit: 10,
+            },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        invoke(
+            &mut restored,
+            MemoryCommand::GetFreshness { id: memory.id },
+        )
+        .unwrap(),
+        MemoryResponse::Freshness { state: Some(state) }
+            if state.freshness == MemoryFreshness::NeedsValidation
     ));
     let _ = fs::remove_file(path);
 }
