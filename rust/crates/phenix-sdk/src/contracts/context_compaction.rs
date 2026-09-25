@@ -87,6 +87,10 @@ pub struct DerivedReductionSummary {
 pub struct ContextReducerProposal {
     pub execution_id: String,
     pub expected_projection: ProjectionRevision,
+    pub configuration_revision: String,
+    pub authority_revision: String,
+    pub capability_generation: String,
+    pub helper_reservation_id: String,
     pub stage: ContextReducerStage,
     pub helper_attempt_id: String,
     #[serde(default)]
@@ -103,6 +107,10 @@ pub struct ContextReducerProposal {
 pub enum ReducerValidationError {
     StaleProjection,
     ExecutionMismatch,
+    ConfigurationMismatch,
+    AuthorityMismatch,
+    CapabilityGenerationMismatch,
+    HelperReservationMismatch,
     StageMismatch,
     UnknownItem { item_id: String },
     DuplicateItem { item_id: String },
@@ -127,6 +135,18 @@ impl ContextReducerProposal {
         }
         if self.execution_id != request.execution_id {
             return Err(ReducerValidationError::ExecutionMismatch);
+        }
+        if self.configuration_revision != request.configuration_revision {
+            return Err(ReducerValidationError::ConfigurationMismatch);
+        }
+        if self.authority_revision != request.authority_revision {
+            return Err(ReducerValidationError::AuthorityMismatch);
+        }
+        if self.capability_generation != request.capability_generation {
+            return Err(ReducerValidationError::CapabilityGenerationMismatch);
+        }
+        if self.helper_reservation_id != request.helper_reservation_id {
+            return Err(ReducerValidationError::HelperReservationMismatch);
         }
         if self.stage != request.stage {
             return Err(ReducerValidationError::StageMismatch);
@@ -378,6 +398,10 @@ mod tests {
         let proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: Vec::new(),
@@ -393,11 +417,46 @@ mod tests {
     }
 
     #[test]
+    fn reducer_proposal_is_bound_to_runtime_and_helper_revisions() {
+        let request = reducer_request();
+        let mut proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            retained_item_ids: vec!["history-1".into()],
+            omitted_item_ids: Vec::new(),
+            summaries: Vec::new(),
+            encoded_output_bytes: 10,
+        };
+
+        proposal.authority_revision = "authority-2".into();
+        assert_eq!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::AuthorityMismatch)
+        );
+        proposal.authority_revision = request.authority_revision.clone();
+        proposal.helper_reservation_id = "reservation-other".into();
+        assert_eq!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::HelperReservationMismatch)
+        );
+    }
+
+    #[test]
     fn reducer_rejects_fabricated_ids_and_oversized_output() {
         let request = reducer_request();
         let mut proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["fabricated".into()],
@@ -424,6 +483,10 @@ mod tests {
         let proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["history-1".into()],
@@ -451,6 +514,10 @@ mod tests {
         let proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["history-1".into()],
@@ -474,6 +541,10 @@ mod tests {
         let proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: Vec::new(),
