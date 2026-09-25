@@ -125,6 +125,7 @@ pub enum ExplorationRejection {
     UnknownChildCostUnderFiniteBudget { allowed: u64 },
     NoExpectedSavings,
     SavingsBelowThreshold { expected: u64, required: u64 },
+    TotalTokenWorkNotReduced { inline: u64, delegated: u64 },
 }
 
 impl ExplorationPolicy {
@@ -195,6 +196,18 @@ impl ExplorationPolicy {
                 reason: ExplorationRejection::SavingsBelowThreshold {
                     expected: expected_saved,
                     required: self.min_parent_input_tokens_saved,
+                },
+            };
+        }
+
+        let delegated_total = delegated_parent_cost
+            .saturating_add(opportunity.child_input_tokens)
+            .saturating_add(opportunity.child_output_tokens);
+        if delegated_total >= inline_total {
+            return ExplorationDecision::KeepInParent {
+                reason: ExplorationRejection::TotalTokenWorkNotReduced {
+                    inline: inline_total,
+                    delegated: delegated_total,
                 },
             };
         }
@@ -487,6 +500,22 @@ mod tests {
             policy().assess(&opportunity),
             ExplorationDecision::KeepInParent {
                 reason: ExplorationRejection::NoExpectedSavings,
+            }
+        );
+    }
+
+    #[test]
+    fn child_work_must_not_erase_parent_token_savings() {
+        let mut opportunity = opportunity();
+        opportunity.expected_result_input_tokens = 2_500;
+
+        assert_eq!(
+            policy().assess(&opportunity),
+            ExplorationDecision::KeepInParent {
+                reason: ExplorationRejection::TotalTokenWorkNotReduced {
+                    inline: 5_500,
+                    delegated: 5_600,
+                },
             }
         );
     }
