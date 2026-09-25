@@ -1,5 +1,7 @@
 use super::{
-    BudgetReservation, ExactContextReference, ExecutionAuthority, ModelTurnUsage, RouteDecision,
+    BudgetReservation, CachePlacement, ContextAdmissionRequest, ContextCandidate, ContextRetention,
+    ContextSource, ExactContextReference, ExecutionAuthority, ModelTurnUsage, RouteDecision,
+    StepPlan,
 };
 use phenix_core::{ArtifactRevision, Bytes, ContextResourceId};
 use serde::{Deserialize, Serialize};
@@ -182,6 +184,37 @@ impl DelegatedWorkerResult {
             content: content.into(),
         })
     }
+
+    pub fn context_admission(
+        &self,
+        task_id: &str,
+        binding: &DelegationTaskBinding,
+        execution_id: impl Into<String>,
+        step_plan: StepPlan,
+        cache_epoch: u64,
+    ) -> Result<ContextAdmissionRequest, DelegationAdmissionError> {
+        let draft = self.context_draft(task_id, binding)?;
+        let content_identity = ArtifactRevision::from_content(draft.content.as_slice()).to_string();
+        let estimated_tokens = u64::try_from(draft.content.as_slice().len()).unwrap_or(u64::MAX);
+        Ok(ContextAdmissionRequest {
+            execution_id: execution_id.into(),
+            step_plan,
+            candidates: vec![ContextCandidate {
+                id: draft.resource_id.as_str().to_owned(),
+                source: ContextSource::Delegation {
+                    task_id: task_id.to_owned(),
+                },
+                content_identity,
+                content: draft.content,
+                estimated_tokens,
+                mandatory: true,
+                retention: ContextRetention::Full,
+                cache: CachePlacement::Epoch,
+                recovery: None,
+            }],
+            cache_epoch,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -328,6 +361,47 @@ mod tests {
         assert_eq!(envelope.task_id, "task with spaces");
         assert_eq!(envelope.findings[0].kind, "fact");
         assert_eq!(envelope.findings[0].evidence.len(), 1);
+    }
+
+    #[test]
+    fn bounded_result_projects_to_ordinary_context_admission() {
+        let binding = DelegationTaskBinding {
+            contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            parent_policy_revision: "policy-1".into(),
+            originating_attempt_id: Some("attempt-1".into()),
+            resources: resources(),
+        };
+        let result = DelegatedWorkerResult {
+            findings: vec![DelegatedFinding {
+                kind: "fact".into(),
+                summary: "bounded finding".into(),
+                evidence: Vec::new(),
+            }],
+            evidence: Vec::new(),
+            escalation: None,
+            usage: ModelTurnUsage::default(),
+            encoded_result_bytes: 0,
+        };
+        let mut plan = crate::contracts::usage_policy::tests_support::plan_for_contract_tests();
+        plan.context.mandatory_input_tokens = 64 * 1024;
+        plan.routing.context = plan.context.clone();
+        let request = result
+            .context_admission("task-1", &binding, "parent-execution", plan, 7)
+            .unwrap();
+
+        assert_eq!(request.execution_id, "parent-execution");
+        assert_eq!(request.cache_epoch, 7);
+        assert_eq!(request.candidates.len(), 1);
+        assert!(request.candidates[0].mandatory);
+        assert_eq!(
+            request.candidates[0].source,
+            ContextSource::Delegation {
+                task_id: "task-1".into()
+            }
+        );
+        let admitted = request.admit().unwrap();
+        assert_eq!(admitted.admitted.len(), 1);
+        assert_eq!(admitted.admitted[0].form, crate::contracts::ContextProjectionForm::Full);
     }
 
     #[test]
