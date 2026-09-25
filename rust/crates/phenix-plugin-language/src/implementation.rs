@@ -4,8 +4,9 @@ use phenix_core::{
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    CodeEntityFacet, CodeEntityFacetChanges, CodeEntityRevision, CodeIdentityContinuityState,
-    DiagnosticsResult, DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
+    CodeEntityFacet, CodeEntityFacetChanges, CodeEntityLineage, CodeEntityLineageConfidence,
+    CodeEntityLineageKind, CodeEntityRevision, CodeIdentityContinuityState, DiagnosticsResult,
+    DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, LANGUAGE_SERVICE,
 };
 use std::collections::BTreeMap;
@@ -188,6 +189,35 @@ fn handle(
             store_entity_revision(context, &revision)?;
             Ok(LanguageResponse::EntityRevision {
                 revision: Some(revision),
+            })
+        }
+        LanguageCommand::RecordEntityLineage {
+            repository_id,
+            lineage,
+        } => {
+            validate_code_entity_lineage(&repository_id, &lineage)?;
+            store_entity_lineage(context, &repository_id, &lineage)?;
+            Ok(LanguageResponse::EntityLineage {
+                lineage: Some(lineage),
+            })
+        }
+        LanguageCommand::GetEntityLineage {
+            repository_id,
+            from_entity_id,
+            to_entity_id,
+            kind,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("lineage source entity id", &from_entity_id)?;
+            validate_identity("lineage target entity id", &to_entity_id)?;
+            Ok(LanguageResponse::EntityLineage {
+                lineage: read_entity_lineage(
+                    context,
+                    &repository_id,
+                    &from_entity_id,
+                    &to_entity_id,
+                    kind,
+                )?,
             })
         }
         LanguageCommand::GetEntityRevision {
@@ -418,6 +448,61 @@ fn store_entity_revision(
         .map_err(|error| error.to_string())
 }
 
+fn store_entity_lineage(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    lineage: &CodeEntityLineage,
+) -> Result<(), String> {
+    let key = entity_lineage_key(repository_id, lineage);
+    let encoded = serde_json::to_vec(lineage).map_err(|error| error.to_string())?;
+    if let Some(existing) = context
+        .kernel
+        .read_durable(&language_namespace(), &key)
+        .map_err(|error| error.to_string())?
+    {
+        let existing: CodeEntityLineage =
+            serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+        if existing == *lineage {
+            return Ok(());
+        }
+        return Err("code entity lineage already exists with different evidence".into());
+    }
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: None,
+                },
+                TransactionOp::Put {
+                    key,
+                    value: encoded,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn read_entity_lineage(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    from_entity_id: &str,
+    to_entity_id: &str,
+    kind: CodeEntityLineageKind,
+) -> Result<Option<CodeEntityLineage>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_lineage_key_parts(repository_id, from_entity_id, to_entity_id, kind),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
 fn read_entity_revision(
     context: &LanguageContext<'_, '_, '_>,
     repository_id: &str,
@@ -481,6 +566,35 @@ fn read_identity_continuity(
         .map_err(|error| error.to_string())?
         .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
         .transpose()
+}
+
+fn validate_code_entity_lineage(
+    repository_id: &str,
+    lineage: &CodeEntityLineage,
+) -> Result<(), String> {
+    validate_identity("code repository id", repository_id)?;
+    validate_identity("lineage source entity id", &lineage.from_entity_id)?;
+    validate_identity("lineage target entity id", &lineage.to_entity_id)?;
+    for observation_id in &lineage.evidence_observation_ids {
+        validate_identity("lineage evidence observation id", observation_id)?;
+    }
+    if matches!(lineage.kind, CodeEntityLineageKind::Rename | CodeEntityLineageKind::Move)
+        && lineage.confidence == CodeEntityLineageConfidence::Confirmed
+        && lineage.from_entity_id != lineage.to_entity_id
+    {
+        return Err("confirmed rename/move lineage must preserve logical entity identity".into());
+    }
+    if matches!(
+        lineage.kind,
+        CodeEntityLineageKind::Replacement
+            | CodeEntityLineageKind::Extract
+            | CodeEntityLineageKind::Split
+            | CodeEntityLineageKind::Merge
+    ) && lineage.from_entity_id == lineage.to_entity_id
+    {
+        return Err("replacement/extract/split/merge lineage requires a distinct target identity".into());
+    }
+    Ok(())
 }
 
 fn validate_code_entity_revision(revision: &CodeEntityRevision) -> Result<(), String> {
@@ -548,6 +662,38 @@ fn observation_key(id: &str) -> String {
 
 fn identity_continuity_key(repository_id: &str) -> String {
     format!("entity/{repository_id}/continuity")
+}
+
+fn lineage_kind_key(kind: CodeEntityLineageKind) -> &'static str {
+    match kind {
+        CodeEntityLineageKind::Rename => "rename",
+        CodeEntityLineageKind::Move => "move",
+        CodeEntityLineageKind::Replacement => "replacement",
+        CodeEntityLineageKind::Extract => "extract",
+        CodeEntityLineageKind::Split => "split",
+        CodeEntityLineageKind::Merge => "merge",
+    }
+}
+
+fn entity_lineage_key(repository_id: &str, lineage: &CodeEntityLineage) -> String {
+    entity_lineage_key_parts(
+        repository_id,
+        &lineage.from_entity_id,
+        &lineage.to_entity_id,
+        lineage.kind,
+    )
+}
+
+fn entity_lineage_key_parts(
+    repository_id: &str,
+    from_entity_id: &str,
+    to_entity_id: &str,
+    kind: CodeEntityLineageKind,
+) -> String {
+    format!(
+        "entity/{repository_id}/lineage/{from_entity_id}/{to_entity_id}/{}",
+        lineage_kind_key(kind)
+    )
 }
 
 fn entity_current_key(repository_id: &str, entity_id: &str) -> String {
