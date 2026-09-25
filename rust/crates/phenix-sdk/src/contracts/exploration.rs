@@ -44,6 +44,7 @@ pub struct ExplorationDelegationInput {
     pub graph_generation: String,
     pub parent_reservation_id: Option<String>,
     pub parent_policy_revision: String,
+    pub originating_attempt_id: Option<String>,
     pub contract_revision: ArtifactRevision,
     pub target: RouteDecision,
     pub parent_authority: ExecutionAuthority,
@@ -279,6 +280,7 @@ pub fn prepare_exploration_delegation(
     let binding = DelegationTaskBinding {
         contract_revision: input.contract_revision,
         parent_policy_revision: input.parent_policy_revision.clone(),
+        originating_attempt_id: input.originating_attempt_id,
         resources: DelegatedWorkResources {
             target: input.target,
             authority: input.delegated_authority.clone(),
@@ -346,6 +348,7 @@ mod tests {
             graph_generation: "generation-1".into(),
             parent_reservation_id: Some("attempt/root".into()),
             parent_policy_revision: "policy-1".into(),
+            originating_attempt_id: Some("attempt-1".into()),
             contract_revision: ArtifactRevision::from_content(b"exploration contract"),
             target: RouteDecision {
                 target: ModelTarget {
@@ -509,6 +512,10 @@ mod tests {
         assert_eq!(
             admission.reservation.purpose,
             BudgetReservationPurpose::Delegation
+        );
+        assert_eq!(
+            admission.binding.originating_attempt_id.as_deref(),
+            Some("attempt-1")
         );
         assert_eq!(
             admission.reservation.budget,
