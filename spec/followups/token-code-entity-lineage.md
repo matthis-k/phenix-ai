@@ -22,18 +22,18 @@ Current language intelligence exposes definitions, references, implementations, 
 - [x] Define normalized `LogicalCodeEntity`, revision, relation, and lineage contracts.
 - [x] Keep path/line/name as revision observations, not logical identity.
 - [ ] Reuse rust-analyzer or SCIP facts where practical.
-- [ ] Add deterministic file/revision fallback when semantic providers are unavailable.
-- [ ] Preserve identity across confident move/rename cases.
+- [x] Add deterministic file/revision fallback when semantic providers are unavailable. (`ReadFileFallback` delegates to the ordinary workspace read service and returns exact file content plus its workspace revision without claiming semantic analyzer coverage.)
+- [x] Preserve identity across confident move/rename cases. (Confirmed move/rename lineage is only valid when it preserves the logical entity ID; revision observations may change path/name independently.)
 - [x] Represent ambiguous extract/split/merge lineage as tentative evidence, not forced identity.
 - [ ] Incrementally invalidate only changed entity/relation neighborhoods. (Typed facet-delta queries are implemented; automatic change-stream delivery remains.)
 - [x] Persist provider-independent logical entity revisions so changing indexers does not rewrite the durable Phenix entity identity.
 
 ## Acceptance
 
-- [ ] Rename and file move preserve logical identity when evidence is unambiguous.
-- [ ] Semantic replacement creates a new identity or explicit replacement lineage.
-- [ ] Dirty/stale analyzer state keeps exact source revision provenance.
-- [ ] No analyzer still permits file-based work without false semantic guarantees.
+- [x] Rename and file move preserve logical identity when evidence is unambiguous.
+- [x] Semantic replacement creates a new identity or explicit replacement lineage. (Durable replacement lineage rejects same-ID replacement.)
+- [x] Dirty/stale analyzer state keeps exact source revision provenance. (Workspace-backed observations require exact file revisions; unsaved frontend provenance remains explicit; stale provider epochs cannot record successful observations.)
+- [x] No analyzer still permits file-based work without false semantic guarantees. (Providerless fallback returns a file-only exact revision contract, not semantic entity results.)
 - [ ] Index rebuilds preserve stable identities using the durable identity map; lost mappings report unavailable continuity. (Durable map/restart preservation and explicit persisted continuity state are implemented; rebuild orchestration remains.)
 
 ## Ownership
