@@ -12,8 +12,9 @@ use phenix_sdk::{
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ModelCommand, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
     ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest,
-    ProjectionRevision, RouteSelection, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface,
+    ProjectionRevision, RouteDecision, RouteSelection, RoutingEvidence, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
+    StepRunnerInterface,
     StepRunnerResponse, StepSettlementBasis, StepTransactionCommand, StepTransactionInterface,
     StepTransactionResponse, UsageAttemptKind, UsageAttribution, UsagePlanningInput,
 };
@@ -774,6 +775,7 @@ fn run_with_retry_route(
     {
         Ok(response) => response,
         Err(CallError::Domain(failure)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -829,6 +831,7 @@ fn run_with_retry_route(
             ));
         }
         Err(CallError::Runtime(error)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -840,6 +843,7 @@ fn run_with_retry_route(
             return Err(format!("prepared model dispatch runtime failure: {error}"));
         }
         Err(CallError::Conversion(error)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -852,6 +856,7 @@ fn run_with_retry_route(
         }
     };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        record_routing_evidence(context, &decision, false, None);
         settle_after_dispatch(
             context,
             &attribution.root_execution_id,
@@ -863,6 +868,7 @@ fn run_with_retry_route(
         return Err("model dispatch returned preflight readiness after dispatch".into());
     };
 
+    record_routing_evidence(context, &decision, true, Some(&response.usage));
     let (settled, settlement_basis) = successful_actual(&plan, &response.usage);
     let attempt = settle_step(
         context,
@@ -880,6 +886,42 @@ fn run_with_retry_route(
         settled,
         settlement_basis,
     })
+}
+
+fn record_routing_evidence(
+    context: &StepRunnerContext<'_, '_>,
+    decision: &RouteDecision,
+    success: bool,
+    usage: Option<&phenix_core::ModelTurnUsage>,
+) {
+    let unavailable_usage = || phenix_core::ModelTurnUsage {
+        fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+        cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+        cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+        output_tokens: phenix_core::UsageQuantity::Unavailable,
+        reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+    };
+    let command = ModelCommand::RecordEvidence {
+        decision: decision.clone(),
+        evidence: RoutingEvidence {
+            success,
+            latency_ms: None,
+            usage: usage.cloned().unwrap_or_else(unavailable_usage),
+        },
+    };
+    if let Err(error) = context
+        .sdk
+        .routing
+        .invoke_projected::<ModelCommand, ModelResponse>(&command)
+    {
+        trace_policy_stage(
+            context,
+            "routing_evidence",
+            "degraded",
+            Some(&decision.policy_revision),
+            Some(format!("routing evidence recording failed: {error}")),
+        );
+    }
 }
 
 fn resolve_model_route(
