@@ -798,6 +798,22 @@ mod tests {
     }
 
     #[test]
+    fn selected_efficiency_evaluation_pulls_in_execution_source() {
+        let evaluation = efficiency_evaluation_manifest().id.as_str().to_owned();
+        let execution = execution_manifest(default_suite_authority())
+            .id
+            .as_str()
+            .to_owned();
+        let builder =
+            HarnessBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
+
+        assert!(builder
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == execution));
+    }
+
+    #[test]
     fn kernel_only_harness_has_no_userspace_plugins() {
         let mut harness = PhenixHarness::kernel_only();
         harness.activate().unwrap();
