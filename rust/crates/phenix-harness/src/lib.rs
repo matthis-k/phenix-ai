@@ -14,7 +14,9 @@ use phenix_plugin_catalog::{
     cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
     context_component_manifest, context_factory, context_manifest, debug_component_manifest,
     debug_factory, debug_manifest, debug_runtime_trace_sink, execution_component_manifest,
-    execution_factory, execution_manifest, first_party_durable_schema_registrations,
+    execution_factory, execution_manifest, efficiency_evaluation_component_manifest,
+    efficiency_evaluation_factory, efficiency_evaluation_manifest,
+    first_party_durable_schema_registrations,
     frontend_component_manifest, frontend_factory, frontend_manifest,
     helper_invocation_component_manifest, hook_component_manifest, hook_factory, hook_manifest,
     job_component_manifest, job_factory, job_manifest, language_component_manifest,
@@ -141,6 +143,10 @@ impl HarnessBuilder {
         builder.add_embedded(cli_manifest(authority.clone()), cli_factory)?;
         builder.add_embedded(context_manifest(), context_factory)?;
         builder.add_embedded(execution_manifest(authority.clone()), execution_factory)?;
+        builder.add_embedded(
+            efficiency_evaluation_manifest(),
+            efficiency_evaluation_factory,
+        )?;
         builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
         let application_agent_tools = builder.application_agent_tools.clone();
         builder.add_embedded(
@@ -178,6 +184,7 @@ impl HarnessBuilder {
             cli_component_manifest(authority.clone()),
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
+            efficiency_evaluation_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
@@ -214,6 +221,7 @@ impl HarnessBuilder {
             cli_manifest(authority.clone()),
             context_manifest(),
             execution_manifest(authority.clone()),
+            efficiency_evaluation_manifest(),
             agent_loop_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
@@ -287,6 +295,11 @@ impl HarnessBuilder {
         )?;
         builder.add_selected(
             &enabled,
+            efficiency_evaluation_manifest(),
+            efficiency_evaluation_factory,
+        )?;
+        builder.add_selected(
+            &enabled,
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
@@ -342,6 +355,7 @@ impl HarnessBuilder {
             cli_component_manifest(authority.clone()),
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
+            efficiency_evaluation_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
