@@ -129,6 +129,9 @@ pub enum ContextCommand {
         lifetime: ContextInjectionLifetime,
         reason: String,
     },
+    LoadDelegatedResult {
+        task_id: String,
+    },
     LoadOnce {
         admission_id: String,
         execution_id: String,
