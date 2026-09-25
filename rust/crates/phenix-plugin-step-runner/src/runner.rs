@@ -1026,7 +1026,7 @@ fn retry_available(
 ) -> Result<bool, String> {
     if !matches!(
         attribution.kind,
-        UsageAttemptKind::Root | UsageAttemptKind::Retry
+        UsageAttemptKind::Root | UsageAttemptKind::Retry | UsageAttemptKind::Delegated
     ) {
         return Ok(false);
     }
@@ -1256,11 +1256,32 @@ fn validate_retry_lineage(
         let attempt = attempts
             .get(&attempt_id)
             .ok_or_else(|| format!("unknown planned retry parent: {attempt_id}"))?;
-        if !matches!(
-            attempt.attribution.kind,
-            UsageAttemptKind::Root | UsageAttemptKind::Retry
-        ) {
-            return Err("planned retry parent is outside the root/retry lifecycle".into());
+        if let Some(task_id) = attribution.task_id.as_deref() {
+            if attempt.attribution.task_id.as_deref() != Some(task_id) {
+                if ancestor_count == 0 {
+                    return Err("planned delegated retry parent belongs to a different task".into());
+                }
+                break;
+            }
+            if !matches!(
+                attempt.attribution.kind,
+                UsageAttemptKind::Delegated | UsageAttemptKind::Retry
+            ) {
+                return Err(
+                    "planned delegated retry parent is outside the delegated/retry lifecycle"
+                        .into(),
+                );
+            }
+        } else {
+            if attempt.attribution.task_id.is_some() {
+                return Err("planned root retry parent belongs to a delegated task".into());
+            }
+            if !matches!(
+                attempt.attribution.kind,
+                UsageAttemptKind::Root | UsageAttemptKind::Retry
+            ) {
+                return Err("planned retry parent is outside the root/retry lifecycle".into());
+            }
         }
         ancestor_count = ancestor_count.saturating_add(1);
         current = attempt.attribution.parent_attempt_id.clone();
