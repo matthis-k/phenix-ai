@@ -1464,13 +1464,20 @@ fn node_key(id: &MemoryKey) -> String {
 #[cfg(test)]
 mod supporting_dependency_tests {
     use super::*;
+    use phenix_sdk::{CodeEntityFacet, CodeEntityFacetReference, LogicalCodeEntity};
 
     fn dependency(revision: Option<&str>) -> MemoryDependencyRevision {
-        MemoryDependencyRevision {
-            service: ServiceId::parse("phenix.language@1").unwrap(),
-            resource: "entity/entity-1/body".into(),
-            revision: revision.map(ToOwned::to_owned),
-        }
+        let reference = CodeEntityFacetReference {
+            entity: LogicalCodeEntity {
+                id: "entity-1".into(),
+                repository_id: "repo-1".into(),
+            },
+            facet: CodeEntityFacet::Body,
+            revision: revision.unwrap_or("body-revision").into(),
+        };
+        let mut dependency = MemoryDependencyRevision::for_code_facet(&reference);
+        dependency.revision = revision.map(ToOwned::to_owned);
+        dependency
     }
 
     #[test]
