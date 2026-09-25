@@ -1,3 +1,4 @@
+use phenix_core::ArtifactRevision;
 use phenix_sdk::{
     DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationAdmissionError,
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, WorkerTaskRecord,
@@ -17,6 +18,10 @@ pub(crate) enum DelegatedTaskStoreError {
     UnknownTask { task_id: String },
     AuthorityExpanded,
     BindingAuthorityMismatch,
+    ContractRevisionMismatch {
+        expected: ArtifactRevision,
+        observed: ArtifactRevision,
+    },
     NotRunnable { task_id: String },
     InvalidState { task_id: String },
     ExecutionMismatch { task_id: String },
@@ -37,6 +42,14 @@ impl DelegatedTaskStore {
         }
         if task.delegated_authority != binding.resources.authority {
             return Err(DelegatedTaskStoreError::BindingAuthorityMismatch);
+        }
+        let observed_contract_revision =
+            ArtifactRevision::from_content(binding.contract.as_slice());
+        if observed_contract_revision != binding.contract_revision {
+            return Err(DelegatedTaskStoreError::ContractRevisionMismatch {
+                expected: binding.contract_revision.clone(),
+                observed: observed_contract_revision,
+            });
         }
         if !task
             .delegated_authority
@@ -274,6 +287,39 @@ mod tests {
             max_attempts: 2,
             max_result_bytes: 64 * 1024,
         }
+    }
+
+    #[test]
+    fn delegated_admission_rejects_contract_revision_mismatch() {
+        let mut store = DelegatedTaskStore::default();
+        let child = authority(&["workspace.read"]);
+        let mut delegated = binding(child.clone());
+        let expected = delegated.contract_revision.clone();
+        delegated.contract = b"different contract".to_vec().into();
+        let observed = ArtifactRevision::from_content(delegated.contract.as_slice());
+        let task = WorkerTaskRecord {
+            id: "task-contract-mismatch".into(),
+            parent_execution: "root".into(),
+            graph_generation: "g1".into(),
+            description: "inspect".into(),
+            depends_on: BTreeSet::new(),
+            delegated_authority: child,
+            state: WorkerTaskState::Pending,
+        };
+
+        assert_eq!(
+            store.create(
+                task,
+                delegated,
+                &authority(&["workspace.read"]),
+                &policy(),
+                0
+            ),
+            Err(DelegatedTaskStoreError::ContractRevisionMismatch {
+                expected,
+                observed,
+            })
+        );
     }
 
     #[test]
