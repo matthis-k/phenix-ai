@@ -19,7 +19,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 
 - [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Attempt-level derivation and de-duplication are implemented; durable source collection/outcome-evidence integration remains.)
 - [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
-- [ ] Define task-level success/outcome evidence without creating a second canonical task state.
+- [x] Define task-level success/outcome evidence without creating a second canonical task state; derived task records require a matching evaluator/source evidence identity and revision.
 - [x] Compare policy variants only after validating the same task fixture set.
 - [x] Report marginal effect of independently disableable reduction stages through explicit baseline/variant stage sets and paired cohort comparisons.
 - [ ] Feed historical estimates into routing/UsagePolicy only as derived evidence for later attempts.
