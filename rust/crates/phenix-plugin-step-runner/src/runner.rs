@@ -6,7 +6,8 @@ use phenix_core::{
     PluginInstance, PluginManifest, RuntimeTraceEvent, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    select_route, step_runner_service, AttemptOutcome, BudgetActual, BudgetReservationPurpose,
+    select_route, step_runner_service, AttemptOutcome, AttemptUsageRecord, BudgetActual,
+    BudgetReservationPurpose,
     BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInterface,
     ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
@@ -877,6 +878,15 @@ fn run_with_retry_route(
         settled.clone(),
         &attribution.attempt_id,
         AttemptOutcome::Succeeded,
+        AttemptUsageRecord {
+            attribution: attribution.clone(),
+            usage: (*response.usage).clone(),
+            latency_ms: None,
+            tool_input_bytes: 0,
+            tool_result_bytes: 0,
+            outcome: AttemptOutcome::Succeeded,
+            reacquisition: Vec::new(),
+        },
     )?;
 
     Ok(StepRunnerResponse::Completed {
@@ -1288,6 +1298,7 @@ fn abort_before_dispatch(
             reservation_id: reservation_id.map(str::to_owned),
             attempt_id: attempt_id.to_owned(),
             outcome,
+            usage,
         })
         .map_err(|error| error.to_string())?;
     match response {
@@ -1305,6 +1316,7 @@ fn settle_step(
     actual: BudgetActual,
     attempt_id: &str,
     outcome: AttemptOutcome,
+    usage: AttemptUsageRecord,
 ) -> Result<StepAttemptRecord, String> {
     let response: StepTransactionResponse = context
         .sdk
@@ -1333,6 +1345,19 @@ fn settle_after_dispatch(
     reservation_id: &str,
     outcome: AttemptOutcome,
 ) -> Result<(), String> {
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::Get {
+            attempt_id: attempt_id.to_owned(),
+        })
+        .map_err(|error| error.to_string())?;
+    let StepAttemptResponse::AttemptLookup {
+        attempt: Some(attempt),
+    } = response
+    else {
+        return Err(format!("cannot settle unknown step attempt: {attempt_id}"));
+    };
     settle_step(
         context,
         root_execution_id,
@@ -1340,6 +1365,21 @@ fn settle_after_dispatch(
         conservative_actual(plan),
         attempt_id,
         outcome,
+        AttemptUsageRecord {
+            attribution: attempt.attribution,
+            usage: phenix_core::ModelTurnUsage {
+                fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+                cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+                cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+                output_tokens: phenix_core::UsageQuantity::Unavailable,
+                reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+            },
+            latency_ms: None,
+            tool_input_bytes: 0,
+            tool_result_bytes: 0,
+            outcome,
+            reacquisition: Vec::new(),
+        },
     )
     .map(|_| ())
 }
