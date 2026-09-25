@@ -1,23 +1,18 @@
 use crate::delegated_task_state::{DelegatedTaskStore, DelegatedTaskStoreError};
 use phenix_sdk::{
     BudgetActual, BudgetLedgerError, BudgetReservationPurpose, BudgetReservationRequest,
-    DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy,
-    DelegationTaskBinding, ExecutionAuthority, RemainingBudget, RootBudgetLedger, WorkerTaskRecord,
+    DelegatedReservationReference, DelegatedWorkerResult, DelegatedWorkerTaskRecord,
+    DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, RemainingBudget,
+    RootBudgetLedger, WorkerTaskRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct TaskReservationBinding {
-    pub root_execution_id: String,
-    pub reservation_id: String,
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ExecutionResourceState {
     ledgers: BTreeMap<String, RootBudgetLedger>,
     delegated: DelegatedTaskStore,
-    task_reservations: BTreeMap<String, TaskReservationBinding>,
+    task_reservations: BTreeMap<String, DelegatedReservationReference>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +107,13 @@ impl ExecutionResourceState {
         self.delegated.get(task_id)
     }
 
+    pub(crate) fn delegated_reservation(
+        &self,
+        task_id: &str,
+    ) -> Option<DelegatedReservationReference> {
+        self.task_reservations.get(task_id).cloned()
+    }
+
     pub(crate) fn runnable_delegated_tasks(&self) -> Vec<String> {
         self.delegated.runnable()
     }
@@ -170,7 +172,7 @@ impl ExecutionResourceState {
         self.delegated = delegated;
         self.task_reservations.insert(
             task_id,
-            TaskReservationBinding {
+            DelegatedReservationReference {
                 root_execution_id: root_execution_id.to_owned(),
                 reservation_id,
             },
@@ -268,7 +270,7 @@ impl ExecutionResourceState {
     fn task_reservation(
         &self,
         task_id: &str,
-    ) -> Result<&TaskReservationBinding, ExecutionResourceError> {
+    ) -> Result<&DelegatedReservationReference, ExecutionResourceError> {
         self.task_reservations.get(task_id).ok_or_else(|| {
             ExecutionResourceError::UnknownTaskReservation {
                 task_id: task_id.to_owned(),
