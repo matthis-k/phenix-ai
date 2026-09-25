@@ -1,3 +1,4 @@
+use super::ExplorationOpportunity;
 use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,27 @@ pub struct PlanRecord {
     pub objective_id: String,
     pub goal: String,
     pub steps: Vec<PlanStep>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationCandidate {
+    pub task_id: String,
+    pub description: String,
+    pub separable: bool,
+    pub requires_parent_transcript: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationCostEstimate {
+    pub parent_input_tokens_if_inline: u64,
+    pub inline_parent_reacquisition_tokens: u64,
+    pub delegated_parent_reacquisition_tokens: u64,
+    pub child_input_tokens: u64,
+    pub child_output_tokens: u64,
+    pub child_cost_microunits: Option<u64>,
+    pub expected_result_input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
@@ -66,6 +88,10 @@ pub enum PlanningCommand {
         goal: String,
         steps: Vec<PlanStep>,
     },
+    PrepareExplorationOpportunity {
+        candidate: ExplorationCandidate,
+        estimate: ExplorationCostEstimate,
+    },
     RecordDecision {
         id: String,
         objective_id: String,
@@ -94,6 +120,7 @@ pub enum PlanningCommand {
 pub enum PlanningResponse {
     Objective { objective: Option<ObjectiveRecord> },
     Plan { plan: Option<PlanRecord> },
+    ExplorationOpportunity { opportunity: ExplorationOpportunity },
     Decision { decision: Option<DecisionRecord> },
     History { entries: Vec<HistoryEntry> },
 }
