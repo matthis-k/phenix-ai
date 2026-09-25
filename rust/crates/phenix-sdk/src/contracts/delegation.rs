@@ -124,9 +124,13 @@ impl DelegatedWorkerResult {
         &self,
         binding: &DelegationTaskBinding,
     ) -> Result<(), DelegationAdmissionError> {
-        if self.encoded_result_bytes > binding.resources.max_result_bytes {
+        let encoded = serde_json::to_vec(&phenix_core::PhenixValue::from(self))
+            .expect("delegated worker result has a deterministic PhenixValue encoding");
+        let actual_encoded_bytes = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
+        let requested = self.encoded_result_bytes.max(actual_encoded_bytes);
+        if requested > binding.resources.max_result_bytes {
             Err(DelegationAdmissionError::ResultLimitExceeded {
-                requested: self.encoded_result_bytes,
+                requested,
                 allowed: binding.resources.max_result_bytes,
             })
         } else {
@@ -175,6 +179,36 @@ mod tests {
             resources().validate_policy(&DelegationResourcePolicy::default()),
             Err(DelegationAdmissionError::Disabled)
         );
+    }
+
+    #[test]
+    fn result_validation_uses_actual_encoded_size_not_only_reported_size() {
+        let mut resources = resources();
+        resources.max_result_bytes = 128;
+        let binding = DelegationTaskBinding {
+            contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            parent_policy_revision: "policy-1".into(),
+            resources,
+        };
+        let result = DelegatedWorkerResult {
+            findings: vec![DelegatedFinding {
+                kind: "summary".into(),
+                summary: "x".repeat(512),
+                evidence: Vec::new(),
+            }],
+            evidence: Vec::new(),
+            escalation: None,
+            usage: ModelTurnUsage::default(),
+            encoded_result_bytes: 1,
+        };
+
+        assert!(matches!(
+            result.validate_against(&binding),
+            Err(DelegationAdmissionError::ResultLimitExceeded {
+                requested,
+                allowed: 128
+            }) if requested > 128
+        ));
     }
 
     #[test]

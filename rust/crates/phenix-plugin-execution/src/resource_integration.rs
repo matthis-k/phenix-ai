@@ -4,9 +4,10 @@ use phenix_core::{
     ModelId, PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
-    BudgetActual, BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest,
-    DelegatedWorkResources, DelegatedWorkerResult, DelegationResourcePolicy, DelegationTaskBinding,
-    ExecutionAuthority, ExecutionResourceCommand, ExecutionResourceResponse, ModelTarget,
+    prepare_exploration_delegation, BudgetActual, BudgetReservation, BudgetReservationPurpose,
+    BudgetReservationRequest, DelegatedWorkResources, DelegatedWorkerResult,
+    DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExplorationDelegationInput, ExplorationOpportunity, ModelTarget,
     ModelTurnUsage, RootBudgetLedger, RootBudgetLimits, RouteDecision, RoutingEstimate,
     UsageQuantity, WorkerTaskRecord, WorkerTaskState,
 };
@@ -173,6 +174,97 @@ fn register(kernel: &mut Kernel) {
         ExecutionResourceCommand::RegisterRootBudget { ledger: ledger() },
     )
     .unwrap();
+}
+
+mod exploration_admission {
+    use super::*;
+
+    #[test]
+    fn accepted_exploration_uses_atomic_delegated_admission() {
+        let path = temp_db("exploration-admission");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+
+        let exploration_policy = phenix_sdk::ExplorationPolicy {
+            enabled: true,
+            min_parent_input_tokens_saved: 1_000,
+            max_child_input_tokens: 2_000,
+            max_child_output_tokens: 1_000,
+            max_child_cost_microunits: Some(2_000),
+            max_result_bytes: 32 * 1024,
+        };
+        let opportunity = ExplorationOpportunity {
+            task_id: "exploration-1".into(),
+            description: "inspect an isolated subsystem".into(),
+            separable: true,
+            requires_parent_transcript: false,
+            parent_input_tokens_if_inline: 5_000,
+            inline_parent_reacquisition_tokens: 0,
+            delegated_parent_reacquisition_tokens: 100,
+            child_input_tokens: 1_000,
+            child_output_tokens: 200,
+            child_cost_microunits: Some(1_000),
+            expected_result_input_tokens: 500,
+        };
+        let decision = exploration_policy.assess(&opportunity);
+        let child = authority(&["workspace.read"]);
+        let admission = prepare_exploration_delegation(
+            &opportunity,
+            &decision,
+            ExplorationDelegationInput {
+                root_execution_id: "root".into(),
+                parent_execution: "root".into(),
+                graph_generation: "generation-1".into(),
+                parent_reservation_id: None,
+                parent_policy_revision: "policy-1".into(),
+                contract_revision: ArtifactRevision::from_content(b"exploration-1"),
+                target: RouteDecision {
+                    target: ModelTarget {
+                        provider_plugin: PluginId::parse("provider.fixture").unwrap(),
+                        model: ModelId::parse("model.fixture").unwrap(),
+                        options: BTreeMap::new(),
+                    },
+                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    policy_revision: "route-1".into(),
+                    candidate_ordinal: 0,
+                    estimate: None::<RoutingEstimate>,
+                },
+                parent_authority: child.clone(),
+                delegated_authority: child,
+                context: Vec::new(),
+                deadline_at_ms: 10_000,
+                depth: 1,
+                attempts: 1,
+                depends_on: BTreeSet::new(),
+            },
+            0,
+        )
+        .unwrap();
+
+        let response = invoke(&mut kernel, admission.into_resource_command(policy(2), 0)).unwrap();
+        assert!(matches!(
+            response,
+            ExecutionResourceResponse::DelegatedTask { ref task }
+                if task.task.id == "exploration-1"
+                    && matches!(task.task.state, WorkerTaskState::Pending)
+        ));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 9_000);
+        assert_eq!(budget.output_tokens, 1_800);
+        assert_eq!(budget.cost_microunits, Some(9_000));
+        assert_eq!(budget.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
 }
 
 mod transaction_rollback {

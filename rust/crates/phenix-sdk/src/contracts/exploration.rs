@@ -1,5 +1,11 @@
-use super::BudgetReservation;
+use super::{
+    BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest, DelegatedWorkResources,
+    DelegationResourcePolicy, DelegationTaskBinding, ExactContextReference, ExecutionAuthority,
+    ExecutionResourceCommand, RouteDecision, WorkerTaskRecord, WorkerTaskState,
+};
+use phenix_core::ArtifactRevision;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(
     Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
@@ -22,11 +28,72 @@ pub struct ExplorationOpportunity {
     pub separable: bool,
     pub requires_parent_transcript: bool,
     pub parent_input_tokens_if_inline: u64,
-    pub expected_parent_reacquisition_tokens: u64,
+    pub inline_parent_reacquisition_tokens: u64,
+    pub delegated_parent_reacquisition_tokens: u64,
     pub child_input_tokens: u64,
     pub child_output_tokens: u64,
     pub child_cost_microunits: Option<u64>,
     pub expected_result_input_tokens: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationDelegationInput {
+    pub root_execution_id: String,
+    pub parent_execution: String,
+    pub graph_generation: String,
+    pub parent_reservation_id: Option<String>,
+    pub parent_policy_revision: String,
+    pub contract_revision: ArtifactRevision,
+    pub target: RouteDecision,
+    pub parent_authority: ExecutionAuthority,
+    pub delegated_authority: ExecutionAuthority,
+    #[serde(default)]
+    pub context: Vec<ExactContextReference>,
+    pub deadline_at_ms: u64,
+    pub depth: u32,
+    pub attempts: u32,
+    #[serde(default)]
+    pub depends_on: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ExplorationDelegationAdmission {
+    pub root_execution_id: String,
+    pub reservation: BudgetReservationRequest,
+    pub task: WorkerTaskRecord,
+    pub binding: DelegationTaskBinding,
+    pub parent_authority: ExecutionAuthority,
+}
+
+impl ExplorationDelegationAdmission {
+    #[must_use]
+    pub fn into_resource_command(
+        self,
+        policy: DelegationResourcePolicy,
+        now_ms: u64,
+    ) -> ExecutionResourceCommand {
+        ExecutionResourceCommand::AdmitDelegated {
+            root_execution_id: self.root_execution_id,
+            reservation: self.reservation,
+            task: self.task,
+            binding: self.binding,
+            parent_authority: self.parent_authority,
+            policy,
+            now_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExplorationPreparationError {
+    NotDelegated,
+    TaskMismatch { expected: String, observed: String },
+    AuthorityExpanded,
+    ZeroAttempts,
+    DeadlineNotFuture { deadline_at_ms: u64, now_ms: u64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -52,6 +119,7 @@ pub enum ExplorationRejection {
     ChildInputBudgetExceeded { requested: u64, allowed: u64 },
     ChildOutputBudgetExceeded { requested: u64, allowed: u64 },
     ChildCostBudgetExceeded { requested: u64, allowed: u64 },
+    UnknownChildCostUnderFiniteBudget { allowed: u64 },
     NoExpectedSavings,
     SavingsBelowThreshold { expected: u64, required: u64 },
 }
@@ -90,21 +158,29 @@ impl ExplorationPolicy {
                 },
             };
         }
-        if let (Some(requested), Some(allowed)) = (
+        match (
             opportunity.child_cost_microunits,
             self.max_child_cost_microunits,
         ) {
-            if requested > allowed {
+            (Some(requested), Some(allowed)) if requested > allowed => {
                 return ExplorationDecision::KeepInParent {
                     reason: ExplorationRejection::ChildCostBudgetExceeded { requested, allowed },
                 };
             }
+            (None, Some(allowed)) => {
+                return ExplorationDecision::KeepInParent {
+                    reason: ExplorationRejection::UnknownChildCostUnderFiniteBudget { allowed },
+                };
+            }
+            _ => {}
         }
 
         let inline_total = opportunity
             .parent_input_tokens_if_inline
-            .saturating_add(opportunity.expected_parent_reacquisition_tokens);
-        let delegated_parent_cost = opportunity.expected_result_input_tokens;
+            .saturating_add(opportunity.inline_parent_reacquisition_tokens);
+        let delegated_parent_cost = opportunity
+            .expected_result_input_tokens
+            .saturating_add(opportunity.delegated_parent_reacquisition_tokens);
         let expected_saved = inline_total.saturating_sub(delegated_parent_cost);
         if expected_saved == 0 {
             return ExplorationDecision::KeepInParent {
@@ -133,6 +209,82 @@ impl ExplorationPolicy {
     }
 }
 
+pub fn prepare_exploration_delegation(
+    opportunity: &ExplorationOpportunity,
+    decision: &ExplorationDecision,
+    input: ExplorationDelegationInput,
+    now_ms: u64,
+) -> Result<ExplorationDelegationAdmission, ExplorationPreparationError> {
+    let ExplorationDecision::Delegate {
+        task_id,
+        reservation,
+        max_result_bytes,
+        ..
+    } = decision
+    else {
+        return Err(ExplorationPreparationError::NotDelegated);
+    };
+    if task_id != &opportunity.task_id {
+        return Err(ExplorationPreparationError::TaskMismatch {
+            expected: opportunity.task_id.clone(),
+            observed: task_id.clone(),
+        });
+    }
+    if input.attempts == 0 {
+        return Err(ExplorationPreparationError::ZeroAttempts);
+    }
+    if input.deadline_at_ms <= now_ms {
+        return Err(ExplorationPreparationError::DeadlineNotFuture {
+            deadline_at_ms: input.deadline_at_ms,
+            now_ms,
+        });
+    }
+    if !input
+        .delegated_authority
+        .capabilities
+        .is_subset(&input.parent_authority.capabilities)
+    {
+        return Err(ExplorationPreparationError::AuthorityExpanded);
+    }
+
+    let binding = DelegationTaskBinding {
+        contract_revision: input.contract_revision,
+        parent_policy_revision: input.parent_policy_revision.clone(),
+        resources: DelegatedWorkResources {
+            target: input.target,
+            authority: input.delegated_authority.clone(),
+            context: input.context,
+            budget: reservation.clone(),
+            deadline_at_ms: input.deadline_at_ms,
+            depth: input.depth,
+            attempts: input.attempts,
+            max_result_bytes: *max_result_bytes,
+        },
+    };
+    Ok(ExplorationDelegationAdmission {
+        root_execution_id: input.root_execution_id,
+        reservation: BudgetReservationRequest {
+            reservation_id: format!("exploration/{task_id}"),
+            parent_reservation_id: input.parent_reservation_id,
+            policy_revision: input.parent_policy_revision,
+            purpose: BudgetReservationPurpose::Delegation,
+            budget: reservation.clone(),
+            attempts: input.attempts,
+        },
+        task: WorkerTaskRecord {
+            id: task_id.clone(),
+            parent_execution: input.parent_execution,
+            graph_generation: input.graph_generation,
+            description: opportunity.description.clone(),
+            depends_on: input.depends_on,
+            delegated_authority: input.delegated_authority,
+            state: WorkerTaskState::Pending,
+        },
+        binding,
+        parent_authority: input.parent_authority,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,11 +296,45 @@ mod tests {
             separable: true,
             requires_parent_transcript: false,
             parent_input_tokens_if_inline: 5_000,
-            expected_parent_reacquisition_tokens: 500,
+            inline_parent_reacquisition_tokens: 500,
+            delegated_parent_reacquisition_tokens: 100,
             child_input_tokens: 1_000,
             child_output_tokens: 500,
             child_cost_microunits: Some(100),
             expected_result_input_tokens: 800,
+        }
+    }
+
+    fn delegation_input() -> ExplorationDelegationInput {
+        use crate::contracts::{ModelTarget, RoutingEstimate};
+        use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+        use std::collections::BTreeMap;
+
+        ExplorationDelegationInput {
+            root_execution_id: "root".into(),
+            parent_execution: "parent-execution".into(),
+            graph_generation: "generation-1".into(),
+            parent_reservation_id: Some("attempt/root".into()),
+            parent_policy_revision: "policy-1".into(),
+            contract_revision: ArtifactRevision::from_content(b"exploration contract"),
+            target: RouteDecision {
+                target: ModelTarget {
+                    provider_plugin: PluginId::parse("provider.fixture").unwrap(),
+                    model: ModelId::parse("model.fixture").unwrap(),
+                    options: BTreeMap::new(),
+                },
+                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                policy_revision: "routing-1".into(),
+                candidate_ordinal: 0,
+                estimate: None::<RoutingEstimate>,
+            },
+            parent_authority: ExecutionAuthority::new(["workspace.read", "workspace.write"]),
+            delegated_authority: ExecutionAuthority::new(["workspace.read"]),
+            context: Vec::new(),
+            deadline_at_ms: 10_000,
+            depth: 1,
+            attempts: 1,
+            depends_on: BTreeSet::new(),
         }
     }
 
@@ -184,6 +370,75 @@ mod tests {
                 reason: ExplorationRejection::NotSeparable
             }
         ));
+    }
+
+    #[test]
+    fn finite_cost_policy_rejects_unknown_child_cost_before_admission() {
+        let mut opportunity = opportunity();
+        opportunity.child_cost_microunits = None;
+
+        assert_eq!(
+            policy().assess(&opportunity),
+            ExplorationDecision::KeepInParent {
+                reason: ExplorationRejection::UnknownChildCostUnderFiniteBudget { allowed: 500 },
+            }
+        );
+    }
+
+    #[test]
+    fn delegated_parent_reacquisition_counts_against_expected_savings() {
+        let mut opportunity = opportunity();
+        opportunity.delegated_parent_reacquisition_tokens = 10_000;
+
+        assert_eq!(
+            policy().assess(&opportunity),
+            ExplorationDecision::KeepInParent {
+                reason: ExplorationRejection::NoExpectedSavings,
+            }
+        );
+    }
+
+    #[test]
+    fn accepted_exploration_prepares_one_ordinary_delegation_admission() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let admission =
+            prepare_exploration_delegation(&opportunity, &decision, delegation_input(), 0).unwrap();
+
+        assert_eq!(admission.task.id, opportunity.task_id);
+        assert_eq!(
+            admission.reservation.reservation_id,
+            "exploration/explore-1"
+        );
+        assert_eq!(
+            admission.reservation.purpose,
+            BudgetReservationPurpose::Delegation
+        );
+        assert_eq!(
+            admission.reservation.budget,
+            admission.binding.resources.budget
+        );
+        assert_eq!(
+            admission.task.delegated_authority,
+            admission.binding.resources.authority
+        );
+        assert_eq!(
+            admission.binding.resources.max_result_bytes,
+            policy().max_result_bytes
+        );
+    }
+
+    #[test]
+    fn exploration_handoff_rejects_authority_expansion_before_resource_admission() {
+        let opportunity = opportunity();
+        let decision = policy().assess(&opportunity);
+        let mut input = delegation_input();
+        input.delegated_authority = ExecutionAuthority::new(["workspace.read", "network.admin"]);
+
+        assert_eq!(
+            prepare_exploration_delegation(&opportunity, &decision, input, 0),
+            Err(ExplorationPreparationError::AuthorityExpanded)
+        );
     }
 
     #[test]
