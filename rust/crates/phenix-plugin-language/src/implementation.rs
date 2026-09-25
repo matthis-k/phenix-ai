@@ -6,7 +6,8 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityRevision,
-    CodeIdentityContinuityState, DiagnosticsResult,
+    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
+    DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
@@ -333,8 +334,32 @@ fn handle(
             if let Some(reason) = &state.reason {
                 validate_identity("identity continuity reason", reason)?;
             }
+            if state.status == CodeIdentityContinuityStatus::Rebuilding {
+                return Err(
+                    "rebuilding continuity must be entered through BeginIdentityRebuild".into(),
+                );
+            }
             store_identity_continuity(context, &state)?;
             Ok(LanguageResponse::IdentityContinuity { state: Some(state) })
+        }
+        LanguageCommand::BeginIdentityRebuild { repository_id } => {
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::IdentityRebuild {
+                checkpoint: begin_identity_rebuild(context, &repository_id)?,
+            })
+        }
+        LanguageCommand::CompleteIdentityRebuild {
+            repository_id,
+            applied_through_sequence,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::IdentityRebuild {
+                checkpoint: complete_identity_rebuild(
+                    context,
+                    &repository_id,
+                    applied_through_sequence,
+                )?,
+            })
         }
         LanguageCommand::GetIdentityContinuity { repository_id } => {
             validate_identity("code repository id", &repository_id)?;
@@ -580,17 +605,7 @@ fn read_entity_changes(
     if !(1..=100).contains(&limit) {
         return Err("code entity change page limit must be between 1 and 100".into());
     }
-    let current_sequence = context
-        .kernel
-        .read_durable(
-            &language_namespace(),
-            &entity_change_sequence_key(repository_id),
-        )
-        .map_err(|error| error.to_string())?
-        .as_deref()
-        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
-        .transpose()?
-        .unwrap_or(0);
+    let current_sequence = read_entity_change_sequence(context, repository_id)?;
     if after_sequence > current_sequence {
         return Err(format!(
             "code entity change cursor {after_sequence} is ahead of current sequence {current_sequence}"
@@ -718,6 +733,156 @@ fn read_entity_revision_version(
         .map_err(|error| error.to_string())?
         .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
         .transpose()
+}
+
+fn read_entity_change_sequence(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+) -> Result<u64, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_change_sequence_key(repository_id),
+        )
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()
+        .map(|sequence| sequence.unwrap_or(0))
+}
+
+fn begin_identity_rebuild(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+) -> Result<CodeIdentityRebuildCheckpoint, String> {
+    let state_key = identity_continuity_key(repository_id);
+    let checkpoint_key = identity_rebuild_key(repository_id);
+    let current_state = context
+        .kernel
+        .read_durable(&language_namespace(), &state_key)
+        .map_err(|error| error.to_string())?;
+    let current_checkpoint = context
+        .kernel
+        .read_durable(&language_namespace(), &checkpoint_key)
+        .map_err(|error| error.to_string())?;
+
+    if let (Some(state_bytes), Some(checkpoint_bytes)) =
+        (current_state.as_deref(), current_checkpoint.as_deref())
+    {
+        let state: CodeIdentityContinuityState =
+            serde_json::from_slice(state_bytes).map_err(|error| error.to_string())?;
+        let checkpoint: CodeIdentityRebuildCheckpoint =
+            serde_json::from_slice(checkpoint_bytes).map_err(|error| error.to_string())?;
+        if state.status == CodeIdentityContinuityStatus::Rebuilding {
+            return Ok(checkpoint);
+        }
+    }
+
+    let checkpoint = CodeIdentityRebuildCheckpoint {
+        repository_id: repository_id.to_owned(),
+        required_through_sequence: read_entity_change_sequence(context, repository_id)?,
+    };
+    let state = CodeIdentityContinuityState {
+        repository_id: repository_id.to_owned(),
+        status: CodeIdentityContinuityStatus::Rebuilding,
+        reason: None,
+    };
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: state_key.clone(),
+                    expected: current_state,
+                },
+                TransactionOp::AssertValue {
+                    key: checkpoint_key.clone(),
+                    expected: current_checkpoint,
+                },
+                TransactionOp::Put {
+                    key: state_key,
+                    value: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+                },
+                TransactionOp::Put {
+                    key: checkpoint_key,
+                    value: serde_json::to_vec(&checkpoint).map_err(|error| error.to_string())?,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(checkpoint)
+}
+
+fn complete_identity_rebuild(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    applied_through_sequence: u64,
+) -> Result<CodeIdentityRebuildCheckpoint, String> {
+    let state_key = identity_continuity_key(repository_id);
+    let checkpoint_key = identity_rebuild_key(repository_id);
+    let state_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &state_key)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "identity rebuild is not active".to_owned())?;
+    let checkpoint_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &checkpoint_key)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "identity rebuild checkpoint is missing".to_owned())?;
+    let state: CodeIdentityContinuityState =
+        serde_json::from_slice(&state_bytes).map_err(|error| error.to_string())?;
+    if state.status != CodeIdentityContinuityStatus::Rebuilding {
+        return Err("identity rebuild is not active".into());
+    }
+    let checkpoint: CodeIdentityRebuildCheckpoint =
+        serde_json::from_slice(&checkpoint_bytes).map_err(|error| error.to_string())?;
+    if checkpoint.repository_id != repository_id {
+        return Err("identity rebuild checkpoint repository mismatch".into());
+    }
+
+    let current_sequence = read_entity_change_sequence(context, repository_id)?;
+    if applied_through_sequence != current_sequence {
+        return Err(format!(
+            "identity rebuild is not caught up: applied through {applied_through_sequence}, current sequence is {current_sequence}"
+        ));
+    }
+
+    let available = CodeIdentityContinuityState {
+        repository_id: repository_id.to_owned(),
+        status: CodeIdentityContinuityStatus::Available,
+        reason: None,
+    };
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: state_key.clone(),
+                    expected: Some(state_bytes),
+                },
+                TransactionOp::AssertValue {
+                    key: checkpoint_key.clone(),
+                    expected: Some(checkpoint_bytes),
+                },
+                TransactionOp::Put {
+                    key: state_key,
+                    value: serde_json::to_vec(&available).map_err(|error| error.to_string())?,
+                },
+                TransactionOp::Delete {
+                    key: checkpoint_key,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(CodeIdentityRebuildCheckpoint {
+        repository_id: repository_id.to_owned(),
+        required_through_sequence: current_sequence,
+    })
 }
 
 fn store_identity_continuity(
@@ -850,6 +1015,10 @@ fn observation_key(id: &str) -> String {
 
 fn identity_continuity_key(repository_id: &str) -> String {
     format!("entity/{repository_id}/continuity")
+}
+
+fn identity_rebuild_key(repository_id: &str) -> String {
+    format!("entity/{repository_id}/continuity/rebuild")
 }
 
 fn lineage_kind_key(kind: CodeEntityLineageKind) -> &'static str {
