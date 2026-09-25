@@ -457,10 +457,17 @@ mod code_entity_facet_resource_tests {
             },
             revision: "relation-revision-1".into(),
         };
+
         let resource = reference.resource();
+        assert!(resource.starts_with(CODE_ENTITY_FACET_RESOURCE_PREFIX));
         assert_eq!(
             CodeEntityFacetReference::from_resource(&resource, reference.revision.clone()),
             Some(reference)
         );
+    }
+
+    #[test]
+    fn non_code_resources_do_not_decode_as_code_facets() {
+        assert!(CodeEntityFacetReference::from_resource("turn/1", "revision-1".into()).is_none());
     }
 }
