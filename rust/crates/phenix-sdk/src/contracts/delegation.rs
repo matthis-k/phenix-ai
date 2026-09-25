@@ -251,6 +251,48 @@ mod tests {
         }
     }
 
+    fn step_plan() -> StepPlan {
+        let context = crate::contracts::ContextDemand {
+            mandatory_input_tokens: 64 * 1024,
+            reducible_input_tokens: 0,
+            output_reserve_tokens: 128,
+            required_capabilities: Default::default(),
+        };
+        StepPlan {
+            policy_revision: "policy-1".into(),
+            routing: crate::contracts::RoutingRequirements {
+                context: context.clone(),
+                required_capabilities: Default::default(),
+                require_known_capacity: false,
+            },
+            context,
+            reasoning: crate::contracts::ReasoningBudget::BackendDefault,
+            tools: crate::contracts::ToolProvisionBudget {
+                initial: Default::default(),
+                expandable: Default::default(),
+                max_schemas: 0,
+                max_result_bytes: 0,
+            },
+            skills: crate::contracts::SkillProvisionBudget {
+                initial: Default::default(),
+                expandable: Default::default(),
+                max_loaded: 0,
+            },
+            delegation: DelegationResourcePolicy::default(),
+            retry: crate::contracts::RetryBudget {
+                max_attempts: 1,
+                reserved_attempts: 1,
+            },
+            reservation: BudgetReservation {
+                input_tokens: 64 * 1024,
+                output_tokens: 128,
+                cost_microunits: None,
+            },
+            deadline_at_ms: None,
+            reducible_input_dropped_tokens: 0,
+        }
+    }
+
     #[test]
     fn delegation_is_disabled_by_default() {
         assert_eq!(
@@ -382,11 +424,8 @@ mod tests {
             usage: ModelTurnUsage::default(),
             encoded_result_bytes: 0,
         };
-        let mut plan = crate::contracts::usage_policy::tests_support::plan_for_contract_tests();
-        plan.context.mandatory_input_tokens = 64 * 1024;
-        plan.routing.context = plan.context.clone();
         let request = result
-            .context_admission("task-1", &binding, "parent-execution", plan, 7)
+            .context_admission("task-1", &binding, "parent-execution", step_plan(), 7)
             .unwrap();
 
         assert_eq!(request.execution_id, "parent-execution");
