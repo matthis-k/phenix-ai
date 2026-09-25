@@ -6,8 +6,9 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityFacet, CodeEntityFacetChanges, CodeEntityLineage, CodeEntityLineageConfidence,
     CodeEntityLineageKind, CodeEntityRevision, CodeIdentityContinuityState, DiagnosticsResult,
-    DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
-    LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, LANGUAGE_SERVICE,
+    DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
+    LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE, WORKSPACE_SERVICE,
 };
 use std::collections::BTreeMap;
 
@@ -16,6 +17,7 @@ const LANGUAGE_NAMESPACE: &str = "phenix.language.state";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+const WORKSPACE_READ: &str = "workspace.read";
 
 #[derive(Default)]
 struct LanguageState {
@@ -51,6 +53,7 @@ pub fn language_manifest() -> PluginManifest {
             capability(PERSISTENCE_SCHEMA),
             capability(PERSISTENCE_READ),
             capability(PERSISTENCE_WRITE),
+            capability(WORKSPACE_READ),
         ]),
     }
 }
@@ -67,6 +70,10 @@ pub fn language_service() -> ServiceId {
 
 fn language_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(LANGUAGE_NAMESPACE).expect("static namespace is valid")
+}
+
+fn workspace_service() -> ServiceId {
+    ServiceId::parse(WORKSPACE_SERVICE).expect("static workspace service id is valid")
 }
 
 fn capability(value: &str) -> CapabilityId {
@@ -182,6 +189,49 @@ fn handle(
             store_observation(context, &observation)?;
             Ok(LanguageResponse::Observation {
                 observation: Some(observation),
+            })
+        }
+        LanguageCommand::ReadFileFallback { workspace_id, path } => {
+            validate_identity("workspace id", &workspace_id)?;
+            validate_identity("language document path", &path)?;
+            let input = context
+                .kernel
+                .encode_value(&WorkspaceCommand::Read { path: path.clone() })
+                .map_err(|error| error.to_string())?;
+            let output = context
+                .kernel
+                .invoke_service_abi(&workspace_service(), &input, context.call.authority, None)
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .kernel
+                .decode_projected::<WorkspaceResponse>(&WorkspaceInterface::interface_id(), &output)
+                .map_err(|error| error.to_string())?;
+            let WorkspaceResponse::Read {
+                path: observed_path,
+                content,
+                version,
+            } = response
+            else {
+                return Err("workspace returned a non-read response to file fallback".into());
+            };
+            if observed_path != path {
+                return Err(format!(
+                    "workspace file fallback path mismatch: requested {path}, observed {observed_path}"
+                ));
+            }
+            let WorkspaceFileVersion::Present { content_hash } = version else {
+                return Err(format!("workspace file fallback is unavailable for absent path {path}"));
+            };
+            Ok(LanguageResponse::FileFallback {
+                fallback: FileRevisionFallback {
+                    workspace_id,
+                    document: LanguageDocumentIdentity {
+                        path,
+                        file_version: Some(content_hash),
+                        provenance: DocumentProvenance::WorkspaceBacked,
+                    },
+                    content,
+                },
             })
         }
         LanguageCommand::RecordEntityRevision { revision } => {
