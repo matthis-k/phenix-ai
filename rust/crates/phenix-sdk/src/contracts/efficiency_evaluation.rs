@@ -79,15 +79,21 @@ pub fn derive_efficiency_task_record(
     evidence: &EfficiencyTaskEvidence,
 ) -> Result<EfficiencyTaskRecord, EfficiencyEvaluationError> {
     if evidence.outcome_evidence.source_identity.trim().is_empty()
-        || evidence.outcome_evidence.evidence_revision.trim().is_empty()
+        || evidence
+            .outcome_evidence
+            .evidence_revision
+            .trim()
+            .is_empty()
     {
         return Err(EfficiencyEvaluationError::InvalidOutcomeEvidence);
     }
     if evidence.outcome_evidence.evaluator_identity != evidence.outcome_evaluator_identity {
-        return Err(EfficiencyEvaluationError::OutcomeEvidenceEvaluatorMismatch {
-            expected: evidence.outcome_evaluator_identity.clone(),
-            observed: evidence.outcome_evidence.evaluator_identity.clone(),
-        });
+        return Err(
+            EfficiencyEvaluationError::OutcomeEvidenceEvaluatorMismatch {
+                expected: evidence.outcome_evaluator_identity.clone(),
+                observed: evidence.outcome_evidence.evaluator_identity.clone(),
+            },
+        );
     }
     if evidence.outcome_evidence.outcome != evidence.outcome {
         return Err(EfficiencyEvaluationError::OutcomeEvidenceOutcomeMismatch {
@@ -131,24 +137,28 @@ pub fn derive_efficiency_task_record(
                 reacquisition.cause_identity.clone(),
                 reacquisition.source_attempt_id.clone(),
             );
-            let aggregate = reacquisition_causes
-                .entry(key.clone())
-                .or_insert_with(|| ReacquisitionCauseAggregate {
+            let aggregate = reacquisition_causes.entry(key.clone()).or_insert_with(|| {
+                ReacquisitionCauseAggregate {
                     cause_identity: key.0,
                     source_attempt_id: key.1,
                     fresh_input_tokens: super::UsageMetricAggregate::default(),
                     tool_result_bytes: 0,
                     model_calls: 0,
                     tool_calls: 0,
-                });
+                }
+            });
             aggregate
                 .fresh_input_tokens
                 .observe(&reacquisition.fresh_input_tokens);
             aggregate.tool_result_bytes = aggregate
                 .tool_result_bytes
                 .saturating_add(reacquisition.tool_result_bytes);
-            aggregate.model_calls = aggregate.model_calls.saturating_add(reacquisition.model_calls);
-            aggregate.tool_calls = aggregate.tool_calls.saturating_add(reacquisition.tool_calls);
+            aggregate.model_calls = aggregate
+                .model_calls
+                .saturating_add(reacquisition.model_calls);
+            aggregate.tool_calls = aggregate
+                .tool_calls
+                .saturating_add(reacquisition.tool_calls);
         }
         known_cost_microunits = known_cost_microunits.saturating_add(charge.known_cost_microunits);
         cost_complete &= charge.cost_complete;
@@ -299,17 +309,20 @@ pub fn evaluate_efficiency_cohort(
         known_cost_microunits = known_cost_microunits.saturating_add(record.known_cost_microunits);
         merge_usage(&mut usage, &record.usage);
         for source in &record.reacquisition_causes {
-            let key = (source.cause_identity.clone(), source.source_attempt_id.clone());
-            let target = reacquisition_causes
-                .entry(key.clone())
-                .or_insert_with(|| ReacquisitionCauseAggregate {
+            let key = (
+                source.cause_identity.clone(),
+                source.source_attempt_id.clone(),
+            );
+            let target = reacquisition_causes.entry(key.clone()).or_insert_with(|| {
+                ReacquisitionCauseAggregate {
                     cause_identity: key.0,
                     source_attempt_id: key.1,
                     fresh_input_tokens: super::UsageMetricAggregate::default(),
                     tool_result_bytes: 0,
                     model_calls: 0,
                     tool_calls: 0,
-                });
+                }
+            });
             merge_metric(&mut target.fresh_input_tokens, &source.fresh_input_tokens);
             target.tool_result_bytes = target
                 .tool_result_bytes
@@ -606,8 +619,7 @@ mod tests {
             }],
         };
 
-        let report =
-            compare_efficiency_variant_set(&baseline, &[lazy_tools, combined]).unwrap();
+        let report = compare_efficiency_variant_set(&baseline, &[lazy_tools, combined]).unwrap();
         assert_eq!(report.variants.len(), 2);
         assert_eq!(
             report.variants[0].added_stages,
@@ -615,10 +627,7 @@ mod tests {
         );
         assert_eq!(
             report.variants[1].added_stages,
-            std::collections::BTreeSet::from([
-                "cache_retention".into(),
-                "lazy_tools".into()
-            ])
+            std::collections::BTreeSet::from(["cache_retention".into(), "lazy_tools".into()])
         );
     }
 
@@ -714,14 +723,17 @@ mod tests {
             super::super::AttemptOutcome::Succeeded,
             3,
         );
-        charged.record.reacquisition.push(super::super::ReacquisitionUsage {
-            cause_identity: "context-reduction:checkpoint-7".into(),
-            source_attempt_id: Some("root-attempt".into()),
-            fresh_input_tokens: super::super::UsageQuantity::Reported { value: 11 },
-            tool_result_bytes: 120,
-            model_calls: 1,
-            tool_calls: 2,
-        });
+        charged
+            .record
+            .reacquisition
+            .push(super::super::ReacquisitionUsage {
+                cause_identity: "context-reduction:checkpoint-7".into(),
+                source_attempt_id: Some("root-attempt".into()),
+                fresh_input_tokens: super::super::UsageQuantity::Reported { value: 11 },
+                tool_result_bytes: 120,
+                model_calls: 1,
+                tool_calls: 2,
+            });
         let evidence = EfficiencyTaskEvidence {
             task_fixture_revision: "task-0@1".into(),
             root_execution_id: "root-1".into(),
