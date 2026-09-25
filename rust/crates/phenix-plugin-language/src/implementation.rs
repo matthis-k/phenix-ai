@@ -905,8 +905,9 @@ mod tests {
     use super::*;
     use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
     use phenix_sdk::{
-        CodeEntityFacetChanges, CodeEntityFacetRevisions, CodeEntityLineage,
-        CodeEntityLineageConfidence, CodeEntityLineageKind, CodeIdentityContinuityState,
+        CodeEntityChangePage, CodeEntityFacetChanges, CodeEntityFacetRevisions,
+        CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
+        CodeIdentityContinuityState,
         CodeIdentityContinuityStatus, LanguageOperationKind, LanguageOperationResult,
         LogicalCodeEntity,
     };
@@ -1328,6 +1329,153 @@ mod tests {
                 }),
             }
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn entity_change_stream_is_repository_global_paginated_and_restart_safe() {
+        let path = temp_db("entity-change-stream");
+        let revision = |entity_id: &str,
+                        revision_id: &str,
+                        entity_sequence: u64,
+                        location: &str,
+                        callers: &str| CodeEntityRevision {
+            entity: LogicalCodeEntity {
+                id: entity_id.into(),
+                repository_id: "repo-1".into(),
+            },
+            revision: revision_id.into(),
+            sequence: entity_sequence,
+            document: LanguageDocumentIdentity {
+                path: location.into(),
+                file_version: Some(format!("sha256:{revision_id}")),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some(format!("crate::{entity_id}")),
+            name: entity_id.into(),
+            signature_identity: Some(format!("signature-{entity_id}")),
+            body_identity: Some(format!("body-{entity_id}")),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: format!("existence-{entity_id}"),
+                name_location: format!("location-{location}"),
+                signature: Some(format!("signature-{entity_id}")),
+                body: Some(format!("body-{entity_id}")),
+                relations: BTreeMap::from([("callers".into(), callers.into())]),
+            },
+        };
+
+        let a1 = revision("a", "a-1", 1, "src/a.rs", "callers-a-1");
+        let b1 = revision("b", "b-1", 1, "src/b.rs", "callers-b-1");
+        let a2 = revision("a", "a-2", 2, "src/moved/a.rs", "callers-a-2");
+
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: a1.clone(),
+                },
+            )
+            .unwrap();
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: b1.clone(),
+                },
+            )
+            .unwrap();
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: a2.clone(),
+                },
+            )
+            .unwrap();
+
+            let first = invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityChanges {
+                    repository_id: "repo-1".into(),
+                    after_sequence: 0,
+                    limit: 2,
+                },
+            )
+            .unwrap();
+            let LanguageResponse::EntityChanges { page } = first else {
+                panic!("expected entity change page");
+            };
+            assert_eq!(page.current_sequence, 3);
+            assert_eq!(page.next_after_sequence, 2);
+            assert!(!page.caught_up);
+            assert_eq!(page.events.len(), 2);
+            assert_eq!(page.events[0].sequence, 1);
+            assert_eq!(page.events[0].entity.id, "a");
+            assert_eq!(page.events[1].sequence, 2);
+            assert_eq!(page.events[1].entity.id, "b");
+        }
+
+        {
+            let mut kernel = kernel_with(&path);
+            let tail = invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityChanges {
+                    repository_id: "repo-1".into(),
+                    after_sequence: 2,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+            let LanguageResponse::EntityChanges { page } = tail else {
+                panic!("expected entity change page");
+            };
+            assert!(page.caught_up);
+            assert_eq!(page.current_sequence, 3);
+            assert_eq!(page.next_after_sequence, 3);
+            assert_eq!(page.events.len(), 1);
+            let event = &page.events[0];
+            assert_eq!(event.sequence, 3);
+            assert_eq!(event.entity.id, "a");
+            assert_eq!(event.previous_revision.as_deref(), Some("a-1"));
+            assert_eq!(event.revision, "a-2");
+            assert!(event.changes.name_location);
+            assert!(!event.changes.body);
+            assert_eq!(event.changes.relations, vec!["callers".to_owned()]);
+
+            // Replaying immutable historical evidence must not create a duplicate stream event
+            // or move the current entity pointer backwards.
+            invoke(
+                &mut kernel,
+                LanguageCommand::RecordEntityRevision {
+                    revision: a1.clone(),
+                },
+            )
+            .unwrap();
+            let after_replay = invoke(
+                &mut kernel,
+                LanguageCommand::GetEntityChanges {
+                    repository_id: "repo-1".into(),
+                    after_sequence: 3,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                after_replay,
+                LanguageResponse::EntityChanges {
+                    page: CodeEntityChangePage {
+                        repository_id: "repo-1".into(),
+                        after_sequence: 3,
+                        current_sequence: 3,
+                        events: Vec::new(),
+                        next_after_sequence: 3,
+                        caught_up: true,
+                    },
+                }
+            );
+        }
+
         let _ = fs::remove_file(path);
     }
 
