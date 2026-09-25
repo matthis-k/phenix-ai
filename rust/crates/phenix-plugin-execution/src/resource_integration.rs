@@ -7,9 +7,10 @@ use phenix_sdk::{
     prepare_exploration_delegation, BudgetActual, BudgetReservation, BudgetReservationPurpose,
     BudgetReservationRequest, DelegatedWorkResources, DelegatedWorkerResult,
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, ExecutionResourceCommand,
-    ExecutionResourceResponse, ExplorationDelegationInput, ExplorationOpportunity, ModelTarget,
-    ModelTurnUsage, RootBudgetLedger, RootBudgetLimits, RouteDecision, RoutingEstimate,
-    UsageQuantity, WorkerTaskRecord, WorkerTaskState,
+    ContextDemand, ExecutionResourceResponse, ExplorationDelegationInput, ExplorationOpportunity,
+    ModelTarget, ModelTurnUsage, ReasoningBudget, RetryBudget, RootBudgetLedger, RootBudgetLimits,
+    RouteDecision, RoutingEstimate, RoutingRequirements, SkillProvisionBudget, StepPlan,
+    ToolProvisionBudget, UsageQuantity, WorkerTaskRecord, WorkerTaskState,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -143,6 +144,42 @@ fn policy(max_children: u32) -> DelegationResourcePolicy {
     }
 }
 
+fn step_plan(max_children: u32) -> StepPlan {
+    StepPlan {
+        policy_revision: "policy-1".into(),
+        routing: RoutingRequirements {
+            context: ContextDemand::default(),
+            required_capabilities: BTreeSet::new(),
+            require_known_capacity: false,
+        },
+        context: ContextDemand::default(),
+        reasoning: ReasoningBudget::BackendDefault,
+        tools: ToolProvisionBudget {
+            initial: BTreeSet::new(),
+            expandable: BTreeSet::new(),
+            max_schemas: 0,
+            max_result_bytes: 0,
+        },
+        skills: SkillProvisionBudget {
+            initial: BTreeSet::new(),
+            expandable: BTreeSet::new(),
+            max_loaded: 0,
+        },
+        delegation: policy(max_children),
+        retry: RetryBudget {
+            max_attempts: 1,
+            reserved_attempts: 1,
+        },
+        reservation: BudgetReservation {
+            input_tokens: 10_000,
+            output_tokens: 2_000,
+            cost_microunits: Some(10_000),
+        },
+        deadline_at_ms: Some(10_000),
+        reducible_input_dropped_tokens: 0,
+    }
+}
+
 fn result() -> DelegatedWorkerResult {
     DelegatedWorkerResult {
         findings: Vec::new(),
@@ -235,13 +272,15 @@ mod exploration_admission {
                 deadline_at_ms: 10_000,
                 depth: 1,
                 attempts: 1,
+                existing_children: 0,
                 depends_on: BTreeSet::new(),
             },
+            &step_plan(2),
             0,
         )
         .unwrap();
 
-        let response = invoke(&mut kernel, admission.into_resource_command(policy(2), 0)).unwrap();
+        let response = invoke(&mut kernel, admission.into_resource_command(0)).unwrap();
         assert!(matches!(
             response,
             ExecutionResourceResponse::DelegatedTask { ref task }
