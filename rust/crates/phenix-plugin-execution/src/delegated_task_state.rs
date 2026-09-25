@@ -236,6 +236,7 @@ mod tests {
     fn binding(authority: ExecutionAuthority) -> DelegationTaskBinding {
         DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract"),
+            contract: b"contract".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: None,
             resources: DelegatedWorkResources {
