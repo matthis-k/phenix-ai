@@ -31,7 +31,6 @@ pub struct BenchmarkOutcomeRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchmarkOutcomeCommand {
     Publish {
         record: BenchmarkOutcomeRecord,
@@ -44,7 +43,6 @@ pub enum BenchmarkOutcomeCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
-#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchmarkOutcomeResponse {
     Published {
         evidence: EfficiencyOutcomeEvidence,
