@@ -36,6 +36,7 @@ pub struct DelegatedWorkResources {
 #[serde(deny_unknown_fields)]
 pub struct DelegationTaskBinding {
     pub contract_revision: ArtifactRevision,
+    pub contract: Bytes,
     pub parent_policy_revision: String,
     #[serde(default)]
     pub originating_attempt_id: Option<String>,
@@ -307,6 +308,7 @@ mod tests {
         resources.max_result_bytes = 128;
         let binding = DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: None,
             resources,
@@ -338,6 +340,7 @@ mod tests {
 
         let binding = DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: None,
             resources: resources(),
@@ -370,6 +373,7 @@ mod tests {
 
         let binding = DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: Some("attempt-1".into()),
             resources: resources(),
@@ -409,6 +413,7 @@ mod tests {
     fn bounded_result_projects_to_ordinary_context_admission() {
         let binding = DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
+            contract: b"contract-1".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
             originating_attempt_id: Some("attempt-1".into()),
             resources: resources(),
