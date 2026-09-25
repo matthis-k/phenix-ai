@@ -99,6 +99,26 @@ impl DelegatedTaskStore {
             .collect()
     }
 
+    pub(crate) fn cancel_pending(
+        &mut self,
+        task_id: &str,
+        cause: String,
+    ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
+        let record =
+            self.tasks
+                .get_mut(task_id)
+                .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+                    task_id: task_id.to_owned(),
+                })?;
+        if !matches!(record.task.state, WorkerTaskState::Pending) {
+            return Err(DelegatedTaskStoreError::InvalidState {
+                task_id: task_id.to_owned(),
+            });
+        }
+        record.task.state = WorkerTaskState::Cancelled { cause };
+        Ok(record)
+    }
+
     pub(crate) fn start(
         &mut self,
         task_id: &str,
