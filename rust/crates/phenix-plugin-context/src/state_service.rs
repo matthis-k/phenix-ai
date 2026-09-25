@@ -125,7 +125,9 @@ impl ContextStateService {
             | ContextCommand::Project { .. }
             | ContextCommand::PrepareInvocation { .. }
             | ContextCommand::MaterializeInvocation { .. }
-            | ContextCommand::EvaluateCompactionCost { .. } => return None,
+            | ContextCommand::EvaluateCompactionCost { .. }
+            | ContextCommand::ExportContinuation { .. }
+            | ContextCommand::ProjectContinuationImport { .. } => return None,
         };
         Some(response)
     }

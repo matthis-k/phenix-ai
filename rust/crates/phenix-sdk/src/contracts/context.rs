@@ -1,7 +1,8 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
     CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
-    ProjectionRevision,
+    ContinuationExportResult, ContinuationImportProjection, ContinuationImportRequest,
+    ContinuationProjectionRequest, ProjectionRevision,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
@@ -175,6 +176,12 @@ pub enum ContextCommand {
     InvalidateProjection {
         execution_id: String,
     },
+    ExportContinuation {
+        request: ContinuationProjectionRequest,
+    },
+    ProjectContinuationImport {
+        request: ContinuationImportRequest,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -230,6 +237,12 @@ pub enum ContextResponse {
     },
     ProjectionInvalidated {
         projection: ProjectionRevision,
+    },
+    ContinuationExported {
+        result: ContinuationExportResult,
+    },
+    ContinuationImportProjected {
+        projection: ContinuationImportProjection,
     },
 }
 

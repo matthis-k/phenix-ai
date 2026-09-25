@@ -63,6 +63,7 @@ fn disabling_and_reenabling_memory_preserves_compatible_durable_state() {
             start: None,
             end: None,
         }],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,

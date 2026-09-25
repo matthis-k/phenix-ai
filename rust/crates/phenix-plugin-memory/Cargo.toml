@@ -14,5 +14,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+phenix-plugin-language = { path = "../phenix-plugin-language" }
 phenix-plugin-models = { path = "../phenix-plugin-models" }
 phenix-plugin-sessions = { path = "../phenix-plugin-sessions" }

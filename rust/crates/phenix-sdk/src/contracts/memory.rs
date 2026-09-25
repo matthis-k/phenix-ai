@@ -1,4 +1,6 @@
-use super::memory_freshness::{MemoryCanonicalReference, MemoryFreshnessRecord};
+use super::memory_freshness::{
+    MemoryCanonicalReference, MemoryDependencyRevision, MemoryFreshnessRecord,
+};
 use phenix_core::{
     CallableId, ComponentInterface, InterfaceId, RoutingProfileId, ServiceId, SessionId,
 };
@@ -81,6 +83,8 @@ pub struct MemoryRecord {
     pub scope: MemoryScope,
     pub content: String,
     pub source_refs: Vec<MemorySourceReference>,
+    #[serde(default)]
+    pub supporting_dependencies: Vec<MemoryDependencyRevision>,
     pub supersedes: Vec<String>,
     pub valid_from: Option<u64>,
     pub valid_until: Option<u64>,
@@ -114,6 +118,8 @@ pub struct MemoryRecallQuery {
 pub struct MemoryExtractionObservation {
     pub content: String,
     pub source_refs: Vec<MemorySourceReference>,
+    #[serde(default)]
+    pub supporting_dependencies: Vec<MemoryDependencyRevision>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -145,6 +151,15 @@ pub struct MemoryConsolidationRequest {
 pub struct MemoryExpansion {
     pub node: MemoryNode,
     pub children: Vec<MemoryNode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryRevisionCursor {
+    pub service: ServiceId,
+    pub resource: String,
+    pub revision: String,
+    pub after_memory_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -180,6 +195,14 @@ pub enum MemoryCommand {
         revision: String,
         observed_at: u64,
         limit: u32,
+    },
+    ObserveRevisionPage {
+        service: ServiceId,
+        resource: String,
+        revision: String,
+        observed_at: u64,
+        limit: u32,
+        cursor: Option<MemoryRevisionCursor>,
     },
     ObserveConflict {
         source: MemorySourceReference,
@@ -220,6 +243,10 @@ pub enum MemoryResponse {
     },
     Affected {
         memory_ids: Vec<String>,
+    },
+    AffectedPage {
+        memory_ids: Vec<String>,
+        next_cursor: Option<MemoryRevisionCursor>,
     },
     Node {
         node: Option<MemoryNode>,

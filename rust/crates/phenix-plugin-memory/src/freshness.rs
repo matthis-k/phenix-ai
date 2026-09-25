@@ -8,15 +8,17 @@ pub(crate) fn initial_state(
     record: &MemoryRecord,
     canonical_reference: Option<MemoryCanonicalReference>,
 ) -> MemoryFreshnessRecord {
-    let mut dependencies = record
-        .source_refs
-        .iter()
-        .map(|source| MemoryDependencyRevision {
-            service: source.service.clone(),
-            resource: source.resource.clone(),
-            revision: None,
-        })
-        .collect::<Vec<_>>();
+    let mut dependencies = record.supporting_dependencies.clone();
+    dependencies.extend(
+        record
+            .source_refs
+            .iter()
+            .map(|source| MemoryDependencyRevision {
+                service: source.service.clone(),
+                resource: source.resource.clone(),
+                revision: None,
+            }),
+    );
     dependencies.sort();
     dependencies.dedup();
 
@@ -44,6 +46,19 @@ pub(crate) fn deterministic_outcome(
         return MemoryRevalidationOutcome::NeedsValidation;
     }
     MemoryRevalidationOutcome::KeepCurrent
+}
+
+pub(crate) fn exact_support_is_current(
+    record: &MemoryRecord,
+    state: &MemoryFreshnessRecord,
+) -> bool {
+    record.supporting_dependencies.iter().all(|support| {
+        state.dependencies.iter().any(|observed| {
+            observed.service == support.service
+                && observed.resource == support.resource
+                && observed.revision == support.revision
+        })
+    })
 }
 
 pub(crate) fn observe_revision_change(
@@ -82,7 +97,21 @@ pub(crate) fn observe_revision_change(
 mod tests {
     use super::*;
     use phenix_core::{ServiceId, SessionId};
-    use phenix_sdk::{MemoryKind, MemoryScope, MemorySourceReference};
+    use phenix_sdk::{
+        CodeEntityFacet, CodeEntityFacetReference, LogicalCodeEntity, MemoryKind, MemoryScope,
+        MemorySourceReference,
+    };
+
+    fn code_dependency(facet: CodeEntityFacet, revision: &str) -> MemoryDependencyRevision {
+        MemoryDependencyRevision::for_code_facet(&CodeEntityFacetReference {
+            entity: LogicalCodeEntity {
+                id: "entity-1".into(),
+                repository_id: "repo-1".into(),
+            },
+            facet,
+            revision: revision.into(),
+        })
+    }
 
     fn record(valid_until: Option<u64>) -> MemoryRecord {
         MemoryRecord {
@@ -98,6 +127,7 @@ mod tests {
                 start: None,
                 end: None,
             }],
+            supporting_dependencies: Vec::new(),
             supersedes: Vec::new(),
             valid_from: None,
             valid_until,
@@ -113,6 +143,76 @@ mod tests {
         assert_eq!(
             deterministic_outcome(&record, &state, 20),
             MemoryRevalidationOutcome::Expire
+        );
+    }
+
+    #[test]
+    fn initial_state_preserves_exact_supporting_revision_separately_from_sources() {
+        let mut record = record(None);
+        record
+            .supporting_dependencies
+            .push(code_dependency(CodeEntityFacet::Body, "body-revision-1"));
+
+        let state = initial_state(&record, None);
+        assert!(state
+            .dependencies
+            .contains(&record.supporting_dependencies[0]));
+        assert!(state.dependencies.iter().any(|dependency| {
+            dependency.service.as_str() == "fixture.history@1"
+                && dependency.resource == "turn/1"
+                && dependency.revision.is_none()
+        }));
+        assert_eq!(
+            record.supporting_dependencies[0].revision.as_deref(),
+            Some("body-revision-1")
+        );
+    }
+
+    #[test]
+    fn exact_support_is_not_current_after_observed_dependency_moves_forward() {
+        let mut record = record(None);
+        let support = code_dependency(CodeEntityFacet::Body, "body-revision-1");
+        let service = support.service.clone();
+        let resource = support.resource.clone();
+        record.supporting_dependencies.push(support);
+        let mut state = initial_state(&record, None);
+        assert!(exact_support_is_current(&record, &state));
+
+        assert!(observe_revision_change(
+            &mut state,
+            &service,
+            &resource,
+            "body-revision-2",
+            20,
+        ));
+        assert!(!exact_support_is_current(&record, &state));
+    }
+
+    #[test]
+    fn observing_new_revision_does_not_rewrite_original_support() {
+        let mut record = record(None);
+        let support = code_dependency(CodeEntityFacet::Signature, "signature-revision-1");
+        let service = support.service.clone();
+        let resource = support.resource.clone();
+        record.supporting_dependencies.push(support);
+        let mut state = initial_state(&record, None);
+
+        assert!(observe_revision_change(
+            &mut state,
+            &service,
+            &resource,
+            "signature-revision-2",
+            20,
+        ));
+        assert_eq!(state.freshness, MemoryFreshness::NeedsValidation);
+        assert!(state.dependencies.iter().any(|dependency| {
+            dependency.service == service
+                && dependency.resource == resource
+                && dependency.revision.as_deref() == Some("signature-revision-2")
+        }));
+        assert_eq!(
+            record.supporting_dependencies[0].revision.as_deref(),
+            Some("signature-revision-1")
         );
     }
 

@@ -205,6 +205,7 @@ fn revalidation_failure_leaves_authoritative_session_history_unchanged() {
             start: None,
             end: None,
         }],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,
