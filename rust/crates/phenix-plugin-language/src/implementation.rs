@@ -5,7 +5,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
-    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFact,
+    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
     CodeEntityProviderFactBatch, CodeEntityRevision, CodeIdentityContinuityState,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
@@ -234,7 +234,7 @@ fn handle(
                     workspace_id,
                     document: LanguageDocumentIdentity {
                         path,
-                        file_version: Some(content_hash),
+                        file_version: Some(workspace_revision_label(&content_hash)),
                         provenance: DocumentProvenance::WorkspaceBacked,
                     },
                     content,
@@ -874,12 +874,28 @@ fn verify_workspace_document_revision(
     let WorkspaceFileVersion::Present { content_hash } = version else {
         return Err(format!("provider fact source path is absent: {path}"));
     };
-    if content_hash != expected_version {
+    if !workspace_revision_matches(&content_hash, expected_version) {
         return Err(format!(
-            "provider fact source revision is stale: expected {expected_version}, current {content_hash}"
+            "provider fact source revision is stale: expected {expected_version}, current {}",
+            workspace_revision_label(&content_hash)
         ));
     }
     Ok(())
+}
+
+fn workspace_revision_label(content_hash: &str) -> String {
+    if content_hash.starts_with("sha256:") {
+        content_hash.to_owned()
+    } else {
+        format!("sha256:{content_hash}")
+    }
+}
+
+fn workspace_revision_matches(content_hash: &str, expected_version: &str) -> bool {
+    expected_version == content_hash
+        || expected_version
+            .strip_prefix("sha256:")
+            .is_some_and(|expected_hash| expected_hash == content_hash)
 }
 
 fn store_entity_revision(
