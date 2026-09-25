@@ -264,6 +264,7 @@ mod tests {
         let binding = DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract-1"),
             parent_policy_revision: "policy-1".into(),
+            originating_attempt_id: None,
             resources: resources(),
         };
         let evidence = ExactContextReference {
