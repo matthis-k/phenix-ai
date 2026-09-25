@@ -822,7 +822,6 @@ mod tests {
                 policy_revision: "policy-1".into(),
                 outcome_evaluator_identity: "fixture.tests".into(),
                 price_revision: "prices-1".into(),
-                root_elapsed_ms: Some(10),
             },
         };
         let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
