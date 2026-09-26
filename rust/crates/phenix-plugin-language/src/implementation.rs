@@ -2098,7 +2098,7 @@ mod tests {
                 repository_id: revision.entity.repository_id.clone(),
                 entity_id: revision.entity.id.clone(),
                 revision: revision.revision.clone(),
-                max_bytes: 7,
+                max_bytes: 8,
             },
         )
         .unwrap() else {
