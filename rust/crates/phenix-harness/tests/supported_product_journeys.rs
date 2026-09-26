@@ -816,10 +816,15 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         "skills/introspection-check/SKILL.md"
     );
     assert_eq!(report.skills[0].content, "fixture skill body");
-    assert!(report
+    let phenix_identity = report
         .instructions
         .iter()
-        .any(|section| section.source == "phenix"));
+        .find(|section| section.source == "phenix")
+        .expect("introspection model must receive the Phenix identity instruction");
+    assert!(phenix_identity.content.contains("workspace-backed shell tool"));
+    assert!(phenix_identity.content.contains("durable session history"));
+    assert!(phenix_identity.content.contains("persistent memory"));
+    assert!(phenix_identity.content.contains("Active skills"));
     assert_eq!(report.request, "print the model surface");
 }
 
