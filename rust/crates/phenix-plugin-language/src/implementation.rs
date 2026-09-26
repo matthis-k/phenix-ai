@@ -6,8 +6,9 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityProviderFactBatch, CodeEntityRevision, CodeIdentityContinuityState,
-    CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, DiagnosticsResult,
+    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator,
+    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
+    CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
@@ -270,6 +271,23 @@ fn handle(
                     context,
                     &observation_id,
                     &repository_id,
+                    None,
+                )?,
+            })
+        }
+        LanguageCommand::IngestDocumentSymbolsWithEncoding {
+            observation_id,
+            repository_id,
+            position_encoding,
+        } => {
+            validate_identity("language observation id", &observation_id)?;
+            validate_identity("code repository id", &repository_id)?;
+            Ok(LanguageResponse::EntityRevisions {
+                revisions: ingest_document_symbol_observation(
+                    context,
+                    &observation_id,
+                    &repository_id,
+                    Some(position_encoding),
                 )?,
             })
         }
@@ -310,6 +328,23 @@ fn handle(
             validate_identity("logical code entity id", &entity_id)?;
             Ok(LanguageResponse::EntityRevision {
                 revision: read_entity_revision(context, &repository_id, &entity_id)?,
+            })
+        }
+        LanguageCommand::GetEntitySourceLocator {
+            repository_id,
+            entity_id,
+            revision,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntitySourceLocator {
+                locator: read_entity_source_locator(
+                    context,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                )?,
             })
         }
         LanguageCommand::GetEntityFacet {
@@ -581,6 +616,7 @@ fn ingest_document_symbol_observation(
     context: &LanguageContext<'_, '_, '_>,
     observation_id: &str,
     repository_id: &str,
+    position_encoding: Option<CodePositionEncoding>,
 ) -> Result<Vec<CodeEntityRevision>, String> {
     let observation = read_observation(context, observation_id)?
         .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
@@ -612,6 +648,7 @@ fn ingest_document_symbol_observation(
             &document,
             source_revision,
             symbol,
+            position_encoding,
             &mut parents,
             &mut seen,
             &mut revisions,
@@ -645,6 +682,7 @@ fn ingest_lsp_document_symbol(
     document: &LanguageDocumentIdentity,
     source_revision: &str,
     symbol: &LspDocumentSymbol,
+    position_encoding: Option<CodePositionEncoding>,
     parents: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
     revisions: &mut Vec<CodeEntityRevision>,
@@ -719,6 +757,18 @@ fn ingest_lsp_document_symbol(
     let current = read_entity_revision(context, repository_id, &entity.id)?;
     if let Some(current) = current.as_ref() {
         if current.revision == revision_id {
+            if let Some(position_encoding) = position_encoding {
+                store_entity_source_locator(
+                    context,
+                    &entity_source_locator(
+                        current,
+                        observation,
+                        position_encoding,
+                        &symbol.range,
+                        &symbol.selection_range,
+                    ),
+                )?;
+            }
             revisions.push(current.clone());
             ingest_lsp_children(
                 context,
@@ -727,6 +777,7 @@ fn ingest_lsp_document_symbol(
                 document,
                 source_revision,
                 symbol,
+                position_encoding,
                 parents,
                 seen,
                 revisions,
@@ -768,6 +819,18 @@ fn ingest_lsp_document_symbol(
     };
     validate_code_entity_revision(&revision)?;
     store_entity_revision(context, &revision)?;
+    if let Some(position_encoding) = position_encoding {
+        store_entity_source_locator(
+            context,
+            &entity_source_locator(
+                &revision,
+                observation,
+                position_encoding,
+                &symbol.range,
+                &symbol.selection_range,
+            ),
+        )?;
+    }
     revisions.push(revision);
 
     ingest_lsp_children(
@@ -777,6 +840,7 @@ fn ingest_lsp_document_symbol(
         document,
         source_revision,
         symbol,
+        position_encoding,
         parents,
         seen,
         revisions,
@@ -791,6 +855,7 @@ fn ingest_lsp_children(
     document: &LanguageDocumentIdentity,
     source_revision: &str,
     symbol: &LspDocumentSymbol,
+    position_encoding: Option<CodePositionEncoding>,
     parents: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
     revisions: &mut Vec<CodeEntityRevision>,
@@ -807,6 +872,7 @@ fn ingest_lsp_children(
             document,
             source_revision,
             child,
+            position_encoding,
             parents,
             seen,
             revisions,
@@ -814,6 +880,98 @@ fn ingest_lsp_children(
     }
     parents.pop();
     Ok(())
+}
+
+fn entity_source_locator(
+    revision: &CodeEntityRevision,
+    observation: &LanguageObservation,
+    position_encoding: CodePositionEncoding,
+    range: &LspRange,
+    selection_range: &LspRange,
+) -> CodeEntitySourceLocator {
+    CodeEntitySourceLocator {
+        entity: revision.entity.clone(),
+        revision: revision.revision.clone(),
+        document: revision.document.clone(),
+        provider_id: observation.provider_id.clone(),
+        provider_epoch: observation.provider_epoch,
+        position_encoding,
+        range: code_source_range(range),
+        selection_range: code_source_range(selection_range),
+    }
+}
+
+fn code_source_range(range: &LspRange) -> CodeSourceRange {
+    CodeSourceRange {
+        start: CodeSourcePosition {
+            line: range.start.line,
+            character: range.start.character,
+        },
+        end: CodeSourcePosition {
+            line: range.end.line,
+            character: range.end.character,
+        },
+    }
+}
+
+fn store_entity_source_locator(
+    context: &LanguageContext<'_, '_, '_>,
+    locator: &CodeEntitySourceLocator,
+) -> Result<(), String> {
+    let key = entity_source_locator_key(
+        &locator.entity.repository_id,
+        &locator.entity.id,
+        &locator.revision,
+    );
+    let encoded = serde_json::to_vec(locator).map_err(|error| error.to_string())?;
+    if let Some(existing) = context
+        .kernel
+        .read_durable(&language_namespace(), &key)
+        .map_err(|error| error.to_string())?
+    {
+        let existing: CodeEntitySourceLocator =
+            serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+        if existing == *locator {
+            return Ok(());
+        }
+        return Err(format!(
+            "code entity source locator {} already exists with different content",
+            locator.revision
+        ));
+    }
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: None,
+                },
+                TransactionOp::Put {
+                    key,
+                    value: encoded,
+                },
+            ],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn read_entity_source_locator(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+) -> Result<Option<CodeEntitySourceLocator>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &entity_source_locator_key(repository_id, entity_id, revision),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
 }
 
 fn validate_lsp_range(range: &LspRange) -> Result<(), String> {
@@ -1500,6 +1658,10 @@ fn entity_current_key(repository_id: &str, entity_id: &str) -> String {
 
 fn entity_revision_key(repository_id: &str, entity_id: &str, revision: &str) -> String {
     format!("entity/{repository_id}/{entity_id}/revision/{revision}")
+}
+
+fn entity_source_locator_key(repository_id: &str, entity_id: &str, revision: &str) -> String {
+    format!("entity/{repository_id}/{entity_id}/source/{revision}")
 }
 
 #[cfg(test)]
