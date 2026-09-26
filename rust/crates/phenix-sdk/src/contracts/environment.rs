@@ -31,9 +31,18 @@ pub struct EnvironmentDirEntry {
     pub kind: EnvironmentFileKind,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentFilesystemPolicy {
+    Unrestricted,
+    WorkingDirectoryOnly,
+    HostReadWorkingDirectoryWrite,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 pub struct EnvironmentDescription {
     pub provider: String,
+    pub filesystem_policy: EnvironmentFilesystemPolicy,
     pub persistent_processes: bool,
     pub pty: bool,
 }
