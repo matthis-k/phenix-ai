@@ -380,10 +380,18 @@ fn process(
         .current_dir(context.plugin.state)
         .output()
         .map_err(|error| format!("spawn {program}: {error}"))?;
+    let (stdout, stdout_complete, stdout_bytes, stdout_content_hash) = capture(&output.stdout);
+    let (stderr, stderr_complete, stderr_bytes, stderr_content_hash) = capture(&output.stderr);
     Ok(WorkspaceResponse::Process {
         exit_code: output.status.code().unwrap_or(-1),
-        stdout: capture(&output.stdout),
-        stderr: capture(&output.stderr),
+        stdout,
+        stderr,
+        stdout_complete,
+        stderr_complete,
+        stdout_bytes: Some(stdout_bytes),
+        stderr_bytes: Some(stderr_bytes),
+        stdout_content_hash: Some(stdout_content_hash),
+        stderr_content_hash: Some(stderr_content_hash),
     })
 }
 
@@ -393,13 +401,21 @@ fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
     }
 }
 
-fn capture(bytes: &[u8]) -> String {
-    let bytes = if bytes.len() > MAX_CAPTURE_BYTES {
-        &bytes[..MAX_CAPTURE_BYTES]
-    } else {
+fn capture(bytes: &[u8]) -> (String, bool, u64, String) {
+    let total_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let content_hash = format!("{:x}", Sha256::digest(bytes));
+    let complete = bytes.len() <= MAX_CAPTURE_BYTES;
+    let captured = if complete {
         bytes
+    } else {
+        &bytes[..MAX_CAPTURE_BYTES]
     };
-    String::from_utf8_lossy(bytes).into_owned()
+    (
+        String::from_utf8_lossy(captured).into_owned(),
+        complete,
+        total_bytes,
+        content_hash,
+    )
 }
 
 #[cfg(test)]
@@ -632,6 +648,22 @@ mod tests {
         .unwrap_err();
         assert!(denied.contains("authority denied"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn process_capture_reports_truncation_explicitly() {
+        let oversized = vec![b'x'; MAX_CAPTURE_BYTES + 1];
+        let (captured, complete, bytes, hash) = capture(&oversized);
+        assert_eq!(captured.len(), MAX_CAPTURE_BYTES);
+        assert!(!complete);
+        assert_eq!(bytes, (MAX_CAPTURE_BYTES + 1) as u64);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(&oversized)));
+
+        let (captured, complete, bytes, hash) = capture(b"small");
+        assert_eq!(captured, "small");
+        assert!(complete);
+        assert_eq!(bytes, 5);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(b"small")));
     }
 
     #[test]

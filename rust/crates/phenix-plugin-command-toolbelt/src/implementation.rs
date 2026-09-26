@@ -276,6 +276,7 @@ fn version(context: &CliContext<'_, '_>, name: &CliName) -> Result<CliDescriptor
         exit_code,
         stdout,
         stderr,
+        ..
     } = response
     else {
         return Err("workspace shell returned a non-process response".into());

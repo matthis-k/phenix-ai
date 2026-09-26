@@ -1855,6 +1855,7 @@ fn execute_application_agent_tool(
         Ok(call) => call,
         Err(error) => {
             return Ok(AgentToolExecutionResponse::Completed {
+                activated_tools: Vec::new(),
                 result: ModelToolResult {
                     call_id: call.call_id,
                     callable_id: call.callable_id,
@@ -1903,7 +1904,10 @@ fn execute_application_agent_tool(
         _ => return Err("tool executor returned a non-terminal tool change".into()),
     };
 
-    Ok(AgentToolExecutionResponse::Completed { result })
+    Ok(AgentToolExecutionResponse::Completed {
+        result,
+        activated_tools: Vec::new(),
+    })
 }
 
 fn record_application_agent_progress(
@@ -2966,7 +2970,7 @@ mod tests {
             .unwrap();
         let value: PhenixValue = serde_json::from_slice(&output).unwrap();
         let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-        let AgentToolExecutionResponse::Completed { result } = response else {
+        let AgentToolExecutionResponse::Completed { result, .. } = response else {
             panic!("default bash tool must complete through the application adapter");
         };
         assert_eq!(result.call_id, "call-1");
@@ -2994,7 +2998,9 @@ mod tests {
             .unwrap();
         let rejected: PhenixValue = serde_json::from_slice(&rejected).unwrap();
         let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
-        let AgentToolExecutionResponse::Completed { result: rejected } = rejected else {
+        let AgentToolExecutionResponse::Completed {
+            result: rejected, ..
+        } = rejected else {
             panic!("unadvertised tool must be reported as a tool failure");
         };
         assert!(rejected.is_error);
@@ -3013,6 +3019,9 @@ mod tests {
                 exit_code: 0,
                 ref stdout,
                 ref stderr,
+                stdout_complete: true,
+                stderr_complete: true,
+                ..
             } if stdout == "phenix-runtime-bash" && stderr.is_empty()
         ));
 

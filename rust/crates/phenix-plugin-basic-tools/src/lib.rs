@@ -1,7 +1,8 @@
 use phenix_core::{
     Authority, CallableId, CapabilityId, ComponentId, ComponentInterface, ComponentManifest,
-    InterfaceId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace, ToolCommand,
-    ToolDefinition, ToolResponse, TransactionOp, TOOL_SERVICE,
+    ArtifactRevision, InterfaceId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
+    ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition, ToolResponse,
+    TransactionOp, TOOL_SERVICE,
 };
 use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 
@@ -95,6 +96,11 @@ fn handle(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+        ToolCommand::Search { query, cursor, limit } => search_catalog(context, query, cursor, limit),
+        ToolCommand::LoadSchemas {
+            ids,
+            catalog_revision,
+        } => load_schemas(context, ids, catalog_revision),
         ToolCommand::Invoke { id, input } => {
             let tool = read_tool(context, &id)?.ok_or_else(|| format!("unknown tool: {id}"))?;
             let mut output = tool.output_prefix.into_vec();
@@ -104,6 +110,117 @@ fn handle(
             })
         }
     }
+}
+
+const MAX_CATALOG_PAGE: u32 = 100;
+
+fn catalog_snapshot(
+    context: &BasicToolsContext<'_, '_>,
+) -> Result<(ArtifactRevision, Vec<ToolDefinition>), String> {
+    let tools = read_ids(context)?
+        .into_iter()
+        .map(|id| read_tool(context, &id)?.ok_or_else(|| format!("missing durable tool: {id}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let encoded = serde_json::to_vec(&tools).map_err(|error| error.to_string())?;
+    Ok((ArtifactRevision::from_content(&encoded), tools))
+}
+
+fn schema_identity(schema: &phenix_core::PhenixSchema) -> Result<ArtifactRevision, String> {
+    serde_json::to_vec(schema)
+        .map(|encoded| ArtifactRevision::from_content(&encoded))
+        .map_err(|error| error.to_string())
+}
+
+fn search_catalog(
+    context: &BasicToolsContext<'_, '_>,
+    query: String,
+    cursor: Option<ToolCatalogCursor>,
+    limit: u32,
+) -> Result<ToolResponse, String> {
+    if limit == 0 {
+        return Err("tool catalog page limit must be greater than zero".into());
+    }
+    let (catalog_revision, tools) = catalog_snapshot(context)?;
+    let query_identity = ArtifactRevision::from_content(query.as_bytes());
+    let offset = match cursor {
+        Some(cursor) => {
+            if cursor.catalog_revision != catalog_revision {
+                return Err("stale tool catalog cursor revision".into());
+            }
+            if cursor.query_identity != query_identity {
+                return Err("tool catalog cursor belongs to a different query".into());
+            }
+            usize::try_from(cursor.offset)
+                .map_err(|_| "tool catalog cursor offset cannot be represented".to_owned())?
+        }
+        None => 0,
+    };
+
+    let needle = query.to_lowercase();
+    let matched = tools
+        .into_iter()
+        .filter(|tool| {
+            query.is_empty()
+                || tool.id.as_str().to_lowercase().contains(&needle)
+                || tool.description.to_lowercase().contains(&needle)
+        })
+        .collect::<Vec<_>>();
+    if offset > matched.len() {
+        return Err("tool catalog cursor offset exceeds result set".into());
+    }
+    let page_len = usize::try_from(limit.min(MAX_CATALOG_PAGE))
+        .expect("bounded u32 catalog page size fits usize");
+    let end = offset.saturating_add(page_len).min(matched.len());
+    let descriptors = matched[offset..end]
+        .iter()
+        .map(|tool| {
+            Ok(ToolCatalogDescriptor {
+                id: tool.id.clone(),
+                description: tool.description.clone(),
+                input_type_identity: schema_identity(&tool.input_schema)?,
+                output_type_identity: schema_identity(&tool.output_schema)?,
+                catalog_revision: catalog_revision.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let next_cursor = (end < matched.len()).then(|| ToolCatalogCursor {
+        catalog_revision: catalog_revision.clone(),
+        query_identity,
+        offset: u32::try_from(end).unwrap_or(u32::MAX),
+    });
+    Ok(ToolResponse::Catalog {
+        descriptors,
+        next_cursor,
+        catalog_revision,
+    })
+}
+
+fn load_schemas(
+    context: &BasicToolsContext<'_, '_>,
+    ids: Vec<CallableId>,
+    expected_revision: ArtifactRevision,
+) -> Result<ToolResponse, String> {
+    let (catalog_revision, tools) = catalog_snapshot(context)?;
+    if expected_revision != catalog_revision {
+        return Err("stale tool catalog revision".into());
+    }
+    let requested = ids.into_iter().collect::<std::collections::BTreeSet<_>>();
+    let available = tools
+        .into_iter()
+        .map(|tool| (tool.id.clone(), tool))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut selected = Vec::with_capacity(requested.len());
+    for id in requested {
+        let tool = available
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| format!("unknown tool schema requested: {id}"))?;
+        selected.push(tool);
+    }
+    Ok(ToolResponse::Schemas {
+        tools: selected,
+        catalog_revision,
+    })
 }
 
 fn write_tool(context: &BasicToolsContext<'_, '_>, tool: &ToolDefinition) -> Result<(), String> {

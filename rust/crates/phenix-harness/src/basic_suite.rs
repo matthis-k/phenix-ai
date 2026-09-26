@@ -202,6 +202,7 @@ mod tests {
                 &ToolCommand::Register {
                     tool: ToolDefinition {
                         id: CallableId::parse("echo").unwrap(),
+                        description: "Echo input bytes".into(),
                         input_schema: PhenixSchema::Any,
                         output_schema: PhenixSchema::Any,
                         output_prefix: b"tool:".to_vec().into(),
