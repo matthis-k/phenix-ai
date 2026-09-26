@@ -257,7 +257,7 @@ pub enum DelegatedWorkerCommand {
 pub enum DelegatedWorkerResponse {
     Idle,
     Processed {
-        task: DelegatedWorkerTaskRecord,
+        task: Box<DelegatedWorkerTaskRecord>,
         parent_admitted: bool,
     },
 }
