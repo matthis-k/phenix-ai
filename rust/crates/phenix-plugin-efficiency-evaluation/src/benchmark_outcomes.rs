@@ -89,13 +89,13 @@ pub fn benchmark_outcome_manifest() -> PluginManifest {
                 role: phenix_core::ServiceRole::Terminal,
                 service: benchmark_outcome_service(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: persistence_authority(),
             },
             ServiceContribution {
                 role: phenix_core::ServiceRole::Terminal,
                 service: efficiency_outcome_evidence_service(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: persistence_read_authority(),
             },
         ],
         resource_namespaces: vec![benchmark_outcome_namespace()],
@@ -122,13 +122,13 @@ pub fn benchmark_outcome_component_manifest() -> ComponentManifest {
                 interface: BenchmarkOutcomeInterface::interface_id(),
                 schema: BenchmarkOutcomeInterface::schema(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: persistence_authority(),
             },
             ComponentExport {
                 interface: EfficiencyOutcomeEvidenceInterface::interface_id(),
                 schema: EfficiencyOutcomeEvidenceInterface::schema(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: persistence_read_authority(),
             },
         ],
         maximum_authority: persistence_authority(),
@@ -145,6 +145,12 @@ fn persistence_authority() -> Authority {
         CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static persistence capability is valid"),
         CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid"),
         CapabilityId::parse(PERSISTENCE_WRITE).expect("static persistence capability is valid"),
+    ])
+}
+
+fn persistence_read_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid"),
     ])
 }
 
@@ -427,7 +433,7 @@ mod tests {
             .invoke(
                 &benchmark_outcome_service(),
                 &input,
-                &Authority::default(),
+                &persistence_authority(),
                 None,
             )
             .map_err(|error| error.to_string())?;
@@ -453,7 +459,7 @@ mod tests {
             .invoke(
                 &efficiency_outcome_evidence_service(),
                 &input,
-                &Authority::default(),
+                &persistence_read_authority(),
                 None,
             )
             .unwrap();
@@ -535,6 +541,14 @@ mod tests {
         assert_eq!(
             component.exports[1].interface,
             EfficiencyOutcomeEvidenceInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[0].required_authority,
+            persistence_authority()
+        );
+        assert_eq!(
+            component.exports[1].required_authority,
+            persistence_read_authority()
         );
     }
 }

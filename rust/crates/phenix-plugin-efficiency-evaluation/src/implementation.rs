@@ -66,7 +66,7 @@ pub fn efficiency_evaluation_component_manifest() -> ComponentManifest {
                 interface: EfficiencyOutcomeEvidenceInterface::interface_id(),
                 schema: EfficiencyOutcomeEvidenceInterface::schema(),
                 required: false,
-                authority: Authority::default(),
+                authority: evidence_read_authority(),
             },
         ],
         exports: vec![ComponentExport {
@@ -206,6 +206,7 @@ mod tests {
             EfficiencyOutcomeEvidenceInterface::interface_id()
         );
         assert!(!manifest.imports[1].required);
+        assert_eq!(manifest.imports[1].authority, evidence_read_authority());
         assert_eq!(manifest.exports.len(), 1);
         assert_eq!(
             manifest.exports[0].interface,
