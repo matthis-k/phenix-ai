@@ -1507,6 +1507,7 @@ mod tests {
     use super::*;
     use phenix_core::{
         Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedHarness,
+        ResolvedHarnessActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,

@@ -496,13 +496,17 @@ fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness};
+    use crate::workspace_component_manifest;
+    use phenix_core::{
+        Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
+    };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
         local_environment_manifest,
     };
     use std::{
         fs,
+        process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
 

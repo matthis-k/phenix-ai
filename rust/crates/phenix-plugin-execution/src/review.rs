@@ -445,7 +445,7 @@ mod tests {
     use super::*;
     use phenix_core::{
         Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,
-        PluginManifest, Project, ResolvedHarness, ServiceContribution,
+        PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, ServiceContribution,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
