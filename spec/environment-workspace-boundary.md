@@ -287,7 +287,7 @@ The current default is unrestricted local execution through `phenix.environment.
 
 The configured local root is only the default namespace base and process cwd. It does not restrict absolute paths, `..` used by child processes, or other host filesystem access.
 
-The two confined behaviors require a future enforcing Environment backend. They must apply equally to direct filesystem operations and arbitrary descendant processes. If enforcement is unavailable, the request fails rather than falling back to unrestricted local execution.
+The two confined behaviors require an enforcing Environment backend. They apply equally to direct filesystem operations and arbitrary descendant processes. Until that backend exists, the local provider represents the policy but fails direct filesystem and process operations closed rather than falling back to unrestricted local execution.
 
 Preset names are product configuration. They are not kernel, Workspace, or Environment ABI semantics.
 
@@ -327,7 +327,7 @@ Implemented in this PR:
 
 The local provider currently:
 
-- reports the `Unrestricted` filesystem policy through `EnvironmentDescription`;
+- reports its effective filesystem policy through `EnvironmentDescription`;
 - uses the unrestricted host filesystem/process namespace;
 - treats its configured root as the default base/cwd, not a confinement boundary;
 - accepts absolute host paths through `EnvironmentInterface`;
@@ -338,8 +338,8 @@ The local provider currently:
 
 Not implemented by this PR:
 
-- working-directory-only confinement;
-- working-directory-write with host-wide reads;
+- working-directory-only enforcing backend;
+- working-directory-write with host-wide reads enforcing backend;
 - Linux sandbox provider;
 - overlay/review provider;
 - SSH Environment provider;
@@ -371,6 +371,12 @@ The architecture is considered preserved only if tests prove:
 - a tool or child executable cannot select an unrestricted spawn path implicitly.
 - broader filesystem access requires explicit pre-spawn policy selection/allowance.
 - unsupported requested confinement fails closed.
+- symlink traversal cannot turn an allowed lexical path into an out-of-policy write.
+- writable scratch is Environment-private rather than host-writable `/tmp`.
+- runtime dependency mounts are read-only and do not become general host-data exceptions.
+- persistent processes remain pinned to their creation policy and cannot survive an incompatible policy change with broader access.
+- embedded native plugins are treated as trusted host code; untrusted plugin execution uses an isolated runtime rather than claiming Environment confinement.
+- filesystem confinement is not described as network, IPC, device, or secret isolation.
 
 ## Ownership summary
 
