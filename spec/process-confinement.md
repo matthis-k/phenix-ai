@@ -15,12 +15,12 @@ The product may expose these behaviors as presets. Their names are configuration
 | Behavior | Reads | Writes | Status |
 | --- | --- | --- | --- |
 | Unrestricted local | Entire host filesystem | Entire host filesystem | Implemented by `phenix.environment.local` |
-| Working-directory only | Working directory tree only | Working directory tree only | Future confined Environment |
-| Working-directory write, host read | Entire host filesystem | Working directory tree only | Future confined Environment |
+| Working-directory only | Working directory tree plus read-only runtime dependencies | Working directory tree plus private scratch | Implemented on Linux by `phenix.environment.local` |
+| Working-directory write, host read | Entire host filesystem | Working directory tree plus private scratch | Implemented on Linux by `phenix.environment.local` |
 
 For unrestricted local execution, the configured root is the default working directory for relative paths and processes. It is not a security boundary. Absolute paths and child processes may access the rest of the host according to the host OS permissions.
 
-The two confined behaviors require an Environment backend that can enforce the policy for direct filesystem operations and the full descendant process tree. They must fail closed when enforcement is unavailable. They must never fall back to unrestricted local execution.
+The two confined behaviors use the Linux local backend. Direct restricted filesystem access is rooted through `openat2`. Process execution uses Bubblewrap to materialize the filesystem view before spawn. Descendants inherit that view. Missing kernel support or Bubblewrap fails closed. Restricted modes never fall back to unrestricted local execution.
 
 ## Authority
 
@@ -65,7 +65,7 @@ Restricted local execution needs runtime support without turning support paths i
 
 A working-directory-only Environment may expose read-only runtime dependencies required to execute an admitted program. On NixOS this includes the required `/nix/store` closure. Such mounts are execution dependencies, not general host-readable project data.
 
-Writable scratch space, when provided, is Environment-private. For example, `TMPDIR` may point at a private writable tmpfs. Restricted modes must not make the host `/tmp` writable as a convenience exception.
+Writable scratch is Environment-private. Working-directory-only uses a private `/tmp`. Host-read/cwd-write keeps host `/tmp` readable but read-only, mounts a separate private tmpfs, and points `TMPDIR` at it. Restricted modes never make host `/tmp` writable as a convenience exception.
 
 Host home/config paths remain governed by the selected policy. A host-read/cwd-write Environment may read them but cannot write them. Rewriting cache or home variables is a separate product choice and must not silently broaden host writes.
 
@@ -116,24 +116,34 @@ Direct filesystem checks and process confinement must derive from the same decla
 
 ## Current implementation
 
-`phenix.environment.local` defaults to unrestricted execution:
+`phenix.environment.local` defaults to unrestricted execution. `PHENIX_LOCAL_FILESYSTEM_POLICY` selects an explicit local filesystem policy:
 
-- relative paths resolve from its configured root;
-- absolute paths name host paths directly;
-- processes default to the configured root as their cwd;
-- processes retain normal host filesystem reach;
-- persistent processes use the same host namespace.
+- `local` or `unrestricted`;
+- `working-dir` or `working-directory-only`;
+- `workdir-write` or `host-read-working-directory-write`.
 
-The local provider can represent the restricted policies but currently has no enforcing backend for them. Direct filesystem operations, scratch process execution, and persistent process creation therefore fail closed for those policies. They never reuse the unrestricted native spawn path.
+Invalid configuration fails provider activation.
 
-Working-directory confinement becomes available only when a backend can enforce the complete filesystem view for direct operations and descendant processes.
+Unrestricted mode preserves the host filesystem/process namespace. The configured root is the default cwd only.
+
+Restricted modes on Linux:
+
+- pin the canonical workspace root with a directory descriptor;
+- use `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` for restricted direct filesystem access;
+- use Bubblewrap for scratch and persistent process creation;
+- bind the workspace root read/write;
+- give host-read/cwd-write a read-only host root;
+- expose only declared runtime dependencies in working-directory-only mode;
+- provide private writable scratch;
+- keep the same view for every descendant process;
+- fail activation or operation when required enforcement is unavailable.
+
+These modes constrain filesystem access only. Network, IPC, devices, secrets, and embedded trusted native code remain separate concerns.
 
 ## Deferred implementations
 
 Later providers or policies may add:
 
-- working-directory-only confinement;
-- working-directory-write with host-wide reads;
 - network confinement;
 - SSH;
 - containers or VMs;
