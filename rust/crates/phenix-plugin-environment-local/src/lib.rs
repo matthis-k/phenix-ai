@@ -819,7 +819,7 @@ mod tests {
                 program: "sh".into(),
                 arguments: vec![
                     "-c".into(),
-                    "cat "$1" >/dev/null && printf ok > inside.txt && (printf nope > "$2")".into(),
+                    r#"cat "$1" >/dev/null && printf ok > inside.txt && (printf nope > "$2")"#.into(),
                     "sh".into(),
                     outside_read.to_string_lossy().into_owned(),
                     outside_write.to_string_lossy().into_owned(),
@@ -841,7 +841,7 @@ mod tests {
                 program: "sh".into(),
                 arguments: vec![
                     "-c".into(),
-                    "printf scratch > "$TMPDIR/value" && cat "$TMPDIR/value"".into(),
+                    r#"printf scratch > "$TMPDIR/value" && cat "$TMPDIR/value""#.into(),
                 ],
                 working_directory: None,
                 environment: BTreeMap::new(),
@@ -882,7 +882,7 @@ mod tests {
                 program: "sh".into(),
                 arguments: vec![
                     "-c".into(),
-                    "printf ok > inside.txt; cat "$1" >/dev/null".into(),
+                    r#"printf ok > inside.txt; cat "$1" >/dev/null"#.into(),
                     "sh".into(),
                     outside_read.to_string_lossy().into_owned(),
                 ],
