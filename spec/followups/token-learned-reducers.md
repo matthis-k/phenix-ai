@@ -15,6 +15,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Added the provider-neutral `phenix.context-reducer@1` request/proposal interface; context imports it optionally with no persistence/canonical-state authority.
 - [x] Context can request a reduction from the optional backend only for the current projection, then revalidates every returned proposal against the pinned request and current projection before exposing it; the backend still has no commit path.
 - [x] Reducer stages are independently opt-in at the context owner; the default context factory enables none, and disabled stages fail before invoking an optional backend.
+- [x] The optional reducer import executes with empty authority and can only return a proposal; canonical context, persistence, routing, memory, and usage-policy mutation remain context/owner-controlled.
 
 ## Required implementation
 
@@ -30,7 +31,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 ## Acceptance
 
 - [ ] Baseline with reducer disabled remains fully functional.
-- [ ] Reducer cannot mutate history, memory, code identity, routing, or usage-policy truth.
+- [x] Reducer cannot mutate history, memory, code identity, routing, or usage-policy truth.
 - [ ] Removed material stays exactly recoverable while retention requires it.
 - [ ] Benchmarks report marginal savings after deterministic reductions, not standalone compression ratios.
 - [ ] Quality regressions and retries count against the reducer.
