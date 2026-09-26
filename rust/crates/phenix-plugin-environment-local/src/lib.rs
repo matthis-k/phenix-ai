@@ -170,7 +170,10 @@ impl LocalEnvironment {
         }
     }
 
-    fn requested_working_directory(&self, working_directory: Option<&str>) -> Result<PathBuf, String> {
+    fn requested_working_directory(
+        &self,
+        working_directory: Option<&str>,
+    ) -> Result<PathBuf, String> {
         let mut cwd = working_directory
             .map(|path| self.resolve(path))
             .unwrap_or_else(|| self.root.clone());
@@ -291,9 +294,9 @@ impl PluginInstance for LocalEnvironment {
             let status = Command::new("bwrap")
                 .arg("--version")
                 .status()
-                .map_err(|error| format!(
-                    "restricted local environment requires bubblewrap: {error}"
-                ))?;
+                .map_err(|error| {
+                    format!("restricted local environment requires bubblewrap: {error}")
+                })?;
             if !status.success() {
                 return Err("restricted local environment bubblewrap probe failed".into());
             }
@@ -393,8 +396,9 @@ impl LocalEnvironment {
                     let parent = resolved.parent().ok_or_else(|| {
                         format!("write path has no parent: {}", resolved.display())
                     })?;
-                    let canonical_parent = fs::canonicalize(parent)
-                        .map_err(|error| format!("canonicalize write parent for {path}: {error}"))?;
+                    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+                        format!("canonicalize write parent for {path}: {error}")
+                    })?;
                     if !canonical_parent.starts_with(&self.root) {
                         return Err(format!(
                             "environment filesystem policy denies write outside working directory: {}",
@@ -763,10 +767,7 @@ mod tests {
         let _ = fs::remove_dir_all(outside);
     }
 
-    fn restricted_kernel(
-        root: &Path,
-        policy: EnvironmentFilesystemPolicy,
-    ) -> Kernel {
+    fn restricted_kernel(root: &Path, policy: EnvironmentFilesystemPolicy) -> Kernel {
         let manifest = local_environment_manifest();
         let plugin = manifest.id.clone();
         let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
@@ -819,7 +820,8 @@ mod tests {
                 program: "sh".into(),
                 arguments: vec![
                     "-c".into(),
-                    r#"cat "$1" >/dev/null && printf ok > inside.txt && (printf nope > "$2")"#.into(),
+                    r#"cat "$1" >/dev/null && printf ok > inside.txt && (printf nope > "$2")"#
+                        .into(),
                     "sh".into(),
                     outside_read.to_string_lossy().into_owned(),
                     outside_write.to_string_lossy().into_owned(),
