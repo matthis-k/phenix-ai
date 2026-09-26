@@ -399,6 +399,9 @@ fn search_path(
                 ));
             };
             for entry in entries {
+                if entry.kind == EnvironmentFileKind::Other {
+                    continue;
+                }
                 search_path(
                     context,
                     workspace_root,
