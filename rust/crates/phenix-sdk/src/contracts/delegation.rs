@@ -267,6 +267,7 @@ mod tests {
         };
         StepPlan {
             policy_revision: "policy-1".into(),
+            historical_estimator_snapshot: None,
             routing: crate::contracts::RoutingRequirements {
                 context: context.clone(),
                 required_capabilities: Default::default(),
