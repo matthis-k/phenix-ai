@@ -130,6 +130,21 @@ pub enum ContextCommand {
         lifetime: ContextInjectionLifetime,
         reason: String,
     },
+    LoadDelegatedResult {
+        task_id: String,
+    },
+    AdmitDelegatedResult {
+        task_id: String,
+    },
+    LoadOnce {
+        admission_id: String,
+        execution_id: String,
+        resource_id: ContextResourceId,
+        revision: ContextRevisionId,
+        requester: ContextInjectionRequester,
+        lifetime: ContextInjectionLifetime,
+        reason: String,
+    },
     Project {
         execution_id: String,
     },
@@ -187,6 +202,12 @@ pub enum ContextResponse {
     Loaded {
         injection: ContextInjection,
         resource: ContextResourceRevision,
+    },
+    DelegatedResultAdmitted {
+        injection: ContextInjection,
+        resource: ContextResourceRevision,
+        result: ContextAdmissionResult,
+        projection: ProjectionRevision,
     },
     Projection {
         projection: ExecutionContextProjection,

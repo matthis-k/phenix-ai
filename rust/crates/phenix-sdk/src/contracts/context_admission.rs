@@ -236,6 +236,7 @@ mod tests {
         };
         StepPlan {
             policy_revision: "p1".into(),
+            historical_estimator_snapshot: None,
             routing: RoutingRequirements {
                 context: context.clone(),
                 required_capabilities: BTreeSet::new(),

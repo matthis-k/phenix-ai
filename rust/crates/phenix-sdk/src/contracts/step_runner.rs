@@ -1,7 +1,7 @@
 use super::{
     BudgetActual, ContextCandidate, ContextDemand, ContextInvocationPreparation,
-    RouteSelectionPolicy, StepAttemptRecord, TaskRequirements, UsageAttemptKind, UsageAttribution,
-    UsagePolicy,
+    DelegatedWorkerTaskRecord, RouteDecision, RouteSelectionPolicy, StepAttemptRecord,
+    TaskRequirements, UsageAttemptKind, UsageAttribution, UsagePolicy,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, InterfaceId, ModelToolCall, ModelToolDescriptor,
@@ -16,6 +16,7 @@ pub const HELPER_INVOCATION_SERVICE: &str = "phenix.invocation.helper@1";
 pub const INVOCATION_DEFAULTS_SERVICE: &str = "phenix.invocation.defaults@1";
 pub const INVOCATION_CLOCK_SERVICE: &str = "phenix.invocation.clock@1";
 pub const STEP_RUNNER_SERVICE: &str = "phenix.step-runner@1";
+pub const DELEGATED_WORKER_SERVICE: &str = "phenix.delegated-worker@1";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
@@ -223,7 +224,13 @@ pub struct PlannedStepRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StepRunnerCommand {
-    Run { request: PlannedStepRequest },
+    Run {
+        request: PlannedStepRequest,
+    },
+    RunResolved {
+        request: PlannedStepRequest,
+        decision: Box<RouteDecision>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -235,6 +242,23 @@ pub enum StepRunnerResponse {
         tool_calls: Vec<ModelToolCall>,
         settled: BudgetActual,
         settlement_basis: StepSettlementBasis,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DelegatedWorkerCommand {
+    RunNext { now_ms: u64 },
+    RunTask { task_id: String, now_ms: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DelegatedWorkerResponse {
+    Idle,
+    Processed {
+        task: Box<DelegatedWorkerTaskRecord>,
+        parent_admitted: bool,
     },
 }
 
@@ -313,6 +337,19 @@ impl ComponentInterface for InvocationClockInterface {
     }
 }
 
+pub struct DelegatedWorkerInterface;
+
+impl ComponentInterface for DelegatedWorkerInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(DELEGATED_WORKER_SERVICE)
+            .expect("static delegated worker interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<DelegatedWorkerCommand, DelegatedWorkerResponse>()
+    }
+}
+
 pub struct StepRunnerInterface;
 
 impl ComponentInterface for StepRunnerInterface {
@@ -356,4 +393,9 @@ pub fn invocation_clock_service() -> ServiceId {
 #[must_use]
 pub fn step_runner_service() -> ServiceId {
     ServiceId::parse(STEP_RUNNER_SERVICE).expect("static step runner service id is valid")
+}
+
+#[must_use]
+pub fn delegated_worker_service() -> ServiceId {
+    ServiceId::parse(DELEGATED_WORKER_SERVICE).expect("static delegated worker service id is valid")
 }

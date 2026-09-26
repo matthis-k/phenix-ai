@@ -149,6 +149,8 @@ pub enum AttemptOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ReacquisitionUsage {
+    /// Stable occurrence identity used to make durable/replayed accounting idempotent.
+    pub reacquisition_id: String,
     pub cause_identity: String,
     pub source_attempt_id: Option<String>,
     pub fresh_input_tokens: UsageQuantity,

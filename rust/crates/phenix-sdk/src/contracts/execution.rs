@@ -59,6 +59,9 @@ pub enum WorkerTaskState {
         execution_id: String,
         cause: String,
     },
+    Cancelled {
+        cause: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -121,13 +124,6 @@ pub enum ExecutionCommand {
         depends_on: BTreeSet<String>,
         requested_authority: ExecutionAuthority,
     },
-    CreateDelegatedTask {
-        id: String,
-        parent_execution: String,
-        description: String,
-        depends_on: BTreeSet<String>,
-        binding: DelegationTaskBinding,
-    },
     RunnableTasks,
     StartTask {
         task_id: String,
@@ -138,11 +134,6 @@ pub enum ExecutionCommand {
         execution_id: String,
         result_refs: Vec<String>,
     },
-    CompleteDelegatedTask {
-        task_id: String,
-        execution_id: String,
-        result: DelegatedWorkerResult,
-    },
     FailTask {
         task_id: String,
         execution_id: String,
@@ -151,41 +142,18 @@ pub enum ExecutionCommand {
     GetTask {
         id: String,
     },
-    GetDelegatedTask {
-        id: String,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum ExecutionResponse {
-    Execution {
-        execution: ExecutionRecord,
-    },
-    ExecutionLookup {
-        execution: Option<ExecutionRecord>,
-    },
-    Callable {
-        callable: CallableRecord,
-    },
-    Invocation {
-        output: Vec<u8>,
-    },
-    Task {
-        task: WorkerTaskRecord,
-    },
-    TaskLookup {
-        task: Option<WorkerTaskRecord>,
-    },
-    DelegatedTask {
-        task: DelegatedWorkerTaskRecord,
-    },
-    DelegatedTaskLookup {
-        task: Option<DelegatedWorkerTaskRecord>,
-    },
-    RunnableTasks {
-        task_ids: Vec<String>,
-    },
+    Execution { execution: ExecutionRecord },
+    ExecutionLookup { execution: Option<ExecutionRecord> },
+    Callable { callable: CallableRecord },
+    Invocation { output: Vec<u8> },
+    Task { task: WorkerTaskRecord },
+    TaskLookup { task: Option<WorkerTaskRecord> },
+    RunnableTasks { task_ids: Vec<String> },
 }
 
 pub struct ExecutionInterface;

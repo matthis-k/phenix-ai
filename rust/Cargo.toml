@@ -28,6 +28,7 @@ members = [
   "crates/phenix-plugin-context",
   "crates/phenix-plugin-debug",
   "crates/phenix-plugin-execution",
+  "crates/phenix-plugin-efficiency-evaluation",
   "crates/phenix-plugin-frontend",
   "crates/phenix-plugin-hooks",
   "crates/phenix-plugin-jobs",

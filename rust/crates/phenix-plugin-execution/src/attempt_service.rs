@@ -3,9 +3,9 @@ use phenix_core::{
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan, UsageAttemptKind,
-    UsageAttribution,
+    step_attempt_service, AttemptOutcome, AttemptUsageRecord, BudgetActual, ReacquisitionUsage,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptPhase, StepAttemptRecord,
+    StepAttemptResponse, StepPlan, UsageAttemptKind, UsageAttribution,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -39,19 +39,43 @@ impl AttemptLedger {
         parent_attempt_id: Option<String>,
         policy_revision: String,
         kind: UsageAttemptKind,
+        explicit_task_id: Option<String>,
     ) -> Result<UsageAttribution, String> {
         require_identity("root execution id", &root_execution_id)?;
         require_identity("execution id", &execution_id)?;
         require_identity("policy revision", &policy_revision)?;
         validate_parent_shape(kind, parent_attempt_id.as_deref())?;
-        if let Some(parent_id) = &parent_attempt_id {
+        let parent = if let Some(parent_id) = &parent_attempt_id {
             require_identity("parent attempt id", parent_id)?;
             let parent = self
                 .attempts
                 .get(parent_id)
                 .ok_or_else(|| format!("unknown parent step attempt: {parent_id}"))?;
             validate_parent(root_execution_id.as_str(), kind, parent)?;
-        }
+            Some(parent)
+        } else {
+            None
+        };
+        let task_id = match kind {
+            UsageAttemptKind::Root => {
+                if explicit_task_id.is_some() {
+                    return Err("root step attempt cannot carry delegated task identity".into());
+                }
+                None
+            }
+            UsageAttemptKind::Delegated => {
+                let task_id = explicit_task_id
+                    .ok_or_else(|| "delegated step attempt requires task identity".to_owned())?;
+                require_identity("delegated task id", &task_id)?;
+                Some(task_id)
+            }
+            _ => {
+                if explicit_task_id.is_some() {
+                    return Err("non-delegated allocation cannot override task identity".into());
+                }
+                parent.and_then(|parent| parent.attribution.task_id.clone())
+            }
+        };
 
         let attempt_id = loop {
             self.next_sequence = self
@@ -70,7 +94,7 @@ impl AttemptLedger {
             parent_attempt_id,
             policy_revision,
             kind,
-            task_id: None,
+            task_id,
         })
     }
 
@@ -89,7 +113,7 @@ impl AttemptLedger {
             return Err("step attempt cannot parent itself".into());
         }
         validate_parent_shape(attribution.kind, attribution.parent_attempt_id.as_deref())?;
-        if let Some(parent_id) = &attribution.parent_attempt_id {
+        let parent = if let Some(parent_id) = &attribution.parent_attempt_id {
             let parent = self
                 .attempts
                 .get(parent_id)
@@ -99,7 +123,11 @@ impl AttemptLedger {
                 attribution.kind,
                 parent,
             )?;
-        }
+            Some(parent)
+        } else {
+            None
+        };
+        validate_task_lineage(&attribution, parent)?;
         let record = StepAttemptRecord::new(attribution, plan)
             .map_err(|error| format!("step attempt creation failed: {error:?}"))?;
         self.attempts
@@ -154,6 +182,52 @@ impl AttemptLedger {
                 .map_err(|error| format!("attempt settlement failed: {error:?}"))
         })
     }
+
+    pub(crate) fn settle_with_usage(
+        &mut self,
+        attempt_id: &str,
+        outcome: AttemptOutcome,
+        actual: BudgetActual,
+        usage: AttemptUsageRecord,
+    ) -> Result<StepAttemptRecord, String> {
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .settle_with_usage(outcome, actual, usage)
+                .map_err(|error| format!("attempt settlement failed: {error:?}"))
+        })
+    }
+
+    fn record_reacquisition(
+        &mut self,
+        attempt_id: &str,
+        usage: ReacquisitionUsage,
+    ) -> Result<StepAttemptRecord, String> {
+        let target_root = self
+            .attempts
+            .get(attempt_id)
+            .ok_or_else(|| format!("unknown step attempt: {attempt_id}"))?
+            .attribution
+            .root_execution_id
+            .clone();
+        if usage.source_attempt_id.as_deref() == Some(attempt_id) {
+            return Err("reacquisition source attempt cannot be the consuming attempt".into());
+        }
+        if let Some(source_attempt_id) = &usage.source_attempt_id {
+            let source = self.attempts.get(source_attempt_id).ok_or_else(|| {
+                format!("unknown reacquisition source attempt: {source_attempt_id}")
+            })?;
+            if source.attribution.root_execution_id != target_root {
+                return Err(
+                    "reacquisition source attempt belongs to a different root execution".into(),
+                );
+            }
+        }
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .record_reacquisition(usage)
+                .map_err(|error| format!("reacquisition accounting failed: {error:?}"))
+        })
+    }
 }
 
 fn validate_parent_shape(kind: UsageAttemptKind, parent: Option<&str>) -> Result<(), String> {
@@ -165,6 +239,33 @@ fn validate_parent_shape(kind: UsageAttemptKind, parent: Option<&str>) -> Result
         (_, None) => Err(format!("{kind:?} step attempt requires a parent attempt")),
         (_, Some(_)) => Ok(()),
     }
+}
+
+fn validate_task_lineage(
+    attribution: &UsageAttribution,
+    parent: Option<&StepAttemptRecord>,
+) -> Result<(), String> {
+    match attribution.kind {
+        UsageAttemptKind::Root => {
+            if attribution.task_id.is_some() {
+                return Err("root step attempt cannot carry delegated task identity".into());
+            }
+        }
+        UsageAttemptKind::Delegated => {
+            let task_id = attribution
+                .task_id
+                .as_deref()
+                .ok_or_else(|| "delegated step attempt requires task identity".to_owned())?;
+            require_identity("delegated task id", task_id)?;
+        }
+        _ => {
+            let inherited = parent.and_then(|parent| parent.attribution.task_id.as_deref());
+            if attribution.task_id.as_deref() != inherited {
+                return Err("step attempt task identity diverged from parent lineage".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_parent(
@@ -284,6 +385,23 @@ fn mutate(
                 parent_attempt_id,
                 policy_revision,
                 kind,
+                None,
+            )?,
+        },
+        StepAttemptCommand::AllocateDelegatedIdentity {
+            root_execution_id,
+            execution_id,
+            parent_attempt_id,
+            policy_revision,
+            task_id,
+        } => StepAttemptResponse::Attribution {
+            attribution: next.allocate_identity(
+                root_execution_id,
+                execution_id,
+                Some(parent_attempt_id),
+                policy_revision,
+                UsageAttemptKind::Delegated,
+                Some(task_id),
             )?,
         },
         StepAttemptCommand::Create { attribution, plan } => StepAttemptResponse::Attempt {
@@ -341,6 +459,11 @@ fn mutate(
         } => StepAttemptResponse::Attempt {
             attempt: next.settle(&attempt_id, outcome)?,
         },
+        StepAttemptCommand::RecordReacquisition { attempt_id, usage } => {
+            StepAttemptResponse::Attempt {
+                attempt: next.record_reacquisition(&attempt_id, usage)?,
+            }
+        }
         StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. } => {
             return Err("read-only step attempt command reached mutation path".into())
         }

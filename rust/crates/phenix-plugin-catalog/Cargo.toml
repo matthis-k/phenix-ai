@@ -17,6 +17,7 @@ phenix-plugin-command-toolbelt = { path = "../phenix-plugin-command-toolbelt" }
 phenix-plugin-context = { path = "../phenix-plugin-context" }
 phenix-plugin-debug = { path = "../phenix-plugin-debug" }
 phenix-plugin-execution = { path = "../phenix-plugin-execution" }
+phenix-plugin-efficiency-evaluation = { path = "../phenix-plugin-efficiency-evaluation" }
 phenix-plugin-frontend = { path = "../phenix-plugin-frontend" }
 phenix-plugin-hooks = { path = "../phenix-plugin-hooks" }
 phenix-plugin-jobs = { path = "../phenix-plugin-jobs" }
