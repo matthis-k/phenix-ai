@@ -11,14 +11,13 @@ use phenix_sdk::{
     BudgetReservationPurpose, BudgetReservationRequest, ContextAdmissionRequest, ContextCommand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface, ContextResponse,
     ContextSource, DelegatedFinding, DelegatedWorkerCommand, DelegatedWorkerInterface,
-    DelegatedWorkerResponse,
-    DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy, ExecutionCommand,
-    ExecutionInterface, ExecutionResourceCommand, ExecutionResourceInterface,
-    ExecutionResourceResponse, ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand,
-    ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision,
-    ReacquisitionUsage, ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy,
-    RoutingEstimateMode, StepAttemptCommand,
+    DelegatedWorkerResponse, DelegatedWorkerResult, DelegatedWorkerTaskRecord,
+    DelegationResourcePolicy, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
+    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
+    InvocationIntent, ModelCommand, ModelDispatchCommand, ModelDispatchFailure,
+    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
+    PlannedStepRequest, ProjectionRevision, ReacquisitionUsage, ReasoningBudget, RouteDecision,
+    RouteSelection, RouteSelectionPolicy, RoutingEstimateMode, StepAttemptCommand,
     StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
     StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
     StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
@@ -920,12 +919,13 @@ fn admit_delegated_result(
                 model_calls: 0,
                 tool_calls: 0,
             };
-            match context.sdk.attempts.invoke_projected(
-                &StepAttemptCommand::RecordReacquisition {
+            match context
+                .sdk
+                .attempts
+                .invoke_projected(&StepAttemptCommand::RecordReacquisition {
                     attempt_id: originating_attempt_id.to_owned(),
                     usage,
-                },
-            ) {
+                }) {
                 Ok(StepAttemptResponse::Attempt { .. }) => true,
                 Ok(_) => {
                     trace_policy_stage(

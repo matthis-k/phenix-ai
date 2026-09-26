@@ -845,10 +845,7 @@ mod delegated_worker_runtime {
             reacquisition.reacquisition_id,
             "delegation:delegated-task-1:parent-context"
         );
-        assert_eq!(
-            reacquisition.cause_identity,
-            "delegation:delegated-task-1"
-        );
+        assert_eq!(reacquisition.cause_identity, "delegation:delegated-task-1");
         assert_eq!(
             reacquisition.source_attempt_id.as_deref(),
             Some(delegated_attempt.attribution.attempt_id.as_str())
