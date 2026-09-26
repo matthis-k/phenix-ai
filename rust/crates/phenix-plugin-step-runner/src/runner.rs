@@ -257,20 +257,20 @@ fn run_delegated_task(
             finish_execution_if_active(context, execution_id, true)?;
             let parent_admitted = admit_delegated_result(context, &record, None);
             return Ok(DelegatedWorkerResponse::Processed {
-                task: delegated_task(context, &task_id)?,
+                task: Box::new(delegated_task(context, &task_id)?),
                 parent_admitted,
             });
         }
         WorkerTaskState::Failed { execution_id, .. } => {
             finish_execution_if_active(context, execution_id, false)?;
             return Ok(DelegatedWorkerResponse::Processed {
-                task: record,
+                task: Box::new(record),
                 parent_admitted: false,
             });
         }
         WorkerTaskState::Cancelled { .. } => {
             return Ok(DelegatedWorkerResponse::Processed {
-                task: record,
+                task: Box::new(record),
                 parent_admitted: false,
             });
         }
@@ -557,7 +557,7 @@ fn run_delegated_task(
         Some(attempt.attribution.attempt_id.as_str()),
     );
     Ok(DelegatedWorkerResponse::Processed {
-        task,
+        task: Box::new(task),
         parent_admitted,
     })
 }
@@ -788,7 +788,7 @@ fn fail_started_delegated_with_actual(
     };
     finish_execution_if_active(context, execution_id, false)?;
     Ok(DelegatedWorkerResponse::Processed {
-        task,
+        task: Box::new(task),
         parent_admitted: false,
     })
 }
@@ -814,7 +814,7 @@ fn cancel_delegated_before_start(
         finish_execution_if_active(context, execution_id, false)?;
     }
     Ok(DelegatedWorkerResponse::Processed {
-        task,
+        task: Box::new(task),
         parent_admitted: false,
     })
 }
