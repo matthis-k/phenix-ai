@@ -1832,6 +1832,7 @@ version = "0.1.0"
 dependencies = [
  "phenix-core",
  "phenix-sdk",
+ "rustix",
  "serde_json",
 ]
 
