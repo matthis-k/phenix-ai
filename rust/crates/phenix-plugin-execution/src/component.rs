@@ -2,7 +2,7 @@ use crate::configuration::ExecutionConfigurationInterface;
 use crate::{execution_manifest, ExecutionReviewInterface};
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, InterfaceId, PluginId,
+    ComponentManifest, PluginId,
 };
 use phenix_sdk::{
     ExecutionInterface, ExecutionResourceInterface, StepAttemptInterface,
@@ -15,7 +15,6 @@ const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const WORKSPACE_WRITE: &str = "workspace.write";
-
 
 #[must_use]
 pub fn execution_component_id() -> ComponentId {
@@ -186,5 +185,4 @@ mod tests {
         let component = execution_component_manifest(Authority::new([write.clone()]));
         assert!(component.imports[0].authority.permits(&write));
     }
-
 }
