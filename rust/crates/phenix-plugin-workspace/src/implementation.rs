@@ -3,10 +3,10 @@ use phenix_core::{
     PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    environment_service, EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface,
-    EnvironmentResponse, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
-    WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
+    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
+    WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -505,6 +505,7 @@ mod tests {
         local_environment_component_manifest, local_environment_factory_for,
         local_environment_manifest,
     };
+    use phenix_sdk::environment_service;
     use std::{
         fs,
         process::Command,
