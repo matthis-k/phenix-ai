@@ -1,6 +1,6 @@
 # Isolated exploration runtime
 
-status: implementation-in-progress
+status: implemented
 
 Tracks #516 slice 5.
 
@@ -41,7 +41,7 @@ Tracks #516 slice 5.
 - [x] A non-separable task stays in the parent.
 - [x] A delegated explorer has no implicit parent-transcript access.
 - [x] Child results cannot exceed the reserved result bound.
-- [ ] Benchmarking compares total task work against the inline-parent baseline.
+- [x] Benchmarking compares total task work against the inline-parent baseline. `ExplorationPolicy::assess` compares inline parent work with delegated child, result, and parent-reacquisition work before admission. #599 derives post-run task cost from the full root-attempt set, including delegated attempts, for paired baseline/variant evaluation.
 
 ## Ownership
 
