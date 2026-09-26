@@ -1706,7 +1706,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-conductor"
+name = "phenix-runtime"
 version = "0.1.0"
 dependencies = [
  "phenix-client",
@@ -1754,7 +1754,7 @@ dependencies = [
  "parking_lot",
  "phenix-acp-stdio",
  "phenix-application-interface",
- "phenix-conductor",
+ "phenix-runtime",
  "phenix-core",
  "phenix-plugin-catalog",
  "phenix-provider-sdk",

@@ -10,7 +10,7 @@ role = "application"
 [dependencies]
 phenix-acp-stdio = { path = "../phenix-acp-stdio" }
 phenix-application-interface = { path = "../phenix-application-interface" }
-phenix-conductor = { path = "../phenix-conductor" }
+phenix-runtime = { path = "../phenix-runtime" }
 phenix-core = { path = "../phenix-core" }
 phenix-plugin-catalog = { path = "../phenix-plugin-catalog" }
 phenix-provider-sdk = { path = "../phenix-provider-sdk" }

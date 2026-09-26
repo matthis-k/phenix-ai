@@ -1,6 +1,6 @@
 mod runtime_config;
 
-use phenix_conductor::serve_jsonl;
+use phenix_runtime::serve_jsonl;
 use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
