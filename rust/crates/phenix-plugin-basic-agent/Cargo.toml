@@ -5,11 +5,12 @@ edition = "2021"
 publish = false
 
 [package.metadata.phenix]
-role = "assembly"
+role = "runtime-plugin"
 
 [dependencies]
 phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
+phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 phenix-plugin-basic-context = { path = "../phenix-plugin-basic-context" }
 phenix-plugin-basic-model = { path = "../phenix-plugin-basic-model" }
 phenix-plugin-basic-skills = { path = "../phenix-plugin-basic-skills" }

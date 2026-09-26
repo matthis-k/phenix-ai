@@ -1793,6 +1793,7 @@ dependencies = [
  "phenix-plugin-basic-skills",
  "phenix-plugin-basic-tools",
  "phenix-sdk",
+ "phenix-sdk-macros",
  "serde",
  "serde_json",
 ]
@@ -1922,6 +1923,7 @@ version = "0.1.0"
 dependencies = [
  "phenix-application-interface",
  "phenix-core",
+ "phenix-plugin-basic-agent",
  "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",

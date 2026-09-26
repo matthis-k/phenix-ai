@@ -10,6 +10,7 @@ role = "runtime-plugin"
 [dependencies]
 phenix-application-interface = { path = "../phenix-application-interface" }
 phenix-core = { path = "../phenix-core" }
+phenix-plugin-basic-agent = { path = "../phenix-plugin-basic-agent" }
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 serde.workspace = true

@@ -1,87 +1,24 @@
 use crate::configuration::ExecutionConfigurationInterface;
-use crate::{
-    execution_manifest, AgentLoopCommand, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewInterface,
-    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE,
-};
+use crate::{execution_manifest, ExecutionReviewInterface};
 use phenix_core::{
     Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, InterfaceId, PluginId,
+    ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    DefaultInvocationInterface, ExecutionInterface, ExecutionResourceInterface,
-    StepAttemptInterface, StepTransactionInterface, WorkspaceInterface,
+    ExecutionInterface, ExecutionResourceInterface, StepAttemptInterface, StepTransactionInterface,
+    WorkspaceInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
-const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
 const EXECUTION_PLUGIN: &str = "phenix.execution";
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const WORKSPACE_WRITE: &str = "workspace.write";
 
-pub struct AgentLoopInterface;
-
-impl ComponentInterface for AgentLoopInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopCommand, AgentLoopResponse>()
-    }
-}
-
-pub struct AgentLoopControlInterface;
-
-impl ComponentInterface for AgentLoopControlInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_CONTROL_SERVICE)
-            .expect("static agent loop control interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopControlRequest, AgentLoopControlResponse>()
-    }
-}
-
-pub struct AgentToolExecutionInterface;
-
-impl ComponentInterface for AgentToolExecutionInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_TOOL_EXECUTION_SERVICE)
-            .expect("static agent tool execution interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentToolExecutionRequest, AgentToolExecutionResponse>()
-    }
-}
-
-pub struct AgentLoopProgressInterface;
-
-impl ComponentInterface for AgentLoopProgressInterface {
-    fn interface_id() -> InterfaceId {
-        InterfaceId::parse(AGENT_LOOP_PROGRESS_SERVICE)
-            .expect("static agent loop progress interface id is valid")
-    }
-
-    fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<AgentLoopProgressRecord, AgentLoopProgressResponse>()
-    }
-}
-
 #[must_use]
 pub fn execution_component_id() -> ComponentId {
     ComponentId::parse(EXECUTION_COMPONENT).expect("static component id is valid")
-}
-
-#[must_use]
-pub fn agent_loop_component_id() -> ComponentId {
-    ComponentId::parse(AGENT_LOOP_COMPONENT).expect("static agent loop component id is valid")
 }
 
 #[must_use]
@@ -148,48 +85,6 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
     }
 }
 
-#[must_use]
-pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentManifest {
-    ComponentManifest {
-        listeners: Vec::new(),
-        id: agent_loop_component_id(),
-        owner: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
-        imports: vec![
-            ComponentImport {
-                interface: DefaultInvocationInterface::interface_id(),
-                schema: DefaultInvocationInterface::schema(),
-                required: false,
-                authority: maximum_authority.clone(),
-            },
-            ComponentImport {
-                interface: AgentLoopControlInterface::interface_id(),
-                schema: AgentLoopControlInterface::schema(),
-                required: true,
-                authority: Authority::default(),
-            },
-            ComponentImport {
-                interface: AgentToolExecutionInterface::interface_id(),
-                schema: AgentToolExecutionInterface::schema(),
-                required: true,
-                authority: Authority::default(),
-            },
-            ComponentImport {
-                interface: AgentLoopProgressInterface::interface_id(),
-                schema: AgentLoopProgressInterface::schema(),
-                required: true,
-                authority: Authority::default(),
-            },
-        ],
-        exports: vec![ComponentExport {
-            interface: AgentLoopInterface::interface_id(),
-            schema: AgentLoopInterface::schema(),
-            priority: 100,
-            required_authority: Authority::default(),
-        }],
-        maximum_authority,
-    }
-}
-
 fn persistence_authority() -> Authority {
     Authority::new([
         CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
@@ -209,7 +104,6 @@ fn workspace_write_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop_manifest;
     use phenix_core::ResolvedComponentGraph;
 
     #[test]
@@ -290,57 +184,5 @@ mod tests {
         let write = CapabilityId::parse(WORKSPACE_WRITE).unwrap();
         let component = execution_component_manifest(Authority::new([write.clone()]));
         assert!(component.imports[0].authority.permits(&write));
-    }
-
-    #[test]
-    fn agent_loop_component_owns_invocation_dependency_separately() {
-        let network = CapabilityId::parse("network.model").unwrap();
-        let authority = Authority::new([network.clone()]);
-        let plugin = agent_loop_manifest(authority.clone());
-        let component = agent_loop_component_manifest(authority);
-
-        assert_eq!(component.id, agent_loop_component_id());
-        assert_eq!(component.owner, plugin.id);
-        assert_eq!(component.imports.len(), 4);
-        assert!(!component.imports[0].required);
-        assert_eq!(
-            component.imports[0].interface,
-            DefaultInvocationInterface::interface_id()
-        );
-        assert!(component.imports[0].authority.permits(&network));
-        assert!(component.imports[1].required);
-        assert_eq!(
-            component.imports[1].interface,
-            AgentLoopControlInterface::interface_id()
-        );
-        assert!(component.imports[2].required);
-        assert_eq!(
-            component.imports[2].interface,
-            AgentToolExecutionInterface::interface_id()
-        );
-        assert!(component.imports[3].required);
-        assert_eq!(
-            component.imports[3].interface,
-            AgentLoopProgressInterface::interface_id()
-        );
-        assert_eq!(component.exports.len(), 1);
-        assert_eq!(
-            component.exports[0].interface,
-            AgentLoopInterface::interface_id()
-        );
-        assert_eq!(
-            component.exports[0].required_authority,
-            Authority::default()
-        );
-    }
-
-    #[test]
-    fn invocation_import_does_not_inherit_execution_persistence_authority() {
-        let network = CapabilityId::parse("network.model").unwrap();
-        let component = agent_loop_component_manifest(Authority::new([network.clone()]));
-        assert!(component.imports[0].authority.permits(&network));
-        for capability in persistence_authority().capabilities() {
-            assert!(!component.imports[0].authority.permits(capability));
-        }
     }
 }
