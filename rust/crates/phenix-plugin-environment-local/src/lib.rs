@@ -429,11 +429,7 @@ impl LocalEnvironment {
             .arg("--die-with-parent")
             .arg("--new-session")
             .arg("--unshare-user")
-            .arg("--unshare-pid")
-            .arg("--proc")
-            .arg("/proc")
-            .arg("--dev")
-            .arg("/dev");
+            .arg("--unshare-pid");
 
         let scratch = match self.filesystem_policy()? {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
@@ -448,8 +444,16 @@ impl LocalEnvironment {
             }
         };
 
-        command.arg("--tmpfs").arg(scratch);
-        command.arg("--bind").arg(&self.root).arg(&self.root);
+        command
+            .arg("--proc")
+            .arg("/proc")
+            .arg("--dev")
+            .arg("/dev")
+            .arg("--tmpfs")
+            .arg(scratch)
+            .arg("--bind")
+            .arg(&self.root)
+            .arg(&self.root);
         command
             .arg("--setenv")
             .arg("TMPDIR")
@@ -1212,7 +1216,8 @@ mod tests {
         };
 
         let command = format!(
-            "sh -c 'printf inside > nested.txt; printf nope > "$1"' sh {}; exit\n",
+            r#"sh -c 'printf inside > nested.txt; printf nope > "$1"' sh '{}'; exit
+"#,
             outside_write.to_string_lossy()
         );
         assert!(matches!(
