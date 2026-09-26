@@ -143,6 +143,8 @@ let
                     wrapProgram "$out/bin/$program" \
                       --set PHENIX_LAYER_POLICY ${pkgs.lib.escapeShellArg layerPolicyJson}
                   ''}
+                  wrapProgram "$out/bin/$program" \
+                    --prefix PATH : ${pkgs.lib.escapeShellArg (pkgs.lib.makeBinPath [ pkgs.bubblewrap ])}
                   ${pkgs.lib.optionalString (resources != [ ]) ''
                     wrapProgram "$out/bin/$program" \
                       --set PHENIX_SKILL_PATH "$out/share/phenix/skills"
