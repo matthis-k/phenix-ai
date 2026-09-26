@@ -110,7 +110,7 @@ impl ToolBridge {
             "initialize" => json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "phenix-conductor", "version": "0.1.0" }
+                "serverInfo": { "name": "phenix-runtime", "version": "0.1.0" }
             }),
             "ping" => json!({}),
             "tools/list" => self.list_tools()?,
@@ -212,11 +212,11 @@ impl ToolBridge {
             }))
             .map_err(|error| {
                 agent_client_protocol::Error::internal_error()
-                    .data(format!("conductor tool host is unavailable: {error}"))
+                    .data(format!("runtime tool host is unavailable: {error}"))
             })?;
         let result = response_rx.recv().map_err(|error| {
             agent_client_protocol::Error::internal_error()
-                .data(format!("conductor tool result channel closed: {error}"))
+                .data(format!("runtime tool result channel closed: {error}"))
         })?;
         Ok(tool_result(result))
     }

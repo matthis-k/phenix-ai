@@ -14,7 +14,7 @@ members = [
   "crates/phenix-core",
   "crates/phenix-domain",
   "crates/phenix-client",
-  "crates/phenix-conductor",
+  "crates/phenix-runtime",
   "crates/phenix-harness",
   "crates/phenix-sdk",
   "crates/phenix-sdk-macros",
