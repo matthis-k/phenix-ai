@@ -3,7 +3,8 @@ use phenix_core::{
     PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
+    environment_service, EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface,
+    EnvironmentResponse,
     WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
     WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
     WORKSPACE_SERVICE,
