@@ -199,12 +199,13 @@ impl AttemptLedger {
             return Err("reacquisition source attempt cannot be the consuming attempt".into());
         }
         if let Some(source_attempt_id) = &usage.source_attempt_id {
-            let source = self
-                .attempts
-                .get(source_attempt_id)
-                .ok_or_else(|| format!("unknown reacquisition source attempt: {source_attempt_id}"))?;
+            let source = self.attempts.get(source_attempt_id).ok_or_else(|| {
+                format!("unknown reacquisition source attempt: {source_attempt_id}")
+            })?;
             if source.attribution.root_execution_id != target_root {
-                return Err("reacquisition source attempt belongs to a different root execution".into());
+                return Err(
+                    "reacquisition source attempt belongs to a different root execution".into(),
+                );
             }
         }
         self.mutate(attempt_id, |attempt| {
