@@ -241,20 +241,21 @@ Filesystem path policy is not encoded as a new Core authority lattice. A sandbox
 
 Default presets may be opinionated. The mechanism is not.
 
-A product-level preset may choose or configure an Environment such as:
+The filesystem behaviors are:
 
-```text
-workspace
-host-review
-home
-readonly-host
-unrestricted
-ssh
-```
+| Behavior | Reads | Writes |
+| --- | --- | --- |
+| unrestricted local | entire host | entire host |
+| working-directory only | working directory tree | working directory tree |
+| working-directory write, host read | entire host | working directory tree |
 
-Those names are configuration conveniences. They are not kernel or Workspace semantics.
+The current default is unrestricted local execution through `phenix.environment.local`.
 
-A plugin may provide different policy or Environment behavior without changing Core, Workspace, or Tool contracts.
+The configured local root is only the default namespace base and process cwd. It does not restrict absolute paths, `..` used by child processes, or other host filesystem access.
+
+The two confined behaviors require a future enforcing Environment backend. They must apply equally to direct filesystem operations and arbitrary descendant processes. If enforcement is unavailable, the request fails rather than falling back to unrestricted local execution.
+
+Preset names are product configuration. They are not kernel, Workspace, or Environment ABI semantics.
 
 ## Review/staging
 
@@ -292,13 +293,18 @@ Implemented in this PR:
 
 The local provider currently:
 
-- uses the host filesystem/process namespace;
+- uses the unrestricted host filesystem/process namespace;
+- treats its configured root as the default base/cwd, not a confinement boundary;
+- accepts absolute host paths through `EnvironmentInterface`;
+- allows child processes normal host filesystem reach;
 - supports persistent pipe-backed processes;
 - does not provide a PTY;
 - does not provide sandboxing or staged review.
 
 Not implemented by this PR:
 
+- working-directory-only confinement;
+- working-directory-write with host-wide reads;
 - Linux sandbox provider;
 - overlay/review provider;
 - SSH Environment provider;
@@ -320,6 +326,7 @@ The architecture is considered preserved only if tests prove:
 - Workspace direct read/write goes through Environment rather than host filesystem code.
 - Workspace shell and Git execution go through Environment.
 - Environment process execution uses the requested Environment working directory.
+- the unrestricted local provider can read/write absolute paths outside its configured root, including from child processes.
 - persistent process handles are provider-owned opaque strings.
 - persistent process cleanup happens on explicit close and provider stop.
 - replacing the Environment provider does not require changing Workspace or tool contracts.
