@@ -67,12 +67,24 @@ pub fn local_environment_component_manifest() -> ComponentManifest {
 pub fn local_environment_factory() -> Box<dyn PluginInstance> {
     Box::new(LocalEnvironment::new(
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        EnvironmentFilesystemPolicy::Unrestricted,
     ))
 }
 
 #[must_use]
 pub fn local_environment_factory_for(root: impl Into<PathBuf>) -> Box<dyn PluginInstance> {
-    Box::new(LocalEnvironment::new(root.into()))
+    Box::new(LocalEnvironment::new(
+        root.into(),
+        EnvironmentFilesystemPolicy::Unrestricted,
+    ))
+}
+
+#[must_use]
+pub fn local_environment_factory_for_policy(
+    root: impl Into<PathBuf>,
+    filesystem_policy: EnvironmentFilesystemPolicy,
+) -> Box<dyn PluginInstance> {
+    Box::new(LocalEnvironment::new(root.into(), filesystem_policy))
 }
 
 #[derive(Default)]
@@ -134,16 +146,29 @@ impl PersistentProcess {
 
 struct LocalEnvironment {
     root: PathBuf,
+    filesystem_policy: EnvironmentFilesystemPolicy,
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
 }
 
 impl LocalEnvironment {
-    fn new(root: PathBuf) -> Self {
+    fn new(root: PathBuf, filesystem_policy: EnvironmentFilesystemPolicy) -> Self {
         Self {
             root,
+            filesystem_policy,
             processes: BTreeMap::new(),
             next_process_id: 1,
+        }
+    }
+
+    fn require_native_policy(&self, operation: &str) -> Result<(), String> {
+        if self.filesystem_policy == EnvironmentFilesystemPolicy::Unrestricted {
+            Ok(())
+        } else {
+            Err(format!(
+                "local environment policy {:?} has no enforcing backend for {operation}; refusing unrestricted fallback",
+                self.filesystem_policy
+            ))
         }
     }
 
@@ -165,7 +190,8 @@ impl LocalEnvironment {
         arguments: &[String],
         working_directory: Option<&str>,
         environment: &BTreeMap<String, String>,
-    ) -> Command {
+    ) -> Result<Command, String> {
+        self.require_native_policy("process spawn")?;
         let mut command = Command::new(program);
         command.args(arguments);
         command.current_dir(
@@ -174,7 +200,7 @@ impl LocalEnvironment {
                 .unwrap_or_else(|| self.root.clone()),
         );
         command.envs(environment);
-        command
+        Ok(command)
     }
 }
 
@@ -226,12 +252,13 @@ impl LocalEnvironment {
             EnvironmentCommand::Describe => Ok(EnvironmentResponse::Description {
                 environment: EnvironmentDescription {
                     provider: LOCAL_ENVIRONMENT_PLUGIN.into(),
-                    filesystem_policy: EnvironmentFilesystemPolicy::Unrestricted,
+                    filesystem_policy: self.filesystem_policy,
                     persistent_processes: true,
                     pty: false,
                 },
             }),
             EnvironmentCommand::Stat { path } => {
+                self.require_native_policy("direct filesystem stat")?;
                 let resolved = self.resolve(&path);
                 let kind = match fs::metadata(&resolved) {
                     Ok(metadata) if metadata.is_file() => Some(EnvironmentFileKind::File),
@@ -243,6 +270,7 @@ impl LocalEnvironment {
                 Ok(EnvironmentResponse::Metadata { kind })
             }
             EnvironmentCommand::ReadFile { path } => {
+                self.require_native_policy("direct filesystem read")?;
                 let resolved = self.resolve(&path);
                 let content = match fs::read(&resolved) {
                     Ok(content) => Some(content),
@@ -256,6 +284,7 @@ impl LocalEnvironment {
                 content,
                 create_parents,
             } => {
+                self.require_native_policy("direct filesystem write")?;
                 let resolved = self.resolve(&path);
                 if create_parents {
                     if let Some(parent) = resolved.parent() {
@@ -267,6 +296,7 @@ impl LocalEnvironment {
                 Ok(EnvironmentResponse::Written)
             }
             EnvironmentCommand::ReadDir { path } => {
+                self.require_native_policy("direct directory read")?;
                 let resolved = self.resolve(&path);
                 let mut entries = fs::read_dir(&resolved)
                     .map_err(|error| format!("read directory {path}: {error}"))?
@@ -304,7 +334,7 @@ impl LocalEnvironment {
                         &arguments,
                         working_directory.as_deref(),
                         &environment,
-                    )
+                    )?
                     .output()
                     .map_err(|error| format!("spawn {program}: {error}"))?;
                 let (stdout, stdout_truncated) = bounded(output.stdout);
@@ -328,7 +358,7 @@ impl LocalEnvironment {
                         &arguments,
                         working_directory.as_deref(),
                         &environment,
-                    )
+                    )?
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -476,13 +506,20 @@ mod tests {
         root
     }
 
-    fn invoke(kernel: &mut Kernel, command: EnvironmentCommand) -> EnvironmentResponse {
+    fn invoke_result(
+        kernel: &mut Kernel,
+        command: EnvironmentCommand,
+    ) -> Result<EnvironmentResponse, String> {
         let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
         let output = kernel
             .invoke(&environment_service(), &input, &Authority::default(), None)
-            .unwrap();
+            .map_err(|error| error.to_string())?;
         let output: PhenixValue = serde_json::from_slice(&output).unwrap();
-        EnvironmentResponse::try_from(Project(&output)).unwrap()
+        EnvironmentResponse::try_from(Project(&output)).map_err(|error| error.to_string())
+    }
+
+    fn invoke(kernel: &mut Kernel, command: EnvironmentCommand) -> EnvironmentResponse {
+        invoke_result(kernel, command).unwrap()
     }
 
     #[test]
@@ -599,6 +636,60 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn restricted_local_policies_fail_closed_until_enforcing_backend_exists() {
+        for policy in [
+            EnvironmentFilesystemPolicy::WorkingDirectoryOnly,
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
+        ] {
+            let root = temp_root();
+            let manifest = local_environment_manifest();
+            let plugin = manifest.id.clone();
+            let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+            let provider_root = root.clone();
+            kernel
+                .register_embedded_factory(plugin, move || {
+                    local_environment_factory_for_policy(provider_root.clone(), policy)
+                })
+                .unwrap();
+            kernel.activate_all().unwrap();
+
+            assert!(matches!(
+                invoke(&mut kernel, EnvironmentCommand::Describe),
+                EnvironmentResponse::Description { environment }
+                    if environment.filesystem_policy == policy
+            ));
+
+            for command in [
+                EnvironmentCommand::ReadFile {
+                    path: "value.txt".into(),
+                },
+                EnvironmentCommand::WriteFile {
+                    path: "value.txt".into(),
+                    content: b"nope".to_vec(),
+                    create_parents: true,
+                },
+                EnvironmentCommand::Exec {
+                    program: "sh".into(),
+                    arguments: vec!["-c".into(), "true".into()],
+                    working_directory: None,
+                    environment: BTreeMap::new(),
+                },
+                EnvironmentCommand::OpenProcess {
+                    program: "sh".into(),
+                    arguments: Vec::new(),
+                    working_directory: None,
+                    environment: BTreeMap::new(),
+                },
+            ] {
+                let error = invoke_result(&mut kernel, command).unwrap_err();
+                assert!(error.contains("refusing unrestricted fallback"));
+            }
+
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]
