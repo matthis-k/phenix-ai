@@ -10,8 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RoutingRuntimeState {
     capabilities: BTreeMap<String, EffectiveModelCapabilities>,
+    #[serde(skip)]
     estimates: BTreeMap<String, RoutingEstimate>,
     evidence: BTreeMap<String, Vec<RoutingEvidence>>,
+    #[serde(default)]
+    evidence_sequence: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,7 +51,45 @@ impl RoutingRuntimeState {
             .entry(target_key(&decision.target)?)
             .or_default()
             .push(evidence);
+        self.evidence_sequence = self.evidence_sequence.saturating_add(1);
+        self.rebuild_estimates();
         Ok(())
+    }
+
+    pub(crate) fn rebuild_estimates(&mut self) {
+        self.estimates.clear();
+        let snapshot_revision = format!("routing-evidence/{}", self.evidence_sequence);
+        for (target, records) in &self.evidence {
+            if records.is_empty() {
+                continue;
+            }
+            let total = u64::try_from(records.len()).unwrap_or(u64::MAX);
+            let successes = u64::try_from(records.iter().filter(|record| record.success).count())
+                .unwrap_or(u64::MAX);
+            let expected_quality_millis =
+                Some(u32::try_from(successes.saturating_mul(1_000) / total).unwrap_or(u32::MAX));
+            let latency = records
+                .iter()
+                .filter_map(|record| record.latency_ms)
+                .fold((0_u64, 0_u64), |(sum, count), value| {
+                    (sum.saturating_add(value), count.saturating_add(1))
+                });
+            let expected_latency_ms = (latency.1 != 0).then(|| latency.0 / latency.1);
+            let confidence_millis =
+                Some(u16::try_from(total.saturating_mul(100).min(1_000)).unwrap_or(1_000));
+            self.estimates.insert(
+                target.clone(),
+                RoutingEstimate {
+                    source: phenix_sdk::RoutingEstimateSource::Historical,
+                    expected_quality_millis,
+                    expected_latency_ms,
+                    expected_cost_microunits: None,
+                    confidence_millis,
+                    estimator_snapshot_revision: Some(snapshot_revision.clone()),
+                    evidence_cutoff_sequence: Some(self.evidence_sequence),
+                },
+            );
+        }
     }
 
     pub(crate) fn validate_decision(
@@ -208,6 +249,106 @@ mod tests {
             state.validate_decision(&decision),
             Err(RoutingRuntimeError::StaleCapabilityGeneration { .. })
         ));
+    }
+
+    #[test]
+    fn historical_estimates_are_rebuilt_from_completed_evidence() {
+        let mut state = RoutingRuntimeState::default();
+        let profile = profile();
+        for target in
+            std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
+        {
+            state
+                .publish_capabilities(capabilities(target.clone(), "generation-1"))
+                .unwrap();
+        }
+
+        let decision = |target: ModelTarget, ordinal: u32| RouteDecision {
+            target,
+            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            policy_revision: "policy-1".into(),
+            candidate_ordinal: ordinal,
+            estimate: None,
+        };
+        let unavailable_usage = || phenix_core::ModelTurnUsage {
+            fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+            cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+            cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+            output_tokens: phenix_core::UsageQuantity::Unavailable,
+            reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+        };
+
+        state
+            .record_evidence(
+                &decision(profile.default_target.clone(), 0),
+                RoutingEvidence {
+                    success: false,
+                    latency_ms: Some(200),
+                    cost_microunits: None,
+                    usage: unavailable_usage(),
+                },
+            )
+            .unwrap();
+        state
+            .record_evidence(
+                &decision(profile.fallback_targets[0].clone(), 1),
+                RoutingEvidence {
+                    success: true,
+                    latency_ms: Some(50),
+                    cost_microunits: None,
+                    usage: unavailable_usage(),
+                },
+            )
+            .unwrap();
+
+        let candidates = state.candidates(&profile, None).unwrap();
+        assert_eq!(
+            candidates[0]
+                .estimate
+                .as_ref()
+                .and_then(|estimate| estimate.evidence_cutoff_sequence),
+            Some(2)
+        );
+        assert_eq!(
+            candidates[1]
+                .estimate
+                .as_ref()
+                .and_then(|estimate| estimate.estimator_snapshot_revision.as_deref()),
+            Some("routing-evidence/2")
+        );
+
+        let selection = state
+            .resolve(
+                &profile,
+                None,
+                &RoutingRequirements {
+                    context: ContextDemand {
+                        mandatory_input_tokens: 100,
+                        reducible_input_tokens: 100,
+                        output_reserve_tokens: 100,
+                        required_capabilities: BTreeSet::new(),
+                    },
+                    required_capabilities: BTreeSet::new(),
+                    require_known_capacity: true,
+                },
+                &RouteSelectionPolicy {
+                    revision: "policy-1".into(),
+                    estimates: RoutingEstimateMode::PreferTrusted {
+                        min_confidence_millis: 100,
+                    },
+                    max_candidate_attempts: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(selection.decision.target.model.as_str(), "fallback");
+        assert_eq!(
+            selection
+                .decision
+                .estimate
+                .as_ref()
+                .and_then(|estimate| estimate.evidence_cutoff_sequence),
+            Some(2)
+        );
     }
 
     #[test]

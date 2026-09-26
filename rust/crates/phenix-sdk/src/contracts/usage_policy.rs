@@ -1,5 +1,6 @@
 use super::{
-    BudgetReservation, ContextDemand, DelegationResourcePolicy, ExecutionState, RoutingRequirements,
+    BudgetReservation, ContextDemand, DelegationResourcePolicy, ExecutionState, RoutingEstimate,
+    RoutingEstimateSource, RoutingRequirements,
 };
 use phenix_core::{CallableId, SkillId};
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,8 @@ pub struct UsagePlanningInput {
     pub execution_state: ExecutionState,
     pub remaining: RemainingBudget,
     pub now_ms: u64,
+    #[serde(default)]
+    pub historical_estimates: Vec<RoutingEstimate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -97,8 +100,40 @@ pub struct RetryBudget {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
+pub struct HistoricalEstimatorSnapshot {
+    pub revision: String,
+    pub evidence_cutoff_sequence: u64,
+}
+
+fn historical_estimator_snapshot(
+    estimates: &[RoutingEstimate],
+) -> Option<HistoricalEstimatorSnapshot> {
+    let first = estimates.first()?;
+    if first.source != RoutingEstimateSource::Historical {
+        return None;
+    }
+    let snapshot = HistoricalEstimatorSnapshot {
+        revision: first.estimator_snapshot_revision.clone()?,
+        evidence_cutoff_sequence: first.evidence_cutoff_sequence?,
+    };
+    estimates
+        .iter()
+        .skip(1)
+        .all(|estimate| {
+            estimate.source == RoutingEstimateSource::Historical
+                && estimate.estimator_snapshot_revision.as_deref()
+                    == Some(snapshot.revision.as_str())
+                && estimate.evidence_cutoff_sequence == Some(snapshot.evidence_cutoff_sequence)
+        })
+        .then_some(snapshot)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
 pub struct StepPlan {
     pub policy_revision: String,
+    #[serde(default)]
+    pub historical_estimator_snapshot: Option<HistoricalEstimatorSnapshot>,
     pub routing: RoutingRequirements,
     pub context: ContextDemand,
     pub reasoning: ReasoningBudget,
@@ -206,6 +241,9 @@ impl UsagePolicy {
 
         Ok(StepPlan {
             policy_revision: self.revision.clone(),
+            historical_estimator_snapshot: historical_estimator_snapshot(
+                &input.historical_estimates,
+            ),
             routing: RoutingRequirements {
                 context: routing_context,
                 required_capabilities: input.task.required_capabilities.clone(),
@@ -292,6 +330,7 @@ mod tests {
                 attempts: 3,
             },
             now_ms: 1_000,
+            historical_estimates: Vec::new(),
         }
     }
 
@@ -367,6 +406,41 @@ mod tests {
             Err(UsagePlanError::MandatoryInputExceedsBudget {
                 requested: 1_001,
                 allowed: 1_000,
+            })
+        );
+    }
+
+    #[test]
+    fn historical_estimates_are_derived_inputs_not_hard_constraint_overrides() {
+        let request = input(ContextDemand {
+            mandatory_input_tokens: 800,
+            reducible_input_tokens: 500,
+            output_reserve_tokens: 200,
+            required_capabilities: BTreeSet::new(),
+        });
+        let baseline = policy().plan(&request).unwrap();
+
+        let mut with_history = request;
+        with_history.historical_estimates = vec![RoutingEstimate {
+            source: super::super::RoutingEstimateSource::Historical,
+            expected_quality_millis: Some(1_000),
+            expected_latency_ms: Some(1),
+            expected_cost_microunits: Some(1),
+            confidence_millis: Some(1_000),
+            estimator_snapshot_revision: Some("routing-evidence/7".into()),
+            evidence_cutoff_sequence: Some(7),
+        }];
+        let planned = policy().plan(&with_history).unwrap();
+
+        assert_eq!(planned.context, baseline.context);
+        assert_eq!(planned.reservation, baseline.reservation);
+        assert_eq!(planned.context.mandatory_input_tokens, 800);
+        assert_eq!(planned.reservation.input_tokens, 1_000);
+        assert_eq!(
+            planned.historical_estimator_snapshot,
+            Some(HistoricalEstimatorSnapshot {
+                revision: "routing-evidence/7".into(),
+                evidence_cutoff_sequence: 7,
             })
         );
     }

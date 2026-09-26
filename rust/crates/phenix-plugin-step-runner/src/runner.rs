@@ -6,16 +6,17 @@ use phenix_core::{
     PluginInstance, PluginManifest, RuntimeTraceEvent, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    select_route, step_runner_service, AttemptOutcome, BudgetActual, BudgetReservationPurpose,
-    BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInterface,
-    ContextResponse, ExecutionCommand, ExecutionInterface, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ModelCommand, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
-    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, PlannedStepRequest,
-    ProjectionRevision, RouteSelection, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface,
-    StepRunnerResponse, StepSettlementBasis, StepTransactionCommand, StepTransactionInterface,
-    StepTransactionResponse, UsageAttemptKind, UsageAttribution, UsagePlanningInput,
+    select_route, step_runner_service, AttemptOutcome, AttemptUsageRecord, BudgetActual,
+    BudgetReservationPurpose, BudgetReservationRequest, ContextAdmissionRequest, ContextCommand,
+    ContextInterface, ContextResponse, ExecutionCommand, ExecutionInterface,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    ExecutionResponse, ExecutionState, ModelCommand, ModelDispatchCommand, ModelDispatchFailure,
+    ModelDispatchInterface, ModelDispatchResponse, ModelResponse, ModelRoutingInterface,
+    PlannedStepRequest, ProjectionRevision, RouteDecision, RouteSelection, RoutingEvidence,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan,
+    StepRunnerCommand, StepRunnerInterface, StepRunnerResponse, StepSettlementBasis,
+    StepTransactionCommand, StepTransactionInterface, StepTransactionResponse, UsageAttemptKind,
+    UsageAttribution, UsagePlanningInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -313,11 +314,26 @@ fn run_with_retry_route(
     let ExecutionResourceResponse::Remaining { budget: remaining } = remaining else {
         return Err("execution resource service returned a non-remaining response".into());
     };
+    let historical_estimates = match context
+        .sdk
+        .routing
+        .invoke_projected::<ModelCommand, ModelResponse>(&ModelCommand::ListCandidates {
+            profile_id: profile_id.clone(),
+            callable_id: callable_id.clone(),
+        }) {
+        Ok(ModelResponse::Candidates { candidates }) => candidates
+            .into_iter()
+            .filter_map(|candidate| candidate.estimate)
+            .filter(|estimate| estimate.source == phenix_sdk::RoutingEstimateSource::Historical)
+            .collect(),
+        Ok(_) | Err(_) => Vec::new(),
+    };
     let plan = match policy.plan(&UsagePlanningInput {
         task,
         execution_state: execution.state,
         remaining,
         now_ms,
+        historical_estimates,
     }) {
         Ok(plan) => {
             trace_policy_stage(
@@ -786,6 +802,7 @@ fn run_with_retry_route(
     {
         Ok(response) => response,
         Err(CallError::Domain(failure)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -841,6 +858,7 @@ fn run_with_retry_route(
             ));
         }
         Err(CallError::Runtime(error)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -852,6 +870,7 @@ fn run_with_retry_route(
             return Err(format!("prepared model dispatch runtime failure: {error}"));
         }
         Err(CallError::Conversion(error)) => {
+            record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
                 &attribution.root_execution_id,
@@ -864,6 +883,7 @@ fn run_with_retry_route(
         }
     };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        record_routing_evidence(context, &decision, false, None);
         settle_after_dispatch(
             context,
             &attribution.root_execution_id,
@@ -875,6 +895,7 @@ fn run_with_retry_route(
         return Err("model dispatch returned preflight readiness after dispatch".into());
     };
 
+    record_routing_evidence(context, &decision, true, Some(&response.usage));
     let (settled, settlement_basis) = successful_actual(&plan, &response.usage);
     let attempt = settle_step(
         context,
@@ -883,6 +904,15 @@ fn run_with_retry_route(
         settled.clone(),
         &attribution.attempt_id,
         AttemptOutcome::Succeeded,
+        AttemptUsageRecord {
+            attribution: attribution.clone(),
+            usage: (*response.usage).clone(),
+            latency_ms: None,
+            tool_input_bytes: 0,
+            tool_result_bytes: 0,
+            outcome: AttemptOutcome::Succeeded,
+            reacquisition: Vec::new(),
+        },
     )?;
 
     Ok(StepRunnerResponse::Completed {
@@ -892,6 +922,43 @@ fn run_with_retry_route(
         settled,
         settlement_basis,
     })
+}
+
+fn record_routing_evidence(
+    context: &StepRunnerContext<'_, '_>,
+    decision: &RouteDecision,
+    success: bool,
+    usage: Option<&phenix_core::ModelTurnUsage>,
+) {
+    let unavailable_usage = || phenix_core::ModelTurnUsage {
+        fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+        cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+        cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+        output_tokens: phenix_core::UsageQuantity::Unavailable,
+        reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+    };
+    let command = ModelCommand::RecordEvidence {
+        decision: decision.clone(),
+        evidence: RoutingEvidence {
+            success,
+            latency_ms: None,
+            cost_microunits: None,
+            usage: usage.cloned().unwrap_or_else(unavailable_usage),
+        },
+    };
+    if let Err(error) = context
+        .sdk
+        .routing
+        .invoke_projected::<ModelCommand, ModelResponse>(&command)
+    {
+        trace_policy_stage(
+            context,
+            "routing_evidence",
+            "degraded",
+            Some(&decision.policy_revision),
+            Some(format!("routing evidence recording failed: {error}")),
+        );
+    }
 }
 
 fn resolve_model_route(
@@ -1275,6 +1342,7 @@ fn settle_step(
     actual: BudgetActual,
     attempt_id: &str,
     outcome: AttemptOutcome,
+    usage: AttemptUsageRecord,
 ) -> Result<StepAttemptRecord, String> {
     let response: StepTransactionResponse = context
         .sdk
@@ -1285,6 +1353,7 @@ fn settle_step(
             actual,
             attempt_id: attempt_id.to_owned(),
             outcome,
+            usage: Box::new(usage),
         })
         .map_err(|error| error.to_string())?;
     match response {
@@ -1303,6 +1372,19 @@ fn settle_after_dispatch(
     reservation_id: &str,
     outcome: AttemptOutcome,
 ) -> Result<(), String> {
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::Get {
+            attempt_id: attempt_id.to_owned(),
+        })
+        .map_err(|error| error.to_string())?;
+    let StepAttemptResponse::AttemptLookup {
+        attempt: Some(attempt),
+    } = response
+    else {
+        return Err(format!("cannot settle unknown step attempt: {attempt_id}"));
+    };
     settle_step(
         context,
         root_execution_id,
@@ -1310,6 +1392,21 @@ fn settle_after_dispatch(
         conservative_actual(plan),
         attempt_id,
         outcome,
+        AttemptUsageRecord {
+            attribution: attempt.attribution,
+            usage: phenix_core::ModelTurnUsage {
+                fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+                cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+                cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+                output_tokens: phenix_core::UsageQuantity::Unavailable,
+                reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+            },
+            latency_ms: None,
+            tool_input_bytes: 0,
+            tool_result_bytes: 0,
+            outcome,
+            reacquisition: Vec::new(),
+        },
     )
     .map(|_| ())
 }

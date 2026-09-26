@@ -1,5 +1,6 @@
 use super::{
-    AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
+    AttemptOutcome, AttemptUsageRecord, BudgetActual, ProjectionRevision, ReacquisitionUsage,
+    RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
 };
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,12 @@ pub struct StepAttemptRecord {
     pub projection: Option<ProjectionRevision>,
     pub dispatch_id: Option<String>,
     pub outcome: Option<AttemptOutcome>,
+    #[serde(default)]
+    pub reacquisition: Vec<ReacquisitionUsage>,
+    #[serde(default)]
+    pub settled_actual: Option<BudgetActual>,
+    #[serde(default)]
+    pub usage: Option<AttemptUsageRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -51,6 +58,17 @@ pub enum StepAttemptTransitionError {
     },
     EmptyIdentity {
         field: String,
+    },
+    UsageAttributionMismatch,
+    UsageOutcomeMismatch {
+        expected: AttemptOutcome,
+        observed: AttemptOutcome,
+    },
+    InvalidReacquisitionPhase {
+        actual: StepAttemptPhase,
+    },
+    ReacquisitionIdentityConflict {
+        reacquisition_id: String,
     },
 }
 
@@ -80,6 +98,9 @@ impl StepAttemptRecord {
             projection: None,
             dispatch_id: None,
             outcome: None,
+            reacquisition: Vec::new(),
+            settled_actual: None,
+            usage: None,
         })
     }
 
@@ -144,6 +165,59 @@ impl StepAttemptRecord {
         self.require_phase(StepAttemptPhase::Dispatched)?;
         self.outcome = Some(outcome);
         self.phase = StepAttemptPhase::Settled;
+        Ok(())
+    }
+
+    pub fn settle_with_usage(
+        &mut self,
+        outcome: AttemptOutcome,
+        actual: BudgetActual,
+        usage: AttemptUsageRecord,
+    ) -> Result<(), StepAttemptTransitionError> {
+        self.require_phase(StepAttemptPhase::Dispatched)?;
+        if usage.attribution != self.attribution {
+            return Err(StepAttemptTransitionError::UsageAttributionMismatch);
+        }
+        if usage.outcome != outcome {
+            return Err(StepAttemptTransitionError::UsageOutcomeMismatch {
+                expected: outcome,
+                observed: usage.outcome,
+            });
+        }
+        self.outcome = Some(outcome);
+        self.settled_actual = Some(actual);
+        self.usage = Some(usage);
+        self.phase = StepAttemptPhase::Settled;
+        Ok(())
+    }
+
+    pub fn record_reacquisition(
+        &mut self,
+        usage: ReacquisitionUsage,
+    ) -> Result<(), StepAttemptTransitionError> {
+        if self.phase != StepAttemptPhase::Settled {
+            return Err(StepAttemptTransitionError::InvalidReacquisitionPhase {
+                actual: self.phase,
+            });
+        }
+        validate_identity("reacquisition_id", &usage.reacquisition_id)?;
+        validate_identity("reacquisition_cause_identity", &usage.cause_identity)?;
+        if let Some(source_attempt_id) = &usage.source_attempt_id {
+            validate_identity("reacquisition_source_attempt_id", source_attempt_id)?;
+        }
+        if let Some(existing) = self
+            .reacquisition
+            .iter()
+            .find(|existing| existing.reacquisition_id == usage.reacquisition_id)
+        {
+            if existing == &usage {
+                return Ok(());
+            }
+            return Err(StepAttemptTransitionError::ReacquisitionIdentityConflict {
+                reacquisition_id: usage.reacquisition_id,
+            });
+        }
+        self.reacquisition.push(usage);
         Ok(())
     }
 

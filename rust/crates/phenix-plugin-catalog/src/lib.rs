@@ -44,6 +44,21 @@ pub use phenix_plugin_debug::{
     debug_runtime_trace_sink, debug_service, DebugCommand, DebugInterface, DebugResponse,
     DiagnosticEntry, DiagnosticSnapshot, DEBUG_SERVICE,
 };
+pub use phenix_plugin_efficiency_evaluation::{
+    benchmark_outcome_component_id, benchmark_outcome_component_manifest,
+    benchmark_outcome_factory, benchmark_outcome_manifest, benchmark_outcome_service,
+    efficiency_evaluation_component_id, efficiency_evaluation_component_manifest,
+    efficiency_evaluation_factory, efficiency_evaluation_manifest, efficiency_evaluation_service,
+    efficiency_outcome_evidence_service, BenchmarkOutcomeCommand, BenchmarkOutcomeInterface,
+    BenchmarkOutcomeRecord, BenchmarkOutcomeResponse, EfficiencyCollectionRequest,
+    EfficiencyEvaluationCommand, EfficiencyEvaluationInterface, EfficiencyEvaluationResponse,
+    EfficiencyOutcomeEvidence, EfficiencyOutcomeEvidenceCommand,
+    EfficiencyOutcomeEvidenceInterface, EfficiencyOutcomeEvidenceRequest,
+    EfficiencyOutcomeEvidenceResponse, EfficiencyTaskRecord, BENCHMARK_OUTCOME_COMPONENT,
+    BENCHMARK_OUTCOME_PLUGIN, BENCHMARK_OUTCOME_SERVICE, EFFICIENCY_EVALUATION_COMPONENT,
+    EFFICIENCY_EVALUATION_PLUGIN, EFFICIENCY_EVALUATION_SERVICE,
+    EFFICIENCY_OUTCOME_EVIDENCE_SERVICE,
+};
 pub use phenix_plugin_execution::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,

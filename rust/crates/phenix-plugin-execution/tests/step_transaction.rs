@@ -8,7 +8,7 @@ use phenix_plugin_execution::{
     step_transaction_service,
 };
 use phenix_sdk::{
-    AttemptOutcome, BudgetActual, BudgetReservation, BudgetReservationPurpose,
+    AttemptOutcome, AttemptUsageRecord, BudgetActual, BudgetReservation, BudgetReservationPurpose,
     BudgetReservationRequest, ContextDemand, DelegationResourcePolicy, ExecutionResourceCommand,
     ExecutionResourceResponse, ModelTarget, ProjectionRevision, ReasoningBudget, RetryBudget,
     RootBudgetLedger, RootBudgetLimits, RouteDecision, RoutingRequirements, SkillProvisionBudget,
@@ -133,6 +133,7 @@ fn plan() -> StepPlan {
     };
     StepPlan {
         policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
             required_capabilities: BTreeSet::new(),
@@ -282,6 +283,32 @@ fn actual() -> BudgetActual {
     }
 }
 
+fn usage() -> AttemptUsageRecord {
+    AttemptUsageRecord {
+        attribution: UsageAttribution {
+            root_execution_id: "root".into(),
+            execution_id: "root".into(),
+            attempt_id: "attempt-1".into(),
+            parent_attempt_id: None,
+            policy_revision: "policy-1".into(),
+            kind: UsageAttemptKind::Root,
+            task_id: None,
+        },
+        usage: phenix_core::ModelTurnUsage {
+            fresh_input_tokens: phenix_core::UsageQuantity::Reported { value: 100 },
+            cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+            cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+            output_tokens: phenix_core::UsageQuantity::Reported { value: 50 },
+            reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+        },
+        latency_ms: Some(25),
+        tool_input_bytes: 0,
+        tool_result_bytes: 0,
+        outcome: AttemptOutcome::Succeeded,
+        reacquisition: Vec::new(),
+    }
+}
+
 fn settle(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
     invoke(
         kernel,
@@ -292,6 +319,7 @@ fn settle(kernel: &mut Kernel) -> Result<StepTransactionResponse, String> {
             actual: actual(),
             attempt_id: "attempt-1".into(),
             outcome: AttemptOutcome::Succeeded,
+            usage: Box::new(usage()),
         },
     )
 }
@@ -371,6 +399,8 @@ fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
     };
     assert_eq!(settled_attempt.phase, StepAttemptPhase::Settled);
     assert_eq!(settled_attempt.outcome, Some(AttemptOutcome::Succeeded));
+    assert_eq!(settled_attempt.settled_actual, Some(actual()));
+    assert_eq!(settled_attempt.usage, Some(usage()));
     assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Settled);
     drop(kernel);
     let _ = fs::remove_file(path);

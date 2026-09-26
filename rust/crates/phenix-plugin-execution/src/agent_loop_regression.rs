@@ -433,6 +433,7 @@ fn fixture_attempt() -> StepAttemptRecord {
                 attempts: 1,
             },
             now_ms: 0,
+            historical_estimates: Vec::new(),
         })
         .unwrap();
     let mut attempt = StepAttemptRecord::new(
