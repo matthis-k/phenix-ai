@@ -171,7 +171,7 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
                 interface: AgentToolExecutionInterface::interface_id(),
                 schema: AgentToolExecutionInterface::schema(),
                 required: true,
-                authority: Authority::default(),
+                authority: maximum_authority.clone(),
             },
             ComponentImport {
                 interface: AgentLoopProgressInterface::interface_id(),
@@ -331,6 +331,18 @@ mod tests {
         assert_eq!(
             component.exports[0].required_authority,
             Authority::default()
+        );
+    }
+
+    #[test]
+    fn tool_execution_import_carries_package_authority() {
+        let shell = CapabilityId::parse("workspace.shell").unwrap();
+        let authority = Authority::new([shell.clone()]);
+        let component = agent_loop_component_manifest(authority);
+
+        assert!(
+            component.imports[2].authority.permits(&shell),
+            "agent-loop tool calls must carry the authority granted to the agent loop"
         );
     }
 
