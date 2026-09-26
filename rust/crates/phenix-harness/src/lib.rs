@@ -20,9 +20,8 @@ use phenix_plugin_catalog::{
     execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
     frontend_factory, frontend_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
-    local_environment_component_manifest, local_environment_factory, local_environment_manifest,
-    LOCAL_ENVIRONMENT_PLUGIN,
     job_manifest, language_component_manifest, language_factory, language_manifest,
+    local_environment_component_manifest, local_environment_factory, local_environment_manifest,
     memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
     model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
     openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
@@ -32,6 +31,7 @@ use phenix_plugin_catalog::{
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
     workspace_component_manifest, workspace_factory, workspace_manifest, AGENT_LOOP_PLUGIN,
+    LOCAL_ENVIRONMENT_PLUGIN,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},

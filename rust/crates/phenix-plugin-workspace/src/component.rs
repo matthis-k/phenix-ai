@@ -1,7 +1,7 @@
 use crate::workspace_manifest;
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    PluginId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PluginId,
 };
 use phenix_sdk::{EnvironmentInterface, WorkspaceInterface};
 
@@ -39,7 +39,7 @@ pub fn workspace_component_manifest() -> ComponentManifest {
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityId, ComponentImport, ComponentGraphError, PluginExecution, PluginManifest,
+        CapabilityId, ComponentGraphError, ComponentImport, PluginExecution, PluginManifest,
         ResolvedComponentGraph,
     };
     use phenix_plugin_environment_local::{
@@ -77,7 +77,6 @@ mod tests {
             maximum_authority: authority,
         }
     }
-
 
     #[test]
     fn workspace_requires_an_environment_provider() {

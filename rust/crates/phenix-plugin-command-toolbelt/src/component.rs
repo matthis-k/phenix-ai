@@ -80,7 +80,9 @@ pub fn cli_component_manifest(maximum_authority: Authority) -> ComponentManifest
 mod tests {
     use super::*;
     use phenix_core::{ComponentGraphError, ResolvedComponentGraph};
-    use phenix_plugin_environment_local::{local_environment_component_manifest, local_environment_manifest};
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_manifest,
+    };
     use phenix_plugin_workspace::{workspace_component_manifest, workspace_manifest};
 
     #[test]

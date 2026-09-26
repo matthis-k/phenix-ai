@@ -84,7 +84,8 @@ struct CaptureBuffer {
 impl CaptureBuffer {
     fn push(&mut self, bytes: &[u8]) {
         let remaining = MAX_CAPTURE_BYTES.saturating_sub(self.bytes.len());
-        self.bytes.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        self.bytes
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
         if bytes.len() > remaining {
             self.truncated = true;
         }
@@ -474,12 +475,7 @@ mod tests {
     fn invoke(kernel: &mut Kernel, command: EnvironmentCommand) -> EnvironmentResponse {
         let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
         let output = kernel
-            .invoke(
-                &environment_service(),
-                &input,
-                &Authority::default(),
-                None,
-            )
+            .invoke(&environment_service(), &input, &Authority::default(), None)
             .unwrap();
         let output: PhenixValue = serde_json::from_slice(&output).unwrap();
         EnvironmentResponse::try_from(Project(&output)).unwrap()
@@ -568,10 +564,7 @@ mod tests {
             ),
             EnvironmentResponse::Written
         ));
-        let closed = invoke(
-            &mut kernel,
-            EnvironmentCommand::CloseProcess { handle },
-        );
+        let closed = invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle });
         assert!(matches!(
             closed,
             EnvironmentResponse::ProcessClosed { stdout, .. }

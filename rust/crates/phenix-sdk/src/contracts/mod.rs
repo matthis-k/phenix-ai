@@ -6,8 +6,8 @@ pub mod context_compaction;
 pub mod context_recovery_bootstrap;
 pub mod delegation;
 pub mod efficiency_evaluation;
-pub mod execution;
 pub mod environment;
+pub mod execution;
 #[allow(clippy::large_enum_variant)]
 pub mod execution_resources;
 pub mod exploration;
@@ -45,8 +45,8 @@ pub use context_compaction::{
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;
 pub use efficiency_evaluation::*;
-pub use execution::*;
 pub use environment::*;
+pub use execution::*;
 pub use execution_resources::*;
 pub use exploration::*;
 pub use frontend::*;

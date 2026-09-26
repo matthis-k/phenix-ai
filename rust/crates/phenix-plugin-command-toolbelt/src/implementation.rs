@@ -405,8 +405,7 @@ mod tests {
             &authority,
         )
         .unwrap();
-        let mut kernel =
-            Kernel::new(KernelConfig::new([environment, workspace, cli]).unwrap());
+        let mut kernel = Kernel::new(KernelConfig::new([environment, workspace, cli]).unwrap());
         kernel.activate_resolved_harness(&resolved).unwrap();
         let environment_root = root.clone();
         kernel
