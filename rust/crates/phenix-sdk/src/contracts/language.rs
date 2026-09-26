@@ -453,6 +453,18 @@ pub struct CodeIdentityRebuildCheckpoint {
     pub required_through_sequence: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntitySourceView {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub document: LanguageDocumentIdentity,
+    pub position_encoding: CodePositionEncoding,
+    pub range: CodeSourceRange,
+    pub content: String,
+    pub complete: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
@@ -521,6 +533,12 @@ pub enum LanguageCommand {
         repository_id: String,
         entity_id: String,
         revision: String,
+    },
+    ReadEntitySource {
+        repository_id: String,
+        entity_id: String,
+        revision: String,
+        max_bytes: u64,
     },
     GetEntityFacet {
         repository_id: String,
