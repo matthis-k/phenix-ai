@@ -550,41 +550,53 @@ impl LocalEnvironment {
             }),
             EnvironmentCommand::Stat { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
-                    let canonical = fs::canonicalize(&resolved)
-                        .map_err(|error| format!("canonicalize stat {path}: {error}"))?;
-                    if !canonical.starts_with(&self.root) {
-                        return Err(format!(
-                            "environment filesystem policy denies stat outside working directory: {}",
-                            resolved.display()
-                        ));
+                let kind = if self.filesystem_policy()?
+                    == EnvironmentFilesystemPolicy::WorkingDirectoryOnly
+                {
+                    match self.confined_open(&resolved, OFlags::PATH, Mode::empty())? {
+                        Some(fd) => {
+                            let stat = rfs::fstat(&fd)
+                                .map_err(|error| format!("stat {path}: {error}"))?;
+                            Some(match FileType::from_raw_mode(stat.st_mode) {
+                                FileType::RegularFile => EnvironmentFileKind::File,
+                                FileType::Directory => EnvironmentFileKind::Directory,
+                                _ => EnvironmentFileKind::Other,
+                            })
+                        }
+                        None => None,
                     }
-                }
-                let kind = match fs::metadata(&resolved) {
-                    Ok(metadata) if metadata.is_file() => Some(EnvironmentFileKind::File),
-                    Ok(metadata) if metadata.is_dir() => Some(EnvironmentFileKind::Directory),
-                    Ok(_) => Some(EnvironmentFileKind::Other),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(format!("stat {path}: {error}")),
+                } else {
+                    match fs::metadata(&resolved) {
+                        Ok(metadata) if metadata.is_file() => Some(EnvironmentFileKind::File),
+                        Ok(metadata) if metadata.is_dir() => Some(EnvironmentFileKind::Directory),
+                        Ok(_) => Some(EnvironmentFileKind::Other),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(error) => return Err(format!("stat {path}: {error}")),
+                    }
                 };
                 Ok(EnvironmentResponse::Metadata { kind })
             }
             EnvironmentCommand::ReadFile { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
-                    let canonical = fs::canonicalize(&resolved)
-                        .map_err(|error| format!("canonicalize read {path}: {error}"))?;
-                    if !canonical.starts_with(&self.root) {
-                        return Err(format!(
-                            "environment filesystem policy denies read outside working directory: {}",
-                            resolved.display()
-                        ));
+                let content = if self.filesystem_policy()?
+                    == EnvironmentFilesystemPolicy::WorkingDirectoryOnly
+                {
+                    match self.confined_open(&resolved, OFlags::RDONLY, Mode::empty())? {
+                        Some(fd) => {
+                            let mut file = fs::File::from(fd);
+                            let mut content = Vec::new();
+                            file.read_to_end(&mut content)
+                                .map_err(|error| format!("read {path}: {error}"))?;
+                            Some(content)
+                        }
+                        None => None,
                     }
-                }
-                let content = match fs::read(&resolved) {
-                    Ok(content) => Some(content),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(format!("read {path}: {error}")),
+                } else {
+                    match fs::read(&resolved) {
+                        Ok(content) => Some(content),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(error) => return Err(format!("read {path}: {error}")),
+                    }
                 };
                 Ok(EnvironmentResponse::File { content })
             }
@@ -594,63 +606,81 @@ impl LocalEnvironment {
                 create_parents,
             } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted {
-                    let parent = resolved.parent().ok_or_else(|| {
-                        format!("write path has no parent: {}", resolved.display())
-                    })?;
-                    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
-                        format!("canonicalize write parent for {path}: {error}")
-                    })?;
-                    if !canonical_parent.starts_with(&self.root) {
-                        return Err(format!(
-                            "environment filesystem policy denies write outside working directory: {}",
-                            resolved.display()
-                        ));
+                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::Unrestricted {
+                    if create_parents {
+                        if let Some(parent) = resolved.parent() {
+                            fs::create_dir_all(parent)
+                                .map_err(|error| format!("create parent for {path}: {error}"))?;
+                        }
                     }
+                    fs::write(&resolved, content)
+                        .map_err(|error| format!("write {path}: {error}"))?;
+                } else {
+                    self.confined_write(&resolved, &content, create_parents)?;
                 }
-                if create_parents {
-                    if let Some(parent) = resolved.parent() {
-                        fs::create_dir_all(parent)
-                            .map_err(|error| format!("create parent for {path}: {error}"))?;
-                    }
-                }
-                fs::write(&resolved, content).map_err(|error| format!("write {path}: {error}"))?;
                 Ok(EnvironmentResponse::Written)
             }
             EnvironmentCommand::ReadDir { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
-                    let canonical = fs::canonicalize(&resolved)
-                        .map_err(|error| format!("canonicalize directory {path}: {error}"))?;
-                    if !canonical.starts_with(&self.root) {
-                        return Err(format!(
-                            "environment filesystem policy denies directory read outside working directory: {}",
-                            resolved.display()
-                        ));
-                    }
-                }
-                let mut entries = fs::read_dir(&resolved)
-                    .map_err(|error| format!("read directory {path}: {error}"))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| error.to_string())?;
-                entries.sort_by_key(|entry| entry.file_name());
-                let entries = entries
-                    .into_iter()
-                    .map(|entry| {
-                        let metadata = entry.metadata().map_err(|error| error.to_string())?;
-                        let kind = if metadata.is_file() {
-                            EnvironmentFileKind::File
-                        } else if metadata.is_dir() {
-                            EnvironmentFileKind::Directory
-                        } else {
-                            EnvironmentFileKind::Other
+                let entries = if self.filesystem_policy()?
+                    == EnvironmentFilesystemPolicy::WorkingDirectoryOnly
+                {
+                    let fd = self
+                        .confined_open(
+                            &resolved,
+                            OFlags::RDONLY | OFlags::DIRECTORY,
+                            Mode::empty(),
+                        )?
+                        .ok_or_else(|| format!("read directory {path}: not found"))?;
+                    let mut entries = Vec::new();
+                    let dir = Dir::new(fd)
+                        .map_err(|error| format!("read directory {path}: {error}"))?;
+                    for entry in dir {
+                        let entry =
+                            entry.map_err(|error| format!("read directory {path}: {error}"))?;
+                        let name = entry.file_name().to_bytes();
+                        if name == b"." || name == b".." {
+                            continue;
+                        }
+                        let kind = match entry.file_type() {
+                            FileType::RegularFile => EnvironmentFileKind::File,
+                            FileType::Directory => EnvironmentFileKind::Directory,
+                            _ => EnvironmentFileKind::Other,
                         };
-                        Ok(EnvironmentDirEntry {
-                            path: entry.path().to_string_lossy().into_owned(),
+                        entries.push(EnvironmentDirEntry {
+                            path: resolved
+                                .join(String::from_utf8_lossy(name).as_ref())
+                                .to_string_lossy()
+                                .into_owned(),
                             kind,
+                        });
+                    }
+                    entries.sort_by(|left, right| left.path.cmp(&right.path));
+                    entries
+                } else {
+                    let mut entries = fs::read_dir(&resolved)
+                        .map_err(|error| format!("read directory {path}: {error}"))?
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| error.to_string())?;
+                    entries.sort_by_key(|entry| entry.file_name());
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            let metadata = entry.metadata().map_err(|error| error.to_string())?;
+                            let kind = if metadata.is_file() {
+                                EnvironmentFileKind::File
+                            } else if metadata.is_dir() {
+                                EnvironmentFileKind::Directory
+                            } else {
+                                EnvironmentFileKind::Other
+                            };
+                            Ok(EnvironmentDirEntry {
+                                path: entry.path().to_string_lossy().into_owned(),
+                                kind,
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
+                        .collect::<Result<Vec<_>, String>>()?
+                };
                 Ok(EnvironmentResponse::Directory { entries })
             }
             EnvironmentCommand::Exec {
