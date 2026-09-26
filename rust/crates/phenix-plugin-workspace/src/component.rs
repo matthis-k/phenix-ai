@@ -1,7 +1,9 @@
 use crate::workspace_manifest;
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PluginId,
 };
+use phenix_plugin_artifacts::ArtifactInterface;
 use phenix_sdk::WorkspaceInterface;
 
 const WORKSPACE_COMPONENT: &str = "phenix.workspace";
@@ -18,7 +20,12 @@ pub fn workspace_component_manifest() -> ComponentManifest {
         listeners: Vec::new(),
         id: workspace_component_id(),
         owner: PluginId::parse(WORKSPACE_PLUGIN).expect("static workspace plugin id is valid"),
-        imports: Vec::new(),
+        imports: vec![ComponentImport {
+            interface: ArtifactInterface::interface_id(),
+            schema: ArtifactInterface::schema(),
+            required: false,
+            authority: Authority::default(),
+        }],
         exports: vec![ComponentExport {
             interface: WorkspaceInterface::interface_id(),
             schema: WorkspaceInterface::schema(),

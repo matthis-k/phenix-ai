@@ -237,6 +237,7 @@ mod tests {
                 &ToolCommand::Register {
                     tool: ToolDefinition {
                         id: CallableId::parse("echo").unwrap(),
+                        description: "Echo input bytes".into(),
                         input_schema: PhenixSchema::Any,
                         output_schema: PhenixSchema::Any,
                         output_prefix: b"tool:".to_vec().into(),
@@ -270,6 +271,46 @@ mod tests {
         }
 
         let mut restored = kernel(&path);
+        let catalog: ToolResponse = invoke(
+            &mut restored,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: "echo".into(),
+                cursor: None,
+                limit: 10,
+            },
+        );
+        let catalog_revision = match catalog {
+            ToolResponse::Catalog {
+                descriptors,
+                next_cursor,
+                catalog_revision,
+            } => {
+                assert_eq!(descriptors.len(), 1);
+                assert_eq!(descriptors[0].id.as_str(), "echo");
+                assert_eq!(descriptors[0].description, "Echo input bytes");
+                assert!(next_cursor.is_none());
+                assert_eq!(descriptors[0].catalog_revision, catalog_revision);
+                catalog_revision
+            }
+            response => panic!("unexpected tool catalog response: {response:?}"),
+        };
+        let schemas: ToolResponse = invoke(
+            &mut restored,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::LoadSchemas {
+                ids: vec![CallableId::parse("echo").unwrap()],
+                catalog_revision,
+            },
+        );
+        assert!(matches!(
+            schemas,
+            ToolResponse::Schemas { tools, .. }
+                if tools.len() == 1 && tools[0].id.as_str() == "echo"
+        ));
+
         let tool: ToolResponse = invoke(
             &mut restored,
             basic_tools_component_manifest(),

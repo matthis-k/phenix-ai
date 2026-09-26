@@ -1855,6 +1855,7 @@ fn execute_application_agent_tool(
         Ok(call) => call,
         Err(error) => {
             return Ok(AgentToolExecutionResponse::Completed {
+                activated_tools: Vec::new(),
                 result: ModelToolResult {
                     call_id: call.call_id,
                     callable_id: call.callable_id,
@@ -1903,7 +1904,10 @@ fn execute_application_agent_tool(
         _ => return Err("tool executor returned a non-terminal tool change".into()),
     };
 
-    Ok(AgentToolExecutionResponse::Completed { result })
+    Ok(AgentToolExecutionResponse::Completed {
+        result,
+        activated_tools: Vec::new(),
+    })
 }
 
 fn record_application_agent_progress(
@@ -2745,6 +2749,9 @@ mod tests {
         RenameSession, ResumeSession,
     };
     use phenix_core::{Bytes, LocalPersistence, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_plugin_catalog::{
+        artifact_service, workspace_service, ArtifactCommand, ArtifactResponse,
+    };
     use std::{
         fs,
         path::PathBuf,
@@ -2966,7 +2973,7 @@ mod tests {
             .unwrap();
         let value: PhenixValue = serde_json::from_slice(&output).unwrap();
         let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-        let AgentToolExecutionResponse::Completed { result } = response else {
+        let AgentToolExecutionResponse::Completed { result, .. } = response else {
             panic!("default bash tool must complete through the application adapter");
         };
         assert_eq!(result.call_id, "call-1");
@@ -2994,7 +3001,10 @@ mod tests {
             .unwrap();
         let rejected: PhenixValue = serde_json::from_slice(&rejected).unwrap();
         let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
-        let AgentToolExecutionResponse::Completed { result: rejected } = rejected else {
+        let AgentToolExecutionResponse::Completed {
+            result: rejected, ..
+        } = rejected
+        else {
             panic!("unadvertised tool must be reported as a tool failure");
         };
         assert!(rejected.is_error);
@@ -3013,6 +3023,9 @@ mod tests {
                 exit_code: 0,
                 ref stdout,
                 ref stderr,
+                stdout_complete: true,
+                stderr_complete: true,
+                ..
             } if stdout == "phenix-runtime-bash" && stderr.is_empty()
         ));
 
@@ -3045,6 +3058,66 @@ mod tests {
         assert_eq!(output["tag"], "Process");
         assert_eq!(output["value"]["exit_code"], 0);
         assert_eq!(output["value"]["stdout"], "phenix-runtime-bash");
+    }
+
+    #[test]
+    fn large_bash_output_keeps_a_recoverable_exact_reference() {
+        let worker = application_worker();
+        let command = WorkspaceCommand::Shell {
+            command: "head -c 1048577 /dev/zero | tr '\\000' x".into(),
+        };
+        let encoded = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+        let output = worker
+            .harness
+            .lock()
+            .invoke(&workspace_service(), &encoded, &worker.authority, None)
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = WorkspaceResponse::try_from(Project(&value)).unwrap();
+        let WorkspaceResponse::Process {
+            stdout,
+            stdout_complete,
+            stdout_bytes,
+            stdout_reference: Some(reference),
+            stdout_reference_error,
+            ..
+        } = response
+        else {
+            panic!("workspace shell must return a referenced process response");
+        };
+
+        assert_eq!(stdout.len(), 1024 * 1024);
+        assert!(!stdout_complete);
+        assert_eq!(stdout_bytes, Some(1_048_577));
+        assert_eq!(reference.bytes, 1_048_577);
+        assert!(stdout_reference_error.is_none());
+
+        let phenix_core::ContentLocator::Service { service, resource } = reference.locator.clone()
+        else {
+            panic!("process artifacts must use the artifact service locator");
+        };
+        assert_eq!(service, artifact_service().as_str());
+
+        let get = ArtifactCommand::Get {
+            id: resource,
+            content_identity: reference.digest.to_string(),
+        };
+        let encoded = serde_json::to_vec(&PhenixValue::from(&get)).unwrap();
+        let output = worker
+            .harness
+            .lock()
+            .invoke(&artifact_service(), &encoded, &worker.authority, None)
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = ArtifactResponse::try_from(Project(&value)).unwrap();
+        let ArtifactResponse::Artifact {
+            artifact: Some(artifact),
+        } = response
+        else {
+            panic!("exact process artifact must be retrievable");
+        };
+        assert_eq!(artifact.content.len(), 1_048_577);
+        assert!(artifact.content.iter().all(|byte| *byte == b'x'));
     }
 
     #[test]

@@ -2113,6 +2113,7 @@ name = "phenix-plugin-workspace"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-artifacts",
  "phenix-sdk",
  "phenix-sdk-macros",
  "serde",

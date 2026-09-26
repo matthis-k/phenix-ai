@@ -1,6 +1,6 @@
 use crate::{
-    Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
-    ModelId, PhenixSchema, PhenixValue, ServiceId, SkillId,
+    ArtifactRevision, Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId,
+    InterfaceId, ModelId, PhenixSchema, PhenixValue, ServiceId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -259,6 +259,8 @@ fn any_schema() -> PhenixSchema {
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub id: CallableId,
+    #[serde(default)]
+    pub description: String,
     #[serde(default = "any_schema")]
     pub input_schema: PhenixSchema,
     #[serde(default = "any_schema")]
@@ -267,21 +269,72 @@ pub struct ToolDefinition {
     pub output_prefix: Bytes,
 }
 
+/// Schema-free metadata used to search an authorized tool catalog without
+/// projecting every tool schema into the model request.
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolCatalogDescriptor {
+    pub id: CallableId,
+    pub description: String,
+    pub input_type_identity: ArtifactRevision,
+    pub output_type_identity: ArtifactRevision,
+    pub catalog_revision: ArtifactRevision,
+}
+
+/// Revision-bound pagination cursor. Reusing it against another query or a
+/// changed catalog is rejected rather than silently changing the result set.
+#[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolCatalogCursor {
+    pub catalog_revision: ArtifactRevision,
+    pub query_identity: ArtifactRevision,
+    pub offset: u32,
+}
+
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ToolCommand {
-    Register { tool: ToolDefinition },
-    Get { id: CallableId },
+    Register {
+        tool: ToolDefinition,
+    },
+    Get {
+        id: CallableId,
+    },
     List,
-    Invoke { id: CallableId, input: Bytes },
+    Search {
+        query: String,
+        cursor: Option<ToolCatalogCursor>,
+        limit: u32,
+    },
+    LoadSchemas {
+        ids: Vec<CallableId>,
+        catalog_revision: ArtifactRevision,
+    },
+    Invoke {
+        id: CallableId,
+        input: Bytes,
+    },
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum ToolResponse {
-    Tool { tool: Option<ToolDefinition> },
-    Tools { tools: Vec<ToolDefinition> },
-    Output { output: Bytes },
+    Tool {
+        tool: Option<ToolDefinition>,
+    },
+    Tools {
+        tools: Vec<ToolDefinition>,
+    },
+    Catalog {
+        descriptors: Vec<ToolCatalogDescriptor>,
+        next_cursor: Option<ToolCatalogCursor>,
+        catalog_revision: ArtifactRevision,
+    },
+    Schemas {
+        tools: Vec<ToolDefinition>,
+        catalog_revision: ArtifactRevision,
+    },
+    Output {
+        output: Bytes,
+    },
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

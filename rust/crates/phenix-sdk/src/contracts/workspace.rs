@@ -1,4 +1,4 @@
-use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
+use phenix_core::{ComponentInterface, ContentReference, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +77,11 @@ pub enum WorkspaceCommand {
     },
 }
 
+const fn complete_capture() -> bool {
+    true
+}
+
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum WorkspaceResponse {
@@ -102,5 +107,25 @@ pub enum WorkspaceResponse {
         exit_code: i32,
         stdout: String,
         stderr: String,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
+        #[serde(default)]
+        stdout_content_hash: Option<String>,
+        #[serde(default)]
+        stderr_content_hash: Option<String>,
+        #[serde(default)]
+        stdout_reference: Option<ContentReference>,
+        #[serde(default)]
+        stderr_reference: Option<ContentReference>,
+        #[serde(default)]
+        stdout_reference_error: Option<String>,
+        #[serde(default)]
+        stderr_reference_error: Option<String>,
     },
 }

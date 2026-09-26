@@ -1,6 +1,10 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ServiceContribution, ServiceId,
+    Authority, CapabilityId, ComponentInterface, ContentReference, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
+    ServiceId,
+};
+use phenix_plugin_artifacts::{
+    ArtifactCommand, ArtifactInterface, ArtifactProvenance, ArtifactResponse,
 };
 use phenix_sdk::{
     WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
@@ -9,7 +13,7 @@ use phenix_sdk::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -22,14 +26,25 @@ const WORKSPACE_SHELL: &str = "workspace.shell";
 const WORKSPACE_GIT: &str = "workspace.git";
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 
+struct WorkspaceSdk<'host, 'runtime> {
+    artifacts: SdkClient<'host, 'runtime, ArtifactInterface>,
+}
+
 type WorkspaceContext<'host, 'runtime, 'state> =
-    PluginContext<'host, 'runtime, (), (), &'state Path>;
+    PluginContext<'host, 'runtime, WorkspaceSdk<'host, 'runtime>, (), &'state Path>;
 
 fn context<'host, 'runtime, 'state>(
     host: &'host PluginHost<'runtime>,
     root: &'state Path,
 ) -> WorkspaceContext<'host, 'runtime, 'state> {
-    PluginContext::new(host, (), (), root)
+    PluginContext::new(
+        host,
+        WorkspaceSdk {
+            artifacts: SdkClient::new(host, crate::workspace_component_id()),
+        },
+        (),
+        root,
+    )
 }
 
 #[must_use]
@@ -380,11 +395,60 @@ fn process(
         .current_dir(context.plugin.state)
         .output()
         .map_err(|error| format!("spawn {program}: {error}"))?;
+    let (stdout, stdout_complete, stdout_bytes, stdout_content_hash) = capture(&output.stdout);
+    let (stderr, stderr_complete, stderr_bytes, stderr_content_hash) = capture(&output.stderr);
+    let (stdout_reference, stdout_reference_error) =
+        process_reference(context, program, "stdout", &output.stdout);
+    let (stderr_reference, stderr_reference_error) =
+        process_reference(context, program, "stderr", &output.stderr);
     Ok(WorkspaceResponse::Process {
         exit_code: output.status.code().unwrap_or(-1),
-        stdout: capture(&output.stdout),
-        stderr: capture(&output.stderr),
+        stdout,
+        stderr,
+        stdout_complete,
+        stderr_complete,
+        stdout_bytes: Some(stdout_bytes),
+        stderr_bytes: Some(stderr_bytes),
+        stdout_content_hash: Some(stdout_content_hash),
+        stderr_content_hash: Some(stderr_content_hash),
+        stdout_reference,
+        stderr_reference,
+        stdout_reference_error,
+        stderr_reference_error,
     })
+}
+
+fn process_reference(
+    context: &WorkspaceContext<'_, '_, '_>,
+    program: &str,
+    stream: &str,
+    content: &[u8],
+) -> (Option<ContentReference>, Option<String>) {
+    let provenance = ArtifactProvenance {
+        producer: "phenix.workspace.process".into(),
+        provider_identity: Some(program.to_owned()),
+        configuration_identity: Some("workspace-process-v1".into()),
+        source_observations: BTreeMap::from([("stream".into(), stream.to_owned())]),
+    };
+    match context
+        .sdk
+        .artifacts
+        .invoke_projected::<ArtifactCommand, ArtifactResponse>(&ArtifactCommand::Store {
+            content: content.to_vec(),
+            provenance,
+        }) {
+        Ok(ArtifactResponse::Stored { artifact, .. }) => (
+            Some(artifact.content_reference("application/octet-stream")),
+            None,
+        ),
+        Ok(other) => (
+            None,
+            Some(format!(
+                "artifact store returned an unexpected response: {other:?}"
+            )),
+        ),
+        Err(error) => (None, Some(format!("artifact store unavailable: {error}"))),
+    }
 }
 
 fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
@@ -393,13 +457,21 @@ fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
     }
 }
 
-fn capture(bytes: &[u8]) -> String {
-    let bytes = if bytes.len() > MAX_CAPTURE_BYTES {
-        &bytes[..MAX_CAPTURE_BYTES]
-    } else {
+fn capture(bytes: &[u8]) -> (String, bool, u64, String) {
+    let total_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let content_hash = format!("{:x}", Sha256::digest(bytes));
+    let complete = bytes.len() <= MAX_CAPTURE_BYTES;
+    let captured = if complete {
         bytes
+    } else {
+        &bytes[..MAX_CAPTURE_BYTES]
     };
-    String::from_utf8_lossy(bytes).into_owned()
+    (
+        String::from_utf8_lossy(captured).into_owned(),
+        complete,
+        total_bytes,
+        content_hash,
+    )
 }
 
 #[cfg(test)]
@@ -632,6 +704,22 @@ mod tests {
         .unwrap_err();
         assert!(denied.contains("authority denied"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn process_capture_reports_truncation_explicitly() {
+        let oversized = vec![b'x'; MAX_CAPTURE_BYTES + 1];
+        let (captured, complete, bytes, hash) = capture(&oversized);
+        assert_eq!(captured.len(), MAX_CAPTURE_BYTES);
+        assert!(!complete);
+        assert_eq!(bytes, (MAX_CAPTURE_BYTES + 1) as u64);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(&oversized)));
+
+        let (captured, complete, bytes, hash) = capture(b"small");
+        assert_eq!(captured, "small");
+        assert!(complete);
+        assert_eq!(bytes, 5);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(b"small")));
     }
 
     #[test]

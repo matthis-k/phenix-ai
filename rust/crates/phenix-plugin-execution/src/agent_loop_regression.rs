@@ -137,6 +137,14 @@ impl PluginInstance for InvocationProvider {
                         .continuation
                         .last()
                         .ok_or_else(|| "agent loop lost continuation".to_owned())?;
+                    if tool.id.as_str() == "fixture.activate"
+                        && !request
+                            .tools
+                            .iter()
+                            .any(|tool| tool.id.as_str() == "fixture.loaded")
+                    {
+                        return Err("activated tool schema was not visible on the next turn".into());
+                    }
                     let expected_result = if tool.id.as_str() == "fixture.error" {
                         ModelToolResult {
                             call_id: "fixture-call-1".into(),
@@ -284,6 +292,11 @@ impl PluginInstance for ToolAdapter {
             let is_error = request.call.callable_id.as_str() == "fixture.error";
             return serde_json::to_vec(&PhenixValue::from(
                 &AgentToolExecutionResponse::Completed {
+                    activated_tools: if request.call.callable_id.as_str() == "fixture.activate" {
+                        vec![descriptor("fixture.loaded")]
+                    } else {
+                        Vec::new()
+                    },
                     result: ModelToolResult {
                         call_id: request.call.call_id,
                         callable_id: request.call.callable_id,
@@ -579,6 +592,35 @@ fn one_agent_call_owns_two_model_turns_and_typed_continuation() {
         &mut kernel,
         &agent_loop,
         command(vec![descriptor("fixture.client.echo")]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Completed {
+            output: Bytes::new(b"provider-output-2".to_vec()),
+            usage: AgentLoopUsage {
+                model_calls: 2,
+                tool_calls: 1,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        progress.lock().unwrap().as_slice(),
+        ["call:fixture-call-1", "result:fixture-call-1"]
+    );
+}
+
+#[test]
+fn tool_executor_can_activate_a_schema_for_the_next_model_turn() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![descriptor("fixture.activate")]),
     )
     .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
