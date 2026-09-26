@@ -13,7 +13,8 @@ use phenix_sdk::{
     context_service, AdmittedContextItem, CachePlacement, ContextCandidate, ContextCommand,
     ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
     ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
-    ContextProjectionForm, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    ContextProjectionForm, ContextReducerCommand, ContextReducerInterface, ContextReducerRequest,
+    ContextReducerResponse, ContextResourceKind, ContextResourceRevision, ContextResponse,
     ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
     ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
@@ -29,6 +30,7 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
+    reducer: SdkClient<'host, 'runtime, ContextReducerInterface>,
 }
 
 type ContextPluginContext<'host, 'runtime> =
@@ -41,6 +43,7 @@ fn context<'host, 'runtime>(
         host,
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
+            reducer: SdkClient::new(host, context_component_id()),
         },
         (),
         (),
@@ -206,6 +209,10 @@ fn handle(
                 expected_projection,
             )?,
         }),
+        ContextCommand::RequestReduction { request } => {
+            require_active_execution(context, &request.execution_id)?;
+            request_reduction(context, state, request)
+        }
         ContextCommand::GetProjectionState { .. }
         | ContextCommand::Admit { .. }
         | ContextCommand::PrepareCompaction { .. }
@@ -214,6 +221,32 @@ fn handle(
             Err("context projection command leaked past state dispatcher".into())
         }
     }
+}
+
+fn request_reduction(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    request: ContextReducerRequest,
+) -> Result<ContextResponse, String> {
+    let actual_projection = state.projection_revision(&request.execution_id);
+    if request.expected_projection != actual_projection {
+        return Err(format!(
+            "context reducer request is stale: expected {:?}, actual {:?}",
+            request.expected_projection, actual_projection
+        ));
+    }
+    let response: ContextReducerResponse = context
+        .sdk
+        .reducer
+        .invoke_projected(&ContextReducerCommand::Reduce {
+            request: request.clone(),
+        })
+        .map_err(|error| format!("context reducer unavailable or failed: {error}"))?;
+    let ContextReducerResponse::Proposal { proposal } = response;
+    proposal
+        .validate_against(&request, &actual_projection)
+        .map_err(|error| format!("context reducer proposal rejected: {error:?}"))?;
+    Ok(ContextResponse::ReductionProposed { proposal })
 }
 
 fn state_command_execution(command: &ContextCommand) -> Option<&str> {

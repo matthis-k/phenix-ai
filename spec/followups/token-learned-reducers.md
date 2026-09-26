@@ -13,6 +13,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Added typed reducer request/proposal contracts pinned to projection, configuration, authority, capability generation, stage, helper reservation, and output bound.
 - [x] Proposal validation rejects fabricated/duplicate/missing item decisions, missing exact recovery for omitted payloads, source-less summaries, stale projections, and underreported encoded size.
 - [x] Added the provider-neutral `phenix.context-reducer@1` request/proposal interface; context imports it optionally with no persistence/canonical-state authority.
+- [x] Context can request a reduction from the optional backend only for the current projection, then revalidates every returned proposal against the pinned request and current projection before exposing it; the backend still has no commit path.
 
 ## Required implementation
 

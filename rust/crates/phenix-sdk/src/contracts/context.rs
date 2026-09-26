@@ -1,6 +1,7 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
-    CompactionCommit, CompactionProposal, ProjectionRevision,
+    CompactionCommit, CompactionProposal, ContextReducerProposal, ContextReducerRequest,
+    ProjectionRevision,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
@@ -142,6 +143,9 @@ pub enum ContextCommand {
     Admit {
         request: ContextAdmissionRequest,
     },
+    RequestReduction {
+        request: ContextReducerRequest,
+    },
     PrepareCompaction {
         proposal: CompactionProposal,
     },
@@ -188,6 +192,9 @@ pub enum ContextResponse {
     Admission {
         result: ContextAdmissionResult,
         projection: ProjectionRevision,
+    },
+    ReductionProposed {
+        proposal: ContextReducerProposal,
     },
     CompactionPrepared {
         checkpoint_id: String,

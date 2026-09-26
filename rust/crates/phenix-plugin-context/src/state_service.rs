@@ -121,7 +121,8 @@ impl ContextStateService {
             | ContextCommand::Load { .. }
             | ContextCommand::Project { .. }
             | ContextCommand::PrepareInvocation { .. }
-            | ContextCommand::MaterializeInvocation { .. } => return None,
+            | ContextCommand::MaterializeInvocation { .. }
+            | ContextCommand::RequestReduction { .. } => return None,
         };
         Some(response)
     }
