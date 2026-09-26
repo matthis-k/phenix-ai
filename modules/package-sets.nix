@@ -206,7 +206,7 @@ in
               '';
             });
         phenix-binding-lua = luaBinding;
-        phenix-conductor = mkBinaryPackage pkgs "phenix-conductor" "phenix-conductor";
+        phenix-runtime = mkBinaryPackage pkgs "phenix-runtime" "phenix-runtime";
       };
 
       checks = pluginPackageChecks // {

@@ -133,7 +133,7 @@ async fn run() -> Result<(), agent_client_protocol::Error> {
                                 .block_task()
                                 .await?;
                             let initialized = response_value(initialized);
-                            if initialized["serverInfo"]["name"] != "phenix-conductor" {
+                            if initialized["serverInfo"]["name"] != "phenix-runtime" {
                                 return Err(agent_client_protocol::Error::internal_error()
                                     .data("unexpected Phenix MCP server info"));
                             }
@@ -172,7 +172,7 @@ async fn run() -> Result<(), agent_client_protocol::Error> {
                                 || called["content"][0]["text"] != "echo:from-acp"
                             {
                                 return Err(agent_client_protocol::Error::internal_error()
-                                    .data("unexpected conductor tool result"));
+                                    .data("unexpected runtime tool result"));
                             }
 
                             task_connection
