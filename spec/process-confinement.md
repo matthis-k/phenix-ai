@@ -37,6 +37,18 @@ A process admitted through Shell or Exec may write wherever its Environment perm
 
 Authority still attenuates through the kernel. Environment policy is an additional execution boundary, not a replacement for capability checks.
 
+## Transitive enforcement invariant
+
+Filesystem policy is attached to the Environment process boundary, not to Shell.
+
+Every process start must resolve the active Environment policy before spawning. Any non-unrestricted policy must be materialized into an enforcing filesystem view first. The resulting restriction applies to the process and every descendant, including tools spawned by tools.
+
+There is no executable allowlist that silently bypasses this rule. Shell, Git, Python, build tools, language servers, plugin tools, and custom binaries all inherit the same view.
+
+A broader view is allowed only through an explicit, separately authorized Environment policy selection before spawn. Child processes cannot widen their own view.
+
+If the backend cannot enforce the selected policy, spawn fails. It never falls back to native unrestricted execution.
+
 ## Backend contract
 
 A confined Environment must enforce its declared filesystem view for:
@@ -51,6 +63,8 @@ Changing executable must not escape the policy. This includes shells, Python, Gi
 A confined backend reports the guarantees it can enforce before process start. If it cannot satisfy the requested policy, execution fails.
 
 Network, IPC, secrets, PTYs, and transport are separate Environment capabilities and policies.
+
+Direct filesystem checks and process confinement must derive from the same declared policy. A provider must not enforce one policy for `ReadFile`/`WriteFile` and a different implicit policy for `Exec`/`OpenProcess`.
 
 ## Current implementation
 
