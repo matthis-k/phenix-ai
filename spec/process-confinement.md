@@ -1,6 +1,6 @@
 # Process confinement
 
-status: specification-only
+status: partial
 
 ## Goal
 
@@ -49,6 +49,54 @@ A broader view is allowed only through an explicit, separately authorized Enviro
 
 If the backend cannot enforce the selected policy, spawn fails. It never falls back to native unrestricted execution.
 
+## Filesystem resolution rules
+
+Policy applies to the resolved filesystem object, not only to the caller's path string.
+
+A confined implementation must account for symlink traversal. A path lexically under the working directory does not grant write access when resolution crosses into a read-only or hidden host path. Direct Environment filesystem operations must use resolution that cannot be raced into an out-of-policy target.
+
+Hard links use path-based policy. Writing an inode through an allowed working-directory path is permitted even if another hard link to that inode exists outside the working directory. Stronger object-level isolation requires a copy-on-write or otherwise isolated filesystem implementation.
+
+Nested host mounts under the working directory remain subject to the effective Environment view. The backend must define whether they are recursively exposed rather than inheriting host mount behavior accidentally.
+
+## Scratch and runtime dependencies
+
+Restricted local execution needs runtime support without turning support paths into policy bypasses.
+
+A working-directory-only Environment may expose read-only runtime dependencies required to execute an admitted program. On NixOS this includes the required `/nix/store` closure. Such mounts are execution dependencies, not general host-readable project data.
+
+Writable scratch space, when provided, is Environment-private. For example, `TMPDIR` may point at a private writable tmpfs. Restricted modes must not make the host `/tmp` writable as a convenience exception.
+
+Host home/config paths remain governed by the selected policy. A host-read/cwd-write Environment may read them but cannot write them. Rewriting cache or home variables is a separate product choice and must not silently broaden host writes.
+
+## Persistent process policy
+
+A persistent process is pinned to the effective Environment policy and filesystem view used at creation.
+
+A later policy change does not widen or narrow the existing OS process in place. If the new policy is incompatible with a live persistent process, the Environment invalidates or terminates that process and requires a new process under the new policy.
+
+Scratch and persistent processes use the same launcher and confinement rules.
+
+## Trusted embedded code
+
+Environment confinement covers execution mediated through Environment.
+
+Embedded native plugins execute inside the trusted Phenix host process. Native plugin code that directly calls host process/filesystem APIs is trusted code and is outside the isolation guarantee. Untrusted plugin execution must use a process-backed or otherwise isolated runtime whose operations are mediated by the relevant Environment/runtime provider.
+
+First-party code that performs model- or tool-triggered execution must route it through Environment. A direct native process spawn is not an allowed alternate execution path.
+
+## Scope of the guarantee
+
+Filesystem confinement limits filesystem reads and writes only.
+
+It does not by itself constrain network access, Unix sockets, DBus, Docker sockets, devices, secrets, credentials, or other IPC. Those are separate Environment policy dimensions. Restricted filesystem modes must not be described as a complete sandbox until those dimensions are also enforced.
+
+## Explicit broader access
+
+Broader filesystem access is represented as an explicit Environment policy selection before process creation.
+
+Executable names, tool identity, command contents, child behavior, or helper processes never imply elevation. Any broader policy must pass normal authority/configuration checks and should be recorded in execution provenance with requested policy, effective policy, caller, and reason.
+
 ## Backend contract
 
 A confined Environment must enforce its declared filesystem view for:
@@ -68,7 +116,7 @@ Direct filesystem checks and process confinement must derive from the same decla
 
 ## Current implementation
 
-`phenix.environment.local` is intentionally unrestricted:
+`phenix.environment.local` defaults to unrestricted execution:
 
 - relative paths resolve from its configured root;
 - absolute paths name host paths directly;
@@ -76,7 +124,9 @@ Direct filesystem checks and process confinement must derive from the same decla
 - processes retain normal host filesystem reach;
 - persistent processes use the same host namespace.
 
-No working-directory confinement is implemented yet.
+The local provider can represent the restricted policies but currently has no enforcing backend for them. Direct filesystem operations, scratch process execution, and persistent process creation therefore fail closed for those policies. They never reuse the unrestricted native spawn path.
+
+Working-directory confinement becomes available only when a backend can enforce the complete filesystem view for direct operations and descendant processes.
 
 ## Deferred implementations
 
