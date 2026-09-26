@@ -14,12 +14,14 @@ use phenix_sdk::{
     ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
     ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
     ContextProjectionForm, ContextReducerCommand, ContextReducerInterface, ContextReducerRequest,
+    ContextReducerStage,
     ContextReducerResponse, ContextResourceKind, ContextResourceRevision, ContextResponse,
     ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
     ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 const CONTEXT_PLUGIN: &str = "phenix.context";
 const CONTEXT_NAMESPACE: &str = "phenix.context.state";
@@ -74,8 +76,16 @@ pub fn context_manifest() -> PluginManifest {
 
 #[must_use]
 pub fn context_factory() -> Box<dyn PluginInstance> {
+    context_factory_with_reducer_stages(BTreeSet::new())
+}
+
+#[must_use]
+pub fn context_factory_with_reducer_stages(
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
+) -> Box<dyn PluginInstance> {
     Box::new(ContextPlugin {
         state: ContextStateService::default(),
+        enabled_reducer_stages,
     })
 }
 
@@ -89,6 +99,7 @@ fn capability(value: &str) -> CapabilityId {
 
 struct ContextPlugin {
     state: ContextStateService,
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
 }
 
 impl PluginInstance for ContextPlugin {
@@ -121,11 +132,25 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
+        if let ContextCommand::RequestReduction { request } = &command {
+            require_reducer_stage_enabled(&self.enabled_reducer_stages, request.stage)?;
+        }
         let response = handle(&context, &mut self.state, command)?;
         context
             .kernel
             .encode_value(&response)
             .map_err(|error| error.to_string())
+    }
+}
+
+fn require_reducer_stage_enabled(
+    enabled: &BTreeSet<ContextReducerStage>,
+    stage: ContextReducerStage,
+) -> Result<(), String> {
+    if enabled.contains(&stage) {
+        Ok(())
+    } else {
+        Err(format!("context reducer stage {stage:?} is disabled"))
     }
 }
 
