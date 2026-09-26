@@ -829,7 +829,7 @@ mod tests {
             .invoke(
                 &efficiency_evaluation_service(),
                 &input,
-                &Authority::default(),
+                &default_suite_authority(),
                 None,
             )
             .unwrap_err()
