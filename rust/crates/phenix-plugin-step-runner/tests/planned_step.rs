@@ -215,6 +215,7 @@ fn capabilities(target: ModelTarget, window: u64) -> EffectiveModelCapabilities 
                 max_output_tokens: Some(512),
             },
         },
+        cache: Default::default(),
         optional: BTreeSet::new(),
     }
 }

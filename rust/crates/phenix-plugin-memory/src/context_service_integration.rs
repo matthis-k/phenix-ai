@@ -85,6 +85,7 @@ fn record() -> MemoryRecord {
         },
         content: "Phenix pull request work and repository tasks".into(),
         source_refs: vec![source()],
+        supporting_dependencies: Vec::new(),
         supersedes: Vec::new(),
         valid_from: None,
         valid_until: None,

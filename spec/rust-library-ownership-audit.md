@@ -154,7 +154,7 @@ Verdicts:
 | `rust/crates/phenix-plugin-context/src/*.rs` | Context/prompt/component implementation | **Yes, appropriate Phenix type/semantics** | Keep; use canonical bytes and shared IDs. |
 | `rust/crates/phenix-plugin-memory/src/*.rs` | Memory component/retrieval/persistence/errors | **Yes, appropriate Phenix type/semantics** | Keep memory policy/model. Delegate errors and generic ranking/vector/storage mechanics where mature crates fit. |
 | `rust/crates/phenix-plugin-models/src/*.rs` | Model component/routing/catalog | **Yes, appropriate Phenix type/semantics** | Keep selection policy; protocol/client mechanics stay upstream. |
-| `rust/crates/phenix-plugin-hooks/src/*.rs` | Hook contracts and scheduling | **Yes, appropriate Phenix type/semantics** | Keep. |
+| `rust/crates/phenix-plugin-hooks/src/*.rs` | Legacy hook dispatcher | **Transitional** | Keep only for compatibility; lower synchronous hooks to kernel Service Layers and observations to Events, then remove. |
 | `rust/crates/phenix-plugin-jobs/src/*.rs` | Job lifecycle contracts/implementation | **Yes, appropriate Phenix type/semantics** | Keep; use standard cancellation/async primitives. |
 | `rust/crates/phenix-plugin-artifacts/src/*.rs` | Artifact contracts/implementation | **Yes, appropriate Phenix type/semantics** | Keep; reuse canonical digest/revision type and generic storage/hash crates. |
 | `rust/crates/phenix-plugin-planning/src/*.rs` | Planning contracts/implementation | **Yes, appropriate Phenix type/semantics** | Keep. |

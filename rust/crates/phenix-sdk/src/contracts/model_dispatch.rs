@@ -1,7 +1,7 @@
 use super::{ModelInferenceResponse, RouteDecision};
 use phenix_core::{
-    Bytes, ComponentInterface, InterfaceId, ModelInferenceFailure, ModelToolDescriptor,
-    ModelToolTurn, ServiceId,
+    Bytes, ComponentInterface, InterfaceId, ModelCacheControl, ModelInferenceFailure,
+    ModelToolDescriptor, ModelToolTurn, ServiceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,8 @@ pub enum ModelDispatchCommand {
     PrepareResolved {
         decision: RouteDecision,
         input: Bytes,
+        #[serde(default)]
+        cache: ModelCacheControl,
         #[serde(default)]
         tools: Vec<ModelToolDescriptor>,
         #[serde(default)]

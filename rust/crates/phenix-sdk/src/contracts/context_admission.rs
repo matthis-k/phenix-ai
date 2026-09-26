@@ -46,12 +46,28 @@ pub enum CachePlacement {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContextSource {
-    Exact { reference: ExactContextReference },
-    Memory { memory_id: String },
-    Tool { call_id: String },
-    Skill { skill_id: String },
-    Delegation { task_id: String },
-    Inline { identity: String },
+    Exact {
+        reference: ExactContextReference,
+    },
+    Memory {
+        memory_id: String,
+    },
+    Tool {
+        call_id: String,
+    },
+    Skill {
+        skill_id: String,
+    },
+    Delegation {
+        task_id: String,
+    },
+    Continuation {
+        packet_digest: String,
+        item_id: String,
+    },
+    Inline {
+        identity: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]

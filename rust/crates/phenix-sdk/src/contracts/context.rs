@@ -1,6 +1,8 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
-    CompactionCommit, CompactionProposal, ProjectionRevision,
+    CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
+    ContinuationExportResult, ContinuationImportProjection, ContinuationImportRequest,
+    ContinuationProjectionRequest, ProjectionRevision,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
@@ -89,6 +91,10 @@ pub struct ContextInvocationPreparation {
 pub struct ContextInvocationMaterialization {
     pub input: Bytes,
     pub projection: ProjectionRevision,
+    /// Byte boundary immediately after the reusable context prefix and before this request.
+    pub cache_prefix_bytes: u64,
+    /// Deterministic identity of the model-facing context prefix before the current request.
+    pub cache_prefix_identity: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -142,6 +148,9 @@ pub enum ContextCommand {
     Admit {
         request: ContextAdmissionRequest,
     },
+    EvaluateCompactionCost {
+        request: CacheCompactionDecisionRequest,
+    },
     PrepareCompaction {
         proposal: CompactionProposal,
     },
@@ -151,6 +160,12 @@ pub enum ContextCommand {
     },
     InvalidateProjection {
         execution_id: String,
+    },
+    ExportContinuation {
+        request: ContinuationProjectionRequest,
+    },
+    ProjectContinuationImport {
+        request: ContinuationImportRequest,
     },
 }
 
@@ -189,6 +204,9 @@ pub enum ContextResponse {
         result: ContextAdmissionResult,
         projection: ProjectionRevision,
     },
+    CompactionCostDecision {
+        decision: CacheCompactionDecision,
+    },
     CompactionPrepared {
         checkpoint_id: String,
         projection: ProjectionRevision,
@@ -198,6 +216,12 @@ pub enum ContextResponse {
     },
     ProjectionInvalidated {
         projection: ProjectionRevision,
+    },
+    ContinuationExported {
+        result: ContinuationExportResult,
+    },
+    ContinuationImportProjected {
+        projection: ContinuationImportProjection,
     },
 }
 

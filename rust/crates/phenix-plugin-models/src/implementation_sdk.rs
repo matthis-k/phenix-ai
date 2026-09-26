@@ -3,17 +3,17 @@ pub use phenix_core::{
     MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, InvocationOutcome, KernelError,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, ResourceNamespace, RoutingProfileId, ServiceContribution, ServiceId,
-    TransactionOp,
+    ArtifactRevision, Authority, CapabilityId, ComponentInterface, DurableSchema,
+    InvocationOutcome, KernelError, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, ResourceNamespace, RoutingProfileId,
+    ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
-    model_diagnostic_event_type, model_dispatch_service, model_routing_service, ModelCommand,
-    ModelDiagnosticEvent, ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface,
-    ModelDispatchResponse, ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch,
-    RoutingProfile, RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION,
-    MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
+    model_diagnostic_event_type, model_dispatch_service, model_routing_service, CapabilitySupport,
+    EffectiveModelCapabilities, ModelCommand, ModelDiagnosticEvent, ModelDispatchCommand,
+    ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
+    ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
+    MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -239,9 +239,15 @@ fn handle_dispatch(
         ModelDispatchCommand::PrepareResolved {
             decision,
             input,
+            cache,
             tools,
             continuation,
         } => {
+            let requested_cache = cache.clone();
+            let mut cache = cache;
+            cache.local_capability_generation =
+                Some(decision.capability_generation.as_str().to_owned());
+            cache.local_authority_identity = Some(authority_identity(context.call.authority));
             let authenticated = context
                 .plugin
                 .state
@@ -261,27 +267,41 @@ fn handle_dispatch(
                     continuation_turns: continuation.len(),
                 },
             );
-            if let Err(failure) = validate_dispatch(context, routing, &decision) {
-                emit_diagnostic(
-                    context,
-                    ModelDiagnosticEvent::DispatchPreflightRejected {
-                        provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
-                        model: decision.target.model.as_str().to_owned(),
-                        authenticated,
-                        authenticated_providers: authenticated_providers(context),
-                        reason: failure.message().to_owned(),
-                    },
-                );
-                return Err(ModelDispatchFailure { failure });
-            }
-            let request = encode_request(context, &decision.target, input, tools, continuation)
+            let capabilities = match validate_dispatch(context, routing, &decision) {
+                Ok(capabilities) => capabilities,
+                Err(failure) => {
+                    emit_diagnostic(
+                        context,
+                        ModelDiagnosticEvent::DispatchPreflightRejected {
+                            provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
+                            model: decision.target.model.as_str().to_owned(),
+                            authenticated,
+                            authenticated_providers: authenticated_providers(context),
+                            reason: failure.message().to_owned(),
+                        },
+                    );
+                    return Err(ModelDispatchFailure { failure });
+                }
+            };
+            let cache = effective_cache_control(cache, capabilities)
                 .map_err(|failure| ModelDispatchFailure { failure })?;
+            let request = encode_request(
+                context,
+                &decision.target,
+                input,
+                cache.clone(),
+                tools,
+                continuation,
+            )
+            .map_err(|failure| ModelDispatchFailure { failure })?;
             emit_diagnostic(
                 context,
                 ModelDiagnosticEvent::DispatchPrepared {
                     provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
                     model: decision.target.model.as_str().to_owned(),
                     request_bytes: request.as_ref().len(),
+                    requested_cache,
+                    effective_cache: cache,
                 },
             );
             Ok(ModelDispatchResponse::Ready {
@@ -382,15 +402,86 @@ fn emit_diagnostic(context: &ModelContext<'_, '_, '_>, diagnostic: ModelDiagnost
     );
 }
 
-fn validate_dispatch(
+fn validate_dispatch<'a>(
     context: &ModelContext<'_, '_, '_>,
-    routing: &RoutingServiceState,
+    routing: &'a RoutingServiceState,
     decision: &phenix_sdk::RouteDecision,
-) -> Result<(), ModelInferenceFailure> {
-    routing
+) -> Result<&'a EffectiveModelCapabilities, ModelInferenceFailure> {
+    let capabilities = routing
         .validate_decision(decision)
         .map_err(|message| ModelInferenceFailure::InvalidRequest { message })?;
-    ensure_authenticated(context, &decision.target.provider_plugin)
+    ensure_authenticated(context, &decision.target.provider_plugin)?;
+    Ok(capabilities)
+}
+
+fn authority_identity(authority: &Authority) -> String {
+    let mut capabilities = authority
+        .capabilities()
+        .map(|capability| capability.as_str())
+        .collect::<Vec<_>>();
+    capabilities.sort_unstable();
+    let mut material = Vec::new();
+    for capability in capabilities {
+        let bytes = capability.as_bytes();
+        material.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+        material.extend_from_slice(bytes);
+    }
+    ArtifactRevision::from_content(&material).to_string()
+}
+
+fn effective_cache_control(
+    mut cache: phenix_core::ModelCacheControl,
+    capabilities: &EffectiveModelCapabilities,
+) -> Result<phenix_core::ModelCacheControl, ModelInferenceFailure> {
+    use phenix_core::{ModelCacheRetention, ModelCacheWritePolicy};
+
+    if cache.explicit_prefix_bytes.is_some() {
+        match cache.write {
+            ModelCacheWritePolicy::ProviderDefault => {
+                if capabilities.cache.breakpoint_control == CapabilitySupport::Supported {
+                    cache.write = ModelCacheWritePolicy::ExplicitPrefix;
+                } else {
+                    // Keep diagnostic identity, but do not claim an enforceable provider breakpoint.
+                    cache.explicit_prefix_bytes = None;
+                }
+            }
+            ModelCacheWritePolicy::ExplicitPrefix => {
+                if capabilities.cache.breakpoint_control != CapabilitySupport::Supported {
+                    return Err(ModelInferenceFailure::InvalidRequest {
+                        message: "selected target does not support explicit cache breakpoints"
+                            .into(),
+                    });
+                }
+            }
+            ModelCacheWritePolicy::CacheThroughRequestEnd => {
+                return Err(ModelInferenceFailure::InvalidRequest {
+                    message:
+                        "explicit cache prefix boundary conflicts with request-end cache policy"
+                            .into(),
+                });
+            }
+        }
+    } else if cache.write == ModelCacheWritePolicy::ExplicitPrefix {
+        return Err(ModelInferenceFailure::InvalidRequest {
+            message: "explicit cache prefix policy requires a prefix byte boundary".into(),
+        });
+    }
+
+    if cache.write == ModelCacheWritePolicy::CacheThroughRequestEnd
+        && capabilities.cache.write_policy != CapabilitySupport::Supported
+    {
+        return Err(ModelInferenceFailure::InvalidRequest {
+            message: "selected target does not support explicit cache write policy".into(),
+        });
+    }
+    if cache.retention != ModelCacheRetention::ProviderDefault
+        && capabilities.cache.retention_hints != CapabilitySupport::Supported
+    {
+        return Err(ModelInferenceFailure::InvalidRequest {
+            message: "selected target does not support cache retention hints".into(),
+        });
+    }
+    Ok(cache)
 }
 
 fn ensure_authenticated(
@@ -410,6 +501,7 @@ fn encode_request(
     context: &ModelContext<'_, '_, '_>,
     target: &ModelTarget,
     input: phenix_core::Bytes,
+    cache: phenix_core::ModelCacheControl,
     tools: Vec<phenix_core::ModelToolDescriptor>,
     continuation: Vec<phenix_core::ModelToolTurn>,
 ) -> Result<phenix_core::Bytes, ModelInferenceFailure> {
@@ -417,6 +509,7 @@ fn encode_request(
         model: target.model.clone(),
         input,
         options: target.options.clone(),
+        cache,
         tools,
         continuation,
     };

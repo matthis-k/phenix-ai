@@ -215,6 +215,28 @@ pub(crate) fn load_secondary_ids(
     )
 }
 
+pub(crate) fn load_secondary_ids_page(
+    context: &MemoryContext<'_, '_>,
+    secondary_key: &str,
+    entry: &str,
+    after: Option<&str>,
+    limit: usize,
+) -> MemoryResult<(Vec<String>, bool)> {
+    let ids = decode_secondary_index(read_raw(context, secondary_key)?.as_deref())?
+        .remove(entry)
+        .unwrap_or_default();
+    let mut page = ids
+        .into_iter()
+        .filter(|id| after.is_none_or(|after| id.as_str() > after))
+        .take(limit.saturating_add(1))
+        .collect::<Vec<_>>();
+    let has_more = page.len() > limit;
+    if has_more {
+        page.truncate(limit);
+    }
+    Ok((page, has_more))
+}
+
 pub(crate) fn load_records<T: DeserializeOwned>(
     context: &MemoryContext<'_, '_>,
     index_key: &str,

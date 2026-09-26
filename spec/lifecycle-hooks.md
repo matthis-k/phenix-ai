@@ -1,36 +1,38 @@
-# Conductor lifecycle hooks
+# Lifecycle hooks
 
 status: partial
 coverage:
   - rust/crates/phenix-plugin-hooks/src/implementation.rs
-  - rust/crates/phenix-plugin-hooks/src/ownership_regression.rs
+  - spec/kernel-hooks.md
 
 ## Current state
 
-`phenix-plugin-hooks` implements immutable configuration revisions, explicit trigger dispatch, dependency ordering, causal re-entry protection, failure policy, context/callable actions, and ordinary Plugin ownership.
+`phenix-plugin-hooks` implements the old configurable dispatcher. It remains selectable for compatibility but is not installed by the default suite.
 
-Automatic wiring from the named conductor lifecycle boundaries into Event/Listener or Layer execution is not implemented yet. The lifecycle events below remain contract targets until those boundaries lower into the canonical mechanisms.
+New hook behavior must use the kernel-owned mechanisms in `kernel-hooks.md`:
 
-## Contract
+```text
+operation interception -> Service Layer
+completed fact         -> Event + Listener
+```
 
-Hooks are immutable configuration-revision semantics attached to explicit conductor lifecycle events. Each hook declares an event, dependency ordering, action, and failure policy. Hooks for one event form a dependency DAG; configuration registration order does not determine execution order.
+Do not add new lifecycle wiring to `phenix.hooks@1`.
 
-The supported lifecycle events are execution creation, execution completion, execution failure, context loading, callable start, and callable completion. The conductor resolves hooks from the configuration revision pinned to the affected execution.
+## Migration
 
-Supported failure policies are `ignore`, `warn`, and `fail_operation`. `ignore` discards the hook failure. `warn` records a conductor event and allows the operation to continue. `fail_operation` returns the typed hook failure to the operation boundary. A veto is therefore effective only at a boundary that has not yet committed the transition or side effect it protects. Execution-creation hook failure leaves the already-created durable execution in the failed state rather than deleting history.
+| Legacy concept | Canonical mechanism |
+| --- | --- |
+| `CallableStart` with veto/transform | Layer on the callable service |
+| `CallableCompleted` observation | Event + Listener |
+| execution start policy | Layer on the execution service |
+| execution completion observation | Event + Listener |
+| context load policy | Layer on the context service |
+| metadata/logging | Event Listener or around-call Layer |
+| dependency ordering | Layer policy or Listener dependency DAG |
+| failure policy | Layer result/error or Event failure policy |
 
-Same-hook recursive re-entry in one causal chain is blocked by default. Nested canonical operations may trigger other hooks, but an active hook cannot recursively invoke itself through a child execution, context load, or callable.
+Handler configuration belongs to the handler Plugin. Runtime ordering, authority, call scope, continuations, delivery, tracing, and provenance belong to the kernel.
 
-Hooks may observe, request canonical context injection, request a normal callable, veto explicitly supported operations, and emit metadata. Context requests use the normal exact-revision injection path. Callable and orchestration requests use the normal conductor callable APIs and inherit their authority, policy, lease, schema, and persistence checks. Hook metadata is a normal durable execution event. Hooks cannot directly mutate prompt state, bypass authority/leases/persistence, or perform privileged side effects outside normal conductor operations. Multi-step behavior invokes an orchestration rather than hiding another scheduler inside hooks.
+## Removal condition
 
-Runtime resources such as currently connected frontend providers are not configuration semantics.
-
-## Invariants
-
-1. Hook definitions are pinned by immutable configuration revision.
-2. Hook ordering is an explicit DAG and is independent of registration order.
-3. Hooks cannot bypass execution authority, policy, leases, schemas, or durable ownership boundaries.
-4. Recursive re-entry is controlled by causal hook identity.
-5. Multi-step hook work uses canonical orchestration.
-6. Runtime connection state is not part of hook configuration identity.
-7. Hook-generated metadata and warnings use the canonical execution event stream rather than a parallel hook log.
+Delete `phenix-plugin-hooks` after all first-party and supported external users have migrated to Layers or Events.

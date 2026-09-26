@@ -10,13 +10,17 @@ use phenix_core::{
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    context_service, AdmittedContextItem, CachePlacement, ContextCandidate, ContextCommand,
-    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
-    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
-    ContextProjectionForm, ContextResourceKind, ContextResourceRevision, ContextResponse,
-    ContextRetention, ContextScope, ContextSource, ExactContextReference, ExecutionCommand,
-    ExecutionContextProjection, ExecutionInterface, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
+    assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
+    context_service, derive_continuation_delta, project_continuation_import,
+    select_continuation_export, AdmittedContextItem, CachePlacement, ContextCandidate,
+    ContextCommand, ContextDescriptor, ContextInjection, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextInterface, ContextInvocationMaterialization,
+    ContextInvocationPreparation, ContextProjectionForm, ContextResourceKind,
+    ContextResourceRevision, ContextResponse, ContextRetention, ContextScope, ContextSource,
+    ContinuationExportResult, ContinuationImportRequest, ContinuationProjectionRequest,
+    ExactContextReference, ExecutionCommand, ExecutionContextProjection, ExecutionInterface,
+    ExecutionResponse, ExecutionState, ProjectedContextEntry, ProjectionCheckpoint,
+    ProjectionRevision, RepositoryContextSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -206,6 +210,21 @@ fn handle(
                 expected_projection,
             )?,
         }),
+        ContextCommand::EvaluateCompactionCost { request } => {
+            let decision = choose_cache_aware_compaction(&request)
+                .map_err(|error| format!("cache compaction cost evaluation failed: {error:?}"))?;
+            Ok(ContextResponse::CompactionCostDecision { decision })
+        }
+        ContextCommand::ExportContinuation { request } => {
+            Ok(ContextResponse::ContinuationExported {
+                result: export_continuation(context, state, request)?,
+            })
+        }
+        ContextCommand::ProjectContinuationImport { request } => {
+            Ok(ContextResponse::ContinuationImportProjected {
+                projection: import_continuation(context, request)?,
+            })
+        }
         ContextCommand::GetProjectionState { .. }
         | ContextCommand::Admit { .. }
         | ContextCommand::PrepareCompaction { .. }
@@ -214,6 +233,58 @@ fn handle(
             Err("context projection command leaked past state dispatcher".into())
         }
     }
+}
+
+fn import_continuation(
+    context: &ContextPluginContext<'_, '_>,
+    request: ContinuationImportRequest,
+) -> Result<phenix_sdk::ContinuationImportProjection, String> {
+    require_active_execution(context, &request.execution_id)?;
+    project_continuation_import(&request)
+        .map_err(|error| format!("continuation import rejected: {error:?}"))
+}
+
+fn export_continuation(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    request: ContinuationProjectionRequest,
+) -> Result<ContinuationExportResult, String> {
+    require_active_execution(context, &request.export.execution_id)?;
+    let projection = state.projection_revision(&request.export.execution_id);
+    let observed_snapshot = format!(
+        "{}:{}:{}:{}",
+        request.export.execution_id,
+        request.export.checkpoint_id,
+        projection.revision,
+        projection.cache_epoch
+    );
+    if request.expected_source_snapshot != observed_snapshot {
+        return Ok(ContinuationExportResult::StaleSnapshot {
+            expected: request.expected_source_snapshot,
+            observed: observed_snapshot,
+        });
+    }
+
+    let mut candidates = assemble_continuation_candidates(&request.source_state)
+        .map_err(|error| format!("invalid continuation source state: {error:?}"))?;
+    candidates.extend(request.candidates.clone());
+    let built = build_continuation_packet(&request.export, &observed_snapshot, &candidates)?;
+    let ContinuationExportResult::Packet { packet } = built else {
+        return Ok(built);
+    };
+    let delta = request
+        .base_packet
+        .as_ref()
+        .map(|base| derive_continuation_delta(base, &packet))
+        .transpose()
+        .map_err(|error| format!("cannot derive continuation delta: {error:?}"))?;
+    select_continuation_export(
+        &request.export,
+        packet,
+        delta,
+        request.acknowledged_base_digest.as_deref(),
+        request.measurements,
+    )
 }
 
 fn state_command_execution(command: &ContextCommand) -> Option<&str> {

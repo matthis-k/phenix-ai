@@ -39,6 +39,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 mod invocation_defaults;
+pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
 
@@ -162,7 +163,6 @@ impl HarnessBuilder {
         builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
-        builder.add_embedded(hook_manifest(authority.clone()), hook_factory)?;
         builder.add_embedded(debug_manifest(authority.clone()), debug_factory)?;
         builder.add_embedded(options_manifest(), options_factory)?;
         builder.add_embedded(
@@ -190,7 +190,6 @@ impl HarnessBuilder {
             helper_invocation_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
-            hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),

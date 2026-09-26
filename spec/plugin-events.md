@@ -99,11 +99,11 @@ A Listener is not a scheduler. Multi-step or recurring behavior belongs in a ker
 
 ## Hooks
 
-Hooks are authoring concepts, not a second Event runtime.
+Hooks are authoring concepts, not a second runtime.
 
-A Hook that only observes a completed fact lowers to an Event and Listener. A Hook that may transform, deny, wrap, or otherwise affect an operation lowers to a Layer.
+A Hook that only observes a completed fact lowers to an Event and Listener. A Hook that may transform, deny, wrap, or otherwise affect an operation lowers to a Layer. The kernel therefore owns hook execution through its existing Event and Layer machinery.
 
-`phenix-plugin-hooks` may own configurable Hook definitions and user-facing policy, but it receives no privileged kernel path.
+Handler configuration and behavior remain Plugin-owned. The legacy `phenix-plugin-hooks` dispatcher is compatibility code and is not installed by the default suite. See `kernel-hooks.md`.
 
 ## Durability
 

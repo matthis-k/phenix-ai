@@ -1,6 +1,8 @@
 use crate::routing_state::RoutingRuntimeState;
 use phenix_core::RoutingProfileId;
-use phenix_sdk::{ModelCommand, ModelResponse, RouteDecision, RoutingProfile};
+use phenix_sdk::{
+    EffectiveModelCapabilities, ModelCommand, ModelResponse, RouteDecision, RoutingProfile,
+};
 
 pub(crate) const ROUTING_RUNTIME_KEY: &str = "runtime/routing-state";
 pub(crate) const MAX_ROUTING_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
@@ -46,10 +48,12 @@ impl RoutingServiceState {
         Ok(bytes)
     }
 
-    pub(crate) fn validate_decision(&self, decision: &RouteDecision) -> Result<(), String> {
+    pub(crate) fn validate_decision(
+        &self,
+        decision: &RouteDecision,
+    ) -> Result<&EffectiveModelCapabilities, String> {
         self.runtime
             .validate_decision(decision)
-            .map(|_| ())
             .map_err(|error| format!("resolved routing decision is invalid: {error:?}"))
     }
 
@@ -140,6 +144,7 @@ mod tests {
                     max_output_tokens: Some(2_000),
                 },
             },
+            cache: Default::default(),
             optional: BTreeSet::new(),
         };
         let mut state = RoutingServiceState::default();

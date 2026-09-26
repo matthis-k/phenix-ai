@@ -1,9 +1,14 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, ComponentManifest, ModelId, PhenixValue, PluginExecution,
+    Authority, CapabilityGenerationId, ComponentManifest, ContextResourceId, ContextResourceKind,
+    ContextScope, Key, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
     ServiceContribution, ServiceId, SessionId, ValueError,
 };
-use phenix_harness::{default_suite_authority, HarnessBuilder, PhenixHarness};
+use phenix_harness::{
+    default_suite_authority,
+    model_surface_fixture::{model_surface_response, ModelSurfaceReport},
+    HarnessBuilder, PhenixHarness,
+};
 use phenix_plugin_catalog::{
     artifact_component_manifest, model_inference_service, planning_component_manifest,
     ArtifactCommand, ArtifactResponse, CliProbeRequest, ContextCommand, ContextResponse,
@@ -15,10 +20,11 @@ use phenix_plugin_catalog::{
     SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelCapabilities,
-    ExecutionResourceCommand, ExecutionResourceResponse, InvocationCommand, InvocationIntent,
-    InvocationParams, InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits,
-    RouteSelectionPolicy, RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
+    CapacityKnowledge, ContextControl, ContextInjectionLifetime, ContextInjectionRequester,
+    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionResourceCommand,
+    ExecutionResourceResponse, InvocationCommand, InvocationIntent, InvocationParams,
+    InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
+    RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -255,6 +261,33 @@ impl PluginInstance for ModelProvider {
     }
 }
 
+struct IntrospectionModelProvider;
+
+impl PluginInstance for IntrospectionModelProvider {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        service: &ServiceId,
+        input: &[u8],
+        _host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        if service != &model_inference_service() {
+            return Err(format!(
+                "unsupported introspection model service: {service}"
+            ));
+        }
+        let value: PhenixValue =
+            serde_json::from_slice(input).map_err(|error| error.to_string())?;
+        let request =
+            ModelInferenceRequest::try_from(Project(&value)).map_err(|error| error.to_string())?;
+        let response = model_surface_response(&request).map_err(|error| error.to_string())?;
+        serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+    }
+}
+
 struct EchoTool;
 
 impl PluginInstance for EchoTool {
@@ -382,14 +415,6 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
     );
     assert_eq!(frontends["response"], "providers");
 
-    let hooks = invoke(
-        &mut harness,
-        "phenix.hooks@1",
-        json!({"operation": "get_configuration", "revision": "missing"}),
-    );
-    assert_eq!(hooks["response"], "configuration");
-    assert!(hooks["configuration"].is_null());
-
     let workspace = invoke(
         &mut harness,
         "phenix.workspace@1",
@@ -467,6 +492,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                         max_output_tokens: Some(2_000),
                     },
                 },
+                cache: Default::default(),
                 optional: BTreeSet::new(),
             },
         },
@@ -603,19 +629,213 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
 }
 
 #[test]
-fn hook_behavior_is_omittable_and_replaceable_through_harness_composition() {
-    let hook_service = ServiceId::parse("phenix.hooks@1").unwrap();
-    let selected = BTreeSet::new();
+fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
+    let provider = "fixture.introspection-provider";
+    let mut builder = HarnessBuilder::with_default_suite().unwrap();
+    builder
+        .add_embedded(
+            fixture_manifest(provider, model_inference_service()),
+            || Box::new(IntrospectionModelProvider),
+        )
+        .unwrap();
+    let mut harness = builder.build().unwrap();
+    harness.activate().unwrap();
 
-    let mut without_hooks = HarnessBuilder::with_selected_suite(&selected)
+    let target = ModelTarget {
+        provider_plugin: PluginId::parse(provider).unwrap(),
+        model: ModelId::parse("fixture-introspection").unwrap(),
+        options: BTreeMap::new(),
+    };
+    let profile = RoutingProfile {
+        id: RoutingProfileId::parse("introspection").unwrap(),
+        default_target: target.clone(),
+        fallback_targets: Vec::new(),
+        callable_targets: BTreeMap::new(),
+    };
+    let _: ModelResponse = invoke_structural(
+        &mut harness,
+        "phenix.models.routing@1",
+        &ModelCommand::RegisterProfile {
+            profile: profile.clone(),
+        },
+    );
+    let _: ModelResponse = invoke_structural(
+        &mut harness,
+        "phenix.models.routing@1",
+        &ModelCommand::PublishCapabilities {
+            capabilities: EffectiveModelCapabilities {
+                target,
+                generation: CapabilityGenerationId::parse("introspection-generation").unwrap(),
+                context: ContextControl::ReplaceableTurns,
+                capacity: CapacityKnowledge::Known {
+                    limits: ModelLimits {
+                        context_window_tokens: 16_000,
+                        max_output_tokens: Some(4_000),
+                    },
+                },
+                cache: Default::default(),
+                optional: BTreeSet::new(),
+            },
+        },
+    );
+    let _: ModelResponse = invoke_structural(
+        &mut harness,
+        "phenix.models.routing@1",
+        &ModelCommand::SetProviderAuthenticated {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            authenticated: true,
+        },
+    );
+
+    let _: ExecutionResponse = invoke_structural(
+        &mut harness,
+        "phenix.execution@1",
+        &ExecutionCommand::CreateExecution {
+            id: "introspection-root".into(),
+            requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+        },
+    );
+    let _: ExecutionResourceResponse = invoke_structural(
+        &mut harness,
+        "phenix.execution.resources@1",
+        &ExecutionResourceCommand::RegisterRootBudget {
+            ledger: RootBudgetLedger {
+                root_execution_id: "introspection-root".into(),
+                limits: RootBudgetLimits {
+                    fresh_input_tokens: 32_000,
+                    output_tokens: 8_000,
+                    cost_microunits: None,
+                    attempts: 4,
+                },
+                reservations: BTreeMap::new(),
+            },
+        },
+    );
+
+    let resource_id = ContextResourceId::parse("skill:introspection-check").unwrap();
+    let registered: ContextResponse = invoke_structural(
+        &mut harness,
+        "phenix.context@1",
+        &ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: ContextResourceKind::Skill,
+            source: "skills/introspection-check/SKILL.md".into(),
+            scope: ContextScope::Workspace,
+            content: b"fixture skill body".to_vec().into(),
+        },
+    );
+    let ContextResponse::Registered { resource } = registered else {
+        panic!("skill registration must return an exact revision");
+    };
+    let _: ContextResponse = invoke_structural(
+        &mut harness,
+        "phenix.context@1",
+        &ContextCommand::Load {
+            execution_id: "introspection-root".into(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: ContextInjectionRequester::User,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: "verify the model-visible skill surface".into(),
+        },
+    );
+
+    let visible_tool = ModelToolDescriptor {
+        id: phenix_core::CallableId::parse("bash").unwrap(),
+        description: "Run a shell command in the configured Phenix workspace".into(),
+        input_schema: PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("command").unwrap(),
+            PhenixSchema::String,
+        )])),
+        output_schema: PhenixSchema::Any,
+    };
+    let tool_id = visible_tool.id.clone();
+    let response: StepRunnerResponse = invoke_structural(
+        &mut harness,
+        "phenix.invocation@1",
+        &InvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "introspection-root".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"print the model surface".to_vec().into(),
+                tools: vec![visible_tool],
+                continuation: Vec::new(),
+            },
+            params: InvocationParams {
+                profile_id: profile.id,
+                policy: UsagePolicy {
+                    revision: "introspection-policy".into(),
+                    max_fresh_input_tokens: 16_000,
+                    max_output_tokens: 4_000,
+                    max_cost_microunits: None,
+                    max_retries: 0,
+                    max_tool_result_bytes: 64 * 1024,
+                    max_tool_schemas: 8,
+                    max_skills: 8,
+                    require_known_capacity: true,
+                    delegation: DelegationResourcePolicy::default(),
+                },
+                intent: InvocationIntent {
+                    output_reserve_tokens: 1_024,
+                    required_context_capabilities: BTreeSet::new(),
+                    required_capabilities: BTreeSet::new(),
+                    required_tools: BTreeSet::new(),
+                    optional_tools: BTreeSet::from([tool_id]),
+                    required_skills: BTreeSet::new(),
+                    optional_skills: BTreeSet::new(),
+                    requested_reasoning: None,
+                    deadline_at_ms: None,
+                },
+                route_policy: RouteSelectionPolicy {
+                    revision: "introspection-route-policy".into(),
+                    estimates: RoutingEstimateMode::Ignore,
+                    max_candidate_attempts: 2,
+                },
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let report: ModelSurfaceReport = serde_json::from_slice(output.as_ref()).unwrap();
+
+    assert_eq!(report.model, "fixture-introspection");
+    assert_eq!(report.tools.len(), 1);
+    assert_eq!(report.tools[0].id, "bash");
+    assert_eq!(
+        report.tools[0].input_schema,
+        serde_json::to_value(PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("command").unwrap(),
+            PhenixSchema::String,
+        )])))
+        .unwrap()
+    );
+    assert_eq!(report.skills.len(), 1);
+    assert_eq!(
+        report.skills[0].source,
+        "skills/introspection-check/SKILL.md"
+    );
+    assert_eq!(report.skills[0].content, "fixture skill body");
+    assert!(report
+        .instructions
+        .iter()
+        .any(|section| section.source == "phenix"));
+    assert_eq!(report.request, "print the model surface");
+}
+
+#[test]
+fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
+    let hook_service = ServiceId::parse("phenix.hooks@1").unwrap();
+
+    let mut default = HarnessBuilder::with_default_suite()
         .unwrap()
         .build()
         .unwrap();
-    without_hooks.activate().unwrap();
+    default.activate().unwrap();
     let request = HookCommand::GetConfiguration {
         revision: "missing".into(),
     };
-    let error = without_hooks
+    let error = default
         .invoke(
             &hook_service,
             &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
@@ -625,6 +845,7 @@ fn hook_behavior_is_omittable_and_replaceable_through_harness_composition() {
         .unwrap_err();
     assert!(error.to_string().contains("no eligible provider"));
 
+    let selected = BTreeSet::new();
     let mut replacement_builder = HarnessBuilder::with_selected_suite(&selected).unwrap();
     replacement_builder
         .add_embedded(

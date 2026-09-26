@@ -462,6 +462,7 @@ mod tests {
                     model: phenix_core::ModelId::parse("model-a").unwrap(),
                     input: b"hello".to_vec().into(),
                     options: BTreeMap::new(),
+                    cache: Default::default(),
                     tools: Vec::new(),
                     continuation: Vec::new(),
                 }))
