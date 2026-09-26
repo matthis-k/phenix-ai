@@ -195,7 +195,7 @@ impl PluginInstance for StepRunnerPlugin {
             let response = match command {
                 StepRunnerCommand::Run { request } => run(&context, request, None)?,
                 StepRunnerCommand::RunResolved { request, decision } => {
-                    run(&context, request, Some(decision))?
+                    run(&context, request, Some(*decision))?
                 }
             };
             return context
