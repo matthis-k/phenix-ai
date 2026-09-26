@@ -27,7 +27,7 @@ Tracks #516 slice 5.
 ## Required implementation
 
 - [x] Add the planner/context handoff that creates an `ExplorationOpportunity`.
-- [ ] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known.
+- [x] Evaluate `ExplorationPolicy` only after task separability and parent-context cost are known. `AssessExplorationOpportunity` first constructs the complete typed opportunity from the explicit separability/transcript candidate and inline/delegated cost estimate, then calls `ExplorationPolicy::assess`; the planning regression locks that ordering.
 - [x] Create the child through the existing delegation/worker path. (`phenix.delegated-worker@1` consumes the durable runnable projection, creates/reuses the attenuated child execution, runs the pinned route through the ordinary step runner, settles the delegated reservation, and re-admits completed findings through context.)
 - [x] Give the child selected exact references and attenuated authority, not the parent transcript.
 - [x] Return bounded typed findings plus exact evidence references.
