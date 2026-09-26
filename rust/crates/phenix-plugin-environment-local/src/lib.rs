@@ -183,9 +183,9 @@ impl LocalEnvironment {
                 )),
             },
             Err(std::env::VarError::NotPresent) => Ok(EnvironmentFilesystemPolicy::Unrestricted),
-            Err(std::env::VarError::NotUnicode(_)) => Err(format!(
-                "{LOCAL_FILESYSTEM_POLICY_ENV} must be valid UTF-8"
-            )),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(format!("{LOCAL_FILESYSTEM_POLICY_ENV} must be valid UTF-8"))
+            }
         };
         Self {
             root,
@@ -314,7 +314,10 @@ impl LocalEnvironment {
                         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
                     )
                     .map_err(|error| {
-                        format!("open created confined parent {}: {error}", name.to_string_lossy())
+                        format!(
+                            "open created confined parent {}: {error}",
+                            name.to_string_lossy()
+                        )
                     })?
                 }
                 Err(error) => {
@@ -555,8 +558,8 @@ impl LocalEnvironment {
                 {
                     match self.confined_open(&resolved, OFlags::PATH, Mode::empty())? {
                         Some(fd) => {
-                            let stat = rfs::fstat(&fd)
-                                .map_err(|error| format!("stat {path}: {error}"))?;
+                            let stat =
+                                rfs::fstat(&fd).map_err(|error| format!("stat {path}: {error}"))?;
                             Some(match FileType::from_raw_mode(stat.st_mode) {
                                 FileType::RegularFile => EnvironmentFileKind::File,
                                 FileType::Directory => EnvironmentFileKind::Directory,
@@ -633,8 +636,8 @@ impl LocalEnvironment {
                         )?
                         .ok_or_else(|| format!("read directory {path}: not found"))?;
                     let mut entries = Vec::new();
-                    let dir = Dir::new(fd)
-                        .map_err(|error| format!("read directory {path}: {error}"))?;
+                    let dir =
+                        Dir::new(fd).map_err(|error| format!("read directory {path}: {error}"))?;
                     for entry in dir {
                         let entry =
                             entry.map_err(|error| format!("read directory {path}: {error}"))?;
@@ -1152,7 +1155,10 @@ mod tests {
         let direct = invoke_result(
             &mut kernel,
             EnvironmentCommand::WriteFile {
-                path: root.join("escape/direct.txt").to_string_lossy().into_owned(),
+                path: root
+                    .join("escape/direct.txt")
+                    .to_string_lossy()
+                    .into_owned(),
                 content: b"nope".to_vec(),
                 create_parents: false,
             },
@@ -1165,10 +1171,7 @@ mod tests {
             &mut kernel,
             EnvironmentCommand::Exec {
                 program: "sh".into(),
-                arguments: vec![
-                    "-c".into(),
-                    r#"printf nope > escape/process.txt"#.into(),
-                ],
+                arguments: vec!["-c".into(), r#"printf nope > escape/process.txt"#.into()],
                 working_directory: None,
                 environment: BTreeMap::new(),
             },
