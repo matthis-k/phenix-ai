@@ -837,7 +837,11 @@ impl ApplicationWorker {
     fn allocate_root_execution(&mut self) -> Result<String, ApplicationError> {
         let response = self.invoke_execution(ExecutionCommand::AllocateExecution {
             prefix: "execution-".to_owned(),
-            requested_authority: ExecutionAuthority::new(Vec::<String>::new()),
+            requested_authority: ExecutionAuthority::new(
+                self.authority
+                    .capabilities()
+                    .map(|capability| capability.as_str().to_owned()),
+            ),
         })?;
         let ExecutionResponse::Execution { execution } = response else {
             return Err(ApplicationError::InvalidResponse {
@@ -3602,6 +3606,40 @@ mod tests {
         let allocated = second.allocate_root_execution().unwrap();
         assert_eq!(allocated, "execution-2");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn default_application_root_execution_inherits_runtime_authority() {
+        let mut worker = application_worker();
+        let execution_id = worker.allocate_root_execution().unwrap();
+        let response = worker
+            .invoke_execution(ExecutionCommand::GetExecution {
+                id: execution_id.clone(),
+            })
+            .unwrap();
+        let ExecutionResponse::ExecutionLookup {
+            execution: Some(execution),
+        } = response
+        else {
+            panic!("allocated application execution must be queryable");
+        };
+
+        let expected = default_suite_authority()
+            .capabilities()
+            .map(|capability| capability.as_str().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(execution.authority.capabilities, expected);
+        for capability in [
+            "workspace.read",
+            "workspace.write",
+            "workspace.shell",
+            "workspace.git",
+        ] {
+            assert!(
+                execution.authority.capabilities.contains(capability),
+                "default application execution is missing {capability}"
+            );
+        }
     }
 
     #[test]
