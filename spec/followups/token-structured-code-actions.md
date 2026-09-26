@@ -1,12 +1,17 @@
 # Structured semantic code actions
 
-status: specification-only
+status: implementation-in-progress
 
 Tracks #516 slice 7. This is separate from stable code identity: identity answers what code entity is being addressed; structured actions define how agents read and modify it.
 
 ## Gap
 
 Phenix has file operations and language-intelligence reads, but no provider-neutral entity read/edit contract with revision-checked transactional writes.
+
+## Implementation progress
+
+- [x] Workspace now exposes a distinct crash-recoverable `CommitBatch` path with strict whole-batch version preconditions, durable operation/intent identity, exact before/after version receipts, idempotent replay, and startup roll-forward of prepared commits. Legacy `WriteBatch` remains explicitly precondition-checked sequential.
+- [x] Commit journals are hidden from ordinary workspace read/search paths; shell-capable or external writers remain outside the cooperative atomicity guarantee.
 
 ## Required implementation
 
