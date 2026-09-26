@@ -20,7 +20,7 @@ Tracks #516 slice 5.
 - [x] Completed delegated results have a context-owned readmission operation that loads the exact result once, re-prepares current parent context, and commits through ordinary context admission.
 - [x] Delegated task bindings persist optional originating-attempt identity so later child/retry/reacquisition accounting has a stable parent attribution key.
 - [x] The delegated worker allocates its first charged attempt with that originating attempt as the parent and the durable task ID; retries inherit the same task identity and remain under the delegated reservation lineage.
-- [x] Step attempts now expose replay-idempotent durable reacquisition accounting keyed by a unique occurrence ID, with optional same-root source-attempt linkage; runtime recovery/expansion paths still need to emit those records before the full attribution item is complete.
+- [x] Step attempts expose replay-idempotent durable reacquisition accounting keyed by a unique occurrence ID, with optional same-root source-attempt linkage. Delegated-result admission records the parent-context reacquisition against the originating attempt and links it to the successful delegated attempt; replay keeps one receipt.
 - [x] Delegated retries remain inside the delegated task lineage: retry eligibility includes the initial delegated attempt, retry validation stops at the delegated/root boundary, and allocated retries inherit the task identity/reservation lineage.
 - [x] Removed the dead delegated-task variants from the generic execution API; the execution-resource service is the single durable owner of delegated task admission/lifecycle state.
 
@@ -32,7 +32,7 @@ Tracks #516 slice 5.
 - [x] Give the child selected exact references and attenuated authority, not the parent transcript.
 - [x] Return bounded typed findings plus exact evidence references.
 - [x] Re-admit findings through ordinary context admission. (`ContextCommand::AdmitDelegatedResult` owns exact result injection and current-parent re-admission; retries re-admit current context without duplicating the delegated-result injection.)
-- [ ] Attribute child cost, retries, and later parent reacquisition to the originating attempt.
+- [x] Attribute child cost, retries, and later parent reacquisition to the originating attempt. (The delegated attempt is parented by the originating attempt, retries preserve the delegated task lineage, and parent result admission records a replay-idempotent reacquisition receipt with the successful child attempt as its source.)
 - [x] Keep automatic exploration disabled until benchmarked.
 
 ## Acceptance
