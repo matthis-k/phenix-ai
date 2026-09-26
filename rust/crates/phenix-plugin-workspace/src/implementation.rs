@@ -498,7 +498,8 @@ mod tests {
     use super::*;
     use crate::workspace_component_manifest;
     use phenix_core::{
-        Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
+        ComponentExport, ComponentId, ComponentManifest, Kernel, KernelConfig, PhenixValue, Project,
+        ResolvedHarness, ResolvedHarnessActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -507,6 +508,7 @@ mod tests {
     use std::{
         fs,
         process::Command,
+        sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -519,6 +521,98 @@ mod tests {
             std::env::temp_dir().join(format!("phenix-{name}-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn fixture_environment_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.environment").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service: environment_service(),
+                priority: 200,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    fn fixture_environment_component_manifest() -> ComponentManifest {
+        ComponentManifest {
+            listeners: Vec::new(),
+            id: ComponentId::parse("fixture.environment").unwrap(),
+            owner: fixture_environment_manifest().id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: EnvironmentInterface::interface_id(),
+                schema: EnvironmentInterface::schema(),
+                priority: 200,
+                required_authority: Authority::default(),
+            }],
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct FixtureEnvironment {
+        commands: Arc<Mutex<Vec<EnvironmentCommand>>>,
+    }
+
+    impl PluginInstance for FixtureEnvironment {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &environment_service() {
+                return Err(format!("unsupported fixture environment service: {service}"));
+            }
+
+            let context = PluginContext::new(host, (), (), ());
+            let command = context
+                .kernel
+                .decode_projected::<EnvironmentCommand>(
+                    &EnvironmentInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            self.commands
+                .lock()
+                .map_err(|_| "fixture environment command log poisoned".to_owned())?
+                .push(command.clone());
+
+            let response = match command {
+                EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
+                    content: path
+                        .ends_with("input.txt")
+                        .then(|| b"virtual-content".to_vec()),
+                },
+                EnvironmentCommand::WriteFile { .. } => EnvironmentResponse::Written,
+                EnvironmentCommand::Exec { .. } => EnvironmentResponse::Process {
+                    exit_code: 0,
+                    stdout: b"fixture-process".to_vec(),
+                    stderr: Vec::new(),
+                    truncated: false,
+                },
+                other => {
+                    return Err(format!(
+                        "unexpected fixture environment command: {other:?}"
+                    ))
+                }
+            };
+
+            context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string())
+        }
     }
 
     fn kernel(root: PathBuf) -> Kernel {
@@ -611,6 +705,126 @@ mod tests {
 
         kernel.activate_all().unwrap();
         let _ = fs::remove_dir_all(cleanup_root);
+    }
+
+    #[test]
+    fn workspace_routes_io_and_processes_through_replaceable_environment() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
+        assert!(!virtual_root.exists());
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(virtual_root.clone())
+            })
+            .unwrap();
+
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(FixtureEnvironment {
+                    commands: Arc::clone(&recorded),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let read = invoke(
+            &mut kernel,
+            WorkspaceCommand::Read {
+                path: "input.txt".into(),
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+        assert!(matches!(
+            read,
+            WorkspaceResponse::Read { content, .. } if content == "virtual-content"
+        ));
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::Write {
+                    path: "new.txt".into(),
+                    content: "new".into(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                },
+                &authority(&[WORKSPACE_WRITE]),
+            )
+            .unwrap(),
+            WorkspaceResponse::Written { .. }
+        ));
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::Shell {
+                    command: "printf shell".into(),
+                },
+                &authority(&[WORKSPACE_SHELL]),
+            )
+            .unwrap(),
+            WorkspaceResponse::Process { exit_code: 0, .. }
+        ));
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::Git {
+                    arguments: vec!["status".into()],
+                },
+                &authority(&[WORKSPACE_GIT]),
+            )
+            .unwrap(),
+            WorkspaceResponse::Process { exit_code: 0, .. }
+        ));
+
+        let commands = commands.lock().unwrap();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::ReadFile { path }
+                if path == "/phenix-fixture-environment-only/project/input.txt"
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::WriteFile { path, content, .. }
+                if path == "/phenix-fixture-environment-only/project/new.txt"
+                    && content == b"new"
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Exec {
+                program,
+                working_directory: Some(working_directory),
+                ..
+            } if program == "bash"
+                && working_directory == "/phenix-fixture-environment-only/project"
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Exec {
+                program,
+                working_directory: Some(working_directory),
+                ..
+            } if program == "git"
+                && working_directory == "/phenix-fixture-environment-only/project"
+        )));
     }
 
     #[test]
