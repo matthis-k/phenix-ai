@@ -1003,8 +1003,7 @@ fn read_entity_source(
     if max_bytes == 0 {
         return Err("entity source read requires a non-zero byte bound".into());
     }
-    let Some(locator) =
-        read_entity_source_locator(context, repository_id, entity_id, revision)?
+    let Some(locator) = read_entity_source_locator(context, repository_id, entity_id, revision)?
     else {
         return Ok(None);
     };
