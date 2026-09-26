@@ -23,6 +23,7 @@ Tracks #516 slice 5.
 - [x] Step attempts expose replay-idempotent durable reacquisition accounting keyed by a unique occurrence ID, with optional same-root source-attempt linkage. Delegated-result admission records the parent-context reacquisition against the originating attempt and links it to the successful delegated attempt; replay keeps one receipt.
 - [x] Delegated retries remain inside the delegated task lineage: retry eligibility includes the initial delegated attempt, retry validation stops at the delegated/root boundary, and allocated retries inherit the task identity/reservation lineage.
 - [x] Removed the dead delegated-task variants from the generic execution API; the execution-resource service is the single durable owner of delegated task admission/lifecycle state.
+- [x] Synced the completed runtime with the current estimator contract and kept the pinned resolved-route command bounded after #599 changed shared planning types.
 
 ## Required implementation
 
