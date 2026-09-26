@@ -287,7 +287,7 @@ The current default is unrestricted local execution through `phenix.environment.
 
 The configured local root is only the default namespace base and process cwd. It does not restrict absolute paths, `..` used by child processes, or other host filesystem access.
 
-The two confined behaviors require an enforcing Environment backend. They apply equally to direct filesystem operations and arbitrary descendant processes. Until that backend exists, the local provider represents the policy but fails direct filesystem and process operations closed rather than falling back to unrestricted local execution.
+The two confined behaviors use the Linux local Environment backend. Restricted direct filesystem access is descriptor-rooted with `openat2`. Restricted process creation materializes the policy with Bubblewrap. Direct operations and descendants therefore share the same policy. Missing enforcement support fails closed rather than falling back to unrestricted local execution.
 
 Preset names are product configuration. They are not kernel, Workspace, or Environment ABI semantics.
 
@@ -328,19 +328,18 @@ Implemented in this PR:
 The local provider currently:
 
 - reports its effective filesystem policy through `EnvironmentDescription`;
-- uses the unrestricted host filesystem/process namespace;
-- treats its configured root as the default base/cwd, not a confinement boundary;
-- accepts absolute host paths through `EnvironmentInterface`;
-- allows child processes normal host filesystem reach;
+- defaults to unrestricted host filesystem/process behavior;
+- selects restricted local policies through `PHENIX_LOCAL_FILESYSTEM_POLICY`;
+- uses `openat2` for race-safe restricted direct filesystem access;
+- uses Bubblewrap for restricted scratch and persistent process execution;
+- inherits restricted process views across descendants;
+- provides Environment-private writable scratch in restricted modes;
 - supports persistent pipe-backed processes;
 - does not provide a PTY;
-- does not provide sandboxing or staged review.
+- does not provide network, IPC, secret, device, or staged-review confinement.
 
 Not implemented by this PR:
 
-- working-directory-only enforcing backend;
-- working-directory-write with host-wide reads enforcing backend;
-- Linux sandbox provider;
 - overlay/review provider;
 - SSH Environment provider;
 - container/VM providers;
@@ -365,8 +364,8 @@ The architecture is considered preserved only if tests prove:
 - persistent process handles are provider-owned opaque strings.
 - persistent process cleanup happens on explicit close and provider stop.
 - replacing the Environment provider does not require changing Workspace or tool contracts.
-- future sandbox provider tests prove direct filesystem operations and shell-originated writes see the same view.
-- future sandbox provider tests prove arbitrary child processes cannot escape the view.
+- restricted local tests prove direct filesystem operations and shell-originated writes enforce the same policy.
+- restricted local tests prove arbitrary child processes cannot escape the filesystem view.
 - every restricted process path, including persistent processes, reaches the same enforcing launcher.
 - a tool or child executable cannot select an unrestricted spawn path implicitly.
 - broader filesystem access requires explicit pre-spawn policy selection/allowance.
