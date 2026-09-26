@@ -198,11 +198,28 @@ pub fn derive_efficiency_task_record_from_attempts(
             });
         }
         let (record, known_cost_microunits, cost_complete) = if let Some(usage) = &attempt.usage {
+            let mut record = usage.clone();
+            for reacquisition in &attempt.reacquisition {
+                if let Some(existing) = record
+                    .reacquisition
+                    .iter()
+                    .find(|existing| existing.reacquisition_id == reacquisition.reacquisition_id)
+                {
+                    if existing != reacquisition {
+                        return Err(EfficiencyEvaluationError::ReacquisitionIdentityConflict {
+                            attempt_id: attempt.attribution.attempt_id.clone(),
+                            reacquisition_id: reacquisition.reacquisition_id.clone(),
+                        });
+                    }
+                } else {
+                    record.reacquisition.push(reacquisition.clone());
+                }
+            }
             let cost = attempt
                 .settled_actual
                 .as_ref()
                 .and_then(|actual| actual.cost_microunits);
-            (usage.clone(), cost.unwrap_or(0), cost.is_some())
+            (record, cost.unwrap_or(0), cost.is_some())
         } else if attempt.dispatch_id.is_none() {
             (
                 AttemptUsageRecord {
@@ -458,6 +475,10 @@ pub enum EfficiencyEvaluationError {
     },
     DuplicateAttempt {
         attempt_id: String,
+    },
+    ReacquisitionIdentityConflict {
+        attempt_id: String,
+        reacquisition_id: String,
     },
     UnsettledAttempt {
         attempt_id: String,
@@ -1065,7 +1086,7 @@ mod tests {
             attempt
         }
 
-        let root = settled_attempt(
+        let mut root = settled_attempt(
             super::super::UsageAttribution {
                 root_execution_id: "root-1".into(),
                 execution_id: "root-1".into(),
@@ -1093,6 +1114,19 @@ mod tests {
             7,
             3,
         );
+        root.record_reacquisition(super::super::ReacquisitionUsage {
+            reacquisition_id: "delegation:task-1:parent-context".into(),
+            cause_identity: "delegation:task-1".into(),
+            source_attempt_id: Some("delegated-attempt".into()),
+            fresh_input_tokens: UsageQuantity::Estimated {
+                value: 3,
+                basis: "delegated result context admission".into(),
+            },
+            tool_result_bytes: 0,
+            model_calls: 0,
+            tool_calls: 0,
+        })
+        .unwrap();
 
         let record = derive_efficiency_task_record_from_attempts(&EfficiencyDurableTaskEvidence {
             task_fixture_revision: "task-1@1".into(),
@@ -1116,6 +1150,16 @@ mod tests {
         assert_eq!(record.usage.attempts, 2);
         assert_eq!(record.usage.fresh_input_tokens.reported, 27);
         assert_eq!(record.usage.output_tokens.reported, 8);
+        assert_eq!(record.reacquisition_causes.len(), 1);
+        assert_eq!(
+            record.reacquisition_causes[0].cause_identity,
+            "delegation:task-1"
+        );
+        assert_eq!(
+            record.reacquisition_causes[0].source_attempt_id.as_deref(),
+            Some("delegated-attempt")
+        );
+        assert_eq!(record.reacquisition_causes[0].fresh_input_tokens.estimated, 3);
         assert!(record.cost_complete);
     }
 
