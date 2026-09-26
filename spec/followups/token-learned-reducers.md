@@ -14,6 +14,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Proposal validation rejects fabricated/duplicate/missing item decisions, missing exact recovery for omitted payloads, source-less summaries, stale projections, and underreported encoded size.
 - [x] Added the provider-neutral `phenix.context-reducer@1` request/proposal interface; context imports it optionally with no persistence/canonical-state authority.
 - [x] Context can request a reduction from the optional backend only for the current projection, then revalidates every returned proposal against the pinned request and current projection before exposing it; the backend still has no commit path.
+- [x] Reducer stages are independently opt-in at the context owner; the default context factory enables none, and disabled stages fail before invoking an optional backend.
 
 ## Required implementation
 
@@ -23,7 +24,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [ ] Benchmark ACON-style history reduction separately from TokenPilot-inspired cache/layout policy.
 - [ ] Route reducer model work through ordinary bounded helper invocation.
 - [ ] Attribute reducer cost and later reacquisition to the same task evaluation.
-- [ ] Keep reducers independently disableable.
+- [x] Keep reducers independently disableable.
 - [ ] Reject a default-on reducer unless it improves the success/cost frontier on representative tasks.
 
 ## Acceptance
