@@ -4,101 +4,75 @@ status: specification-only
 
 ## Goal
 
-Define the default security boundary for commands started by agents, tools, and workspace services.
+Define filesystem reach for process execution without coupling it to Workspace API authority.
 
-Process execution must use an explicit confinement mode. A caller must not gain host access because a sandbox backend is missing or partially supported.
+Environment policy determines what a process can observe and mutate. Workspace authority only decides which Workspace operations a caller may invoke.
 
-## Modes
+## Filesystem behaviors
 
-| Mode | Workspace | Network | Host filesystem | Use |
-| --- | --- | --- | --- | --- |
-| `read_only` | Read-only | Denied unless granted | Denied | Default agent and inspection commands |
-| `workspace_write` | Read-write | Denied unless granted | Denied | Commands expected to modify the workspace |
-| `unrestricted` | Host policy | Host policy | Host policy | Explicit user-approved escape hatch |
+The product may expose these behaviors as presets. Their names are configuration, not Core or Workspace semantics.
 
-`unrestricted` is never selected by fallback.
+| Behavior | Reads | Writes | Status |
+| --- | --- | --- | --- |
+| Unrestricted local | Entire host filesystem | Entire host filesystem | Implemented by `phenix.environment.local` |
+| Working-directory only | Working directory tree only | Working directory tree only | Future confined Environment |
+| Working-directory write, host read | Entire host filesystem | Working directory tree only | Future confined Environment |
 
-## Defaults
+For unrestricted local execution, the configured root is the default working directory for relative paths and processes. It is not a security boundary. Absolute paths and child processes may access the rest of the host according to the host OS permissions.
 
-- New process requests use `read_only`. `workspace_write` is selected only when the caller explicitly requests it and has the required authority.
-- Network access is denied unless authority grants the required network capability.
-- The workspace is the only project filesystem visible to confined commands.
-- `.git` stays read-only unless the call has explicit Git write authority.
-- Scratch storage is writable and private to the execution.
-- Confined execution fails when the selected backend cannot enforce the requested mode.
-- Process output is bounded. Truncation is explicit in the result.
-- Cancellation terminates the process tree, not only the direct child.
+The two confined behaviors require an Environment backend that can enforce the policy for direct filesystem operations and the full descendant process tree. They must fail closed when enforcement is unavailable. They must never fall back to unrestricted local execution.
 
 ## Authority
 
-Confinement does not replace capability checks. Both must pass.
+Workspace capabilities are admission checks:
 
-Examples:
+- `workspace.read` admits direct Workspace read/search operations.
+- `workspace.write` admits direct Workspace writes and future Patch operations.
+- `workspace.shell` or future Exec authority admits process execution.
+- `workspace.git` admits the transitional dedicated Git operation.
 
-- `workspace.read` permits a read operation. It does not permit a shell process to write the workspace.
-- `workspace.write` permits writes only inside a `workspace_write` process or a direct workspace write operation.
-- Network capabilities name the destinations or provider classes the process may reach. No network capability means no network.
-- `unrestricted` requires a dedicated authority. Broad workspace or shell authority is insufficient.
+Those capabilities do not redefine the selected Environment filesystem policy.
 
-Authority is attenuated when one execution starts another process. A child cannot regain capabilities removed by its parent.
+A process admitted through Shell or Exec may write wherever its Environment permits. Phenix does not inspect command strings to decide whether a process is read-only or mutating.
+
+Authority still attenuates through the kernel. Environment policy is an additional execution boundary, not a replacement for capability checks.
 
 ## Backend contract
 
-A confinement backend reports the guarantees it can enforce before process start. Resolution either selects a backend that satisfies the request or rejects the request.
+A confined Environment must enforce its declared filesystem view for:
 
-Required guarantees:
+- direct read, write, stat, and directory operations;
+- scratch process execution;
+- persistent processes;
+- every descendant process.
 
-- filesystem mode
-- network mode
-- process-tree isolation and termination
-- workspace root
-- scratch root
+Changing executable must not escape the policy. This includes shells, Python, Git, Nix, build tools, and custom binaries.
 
-A backend may expose stronger guarantees. The caller must not depend on backend-specific behavior unless the contract names it.
+A confined backend reports the guarantees it can enforce before process start. If it cannot satisfy the requested policy, execution fails.
 
-## Environment
+Network, IPC, secrets, PTYs, and transport are separate Environment capabilities and policies.
 
-Confined commands receive a minimal runtime environment plus explicitly supplied values. Secrets are references resolved for the process, not copied into durable process metadata.
+## Current implementation
 
-The environment must preserve enough platform configuration for normal command lookup and locale handling. The exact allowlist belongs to the platform backend.
+`phenix.environment.local` is intentionally unrestricted:
 
-## Result
+- relative paths resolve from its configured root;
+- absolute paths name host paths directly;
+- processes default to the configured root as their cwd;
+- processes retain normal host filesystem reach;
+- persistent processes use the same host namespace.
 
-Process results include:
+No working-directory confinement is implemented yet.
 
-- exit status or terminating signal
-- bounded stdout and stderr
-- whether either stream was truncated
-- selected confinement mode
-- backend identity
-- start and finish timestamps
+## Deferred implementations
 
-Sandbox diagnostics must not include secret values.
+Later providers or policies may add:
 
-## Failure behavior
+- working-directory-only confinement;
+- working-directory-write with host-wide reads;
+- network confinement;
+- SSH;
+- containers or VMs;
+- stronger local sandboxes.
 
-Failures are typed by stage:
-
-1. authority denied
-2. no backend satisfies the requested confinement
-3. process spawn failed
-4. process exceeded its execution limit
-5. process cancelled
-6. process exited
-
-Only process exit is a normal completed process result. The other cases are execution failures.
-
-## Non-goals
-
-- Define a Linux-specific namespace or seccomp implementation.
-- Define terminal persistence. See `persistent-terminals-jobs.md`.
-- Define tool scheduling.
-- Treat containers as the required sandbox mechanism.
-
-## Implementation order
-
-1. Add typed confinement request and result contracts.
-2. Route workspace shell and Git process execution through the contract.
-3. Add the Linux backend.
-4. Add regression tests proving read-only commands cannot mutate the workspace or escape it.
-5. Add explicit unrestricted execution only after confined execution is complete.
+These implementations must preserve the Environment/Workspace boundary from `environment-workspace-boundary.md`.
