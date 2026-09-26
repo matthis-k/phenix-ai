@@ -10,13 +10,15 @@ use phenix_sdk::{
     delegated_worker_service, select_route, step_runner_service, AttemptOutcome, BudgetActual,
     BudgetReservationPurpose, BudgetReservationRequest, ContextAdmissionRequest, ContextCommand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface, ContextResponse,
-    DelegatedFinding, DelegatedWorkerCommand, DelegatedWorkerInterface, DelegatedWorkerResponse,
+    ContextSource, DelegatedFinding, DelegatedWorkerCommand, DelegatedWorkerInterface,
+    DelegatedWorkerResponse,
     DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy, ExecutionCommand,
     ExecutionInterface, ExecutionResourceCommand, ExecutionResourceInterface,
     ExecutionResourceResponse, ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand,
     ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision, ReasoningBudget,
-    RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingEstimateMode, StepAttemptCommand,
+    ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision,
+    ReacquisitionUsage, ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy,
+    RoutingEstimateMode, StepAttemptCommand,
     StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
     StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
     StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
@@ -254,7 +256,7 @@ fn run_delegated_task(
     match &record.task.state {
         WorkerTaskState::Completed { execution_id, .. } => {
             finish_execution_if_active(context, execution_id, true)?;
-            let parent_admitted = admit_delegated_result(context, &task_id);
+            let parent_admitted = admit_delegated_result(context, &record, None);
             return Ok(DelegatedWorkerResponse::Processed {
                 task: delegated_task(context, &task_id)?,
                 parent_admitted,
@@ -476,7 +478,10 @@ fn run_delegated_task(
     };
 
     let StepRunnerResponse::Completed {
-        output, tool_calls, ..
+        attempt,
+        output,
+        tool_calls,
+        ..
     } = response;
     if !tool_calls.is_empty() {
         return fail_started_delegated(
@@ -547,7 +552,11 @@ fn run_delegated_task(
         return Err("execution resource service returned a non-task completion response".into());
     };
     finish_execution_if_active(context, &execution_id, true)?;
-    let parent_admitted = admit_delegated_result(context, &task_id);
+    let parent_admitted = admit_delegated_result(
+        context,
+        &task,
+        Some(attempt.attribution.attempt_id.as_str()),
+    );
     Ok(DelegatedWorkerResponse::Processed {
         task,
         parent_admitted,
@@ -847,7 +856,12 @@ fn finish_execution_if_active(
     }
 }
 
-fn admit_delegated_result(context: &StepRunnerContext<'_, '_>, task_id: &str) -> bool {
+fn admit_delegated_result(
+    context: &StepRunnerContext<'_, '_>,
+    record: &DelegatedWorkerTaskRecord,
+    source_attempt_id: Option<&str>,
+) -> bool {
+    let task_id = record.task.id.as_str();
     match context
         .sdk
         .context
@@ -856,7 +870,88 @@ fn admit_delegated_result(context: &StepRunnerContext<'_, '_>, task_id: &str) ->
                 task_id: task_id.to_owned(),
             },
         ) {
-        Ok(ContextResponse::DelegatedResultAdmitted { .. }) => true,
+        Ok(ContextResponse::DelegatedResultAdmitted { result, .. }) => {
+            let Some(originating_attempt_id) = record.binding.originating_attempt_id.as_deref()
+            else {
+                trace_policy_stage(
+                    context,
+                    "delegated_parent_reacquisition",
+                    "deferred",
+                    None,
+                    Some("delegated task has no originating attempt identity".into()),
+                );
+                return true;
+            };
+            let delegated_input_tokens = result
+                .admitted
+                .iter()
+                .filter_map(|item| match &item.source {
+                    ContextSource::Delegation {
+                        task_id: admitted_task_id,
+                    } if admitted_task_id == task_id => Some(item.estimated_tokens),
+                    _ => None,
+                })
+                .fold(0_u64, u64::saturating_add);
+            let source_attempt_id = match source_attempt_id {
+                Some(source_attempt_id) => Some(source_attempt_id.to_owned()),
+                None => match delegated_success_attempt_id(context, task_id) {
+                    Ok(source_attempt_id) => source_attempt_id,
+                    Err(error) => {
+                        trace_policy_stage(
+                            context,
+                            "delegated_parent_reacquisition",
+                            "source_unresolved",
+                            None,
+                            Some(error),
+                        );
+                        None
+                    }
+                },
+            };
+            let usage = ReacquisitionUsage {
+                reacquisition_id: format!("delegation:{task_id}:parent-context"),
+                cause_identity: format!("delegation:{task_id}"),
+                source_attempt_id,
+                fresh_input_tokens: phenix_core::UsageQuantity::Estimated {
+                    value: delegated_input_tokens,
+                    basis: "delegated result context admission".into(),
+                },
+                tool_result_bytes: 0,
+                model_calls: 0,
+                tool_calls: 0,
+            };
+            match context.sdk.attempts.invoke_projected(
+                &StepAttemptCommand::RecordReacquisition {
+                    attempt_id: originating_attempt_id.to_owned(),
+                    usage,
+                },
+            ) {
+                Ok(StepAttemptResponse::Attempt { .. }) => true,
+                Ok(_) => {
+                    trace_policy_stage(
+                        context,
+                        "delegated_parent_reacquisition",
+                        "deferred",
+                        None,
+                        Some(
+                            "step attempt service returned a non-attempt reacquisition response"
+                                .into(),
+                        ),
+                    );
+                    true
+                }
+                Err(error) => {
+                    trace_policy_stage(
+                        context,
+                        "delegated_parent_reacquisition",
+                        "deferred",
+                        None,
+                        Some(error.to_string()),
+                    );
+                    true
+                }
+            }
+        }
         Ok(_) => false,
         Err(error) => {
             trace_policy_stage(
@@ -869,6 +964,34 @@ fn admit_delegated_result(context: &StepRunnerContext<'_, '_>, task_id: &str) ->
             false
         }
     }
+}
+
+fn delegated_success_attempt_id(
+    context: &StepRunnerContext<'_, '_>,
+    task_id: &str,
+) -> Result<Option<String>, String> {
+    let root_execution_id = root_execution_for_task(context, task_id)?;
+    let response: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::ListRoot { root_execution_id })
+        .map_err(|error| format!("delegated attempt lookup failed: {error}"))?;
+    let StepAttemptResponse::Attempts { attempts } = response else {
+        return Err("step attempt service returned a non-list delegated lookup response".into());
+    };
+    let mut successful = attempts.into_iter().filter(|attempt| {
+        attempt.attribution.task_id.as_deref() == Some(task_id)
+            && attempt.outcome == Some(AttemptOutcome::Succeeded)
+    });
+    let source = successful
+        .next()
+        .map(|attempt| attempt.attribution.attempt_id);
+    if successful.next().is_some() {
+        return Err(format!(
+            "delegated task has multiple successful charged attempts: {task_id}"
+        ));
+    }
+    Ok(source)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
