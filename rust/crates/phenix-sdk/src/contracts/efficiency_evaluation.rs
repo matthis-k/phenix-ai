@@ -1211,6 +1211,7 @@ mod tests {
             .record
             .reacquisition
             .push(super::super::ReacquisitionUsage {
+                reacquisition_id: "reacquire:checkpoint-7:retry-attempt".into(),
                 cause_identity: "context-reduction:checkpoint-7".into(),
                 source_attempt_id: Some("root-attempt".into()),
                 fresh_input_tokens: super::super::UsageQuantity::Reported { value: 11 },
