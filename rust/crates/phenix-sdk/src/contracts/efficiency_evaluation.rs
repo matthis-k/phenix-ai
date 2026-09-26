@@ -197,74 +197,73 @@ pub fn derive_efficiency_task_record_from_attempts(
                 attempt_id: attempt.attribution.attempt_id.clone(),
             });
         }
-        let (record, known_cost_microunits, cost_complete) = if let Some(usage) = &attempt.usage {
-            let mut record = usage.clone();
-            for reacquisition in &attempt.reacquisition {
-                if let Some(existing) = record
-                    .reacquisition
-                    .iter()
-                    .find(|existing| existing.reacquisition_id == reacquisition.reacquisition_id)
-                {
-                    if existing != reacquisition {
-                        return Err(EfficiencyEvaluationError::ReacquisitionIdentityConflict {
-                            attempt_id: attempt.attribution.attempt_id.clone(),
-                            reacquisition_id: reacquisition.reacquisition_id.clone(),
-                        });
+        let (record, known_cost_microunits, cost_complete) =
+            if let Some(usage) = &attempt.usage {
+                let mut record = usage.clone();
+                for reacquisition in &attempt.reacquisition {
+                    if let Some(existing) = record.reacquisition.iter().find(|existing| {
+                        existing.reacquisition_id == reacquisition.reacquisition_id
+                    }) {
+                        if existing != reacquisition {
+                            return Err(EfficiencyEvaluationError::ReacquisitionIdentityConflict {
+                                attempt_id: attempt.attribution.attempt_id.clone(),
+                                reacquisition_id: reacquisition.reacquisition_id.clone(),
+                            });
+                        }
+                    } else {
+                        record.reacquisition.push(reacquisition.clone());
                     }
-                } else {
-                    record.reacquisition.push(reacquisition.clone());
                 }
-            }
-            let cost = attempt
-                .settled_actual
-                .as_ref()
-                .and_then(|actual| actual.cost_microunits);
-            (record, cost.unwrap_or(0), cost.is_some())
-        } else if attempt.dispatch_id.is_none() {
-            (
-                AttemptUsageRecord {
-                    attribution: attempt.attribution.clone(),
-                    usage: phenix_core::ModelTurnUsage {
-                        fresh_input_tokens: UsageQuantity::Reported { value: 0 },
-                        cache_read_tokens: UsageQuantity::Reported { value: 0 },
-                        cache_write_tokens: UsageQuantity::Reported { value: 0 },
-                        output_tokens: UsageQuantity::Reported { value: 0 },
-                        reasoning_tokens: UsageQuantity::Reported { value: 0 },
-                    },
-                    latency_ms: None,
-                    tool_input_bytes: 0,
-                    tool_result_bytes: 0,
-                    outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
-                    reacquisition: Vec::new(),
-                },
-                0,
-                true,
-            )
-        } else {
-            (
-                AttemptUsageRecord {
-                    attribution: attempt.attribution.clone(),
-                    usage: phenix_core::ModelTurnUsage {
-                        fresh_input_tokens: UsageQuantity::Unavailable,
-                        cache_read_tokens: UsageQuantity::Unavailable,
-                        cache_write_tokens: UsageQuantity::Unavailable,
-                        output_tokens: UsageQuantity::Unavailable,
-                        reasoning_tokens: UsageQuantity::Unavailable,
-                    },
-                    latency_ms: None,
-                    tool_input_bytes: 0,
-                    tool_result_bytes: 0,
-                    outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
-                    reacquisition: Vec::new(),
-                },
-                attempt
+                let cost = attempt
                     .settled_actual
                     .as_ref()
-                    .and_then(|actual| actual.cost_microunits)
-                    .unwrap_or(0),
-                false,
-            )
-        };
+                    .and_then(|actual| actual.cost_microunits);
+                (record, cost.unwrap_or(0), cost.is_some())
+            } else if attempt.dispatch_id.is_none() {
+                (
+                    AttemptUsageRecord {
+                        attribution: attempt.attribution.clone(),
+                        usage: phenix_core::ModelTurnUsage {
+                            fresh_input_tokens: UsageQuantity::Reported { value: 0 },
+                            cache_read_tokens: UsageQuantity::Reported { value: 0 },
+                            cache_write_tokens: UsageQuantity::Reported { value: 0 },
+                            output_tokens: UsageQuantity::Reported { value: 0 },
+                            reasoning_tokens: UsageQuantity::Reported { value: 0 },
+                        },
+                        latency_ms: None,
+                        tool_input_bytes: 0,
+                        tool_result_bytes: 0,
+                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                        reacquisition: Vec::new(),
+                    },
+                    0,
+                    true,
+                )
+            } else {
+                (
+                    AttemptUsageRecord {
+                        attribution: attempt.attribution.clone(),
+                        usage: phenix_core::ModelTurnUsage {
+                            fresh_input_tokens: UsageQuantity::Unavailable,
+                            cache_read_tokens: UsageQuantity::Unavailable,
+                            cache_write_tokens: UsageQuantity::Unavailable,
+                            output_tokens: UsageQuantity::Unavailable,
+                            reasoning_tokens: UsageQuantity::Unavailable,
+                        },
+                        latency_ms: None,
+                        tool_input_bytes: 0,
+                        tool_result_bytes: 0,
+                        outcome: attempt.outcome.unwrap_or(AttemptOutcome::Failed),
+                        reacquisition: Vec::new(),
+                    },
+                    attempt
+                        .settled_actual
+                        .as_ref()
+                        .and_then(|actual| actual.cost_microunits)
+                        .unwrap_or(0),
+                    false,
+                )
+            };
         charges.push(EfficiencyAttemptCharge {
             record,
             known_cost_microunits,
@@ -1159,7 +1158,10 @@ mod tests {
             record.reacquisition_causes[0].source_attempt_id.as_deref(),
             Some("delegated-attempt")
         );
-        assert_eq!(record.reacquisition_causes[0].fresh_input_tokens.estimated, 3);
+        assert_eq!(
+            record.reacquisition_causes[0].fresh_input_tokens.estimated,
+            3
+        );
         assert!(record.cost_complete);
     }
 
