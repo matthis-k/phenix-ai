@@ -150,6 +150,7 @@ fn policy(max_children: u32) -> DelegationResourcePolicy {
 fn step_plan(max_children: u32) -> StepPlan {
     StepPlan {
         policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: ContextDemand::default(),
             required_capabilities: BTreeSet::new(),
