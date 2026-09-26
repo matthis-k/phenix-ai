@@ -212,6 +212,147 @@ impl LocalEnvironment {
         }
     }
 
+    fn root_fd(&self) -> Result<&OwnedFd, String> {
+        self.root_fd
+            .as_ref()
+            .ok_or_else(|| "local environment root descriptor is unavailable".to_owned())
+    }
+
+    fn restricted_relative(&self, resolved: &Path) -> Result<PathBuf, String> {
+        let relative = resolved.strip_prefix(&self.root).map_err(|_| {
+            format!(
+                "environment filesystem policy denies path outside working directory: {}",
+                resolved.display()
+            )
+        })?;
+        for component in relative.components() {
+            match component {
+                Component::Normal(_) | Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "environment filesystem policy denies path escape: {}",
+                        resolved.display()
+                    ));
+                }
+            }
+        }
+        if relative.as_os_str().is_empty() {
+            Ok(PathBuf::from("."))
+        } else {
+            Ok(relative.to_path_buf())
+        }
+    }
+
+    fn confined_open(
+        &self,
+        resolved: &Path,
+        flags: OFlags,
+        mode: Mode,
+    ) -> Result<Option<OwnedFd>, String> {
+        let relative = self.restricted_relative(resolved)?;
+        match rfs::openat2(
+            self.root_fd()?.as_fd(),
+            &relative,
+            flags | OFlags::CLOEXEC,
+            mode,
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        ) {
+            Ok(fd) => Ok(Some(fd)),
+            Err(Errno::NOENT) => Ok(None),
+            Err(Errno::NOSYS) => Err(
+                "restricted local environment requires Linux openat2 for race-safe filesystem access"
+                    .into(),
+            ),
+            Err(error) => Err(format!(
+                "confined open {} failed: {error}",
+                resolved.display()
+            )),
+        }
+    }
+
+    fn confined_parent_dir(&self, relative: &Path, create: bool) -> Result<OwnedFd, String> {
+        let mut current = rfs::openat2(
+            self.root_fd()?.as_fd(),
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        )
+        .map_err(|error| format!("open confined root directory: {error}"))?;
+
+        let Some(parent) = relative.parent() else {
+            return Ok(current);
+        };
+        for component in parent.components() {
+            let Component::Normal(name) = component else {
+                if matches!(component, Component::CurDir) {
+                    continue;
+                }
+                return Err(format!(
+                    "environment filesystem policy denies parent path escape: {}",
+                    relative.display()
+                ));
+            };
+            let next = match rfs::openat2(
+                current.as_fd(),
+                Path::new(name),
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+            ) {
+                Ok(fd) => fd,
+                Err(Errno::NOENT) if create => {
+                    rfs::mkdirat(current.as_fd(), Path::new(name), Mode::from_raw_mode(0o755))
+                        .map_err(|error| {
+                            format!("create confined parent {}: {error}", name.to_string_lossy())
+                        })?;
+                    rfs::openat2(
+                        current.as_fd(),
+                        Path::new(name),
+                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                        Mode::empty(),
+                        ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+                    )
+                    .map_err(|error| {
+                        format!("open created confined parent {}: {error}", name.to_string_lossy())
+                    })?
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "open confined parent {}: {error}",
+                        name.to_string_lossy()
+                    ))
+                }
+            };
+            current = next;
+        }
+        Ok(current)
+    }
+
+    fn confined_write(
+        &self,
+        resolved: &Path,
+        content: &[u8],
+        create_parents: bool,
+    ) -> Result<(), String> {
+        let relative = self.restricted_relative(resolved)?;
+        let parent = self.confined_parent_dir(&relative, create_parents)?;
+        let name = relative
+            .file_name()
+            .ok_or_else(|| format!("write path has no file name: {}", resolved.display()))?;
+        let fd = rfs::openat2(
+            parent.as_fd(),
+            Path::new(name),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o666),
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        )
+        .map_err(|error| format!("confined write open {}: {error}", resolved.display()))?;
+        let mut file = fs::File::from(fd);
+        file.write_all(content)
+            .map_err(|error| format!("confined write {}: {error}", resolved.display()))
+    }
+
     fn requested_working_directory(
         &self,
         working_directory: Option<&str>,
