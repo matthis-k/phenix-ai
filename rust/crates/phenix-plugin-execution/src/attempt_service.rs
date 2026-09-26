@@ -3,9 +3,9 @@ use phenix_core::{
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    step_attempt_service, AttemptOutcome, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan, UsageAttemptKind,
-    UsageAttribution,
+    step_attempt_service, AttemptOutcome, ReacquisitionUsage, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepPlan,
+    UsageAttemptKind, UsageAttribution,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -180,6 +180,37 @@ impl AttemptLedger {
             attempt
                 .settle(outcome)
                 .map_err(|error| format!("attempt settlement failed: {error:?}"))
+        })
+    }
+
+    fn record_reacquisition(
+        &mut self,
+        attempt_id: &str,
+        usage: ReacquisitionUsage,
+    ) -> Result<StepAttemptRecord, String> {
+        let target_root = self
+            .attempts
+            .get(attempt_id)
+            .ok_or_else(|| format!("unknown step attempt: {attempt_id}"))?
+            .attribution
+            .root_execution_id
+            .clone();
+        if usage.source_attempt_id.as_deref() == Some(attempt_id) {
+            return Err("reacquisition source attempt cannot be the consuming attempt".into());
+        }
+        if let Some(source_attempt_id) = &usage.source_attempt_id {
+            let source = self
+                .attempts
+                .get(source_attempt_id)
+                .ok_or_else(|| format!("unknown reacquisition source attempt: {source_attempt_id}"))?;
+            if source.attribution.root_execution_id != target_root {
+                return Err("reacquisition source attempt belongs to a different root execution".into());
+            }
+        }
+        self.mutate(attempt_id, |attempt| {
+            attempt
+                .record_reacquisition(usage)
+                .map_err(|error| format!("reacquisition accounting failed: {error:?}"))
         })
     }
 }
@@ -413,6 +444,11 @@ fn mutate(
         } => StepAttemptResponse::Attempt {
             attempt: next.settle(&attempt_id, outcome)?,
         },
+        StepAttemptCommand::RecordReacquisition { attempt_id, usage } => {
+            StepAttemptResponse::Attempt {
+                attempt: next.record_reacquisition(&attempt_id, usage)?,
+            }
+        }
         StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. } => {
             return Err("read-only step attempt command reached mutation path".into())
         }

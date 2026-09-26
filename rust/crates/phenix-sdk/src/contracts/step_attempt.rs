@@ -1,5 +1,6 @@
 use super::{
-    AttemptOutcome, ProjectionRevision, RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
+    AttemptOutcome, ProjectionRevision, ReacquisitionUsage, RouteDecision, StepPlan,
+    UsageAttemptKind, UsageAttribution,
 };
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,8 @@ pub struct StepAttemptRecord {
     pub projection: Option<ProjectionRevision>,
     pub dispatch_id: Option<String>,
     pub outcome: Option<AttemptOutcome>,
+    #[serde(default)]
+    pub reacquisition: Vec<ReacquisitionUsage>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -51,6 +54,12 @@ pub enum StepAttemptTransitionError {
     },
     EmptyIdentity {
         field: String,
+    },
+    InvalidReacquisitionPhase {
+        actual: StepAttemptPhase,
+    },
+    ReacquisitionIdentityConflict {
+        reacquisition_id: String,
     },
 }
 
@@ -80,6 +89,7 @@ impl StepAttemptRecord {
             projection: None,
             dispatch_id: None,
             outcome: None,
+            reacquisition: Vec::new(),
         })
     }
 
@@ -144,6 +154,36 @@ impl StepAttemptRecord {
         self.require_phase(StepAttemptPhase::Dispatched)?;
         self.outcome = Some(outcome);
         self.phase = StepAttemptPhase::Settled;
+        Ok(())
+    }
+
+    pub fn record_reacquisition(
+        &mut self,
+        usage: ReacquisitionUsage,
+    ) -> Result<(), StepAttemptTransitionError> {
+        if self.phase != StepAttemptPhase::Settled {
+            return Err(StepAttemptTransitionError::InvalidReacquisitionPhase {
+                actual: self.phase,
+            });
+        }
+        validate_identity("reacquisition_id", &usage.reacquisition_id)?;
+        validate_identity("reacquisition_cause_identity", &usage.cause_identity)?;
+        if let Some(source_attempt_id) = &usage.source_attempt_id {
+            validate_identity("reacquisition_source_attempt_id", source_attempt_id)?;
+        }
+        if let Some(existing) = self
+            .reacquisition
+            .iter()
+            .find(|existing| existing.reacquisition_id == usage.reacquisition_id)
+        {
+            if existing == &usage {
+                return Ok(());
+            }
+            return Err(StepAttemptTransitionError::ReacquisitionIdentityConflict {
+                reacquisition_id: usage.reacquisition_id,
+            });
+        }
+        self.reacquisition.push(usage);
         Ok(())
     }
 
@@ -219,6 +259,10 @@ pub enum StepAttemptCommand {
     Settle {
         attempt_id: String,
         outcome: AttemptOutcome,
+    },
+    RecordReacquisition {
+        attempt_id: String,
+        usage: ReacquisitionUsage,
     },
 }
 
