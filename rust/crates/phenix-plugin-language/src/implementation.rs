@@ -2063,9 +2063,7 @@ mod tests {
         };
         assert_eq!(repeated, revisions);
 
-        let LanguageResponse::EntityRevisions {
-            revisions: located,
-        } = invoke(
+        let LanguageResponse::EntityRevisions { revisions: located } = invoke(
             &mut kernel,
             LanguageCommand::IngestDocumentSymbolsWithEncoding {
                 observation_id: "lsp-symbols-1".into(),
@@ -2073,8 +2071,7 @@ mod tests {
                 position_encoding: phenix_sdk::CodePositionEncoding::Utf16,
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected source-located entity revisions");
         };
         assert_eq!(located, revisions);
