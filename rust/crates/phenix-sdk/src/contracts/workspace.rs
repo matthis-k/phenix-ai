@@ -37,6 +37,22 @@ pub struct WorkspaceWrittenFile {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCommittedFile {
+    pub path: String,
+    pub before_version: WorkspaceFileVersion,
+    pub version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCommitReceipt {
+    pub operation_id: String,
+    pub intent_identity: String,
+    pub files: Vec<WorkspaceCommittedFile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 pub struct WorkspaceVersionConflict {
     pub path: String,
     pub expected_version: WorkspaceFileVersion,
@@ -50,9 +66,25 @@ pub struct WorkspaceSearchMatch {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceWriteAtomicity {
+    PreconditionCheckedSequential,
+    CrashRecoverable,
+    SnapshotAtomic,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceCapabilities {
+    pub write_atomicity: WorkspaceWriteAtomicity,
+    #[serde(default)]
+    pub recoverable_commit_atomicity: Option<WorkspaceWriteAtomicity>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum WorkspaceCommand {
+    Capabilities,
     Read {
         path: String,
     },
@@ -62,6 +94,10 @@ pub enum WorkspaceCommand {
         expected_version: WorkspaceFileVersion,
     },
     WriteBatch {
+        writes: Vec<WorkspaceWrite>,
+    },
+    CommitBatch {
+        operation_id: String,
         writes: Vec<WorkspaceWrite>,
     },
     Search {
@@ -80,6 +116,9 @@ pub enum WorkspaceCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum WorkspaceResponse {
+    Capabilities {
+        capabilities: WorkspaceCapabilities,
+    },
     Read {
         path: String,
         content: String,
@@ -91,6 +130,9 @@ pub enum WorkspaceResponse {
     },
     WrittenBatch {
         files: Vec<WorkspaceWrittenFile>,
+    },
+    CommittedBatch {
+        receipt: WorkspaceCommitReceipt,
     },
     VersionConflict {
         conflicts: Vec<WorkspaceVersionConflict>,
