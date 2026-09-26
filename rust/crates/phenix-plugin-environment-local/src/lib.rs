@@ -9,11 +9,16 @@ use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
     EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
 };
+use rustix::{
+    fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
+    io::Errno,
+};
 use std::{
     collections::BTreeMap,
     fs,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    os::fd::{AsFd, OwnedFd},
+    path::{Component, Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
@@ -146,6 +151,7 @@ impl PersistentProcess {
 
 struct LocalEnvironment {
     root: PathBuf,
+    root_fd: Option<OwnedFd>,
     filesystem_policy: Result<EnvironmentFilesystemPolicy, String>,
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
@@ -155,6 +161,7 @@ impl LocalEnvironment {
     fn new(root: PathBuf, filesystem_policy: EnvironmentFilesystemPolicy) -> Self {
         Self {
             root,
+            root_fd: None,
             filesystem_policy: Ok(filesystem_policy),
             processes: BTreeMap::new(),
             next_process_id: 1,
@@ -182,6 +189,7 @@ impl LocalEnvironment {
         };
         Self {
             root,
+            root_fd: None,
             filesystem_policy,
             processes: BTreeMap::new(),
             next_process_id: 1,
