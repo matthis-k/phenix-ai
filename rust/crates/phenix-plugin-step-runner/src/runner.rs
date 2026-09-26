@@ -220,7 +220,6 @@ impl PluginInstance for StepRunnerPlugin {
     }
 }
 
-
 fn run_delegated_worker(
     context: &StepRunnerContext<'_, '_>,
     command: DelegatedWorkerCommand,
@@ -333,24 +332,24 @@ fn run_delegated_task(
         );
     }
 
-    let preparation: ContextResponse = match context
-        .sdk
-        .context
-        .invoke_projected(&ContextCommand::PrepareInvocation {
-            execution_id: execution_id.clone(),
-            input: record.binding.contract.clone(),
-        })
-    {
-        Ok(preparation) => preparation,
-        Err(error) => {
-            return cancel_delegated_before_start(
-                context,
-                &task_id,
-                Some(&execution_id),
-                format!("delegated context preparation failed: {error}"),
-            );
-        }
-    };
+    let preparation: ContextResponse =
+        match context
+            .sdk
+            .context
+            .invoke_projected(&ContextCommand::PrepareInvocation {
+                execution_id: execution_id.clone(),
+                input: record.binding.contract.clone(),
+            }) {
+            Ok(preparation) => preparation,
+            Err(error) => {
+                return cancel_delegated_before_start(
+                    context,
+                    &task_id,
+                    Some(&execution_id),
+                    format!("delegated context preparation failed: {error}"),
+                );
+            }
+        };
     let ContextResponse::InvocationPrepared { preparation } = preparation else {
         return cancel_delegated_before_start(
             context,
@@ -371,17 +370,15 @@ fn run_delegated_task(
             );
         }
     };
-    let allocated: StepAttemptResponse = match context
-        .sdk
-        .attempts
-        .invoke_projected(&StepAttemptCommand::AllocateDelegatedIdentity {
+    let allocated: StepAttemptResponse = match context.sdk.attempts.invoke_projected(
+        &StepAttemptCommand::AllocateDelegatedIdentity {
             root_execution_id,
             execution_id: execution_id.clone(),
             parent_attempt_id: originating_attempt_id,
             policy_revision: record.binding.parent_policy_revision.clone(),
             task_id: task_id.clone(),
-        })
-    {
+        },
+    ) {
         Ok(allocated) => allocated,
         Err(error) => {
             return cancel_delegated_before_start(
@@ -436,25 +433,25 @@ fn run_delegated_task(
         now_ms,
     };
 
-    let started: ExecutionResourceResponse = match context
-        .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::StartDelegated {
-            task_id: task_id.clone(),
-            execution_id: execution_id.clone(),
-            now_ms,
-        })
-    {
-        Ok(started) => started,
-        Err(error) => {
-            return cancel_delegated_before_start(
-                context,
-                &task_id,
-                Some(&execution_id),
-                format!("delegated task start failed before state transition: {error}"),
-            );
-        }
-    };
+    let started: ExecutionResourceResponse =
+        match context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::StartDelegated {
+                task_id: task_id.clone(),
+                execution_id: execution_id.clone(),
+                now_ms,
+            }) {
+            Ok(started) => started,
+            Err(error) => {
+                return cancel_delegated_before_start(
+                    context,
+                    &task_id,
+                    Some(&execution_id),
+                    format!("delegated task start failed before state transition: {error}"),
+                );
+            }
+        };
     if !matches!(started, ExecutionResourceResponse::DelegatedTask { .. }) {
         return Err(
             "execution resource service returned a non-task start response after mutation".into(),
@@ -525,27 +522,27 @@ fn run_delegated_task(
         encoded_result_bytes: 0,
     };
 
-    let completed: ExecutionResourceResponse = match context
-        .sdk
-        .resources
-        .invoke_projected(&ExecutionResourceCommand::CompleteDelegated {
-            task_id: task_id.clone(),
-            execution_id: execution_id.clone(),
-            result,
-            actual: actual.clone(),
-        })
-    {
-        Ok(response) => response,
-        Err(error) => {
-            return fail_started_delegated_with_actual(
-                context,
-                &task_id,
-                &execution_id,
-                actual,
-                format!("delegated result completion failed: {error}"),
-            );
-        }
-    };
+    let completed: ExecutionResourceResponse =
+        match context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::CompleteDelegated {
+                task_id: task_id.clone(),
+                execution_id: execution_id.clone(),
+                result,
+                actual: actual.clone(),
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                return fail_started_delegated_with_actual(
+                    context,
+                    &task_id,
+                    &execution_id,
+                    actual,
+                    format!("delegated result completion failed: {error}"),
+                );
+            }
+        };
     let ExecutionResourceResponse::DelegatedTask { task } = completed else {
         return Err("execution resource service returned a non-task completion response".into());
     };
@@ -568,10 +565,7 @@ fn delegated_task(
             task_id: task_id.to_owned(),
         })
         .map_err(|error| format!("delegated task lookup failed: {error}"))?;
-    let ExecutionResourceResponse::DelegatedTaskLookup {
-        task: Some(record),
-    } = response
-    else {
+    let ExecutionResourceResponse::DelegatedTaskLookup { task: Some(record) } = response else {
         return Err(format!("unknown delegated task: {task_id}"));
     };
     Ok(record)
@@ -624,11 +618,17 @@ fn ensure_delegated_execution(
                 })
                 .map_err(|error| error.to_string())?;
             let ExecutionResponse::Execution { execution } = delegated else {
-                return Err("execution service returned a non-execution delegation response".into());
+                return Err(
+                    "execution service returned a non-execution delegation response".into(),
+                );
             };
             execution
         }
-        other => return Err(format!("unexpected delegated execution lookup response: {other:?}")),
+        other => {
+            return Err(format!(
+                "unexpected delegated execution lookup response: {other:?}"
+            ))
+        }
     };
     if execution.parent_execution.as_deref() != Some(record.task.parent_execution.as_str()) {
         return Err("delegated execution parent identity mismatch".into());
@@ -720,7 +720,9 @@ fn delegated_actual(
         })
         .map_err(|error| error.to_string())?;
     let ExecutionResourceResponse::Remaining { budget: remaining } = remaining else {
-        return Err("execution resource service returned a non-remaining delegated response".into());
+        return Err(
+            "execution resource service returned a non-remaining delegated response".into(),
+        );
     };
     let budget = &record.binding.resources.budget;
     let cost_microunits = match (budget.cost_microunits, remaining.cost_microunits) {
@@ -849,10 +851,11 @@ fn admit_delegated_result(context: &StepRunnerContext<'_, '_>, task_id: &str) ->
     match context
         .sdk
         .context
-        .invoke_projected::<ContextCommand, ContextResponse>(&ContextCommand::AdmitDelegatedResult {
-            task_id: task_id.to_owned(),
-        })
-    {
+        .invoke_projected::<ContextCommand, ContextResponse>(
+            &ContextCommand::AdmitDelegatedResult {
+                task_id: task_id.to_owned(),
+            },
+        ) {
         Ok(ContextResponse::DelegatedResultAdmitted { .. }) => true,
         Ok(_) => false,
         Err(error) => {

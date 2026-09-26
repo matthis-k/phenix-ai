@@ -1,7 +1,6 @@
 use phenix_core::{
     ArtifactRevision, Authority, CapabilityGenerationId, ComponentInterface, InvocationOutcome,
-    Kernel, KernelConfig,
-    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
+    Kernel, KernelConfig, LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
     ServiceContribution, ServiceId, ValueError,
@@ -21,14 +20,15 @@ use phenix_sdk::{
     delegated_worker_service, execution_resource_service, execution_service, model_routing_service,
     step_attempt_service, step_runner_service, AttemptOutcome, BudgetReservation,
     BudgetReservationPurpose, BudgetReservationRequest, CapacityKnowledge, ContextCandidate,
-    ContextControl, ContextDemand, ContextRetention, ContextSource, DelegatedWorkerCommand,
-    DelegatedWorkerResponse, DelegationResourcePolicy, DelegationTaskBinding, DelegatedWorkResources,
-    EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand,
-    ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelLimits, ModelResponse,
-    ModelTarget, PlannedStepRequest, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
-    StepAttemptCommand, StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepRunnerCommand,
-    StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind, UsageAttribution,
-    UsagePolicy, WorkerTaskRecord, WorkerTaskState,
+    ContextControl, ContextDemand, ContextRetention, ContextSource, DelegatedWorkResources,
+    DelegatedWorkerCommand, DelegatedWorkerResponse, DelegationResourcePolicy,
+    DelegationTaskBinding, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
+    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, ModelCommand,
+    ModelLimits, ModelResponse, ModelTarget, PlannedStepRequest, RouteSelectionPolicy,
+    RoutingEstimateMode, RoutingProfile, StepAttemptCommand, StepAttemptPhase, StepAttemptRecord,
+    StepAttemptResponse, StepRunnerCommand, StepRunnerResponse, StepSettlementBasis,
+    TaskRequirements, UsageAttemptKind, UsageAttribution, UsagePolicy, WorkerTaskRecord,
+    WorkerTaskState,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -685,7 +685,6 @@ mod retry_budget {
         let _ = fs::remove_file(path);
     }
 }
-
 
 mod delegated_worker_runtime {
     use super::*;

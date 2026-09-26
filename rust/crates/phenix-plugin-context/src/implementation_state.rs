@@ -537,10 +537,7 @@ fn load_delegated_result(
             task_id: task_id.clone(),
         })
         .map_err(|error| format!("delegated task lookup failed: {error}"))?;
-    let ExecutionResourceResponse::DelegatedTaskLookup {
-        task: Some(record),
-    } = response
-    else {
+    let ExecutionResourceResponse::DelegatedTaskLookup { task: Some(record) } = response else {
         return Err(format!("unknown delegated task: {task_id}"));
     };
     if !matches!(record.task.state, WorkerTaskState::Completed { .. }) {
@@ -587,11 +584,10 @@ fn admit_delegated_result(
             task_id: task_id.clone(),
         })
         .map_err(|error| format!("delegated task lookup failed: {error}"))?;
-    let ExecutionResourceResponse::DelegatedTaskLookup {
-        task: Some(record),
-    } = response
-    else {
-        return Err(format!("unknown delegated task after result load: {task_id}"));
+    let ExecutionResourceResponse::DelegatedTaskLookup { task: Some(record) } = response else {
+        return Err(format!(
+            "unknown delegated task after result load: {task_id}"
+        ));
     };
     let parent_plan = record
         .binding

@@ -10,8 +10,7 @@ use phenix_plugin_execution::{
 use phenix_sdk::{
     context_service, execution_resource_service, execution_service, BudgetActual,
     BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest, CachePlacement,
-    CompactionProposal,
-    ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDemand,
+    CompactionProposal, ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDemand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
     ContextRetention, ContextScope, ContextSource, DelegatedFinding, DelegatedWorkResources,
     DelegatedWorkerResult, DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority,
@@ -485,7 +484,6 @@ mod injection_invalidation {
         let _ = fs::remove_file(path);
     }
 }
-
 
 #[test]
 fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admission() {
