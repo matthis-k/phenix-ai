@@ -80,6 +80,9 @@ pub fn cli_component_manifest(maximum_authority: Authority) -> ComponentManifest
 mod tests {
     use super::*;
     use phenix_core::{ComponentGraphError, ResolvedComponentGraph};
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_manifest,
+    };
     use phenix_plugin_workspace::{workspace_component_manifest, workspace_manifest};
 
     #[test]
@@ -126,8 +129,13 @@ mod tests {
         let shell_capability = CapabilityId::parse(WORKSPACE_SHELL).unwrap();
         let shell = Authority::new([shell_capability.clone()]);
         let graph = ResolvedComponentGraph::compile(
-            [workspace_manifest(), cli_manifest(shell.clone())],
             [
+                local_environment_manifest(),
+                workspace_manifest(),
+                cli_manifest(shell.clone()),
+            ],
+            [
+                local_environment_component_manifest(),
                 workspace_component_manifest(),
                 cli_component_manifest(shell.clone()),
             ],
