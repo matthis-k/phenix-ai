@@ -319,7 +319,6 @@ fn write_batch(
     Ok(WorkspaceResponse::WrittenBatch { files })
 }
 
-
 fn commit_batch(
     context: &WorkspaceContext<'_, '_, '_>,
     operation_id: String,
@@ -411,7 +410,8 @@ fn commit_intent_identity(writes: &[WorkspaceWrite]) -> Result<String, String> {
 
 fn commit_journal_path(root: &Path, operation_id: &str) -> PathBuf {
     let identity = format!("{:x}", Sha256::digest(operation_id.as_bytes()));
-    root.join(INTERNAL_COMMIT_DIR).join(format!("{identity}.json"))
+    root.join(INTERNAL_COMMIT_DIR)
+        .join(format!("{identity}.json"))
 }
 
 fn read_commit_journal(
@@ -424,8 +424,8 @@ fn read_commit_journal(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("read commit journal {}: {error}", path.display())),
     };
-    let journal: WorkspaceCommitJournal =
-        serde_json::from_slice(&bytes).map_err(|error| format!("decode commit journal: {error}"))?;
+    let journal: WorkspaceCommitJournal = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode commit journal: {error}"))?;
     if journal.operation_id != operation_id {
         return Err("workspace commit journal identity collision".into());
     }
@@ -455,7 +455,12 @@ fn persist_commit_journal(root: &Path, journal: &WorkspaceCommitJournal) -> Resu
     })?;
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("sync commit journal directory {}: {error}", parent.display()))
+        .map_err(|error| {
+            format!(
+                "sync commit journal directory {}: {error}",
+                parent.display()
+            )
+        })
 }
 
 fn resolve_journal_file(root: &Path, input: &str) -> Result<PathBuf, String> {
@@ -518,12 +523,15 @@ fn recover_pending_commits(root: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect::<Vec<_>>();
     paths.sort();
     for path in paths {
-        let bytes =
-            fs::read(&path).map_err(|error| format!("read commit journal {}: {error}", path.display()))?;
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("read commit journal {}: {error}", path.display()))?;
         let mut journal: WorkspaceCommitJournal = serde_json::from_slice(&bytes)
             .map_err(|error| format!("decode commit journal {}: {error}", path.display()))?;
         if journal.state == WorkspaceCommitState::Prepared {
@@ -980,7 +988,10 @@ mod tests {
             &write,
         )
         .unwrap();
-        assert!(matches!(response, WorkspaceResponse::VersionConflict { .. }));
+        assert!(matches!(
+            response,
+            WorkspaceResponse::VersionConflict { .. }
+        ));
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "old-a");
         assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "old-b");
         let _ = fs::remove_dir_all(root);
