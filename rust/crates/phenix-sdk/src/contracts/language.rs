@@ -176,6 +176,43 @@ pub struct LogicalCodeEntity {
     pub repository_id: String,
 }
 
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodePositionEncoding {
+    Utf8,
+    Utf16,
+    Utf32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSourcePosition {
+    pub line: u32,
+    pub character: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSourceRange {
+    pub start: CodeSourcePosition,
+    pub end: CodeSourcePosition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntitySourceLocator {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub document: LanguageDocumentIdentity,
+    pub provider_id: String,
+    pub provider_epoch: ProviderEpoch,
+    pub position_encoding: CodePositionEncoding,
+    pub range: CodeSourceRange,
+    pub selection_range: CodeSourceRange,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntityFacetRevisions {
@@ -461,6 +498,11 @@ pub enum LanguageCommand {
         observation_id: String,
         repository_id: String,
     },
+    IngestDocumentSymbolsWithEncoding {
+        observation_id: String,
+        repository_id: String,
+        position_encoding: CodePositionEncoding,
+    },
     RecordEntityLineage {
         repository_id: String,
         lineage: CodeEntityLineage,
@@ -474,6 +516,11 @@ pub enum LanguageCommand {
     GetEntityRevision {
         repository_id: String,
         entity_id: String,
+    },
+    GetEntitySourceLocator {
+        repository_id: String,
+        entity_id: String,
+        revision: String,
     },
     GetEntityFacet {
         repository_id: String,
@@ -525,6 +572,9 @@ pub enum LanguageResponse {
     },
     EntityRevision {
         revision: Option<CodeEntityRevision>,
+    },
+    EntitySourceLocator {
+        locator: Option<CodeEntitySourceLocator>,
     },
     EntityRevisions {
         revisions: Vec<CodeEntityRevision>,
