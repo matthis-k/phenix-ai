@@ -7,7 +7,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
-    EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
+    EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
 };
 use std::{
     collections::BTreeMap,
@@ -156,7 +156,10 @@ impl LocalEnvironment {
         }
     }
 
-    fn command(
+    // This is the only process-construction path for the unrestricted local provider.
+    // Restricted local policies must replace this native construction with an enforcing
+    // launcher before spawn; callers and executable identity never bypass that boundary.
+    fn process_command(
         &self,
         program: &str,
         arguments: &[String],
@@ -223,6 +226,7 @@ impl LocalEnvironment {
             EnvironmentCommand::Describe => Ok(EnvironmentResponse::Description {
                 environment: EnvironmentDescription {
                     provider: LOCAL_ENVIRONMENT_PLUGIN.into(),
+                    filesystem_policy: EnvironmentFilesystemPolicy::Unrestricted,
                     persistent_processes: true,
                     pty: false,
                 },
@@ -295,7 +299,7 @@ impl LocalEnvironment {
                 environment,
             } => {
                 let output = self
-                    .command(
+                    .process_command(
                         &program,
                         &arguments,
                         working_directory.as_deref(),
@@ -319,7 +323,7 @@ impl LocalEnvironment {
                 environment,
             } => {
                 let mut child = self
-                    .command(
+                    .process_command(
                         &program,
                         &arguments,
                         working_directory.as_deref(),
