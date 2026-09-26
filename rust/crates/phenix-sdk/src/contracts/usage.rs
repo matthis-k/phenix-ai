@@ -31,6 +31,36 @@ pub enum ContextControl {
     OpaqueManaged,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilitySupport {
+    Supported,
+    Unsupported,
+    #[default]
+    Unknown,
+}
+
+#[derive(
+    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCapabilities {
+    pub breakpoint_control: CapabilitySupport,
+    pub write_policy: CapabilitySupport,
+    pub retention_hints: CapabilitySupport,
+    pub usage_reporting: CapabilitySupport,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ModelLimits {
@@ -53,6 +83,8 @@ pub struct EffectiveModelCapabilities {
     pub generation: CapabilityGenerationId,
     pub context: ContextControl,
     pub capacity: CapacityKnowledge,
+    #[serde(default)]
+    pub cache: CacheCapabilities,
     #[serde(default)]
     pub optional: BTreeSet<String>,
 }
@@ -117,6 +149,8 @@ pub enum AttemptOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ReacquisitionUsage {
+    /// Stable occurrence identity used to make durable/replayed accounting idempotent.
+    pub reacquisition_id: String,
     pub cause_identity: String,
     pub source_attempt_id: Option<String>,
     pub fresh_input_tokens: UsageQuantity,
@@ -240,6 +274,15 @@ mod tests {
     fn unavailable_usage_is_not_zero() {
         assert_eq!(UsageQuantity::default(), UsageQuantity::Unavailable);
         assert_eq!(UsageQuantity::Unavailable.value(), None);
+    }
+
+    #[test]
+    fn cache_capabilities_default_to_unknown_without_making_cache_support_mandatory() {
+        let cache = CacheCapabilities::default();
+        assert_eq!(cache.breakpoint_control, CapabilitySupport::Unknown);
+        assert_eq!(cache.write_policy, CapabilitySupport::Unknown);
+        assert_eq!(cache.retention_hints, CapabilitySupport::Unknown);
+        assert_eq!(cache.usage_reporting, CapabilitySupport::Unknown);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelCapabilities, ModelTurnUsage};
 pub use phenix_core::{
-    model_inference_service, ModelInferenceInterface, ModelInferenceRequest,
-    ModelInferenceResponse, MODEL_INFERENCE_SERVICE,
+    model_inference_service, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
     CallableId, CapabilityGenerationId, ComponentInterface, EventTypeId, InterfaceId, ModelId,
@@ -57,6 +58,8 @@ pub enum ModelDiagnosticEvent {
         provider_plugin: String,
         model: String,
         request_bytes: usize,
+        requested_cache: ModelCacheControl,
+        effective_cache: ModelCacheControl,
     },
     DispatchInvocationStarted {
         provider_plugin: String,
@@ -180,6 +183,10 @@ pub struct RoutingEstimate {
     pub expected_latency_ms: Option<u64>,
     pub expected_cost_microunits: Option<u64>,
     pub confidence_millis: Option<u16>,
+    #[serde(default)]
+    pub estimator_snapshot_revision: Option<String>,
+    #[serde(default)]
+    pub evidence_cutoff_sequence: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -252,6 +259,7 @@ pub enum RouteSelectionError {
 pub struct RoutingEvidence {
     pub success: bool,
     pub latency_ms: Option<u64>,
+    pub cost_microunits: Option<u64>,
     pub usage: ModelTurnUsage,
 }
 
@@ -452,6 +460,7 @@ mod tests {
             generation: CapabilityGenerationId::parse("generation-1").unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity,
+            cache: Default::default(),
             optional: BTreeSet::new(),
         }
     }
@@ -504,6 +513,8 @@ mod tests {
                     expected_latency_ms: Some(100),
                     expected_cost_microunits: Some(100),
                     confidence_millis: Some(1_000),
+                    estimator_snapshot_revision: None,
+                    evidence_cutoff_sequence: None,
                 }),
                 ordinal: 0,
             },
@@ -523,6 +534,8 @@ mod tests {
                     expected_latency_ms: Some(10),
                     expected_cost_microunits: Some(10),
                     confidence_millis: Some(1_000),
+                    estimator_snapshot_revision: None,
+                    evidence_cutoff_sequence: None,
                 }),
                 ordinal: 1,
             },
@@ -559,6 +572,8 @@ mod tests {
                     expected_latency_ms: Some(1),
                     expected_cost_microunits: Some(1),
                     confidence_millis: Some(1_000),
+                    estimator_snapshot_revision: None,
+                    evidence_cutoff_sequence: None,
                 }),
                 ordinal: 0,
             },

@@ -82,7 +82,9 @@ fn is_mutation(command: &ExecutionResourceCommand) -> bool {
         command,
         ExecutionResourceCommand::Remaining { .. }
             | ExecutionResourceCommand::RemainingWithin { .. }
+            | ExecutionResourceCommand::RunnableDelegated
             | ExecutionResourceCommand::GetDelegated { .. }
+            | ExecutionResourceCommand::GetDelegatedReservation { .. }
     )
 }
 
@@ -102,9 +104,19 @@ fn read(
             .remaining_within(&root_execution_id, &reservation_id)
             .map(|budget| ExecutionResourceResponse::Remaining { budget })
             .map_err(|error| format!("execution resource nested remaining failed: {error:?}")),
+        ExecutionResourceCommand::RunnableDelegated => {
+            Ok(ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: state.runnable_delegated_tasks(),
+            })
+        }
         ExecutionResourceCommand::GetDelegated { task_id } => {
             Ok(ExecutionResourceResponse::DelegatedTaskLookup {
                 task: state.delegated_task(&task_id).cloned(),
+            })
+        }
+        ExecutionResourceCommand::GetDelegatedReservation { task_id } => {
+            Ok(ExecutionResourceResponse::DelegatedReservation {
+                reservation: state.delegated_reservation(&task_id),
             })
         }
         _ => Err("mutating execution resource command reached read path".into()),
@@ -172,6 +184,16 @@ fn mutate(
             .start_delegated(&task_id, execution_id, now_ms)
             .map(|task| ExecutionResourceResponse::DelegatedTask { task })
             .map_err(|error| format!("delegated resource start failed: {error:?}"))?,
+        ExecutionResourceCommand::CancelDelegatedBeforeStart { task_id, cause } => {
+            if cause.trim().is_empty() {
+                return Err("delegated pre-start cancellation cause must not be empty".into());
+            }
+            next.cancel_delegated_before_start(&task_id, cause)
+                .map(|task| ExecutionResourceResponse::DelegatedTask { task })
+                .map_err(|error| {
+                    format!("delegated resource pre-start cancellation failed: {error:?}")
+                })?
+        }
         ExecutionResourceCommand::CompleteDelegated {
             task_id,
             execution_id,
@@ -196,7 +218,9 @@ fn mutate(
         }
         ExecutionResourceCommand::Remaining { .. }
         | ExecutionResourceCommand::RemainingWithin { .. }
-        | ExecutionResourceCommand::GetDelegated { .. } => {
+        | ExecutionResourceCommand::RunnableDelegated
+        | ExecutionResourceCommand::GetDelegated { .. }
+        | ExecutionResourceCommand::GetDelegatedReservation { .. } => {
             return Err("read-only execution resource command reached mutation path".into())
         }
     };

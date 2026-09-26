@@ -1,7 +1,7 @@
 use crate::{
     projection_state::ContextProjectionState, PromptAssembly, PromptSection, PromptSectionKind,
 };
-use phenix_core::Bytes;
+use phenix_core::{ArtifactRevision, Bytes};
 use phenix_sdk::{
     ContextInvocationMaterialization, ContextProjectionForm, ContextRetention,
     ExactContextReference, ProjectionRevision,
@@ -85,10 +85,19 @@ pub(crate) fn materialize_invocation(
         ));
     }
 
+    let cache_prefix_bytes = u64::try_from(output.len())
+        .map_err(|_| "materialized cache prefix length exceeds u64".to_owned())?;
+    let mut cache_identity_material = state.revision.cache_epoch.to_be_bytes().to_vec();
+    cache_identity_material.extend_from_slice(&output);
+    let cache_prefix_identity =
+        ArtifactRevision::from_content(&cache_identity_material).to_string();
+
     append_section(&mut output, "request", "user", input.as_ref());
     Ok(ContextInvocationMaterialization {
         input: output.into(),
         projection: state.revision.clone(),
+        cache_prefix_bytes,
+        cache_prefix_identity,
     })
 }
 
@@ -204,6 +213,67 @@ mod tests {
             .position(|window| window == b"request body")
             .unwrap();
         assert!(context < request);
+    }
+
+    #[test]
+    fn request_suffix_does_not_change_cache_prefix_identity() {
+        let reference = exact("doc");
+        let mut state = ContextProjectionState::new("execution-1");
+        state.revision = revision();
+        let admitted = item(reference.clone());
+        state.admitted.insert(admitted.id.clone(), admitted);
+        let assembly = PromptAssembly {
+            execution_id: "execution-1".into(),
+            sections: vec![section(Some(reference), b"stable context")],
+        };
+
+        let first = materialize_invocation(
+            &assembly,
+            &state,
+            Bytes::from(b"request one".to_vec()),
+            &revision(),
+        )
+        .unwrap();
+        let second = materialize_invocation(
+            &assembly,
+            &state,
+            Bytes::from(b"request two".to_vec()),
+            &revision(),
+        )
+        .unwrap();
+
+        assert_eq!(first.cache_prefix_identity, second.cache_prefix_identity);
+        assert_eq!(first.cache_prefix_bytes, second.cache_prefix_bytes);
+        assert!(first.cache_prefix_bytes > 0);
+        assert_ne!(first.input, second.input);
+    }
+
+    #[test]
+    fn cache_epoch_changes_prefix_identity_even_when_prefix_bytes_match() {
+        let reference = exact("doc");
+        let mut state = ContextProjectionState::new("execution-1");
+        state.revision = revision();
+        let admitted = item(reference.clone());
+        state.admitted.insert(admitted.id.clone(), admitted);
+        let assembly = PromptAssembly {
+            execution_id: "execution-1".into(),
+            sections: vec![section(Some(reference), b"stable context")],
+        };
+        let first = materialize_invocation(
+            &assembly,
+            &state,
+            Bytes::from(b"request".to_vec()),
+            &revision(),
+        )
+        .unwrap();
+
+        state.revision.cache_epoch += 1;
+        let next = state.revision.clone();
+        let second =
+            materialize_invocation(&assembly, &state, Bytes::from(b"request".to_vec()), &next)
+                .unwrap();
+
+        assert_ne!(first.cache_prefix_identity, second.cache_prefix_identity);
     }
 
     #[test]

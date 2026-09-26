@@ -78,6 +78,7 @@ pub enum BudgetLedgerError {
     InputBudgetExceeded { requested: u64, remaining: u64 },
     OutputBudgetExceeded { requested: u64, remaining: u64 },
     CostBudgetExceeded { requested: u64, remaining: u64 },
+    UnknownCostUnderFiniteBudget { remaining: u64 },
     AttemptBudgetExceeded { requested: u32, remaining: u32 },
     UnknownReservation { reservation_id: String },
     ReservationNotActive { reservation_id: String },
@@ -288,15 +289,17 @@ fn validate_fits(
             remaining: remaining.attempts,
         });
     }
-    if let (Some(requested), Some(remaining)) =
-        (request.budget.cost_microunits, remaining.cost_microunits)
-    {
-        if requested > remaining {
+    match (request.budget.cost_microunits, remaining.cost_microunits) {
+        (Some(requested), Some(remaining)) if requested > remaining => {
             return Err(BudgetLedgerError::CostBudgetExceeded {
                 requested,
                 remaining,
             });
         }
+        (None, Some(remaining)) => {
+            return Err(BudgetLedgerError::UnknownCostUnderFiniteBudget { remaining });
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -385,6 +388,29 @@ mod tests {
     }
 
     #[test]
+    fn finite_cost_budget_rejects_unknown_reservation_cost() {
+        let mut ledger = ledger();
+        let mut request = reservation("unknown-cost", 1_000, 1);
+        request.budget.cost_microunits = None;
+
+        assert!(matches!(
+            ledger.reserve(request),
+            Err(BudgetLedgerError::UnknownCostUnderFiniteBudget { remaining: 10_000 })
+        ));
+    }
+
+    #[test]
+    fn unlimited_cost_budget_allows_unknown_reservation_cost() {
+        let mut ledger = ledger();
+        ledger.limits.cost_microunits = None;
+        let mut request = reservation("unknown-cost", 1_000, 1);
+        request.budget.cost_microunits = None;
+
+        ledger.reserve(request).unwrap();
+        assert_eq!(ledger.remaining().cost_microunits, None);
+    }
+
+    #[test]
     fn concurrent_reservations_cannot_spend_the_same_budget() {
         let mut ledger = ledger();
         ledger.reserve(reservation("one", 7_000, 2)).unwrap();
@@ -457,6 +483,44 @@ mod tests {
                     ..
                 })
             ));
+        }
+
+        #[test]
+        fn child_with_unknown_cost_cannot_bypass_parent_cost_bound() {
+            let mut ledger = ledger();
+            let mut parent = reservation("parent", 5_000, 2);
+            parent.budget.cost_microunits = Some(5_000);
+            ledger.reserve(parent).unwrap();
+
+            let mut child = reservation("child", 1_000, 1);
+            child.parent_reservation_id = Some("parent".into());
+            child.budget.cost_microunits = None;
+
+            assert!(matches!(
+                ledger.reserve(child),
+                Err(BudgetLedgerError::UnknownCostUnderFiniteBudget { remaining: 5_000 })
+            ));
+        }
+
+        #[test]
+        fn unknown_actual_cost_keeps_reserved_charge() {
+            let mut ledger = ledger();
+            let mut request = reservation("root", 1_000, 1);
+            request.budget.cost_microunits = Some(2_500);
+            ledger.reserve(request).unwrap();
+            ledger
+                .settle(
+                    "root",
+                    BudgetActual {
+                        fresh_input_tokens: 500,
+                        output_tokens: 100,
+                        cost_microunits: None,
+                        attempts: 1,
+                    },
+                )
+                .unwrap();
+
+            assert_eq!(ledger.remaining().cost_microunits, Some(7_500));
         }
 
         #[test]

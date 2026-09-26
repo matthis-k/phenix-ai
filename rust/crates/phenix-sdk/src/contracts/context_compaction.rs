@@ -43,6 +43,154 @@ pub struct RetentionTransition {
     pub recovery: Option<ExactContextReference>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCostScenario {
+    pub future_turns: u32,
+    pub expected_cache_hits: u32,
+    pub expected_cache_misses: u32,
+    /// Cost of one future turn when the prefix must be freshly processed.
+    pub fresh_input_cost_microunits: Option<u64>,
+    /// Cost of one future turn when the prefix is served from cache.
+    pub cache_read_cost_microunits: Option<u64>,
+    /// One-time write/prefill cost for this projection. Use Some(0) when none is expected.
+    pub cache_write_cost_microunits: Option<u64>,
+    /// One-time helper/reducer work needed to establish this projection.
+    pub setup_cost_microunits: u64,
+    /// Expected later reacquisition work attributable to this projection.
+    pub reacquisition_cost_microunits: Option<u64>,
+}
+
+impl CacheCostScenario {
+    pub fn total_cost_microunits(&self) -> Result<Option<u64>, CacheCompactionCostError> {
+        if self
+            .expected_cache_hits
+            .saturating_add(self.expected_cache_misses)
+            != self.future_turns
+        {
+            return Err(CacheCompactionCostError::TurnAccountingMismatch {
+                future_turns: self.future_turns,
+                expected_cache_hits: self.expected_cache_hits,
+                expected_cache_misses: self.expected_cache_misses,
+            });
+        }
+
+        let cache_reads = if self.expected_cache_hits == 0 {
+            0
+        } else {
+            let Some(cost) = self.cache_read_cost_microunits else {
+                return Ok(None);
+            };
+            cost.checked_mul(u64::from(self.expected_cache_hits))
+                .ok_or(CacheCompactionCostError::CostOverflow)?
+        };
+        let fresh = if self.expected_cache_misses == 0 {
+            0
+        } else {
+            let Some(cost) = self.fresh_input_cost_microunits else {
+                return Ok(None);
+            };
+            cost.checked_mul(u64::from(self.expected_cache_misses))
+                .ok_or(CacheCompactionCostError::CostOverflow)?
+        };
+        let Some(write) = self.cache_write_cost_microunits else {
+            return Ok(None);
+        };
+        let Some(reacquisition) = self.reacquisition_cost_microunits else {
+            return Ok(None);
+        };
+
+        self.setup_cost_microunits
+            .checked_add(write)
+            .and_then(|cost| cost.checked_add(cache_reads))
+            .and_then(|cost| cost.checked_add(fresh))
+            .and_then(|cost| cost.checked_add(reacquisition))
+            .map(Some)
+            .ok_or(CacheCompactionCostError::CostOverflow)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCompactionDecisionRequest {
+    pub retain: CacheCostScenario,
+    pub compact: CacheCostScenario,
+    /// Capacity/context pressure is a correctness fallback when monetary estimates are incomplete.
+    pub context_pressure_requires_compaction: bool,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheCompactionChoice {
+    Retain,
+    Compact,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheCompactionDecisionBasis {
+    KnownCost,
+    ContextPressureFallback,
+    RetainFallback,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCompactionDecision {
+    pub choice: CacheCompactionChoice,
+    pub basis: CacheCompactionDecisionBasis,
+    pub retain_cost_microunits: Option<u64>,
+    pub compact_cost_microunits: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CacheCompactionCostError {
+    TurnAccountingMismatch {
+        future_turns: u32,
+        expected_cache_hits: u32,
+        expected_cache_misses: u32,
+    },
+    CostOverflow,
+}
+
+pub fn choose_cache_aware_compaction(
+    request: &CacheCompactionDecisionRequest,
+) -> Result<CacheCompactionDecision, CacheCompactionCostError> {
+    let retain = request.retain.total_cost_microunits()?;
+    let compact = request.compact.total_cost_microunits()?;
+
+    let (choice, basis) = match (retain, compact) {
+        (Some(retain), Some(compact)) => (
+            if compact < retain {
+                CacheCompactionChoice::Compact
+            } else {
+                CacheCompactionChoice::Retain
+            },
+            CacheCompactionDecisionBasis::KnownCost,
+        ),
+        _ if request.context_pressure_requires_compaction => (
+            CacheCompactionChoice::Compact,
+            CacheCompactionDecisionBasis::ContextPressureFallback,
+        ),
+        _ => (
+            CacheCompactionChoice::Retain,
+            CacheCompactionDecisionBasis::RetainFallback,
+        ),
+    };
+
+    Ok(CacheCompactionDecision {
+        choice,
+        basis,
+        retain_cost_microunits: retain,
+        compact_cost_microunits: compact,
+    })
+}
+
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
     phenix_sdk_macros::PhenixValue,
@@ -401,6 +549,89 @@ mod tests {
                 tool_groups: Vec::new(),
             },
         }
+    }
+
+    fn cache_scenario(
+        hits: u32,
+        misses: u32,
+        fresh: Option<u64>,
+        read: Option<u64>,
+        write: Option<u64>,
+        setup: u64,
+        reacquisition: Option<u64>,
+    ) -> CacheCostScenario {
+        CacheCostScenario {
+            future_turns: hits + misses,
+            expected_cache_hits: hits,
+            expected_cache_misses: misses,
+            fresh_input_cost_microunits: fresh,
+            cache_read_cost_microunits: read,
+            cache_write_cost_microunits: write,
+            setup_cost_microunits: setup,
+            reacquisition_cost_microunits: reacquisition,
+        }
+    }
+
+    #[test]
+    fn known_cache_cost_can_prefer_larger_retained_prefix() {
+        let decision = choose_cache_aware_compaction(&CacheCompactionDecisionRequest {
+            // Retaining costs 3 cached reads.
+            retain: cache_scenario(3, 0, Some(50), Some(2), Some(0), 0, Some(0)),
+            // Compacting has lower read cost but pays rewrite/helper cost.
+            compact: cache_scenario(3, 0, Some(20), Some(1), Some(5), 8, Some(2)),
+            context_pressure_requires_compaction: false,
+        })
+        .unwrap();
+
+        assert_eq!(decision.retain_cost_microunits, Some(6));
+        assert_eq!(decision.compact_cost_microunits, Some(18));
+        assert_eq!(decision.choice, CacheCompactionChoice::Retain);
+        assert_eq!(decision.basis, CacheCompactionDecisionBasis::KnownCost);
+    }
+
+    #[test]
+    fn known_total_cost_can_choose_compaction() {
+        let decision = choose_cache_aware_compaction(&CacheCompactionDecisionRequest {
+            retain: cache_scenario(0, 4, Some(20), Some(2), Some(0), 0, Some(0)),
+            compact: cache_scenario(4, 0, Some(10), Some(2), Some(4), 4, Some(0)),
+            context_pressure_requires_compaction: false,
+        })
+        .unwrap();
+
+        assert_eq!(decision.retain_cost_microunits, Some(80));
+        assert_eq!(decision.compact_cost_microunits, Some(16));
+        assert_eq!(decision.choice, CacheCompactionChoice::Compact);
+    }
+
+    #[test]
+    fn unknown_cost_uses_capacity_rule_not_invented_zero() {
+        let retain = cache_scenario(2, 0, Some(10), None, Some(0), 0, Some(0));
+        let compact = cache_scenario(2, 0, Some(10), Some(1), Some(3), 2, Some(0));
+
+        let retain_decision = choose_cache_aware_compaction(&CacheCompactionDecisionRequest {
+            retain: retain.clone(),
+            compact: compact.clone(),
+            context_pressure_requires_compaction: false,
+        })
+        .unwrap();
+        assert_eq!(retain_decision.choice, CacheCompactionChoice::Retain);
+        assert_eq!(
+            retain_decision.basis,
+            CacheCompactionDecisionBasis::RetainFallback
+        );
+        assert_eq!(retain_decision.retain_cost_microunits, None);
+
+        let compact_decision = choose_cache_aware_compaction(&CacheCompactionDecisionRequest {
+            retain,
+            compact,
+            context_pressure_requires_compaction: true,
+        })
+        .unwrap();
+        assert_eq!(compact_decision.choice, CacheCompactionChoice::Compact);
+        assert_eq!(
+            compact_decision.basis,
+            CacheCompactionDecisionBasis::ContextPressureFallback
+        );
     }
 
     fn reducer_request() -> ContextReducerRequest {

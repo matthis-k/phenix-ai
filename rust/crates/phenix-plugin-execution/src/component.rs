@@ -123,7 +123,7 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
                 interface: StepAttemptInterface::interface_id(),
                 schema: StepAttemptInterface::schema(),
                 priority: 100,
-                required_authority: persistence_authority(),
+                required_authority: attempt_read_authority(),
             },
             ComponentExport {
                 interface: StepTransactionInterface::interface_id(),
@@ -198,6 +198,10 @@ fn persistence_authority() -> Authority {
     ])
 }
 
+fn attempt_read_authority() -> Authority {
+    Authority::new([CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid")])
+}
+
 fn workspace_write_authority() -> Authority {
     Authority::new([CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")])
 }
@@ -240,9 +244,22 @@ mod tests {
             component.exports[3].interface,
             StepTransactionInterface::interface_id()
         );
-        for export in &component.exports[..4] {
-            assert_eq!(export.required_authority, persistence_authority());
-        }
+        assert_eq!(
+            component.exports[0].required_authority,
+            persistence_authority()
+        );
+        assert_eq!(
+            component.exports[1].required_authority,
+            persistence_authority()
+        );
+        assert_eq!(
+            component.exports[2].required_authority,
+            attempt_read_authority()
+        );
+        assert_eq!(
+            component.exports[3].required_authority,
+            persistence_authority()
+        );
         assert_eq!(
             component.exports[4].interface,
             ExecutionConfigurationInterface::interface_id()

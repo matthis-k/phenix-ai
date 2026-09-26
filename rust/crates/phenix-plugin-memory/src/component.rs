@@ -4,8 +4,8 @@ use phenix_core::{
 };
 use phenix_sdk::{
     ContextCompactionInterface, ContextExpansionInterface, HelperInvocationInterface,
-    MemoryContextInterface, MemoryEmbeddingInterface, MemoryInterface, MemoryRankInterface,
-    OptionsInterface,
+    LanguageInterface, MemoryContextInterface, MemoryEmbeddingInterface, MemoryInterface,
+    MemoryRankInterface, OptionsInterface,
 };
 
 const MEMORY_COMPONENT: &str = "phenix.memory";
@@ -48,6 +48,12 @@ pub fn memory_component_manifest() -> ComponentManifest {
                 required: false,
                 authority: authority.clone(),
             },
+            ComponentImport {
+                interface: LanguageInterface::interface_id(),
+                schema: LanguageInterface::schema(),
+                required: false,
+                authority: authority.clone(),
+            },
         ],
         exports: [
             (MemoryInterface::interface_id(), MemoryInterface::schema()),
@@ -85,7 +91,7 @@ mod tests {
         let manifest = memory_component_manifest();
         assert_eq!(manifest.id, memory_component_id());
         assert_eq!(manifest.owner.as_str(), MEMORY_PLUGIN);
-        assert_eq!(manifest.imports.len(), 4);
+        assert_eq!(manifest.imports.len(), 5);
         assert_eq!(
             manifest.imports[0].interface,
             HelperInvocationInterface::interface_id()
@@ -106,6 +112,11 @@ mod tests {
             MemoryRankInterface::interface_id()
         );
         assert!(!manifest.imports[3].required);
+        assert_eq!(
+            manifest.imports[4].interface,
+            LanguageInterface::interface_id()
+        );
+        assert!(!manifest.imports[4].required);
         assert_eq!(manifest.exports.len(), 4);
         for interface in [
             MemoryInterface::interface_id(),

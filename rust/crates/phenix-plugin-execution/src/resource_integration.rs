@@ -4,11 +4,13 @@ use phenix_core::{
     ModelId, PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
-    BudgetActual, BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest,
-    DelegatedWorkResources, DelegatedWorkerResult, DelegationResourcePolicy, DelegationTaskBinding,
-    ExecutionAuthority, ExecutionResourceCommand, ExecutionResourceResponse, ModelTarget,
-    ModelTurnUsage, RootBudgetLedger, RootBudgetLimits, RouteDecision, RoutingEstimate,
-    UsageQuantity, WorkerTaskRecord, WorkerTaskState,
+    prepare_exploration_delegation, BudgetActual, BudgetReservation, BudgetReservationPurpose,
+    BudgetReservationRequest, ContextDemand, DelegatedWorkResources, DelegatedWorkerResult,
+    DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExplorationDelegationInput, ExplorationOpportunity, ModelTarget,
+    ModelTurnUsage, ReasoningBudget, RetryBudget, RootBudgetLedger, RootBudgetLimits,
+    RouteDecision, RoutingEstimate, RoutingRequirements, SkillProvisionBudget, StepPlan,
+    ToolProvisionBudget, UsageQuantity, WorkerTaskRecord, WorkerTaskState,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -81,7 +83,10 @@ fn authority(values: &[&str]) -> ExecutionAuthority {
 fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
     DelegationTaskBinding {
         contract_revision: ArtifactRevision::from_content(b"contract"),
+        contract: b"contract".to_vec().into(),
         parent_policy_revision: "policy-1".into(),
+        parent_plan: Some(step_plan(2)),
+        originating_attempt_id: None,
         resources: DelegatedWorkResources {
             target: RouteDecision {
                 target: ModelTarget {
@@ -142,6 +147,43 @@ fn policy(max_children: u32) -> DelegationResourcePolicy {
     }
 }
 
+fn step_plan(max_children: u32) -> StepPlan {
+    StepPlan {
+        policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
+        routing: RoutingRequirements {
+            context: ContextDemand::default(),
+            required_capabilities: BTreeSet::new(),
+            require_known_capacity: false,
+        },
+        context: ContextDemand::default(),
+        reasoning: ReasoningBudget::BackendDefault,
+        tools: ToolProvisionBudget {
+            initial: BTreeSet::new(),
+            expandable: BTreeSet::new(),
+            max_schemas: 0,
+            max_result_bytes: 0,
+        },
+        skills: SkillProvisionBudget {
+            initial: BTreeSet::new(),
+            expandable: BTreeSet::new(),
+            max_loaded: 0,
+        },
+        delegation: policy(max_children),
+        retry: RetryBudget {
+            max_attempts: 1,
+            reserved_attempts: 1,
+        },
+        reservation: BudgetReservation {
+            input_tokens: 10_000,
+            output_tokens: 2_000,
+            cost_microunits: Some(10_000),
+        },
+        deadline_at_ms: Some(10_000),
+        reducible_input_dropped_tokens: 0,
+    }
+}
+
 fn result() -> DelegatedWorkerResult {
     DelegatedWorkerResult {
         findings: Vec::new(),
@@ -173,6 +215,101 @@ fn register(kernel: &mut Kernel) {
         ExecutionResourceCommand::RegisterRootBudget { ledger: ledger() },
     )
     .unwrap();
+}
+
+mod exploration_admission {
+    use super::*;
+
+    #[test]
+    fn accepted_exploration_uses_atomic_delegated_admission() {
+        let path = temp_db("exploration-admission");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+
+        let exploration_policy = phenix_sdk::ExplorationPolicy {
+            enabled: true,
+            min_parent_input_tokens_saved: 1_000,
+            max_child_input_tokens: 2_000,
+            max_child_output_tokens: 1_000,
+            max_child_cost_microunits: Some(2_000),
+            max_result_bytes: 32 * 1024,
+        };
+        let opportunity = ExplorationOpportunity {
+            task_id: "exploration-1".into(),
+            description: "inspect an isolated subsystem".into(),
+            separable: true,
+            requires_parent_transcript: false,
+            parent_input_tokens_if_inline: 5_000,
+            inline_parent_reacquisition_tokens: 0,
+            delegated_parent_reacquisition_tokens: 100,
+            child_input_tokens: 1_000,
+            child_output_tokens: 200,
+            child_cost_microunits: Some(1_000),
+            expected_result_input_tokens: 500,
+        };
+        let decision = exploration_policy.assess(&opportunity);
+        let child = authority(&["workspace.read"]);
+        let admission = prepare_exploration_delegation(
+            &opportunity,
+            &decision,
+            ExplorationDelegationInput {
+                root_execution_id: "root".into(),
+                parent_execution: "root".into(),
+                graph_generation: "generation-1".into(),
+                parent_reservation_id: None,
+                parent_policy_revision: "policy-1".into(),
+                originating_attempt_id: None,
+                contract_revision: ArtifactRevision::from_content(b"exploration-1"),
+                contract: b"exploration-1".to_vec().into(),
+                target: RouteDecision {
+                    target: ModelTarget {
+                        provider_plugin: PluginId::parse("provider.fixture").unwrap(),
+                        model: ModelId::parse("model.fixture").unwrap(),
+                        options: BTreeMap::new(),
+                    },
+                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    policy_revision: "route-1".into(),
+                    candidate_ordinal: 0,
+                    estimate: None::<RoutingEstimate>,
+                },
+                parent_authority: child.clone(),
+                delegated_authority: child,
+                context: Vec::new(),
+                deadline_at_ms: 10_000,
+                depth: 1,
+                attempts: 1,
+                existing_children: 0,
+                depends_on: BTreeSet::new(),
+            },
+            &step_plan(2),
+            0,
+        )
+        .unwrap();
+
+        let response = invoke(&mut kernel, admission.into_resource_command(0)).unwrap();
+        assert!(matches!(
+            response,
+            ExecutionResourceResponse::DelegatedTask { ref task }
+                if task.task.id == "exploration-1"
+                    && matches!(task.task.state, WorkerTaskState::Pending)
+        ));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 9_000);
+        assert_eq!(budget.output_tokens, 1_800);
+        assert_eq!(budget.cost_microunits, Some(9_000));
+        assert_eq!(budget.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
 }
 
 mod transaction_rollback {
@@ -215,6 +352,161 @@ mod transaction_rollback {
     }
 }
 
+mod pre_start_cancellation {
+    use super::*;
+
+    fn admit(kernel: &mut Kernel) {
+        let child = authority(&["workspace.read"]);
+        let binding = binding(child.clone());
+        invoke(
+            kernel,
+            ExecutionResourceCommand::AdmitDelegated {
+                root_execution_id: "root".into(),
+                reservation: reservation("reservation-1", &binding),
+                task: task("task-1", child.clone()),
+                binding,
+                parent_authority: child,
+                policy: policy(2),
+                now_ms: 0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn admitted_child_is_visible_to_scheduler_until_started() {
+        let path = temp_db("delegated-runnable");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+
+        let runnable = invoke(&mut kernel, ExecutionResourceCommand::RunnableDelegated).unwrap();
+        assert_eq!(
+            runnable,
+            ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: vec!["task-1".into()],
+            }
+        );
+
+        invoke(
+            &mut kernel,
+            ExecutionResourceCommand::StartDelegated {
+                task_id: "task-1".into(),
+                execution_id: "child-execution".into(),
+                now_ms: 1,
+            },
+        )
+        .unwrap();
+        let runnable = invoke(&mut kernel, ExecutionResourceCommand::RunnableDelegated).unwrap();
+        assert_eq!(
+            runnable,
+            ExecutionResourceResponse::DelegatedRunnableTasks {
+                task_ids: Vec::new(),
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn pending_child_cancellation_releases_reserved_budget_atomically() {
+        let path = temp_db("pre-start-cancel");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+
+        let cancelled = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::CancelDelegatedBeforeStart {
+                task_id: "task-1".into(),
+                cause: "scheduler unavailable".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            cancelled,
+            ExecutionResourceResponse::DelegatedTask { ref task }
+                if matches!(
+                    task.task.state,
+                    WorkerTaskState::Cancelled { ref cause }
+                        if cause == "scheduler unavailable"
+                )
+        ));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 10_000);
+        assert_eq!(budget.output_tokens, 2_000);
+        assert_eq!(budget.cost_microunits, Some(10_000));
+        assert_eq!(budget.attempts, 4);
+
+        let lookup = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::GetDelegated {
+                task_id: "task-1".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            lookup,
+            ExecutionResourceResponse::DelegatedTaskLookup {
+                task: Some(ref task)
+            } if matches!(task.task.state, WorkerTaskState::Cancelled { .. })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn running_child_cannot_use_pre_start_cancellation() {
+        let path = temp_db("pre-start-cancel-running");
+        let mut kernel = kernel(&path);
+        register(&mut kernel);
+        admit(&mut kernel);
+        invoke(
+            &mut kernel,
+            ExecutionResourceCommand::StartDelegated {
+                task_id: "task-1".into(),
+                execution_id: "child-execution".into(),
+                now_ms: 1,
+            },
+        )
+        .unwrap();
+
+        let error = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::CancelDelegatedBeforeStart {
+                task_id: "task-1".into(),
+                cause: "too late".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("InvalidState"));
+
+        let remaining = invoke(
+            &mut kernel,
+            ExecutionResourceCommand::Remaining {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let ExecutionResourceResponse::Remaining { budget } = remaining else {
+            panic!("expected remaining budget");
+        };
+        assert_eq!(budget.fresh_input_tokens, 8_000);
+        assert_eq!(budget.output_tokens, 1_600);
+        assert_eq!(budget.cost_microunits, Some(8_000));
+        assert_eq!(budget.attempts, 3);
+        let _ = fs::remove_file(path);
+    }
+}
+
 mod delegation_policy {
     use super::*;
 
@@ -224,7 +516,8 @@ mod delegation_policy {
         let mut kernel = kernel(&path);
         register(&mut kernel);
         let child = authority(&["workspace.read"]);
-        let first_binding = binding(child.clone());
+        let mut first_binding = binding(child.clone());
+        first_binding.parent_plan = Some(step_plan(1));
         invoke(
             &mut kernel,
             ExecutionResourceCommand::AdmitDelegated {
@@ -238,7 +531,8 @@ mod delegation_policy {
             },
         )
         .unwrap();
-        let second_binding = binding(child.clone());
+        let mut second_binding = binding(child.clone());
+        second_binding.parent_plan = Some(step_plan(1));
         let error = invoke(
             &mut kernel,
             ExecutionResourceCommand::AdmitDelegated {

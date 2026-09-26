@@ -107,6 +107,7 @@ fn capabilities(
                 max_output_tokens: Some(2_000),
             },
         },
+        cache: Default::default(),
         optional: BTreeSet::new(),
     }
 }
@@ -450,6 +451,7 @@ mod resolved_dispatch {
             ModelDispatchCommand::PrepareResolved {
                 decision,
                 input: input.to_vec().into(),
+                cache: Default::default(),
                 tools: Vec::new(),
                 continuation: Vec::new(),
             },
@@ -460,6 +462,151 @@ mod resolved_dispatch {
                 Err("dispatch returned inference during preparation".into())
             }
         }
+    }
+
+    #[test]
+    fn cache_prefix_boundary_activates_only_for_supported_target() {
+        let target = target("provider.default", "root");
+        let mut supported = capabilities(target.clone(), "generation-1", 10_000);
+        supported.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
+
+        let requested = phenix_core::ModelCacheControl {
+            explicit_prefix_bytes: Some(128),
+            local_prefix_identity: Some("sha256:prefix".into()),
+            ..Default::default()
+        };
+        let effective = effective_cache_control(requested.clone(), &supported).unwrap();
+        assert_eq!(
+            effective.write,
+            phenix_core::ModelCacheWritePolicy::ExplicitPrefix
+        );
+        assert_eq!(effective.explicit_prefix_bytes, Some(128));
+
+        let mut unsupported = supported;
+        unsupported.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Unsupported;
+        let effective = effective_cache_control(requested, &unsupported).unwrap();
+        assert_eq!(
+            effective.write,
+            phenix_core::ModelCacheWritePolicy::ProviderDefault
+        );
+        assert_eq!(effective.explicit_prefix_bytes, None);
+        assert_eq!(
+            effective.local_prefix_identity.as_deref(),
+            Some("sha256:prefix")
+        );
+    }
+
+    #[test]
+    fn cache_hint_does_not_change_provider_visible_context() {
+        let path = temp_db("resolved-dispatch-cache-input");
+        let mut kernel = kernel_with_provider(&path);
+        authenticate(&mut kernel, true);
+        let target = target("fixture.provider", "selected");
+        let mut published = capabilities(target.clone(), "generation-1", 8_000);
+        published.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::PublishCapabilities {
+                capabilities: published,
+            },
+        )
+        .unwrap();
+
+        let response = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision(target, "generation-1"),
+                input: b"canonical context".to_vec().into(),
+                cache: phenix_core::ModelCacheControl {
+                    explicit_prefix_bytes: Some(9),
+                    local_prefix_identity: Some("sha256:prefix".into()),
+                    ..Default::default()
+                },
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        )
+        .and_then(|response| match response {
+            ModelDispatchResponse::Ready { prepared } => invoke_dispatch(
+                &mut kernel,
+                ModelDispatchCommand::InvokePrepared { prepared },
+            ),
+            ModelDispatchResponse::Inference { .. } => {
+                Err("dispatch returned inference during preparation".into())
+            }
+        })
+        .unwrap();
+
+        let ModelDispatchResponse::Inference { response, .. } = response else {
+            panic!("expected inference response");
+        };
+        assert_eq!(response.output.as_ref(), b"canonical context");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unsupported_cache_control_preserves_context_semantics() {
+        let path = temp_db("resolved-dispatch-no-cache");
+        let mut kernel = kernel_with_provider(&path);
+        authenticate(&mut kernel, true);
+        let target = target("fixture.provider", "selected");
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            },
+        )
+        .unwrap();
+
+        let response = invoke_dispatch(
+            &mut kernel,
+            ModelDispatchCommand::PrepareResolved {
+                decision: decision(target, "generation-1"),
+                input: b"same context without cache support".to_vec().into(),
+                cache: phenix_core::ModelCacheControl {
+                    explicit_prefix_bytes: Some(12),
+                    local_prefix_identity: Some("sha256:prefix".into()),
+                    ..Default::default()
+                },
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        )
+        .and_then(|response| match response {
+            ModelDispatchResponse::Ready { prepared } => invoke_dispatch(
+                &mut kernel,
+                ModelDispatchCommand::InvokePrepared { prepared },
+            ),
+            ModelDispatchResponse::Inference { .. } => {
+                Err("dispatch returned inference during preparation".into())
+            }
+        })
+        .unwrap();
+
+        let ModelDispatchResponse::Inference { response, .. } = response else {
+            panic!("expected inference response");
+        };
+        assert_eq!(
+            response.output.as_ref(),
+            b"same context without cache support"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicitly_required_cache_control_rejects_unsupported_target() {
+        let target = target("provider.default", "root");
+        let capabilities = capabilities(target, "generation-1", 10_000);
+        let requested = phenix_core::ModelCacheControl {
+            write: phenix_core::ModelCacheWritePolicy::ExplicitPrefix,
+            explicit_prefix_bytes: Some(64),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            effective_cache_control(requested, &capabilities),
+            Err(ModelInferenceFailure::InvalidRequest { .. })
+        ));
     }
 
     #[test]
@@ -525,6 +672,7 @@ mod resolved_dispatch {
             ModelDispatchCommand::PrepareResolved {
                 decision,
                 input: b"must-not-run".to_vec().into(),
+                cache: Default::default(),
                 tools: Vec::new(),
                 continuation: Vec::new(),
             },
@@ -555,6 +703,7 @@ mod resolved_dispatch {
             ModelDispatchCommand::PrepareResolved {
                 decision: decision(target, "generation-1"),
                 input: b"must-not-run".to_vec().into(),
+                cache: Default::default(),
                 tools: Vec::new(),
                 continuation: Vec::new(),
             },

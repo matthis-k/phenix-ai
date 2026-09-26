@@ -2060,7 +2060,7 @@ fn start_prompt(
             return;
         }
     };
-    let tools = match model_tool_surface(service, &request.session_id, runtime_model_tools()) {
+    let tools = match application_model_tool_surface(service, &request.session_id) {
         Ok(tools) => tools,
         Err(error) => {
             invocation.respond(Err(error));
@@ -2600,6 +2600,13 @@ fn normalize_model_tool_table(
     Ok(PhenixValue::Table(normalized))
 }
 
+fn application_model_tool_surface(
+    service: &SdkApplicationService,
+    session_id: &SessionId,
+) -> Result<Vec<ModelToolDescriptor>, ApplicationError> {
+    model_tool_surface(service, session_id, runtime_model_tools())
+}
+
 fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
     vec![ModelToolDescriptor {
         id: CallableId::parse("bash").expect("static bash callable id is valid"),
@@ -2817,17 +2824,6 @@ mod tests {
 
     #[test]
     fn default_runtime_exposes_backend_neutral_bash_tool() {
-        let tools = runtime_model_tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].id.as_str(), "bash");
-        assert_eq!(
-            tools[0].input_schema,
-            PhenixSchema::Table(BTreeMap::from([(
-                Key::parse("command").unwrap(),
-                PhenixSchema::String,
-            )]))
-        );
-
         let worker = application_worker();
         let sdk = {
             let harness = worker.harness.lock();
@@ -2855,6 +2851,30 @@ mod tests {
         )
         .unwrap();
         let session_id = SessionId::parse("session-1").unwrap();
+        let tools = application_model_tool_surface(&service, &session_id).unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id.as_str(), "bash");
+        assert_eq!(
+            tools[0].input_schema,
+            PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
+                PhenixSchema::String,
+            )]))
+        );
+        let report = crate::model_surface_fixture::model_surface_report(
+            &phenix_core::ModelInferenceRequest {
+                model: phenix_core::ModelId::parse("fixture-introspection").unwrap(),
+                input: Bytes::new(b"show available capabilities".to_vec()),
+                options: BTreeMap::new(),
+                cache: Default::default(),
+                tools: tools.clone(),
+                continuation: Vec::new(),
+            },
+        );
+        assert_eq!(report.tools.len(), 1);
+        assert_eq!(report.tools[0].id, "bash");
+        assert_eq!(report.request, "show available capabilities");
+
         let execution_id = "execution-1".to_owned();
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, mut progress_receiver) =
@@ -3000,6 +3020,7 @@ mod tests {
             model: phenix_core::ModelId::parse("gpt-fixture").unwrap(),
             input: Bytes::new(b"run the command".to_vec()),
             options: BTreeMap::new(),
+            cache: Default::default(),
             tools,
             continuation: vec![ModelToolTurn {
                 assistant_output: Bytes::new(Vec::new()),

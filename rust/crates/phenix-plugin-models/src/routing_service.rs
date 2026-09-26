@@ -1,6 +1,8 @@
 use crate::routing_state::RoutingRuntimeState;
 use phenix_core::RoutingProfileId;
-use phenix_sdk::{ModelCommand, ModelResponse, RouteDecision, RoutingProfile};
+use phenix_sdk::{
+    EffectiveModelCapabilities, ModelCommand, ModelResponse, RouteDecision, RoutingProfile,
+};
 
 pub(crate) const ROUTING_RUNTIME_KEY: &str = "runtime/routing-state";
 pub(crate) const MAX_ROUTING_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
@@ -31,6 +33,8 @@ impl RoutingServiceState {
             }
             None => RoutingRuntimeState::default(),
         };
+        let mut runtime = runtime;
+        runtime.rebuild_estimates();
         Ok(Self { runtime })
     }
 
@@ -46,10 +50,12 @@ impl RoutingServiceState {
         Ok(bytes)
     }
 
-    pub(crate) fn validate_decision(&self, decision: &RouteDecision) -> Result<(), String> {
+    pub(crate) fn validate_decision(
+        &self,
+        decision: &RouteDecision,
+    ) -> Result<&EffectiveModelCapabilities, String> {
         self.runtime
             .validate_decision(decision)
-            .map(|_| ())
             .map_err(|error| format!("resolved routing decision is invalid: {error:?}"))
     }
 
@@ -124,6 +130,59 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
+    fn derived_estimates_are_rebuilt_instead_of_persisted_as_truth() {
+        let target = ModelTarget {
+            provider_plugin: PluginId::parse("provider.fixture").unwrap(),
+            model: ModelId::parse("model.fixture").unwrap(),
+            options: BTreeMap::new(),
+        };
+        let capabilities = EffectiveModelCapabilities {
+            target: target.clone(),
+            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            context: ContextControl::ReplaceableTurns,
+            capacity: CapacityKnowledge::Known {
+                limits: ModelLimits {
+                    context_window_tokens: 16_000,
+                    max_output_tokens: Some(2_000),
+                },
+            },
+            cache: Default::default(),
+            optional: BTreeSet::new(),
+        };
+        let mut state = RoutingServiceState::default();
+        state.runtime.publish_capabilities(capabilities).unwrap();
+        state
+            .runtime
+            .record_evidence(
+                &phenix_sdk::RouteDecision {
+                    target,
+                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    policy_revision: "policy-1".into(),
+                    candidate_ordinal: 0,
+                    estimate: None,
+                },
+                phenix_sdk::RoutingEvidence {
+                    success: true,
+                    latency_ms: Some(25),
+                    cost_microunits: None,
+                    usage: phenix_core::ModelTurnUsage {
+                        fresh_input_tokens: phenix_core::UsageQuantity::Unavailable,
+                        cache_read_tokens: phenix_core::UsageQuantity::Unavailable,
+                        cache_write_tokens: phenix_core::UsageQuantity::Unavailable,
+                        output_tokens: phenix_core::UsageQuantity::Unavailable,
+                        reasoning_tokens: phenix_core::UsageQuantity::Unavailable,
+                    },
+                },
+            )
+            .unwrap();
+
+        let snapshot = state.snapshot().unwrap();
+        assert!(!String::from_utf8_lossy(&snapshot).contains("\"estimates\""));
+        let restored = RoutingServiceState::restore(Some(&snapshot)).unwrap();
+        assert_eq!(restored.runtime, state.runtime);
+    }
+
+    #[test]
     fn capability_publication_round_trips_through_snapshot() {
         let target = ModelTarget {
             provider_plugin: PluginId::parse("provider.fixture").unwrap(),
@@ -140,6 +199,7 @@ mod tests {
                     max_output_tokens: Some(2_000),
                 },
             },
+            cache: Default::default(),
             optional: BTreeSet::new(),
         };
         let mut state = RoutingServiceState::default();

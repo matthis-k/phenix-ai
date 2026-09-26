@@ -3,8 +3,8 @@ use phenix_core::{
     ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    ContextCompactionInterface, ContextExpansionInterface, ContextInterface, ContextReducerInterface,
-    ExecutionInterface,
+    ContextCompactionInterface, ContextExpansionInterface, ContextInterface,
+    ContextReducerInterface, ExecutionInterface, ExecutionResourceInterface,
 };
 
 const CONTEXT_COMPONENT: &str = "phenix.context";
@@ -35,6 +35,12 @@ pub fn context_component_manifest() -> ComponentManifest {
             ComponentImport {
                 interface: ExecutionInterface::interface_id(),
                 schema: ExecutionInterface::schema(),
+                required: true,
+                authority: authority.clone(),
+            },
+            ComponentImport {
+                interface: ExecutionResourceInterface::interface_id(),
+                schema: ExecutionResourceInterface::schema(),
                 required: true,
                 authority: authority.clone(),
             },
@@ -103,6 +109,18 @@ mod tests {
             &execution_component_manifest(authority()).id
         );
         assert_eq!(handle.effective_authority(), &authority());
+        let resource_handle = graph
+            .import_handle(
+                &context_component_id(),
+                &ExecutionResourceInterface::interface_id(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resource_handle.exporter(),
+            &execution_component_manifest(authority()).id
+        );
+        assert_eq!(resource_handle.effective_authority(), &authority());
         assert!(graph
             .import_handle(
                 &context_component_id(),

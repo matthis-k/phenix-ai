@@ -320,6 +320,7 @@ fn replacement_component_satisfies_the_same_basic_model_import_without_consumer_
         model: ModelId::parse("same-request").unwrap(),
         input: b"hello".to_vec().into(),
         options: BTreeMap::new(),
+        cache: Default::default(),
         tools: Vec::new(),
         continuation: Vec::new(),
     };

@@ -1855,6 +1855,7 @@ dependencies = [
  "phenix-plugin-command-toolbelt",
  "phenix-plugin-context",
  "phenix-plugin-debug",
+ "phenix-plugin-efficiency-evaluation",
  "phenix-plugin-execution",
  "phenix-plugin-frontend",
  "phenix-plugin-hooks",
@@ -1915,6 +1916,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-efficiency-evaluation"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+ "phenix-sdk-macros",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-execution"
 version = "0.1.0"
 dependencies = [
@@ -1969,6 +1980,8 @@ name = "phenix-plugin-language"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-workspace",
+ "phenix-sdk",
  "phenix-sdk-macros",
  "serde",
  "serde_json",
@@ -1980,6 +1993,7 @@ name = "phenix-plugin-memory"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-language",
  "phenix-plugin-models",
  "phenix-plugin-sessions",
  "phenix-sdk",

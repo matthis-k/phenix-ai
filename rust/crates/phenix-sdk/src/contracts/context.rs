@@ -1,6 +1,8 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
-    CompactionCommit, CompactionProposal, ContextReducerProposal, ContextReducerRequest,
+    CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
+    ContextReducerProposal, ContextReducerRequest, ContinuationExportResult,
+    ContinuationImportProjection, ContinuationImportRequest, ContinuationProjectionRequest,
     ProjectionRevision,
 };
 use phenix_core::{
@@ -90,6 +92,10 @@ pub struct ContextInvocationPreparation {
 pub struct ContextInvocationMaterialization {
     pub input: Bytes,
     pub projection: ProjectionRevision,
+    /// Byte boundary immediately after the reusable context prefix and before this request.
+    pub cache_prefix_bytes: u64,
+    /// Deterministic identity of the model-facing context prefix before the current request.
+    pub cache_prefix_identity: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -125,6 +131,21 @@ pub enum ContextCommand {
         lifetime: ContextInjectionLifetime,
         reason: String,
     },
+    LoadDelegatedResult {
+        task_id: String,
+    },
+    AdmitDelegatedResult {
+        task_id: String,
+    },
+    LoadOnce {
+        admission_id: String,
+        execution_id: String,
+        resource_id: ContextResourceId,
+        revision: ContextRevisionId,
+        requester: ContextInjectionRequester,
+        lifetime: ContextInjectionLifetime,
+        reason: String,
+    },
     Project {
         execution_id: String,
     },
@@ -146,6 +167,9 @@ pub enum ContextCommand {
     RequestReduction {
         request: ContextReducerRequest,
     },
+    EvaluateCompactionCost {
+        request: CacheCompactionDecisionRequest,
+    },
     PrepareCompaction {
         proposal: CompactionProposal,
     },
@@ -155,6 +179,12 @@ pub enum ContextCommand {
     },
     InvalidateProjection {
         execution_id: String,
+    },
+    ExportContinuation {
+        request: ContinuationProjectionRequest,
+    },
+    ProjectContinuationImport {
+        request: ContinuationImportRequest,
     },
 }
 
@@ -177,6 +207,12 @@ pub enum ContextResponse {
         injection: ContextInjection,
         resource: ContextResourceRevision,
     },
+    DelegatedResultAdmitted {
+        injection: ContextInjection,
+        resource: ContextResourceRevision,
+        result: ContextAdmissionResult,
+        projection: ProjectionRevision,
+    },
     Projection {
         projection: ExecutionContextProjection,
     },
@@ -196,6 +232,9 @@ pub enum ContextResponse {
     ReductionProposed {
         proposal: ContextReducerProposal,
     },
+    CompactionCostDecision {
+        decision: CacheCompactionDecision,
+    },
     CompactionPrepared {
         checkpoint_id: String,
         projection: ProjectionRevision,
@@ -205,6 +244,12 @@ pub enum ContextResponse {
     },
     ProjectionInvalidated {
         projection: ProjectionRevision,
+    },
+    ContinuationExported {
+        result: ContinuationExportResult,
+    },
+    ContinuationImportProjected {
+        projection: ContinuationImportProjection,
     },
 }
 

@@ -119,10 +119,16 @@ impl ContextStateService {
             | ContextCommand::List
             | ContextCommand::DiscoverRepository { .. }
             | ContextCommand::Load { .. }
+            | ContextCommand::LoadDelegatedResult { .. }
+            | ContextCommand::AdmitDelegatedResult { .. }
+            | ContextCommand::LoadOnce { .. }
             | ContextCommand::Project { .. }
             | ContextCommand::PrepareInvocation { .. }
             | ContextCommand::MaterializeInvocation { .. }
-            | ContextCommand::RequestReduction { .. } => return None,
+            | ContextCommand::EvaluateCompactionCost { .. }
+            | ContextCommand::RequestReduction { .. }
+            | ContextCommand::ExportContinuation { .. }
+            | ContextCommand::ProjectContinuationImport { .. } => return None,
         };
         Some(response)
     }

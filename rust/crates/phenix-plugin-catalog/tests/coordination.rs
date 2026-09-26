@@ -145,6 +145,7 @@ fn plan() -> StepPlan {
     };
     StepPlan {
         policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
             required_capabilities: BTreeSet::new(),
@@ -233,6 +234,7 @@ fn capabilities(target: ModelTarget, context_window_tokens: u64) -> EffectiveMod
                 max_output_tokens: Some(512),
             },
         },
+        cache: Default::default(),
         optional: BTreeSet::new(),
     }
 }

@@ -1225,6 +1225,7 @@ fn secure_file(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_core::ModelCacheControl;
 
     fn model_request() -> ModelInferenceRequest {
         ModelInferenceRequest {
@@ -1240,6 +1241,7 @@ mod tests {
                     serde_json::json!({"effort": "medium"}).into(),
                 ),
             ]),
+            cache: ModelCacheControl::default(),
             tools: Vec::new(),
             continuation: Vec::new(),
         }

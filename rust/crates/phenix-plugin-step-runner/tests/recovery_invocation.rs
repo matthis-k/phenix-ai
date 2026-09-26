@@ -204,6 +204,7 @@ impl PluginInstance for RecoverySupport {
                         scope: MemoryScope::Global,
                         content: RECOVERED_MARKER.into(),
                         source_refs: Vec::new(),
+                        supporting_dependencies: Vec::new(),
                         supersedes: Vec::new(),
                         valid_from: None,
                         valid_until: None,
@@ -487,6 +488,7 @@ fn setup(kernel: &mut Kernel) {
                     },
                 },
                 optional: BTreeSet::new(),
+                cache: Default::default(),
             },
         },
     );

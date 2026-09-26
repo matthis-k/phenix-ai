@@ -11,18 +11,20 @@ use phenix_plugin_catalog::{
     basic_model_component_manifest, basic_model_factory, basic_model_manifest,
     basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
     basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
+    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
     cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
     context_component_manifest, context_factory, context_manifest, debug_component_manifest,
-    debug_factory, debug_manifest, debug_runtime_trace_sink, execution_component_manifest,
-    execution_factory, execution_manifest, first_party_durable_schema_registrations,
-    frontend_component_manifest, frontend_factory, frontend_manifest,
-    helper_invocation_component_manifest, hook_component_manifest, hook_factory, hook_manifest,
-    job_component_manifest, job_factory, job_manifest, language_component_manifest,
-    language_factory, language_manifest, memory_component_manifest, memory_factory,
-    memory_manifest, model_routing_component_manifest, model_routing_factory,
-    model_routing_manifest, openai_codex_component_manifest, openai_codex_factory,
-    openai_codex_manifest, options_component_manifest, options_factory, options_manifest,
-    planning_component_manifest, planning_factory, planning_manifest,
+    debug_factory, debug_manifest, debug_runtime_trace_sink,
+    efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
+    efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
+    execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
+    frontend_factory, frontend_manifest, helper_invocation_component_manifest,
+    hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
+    job_manifest, language_component_manifest, language_factory, language_manifest,
+    memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
+    model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
+    openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
+    options_manifest, planning_component_manifest, planning_factory, planning_manifest,
     repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
     sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
@@ -39,6 +41,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 mod invocation_defaults;
+pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
 
@@ -140,6 +143,10 @@ impl HarnessBuilder {
         builder.add_embedded(cli_manifest(authority.clone()), cli_factory)?;
         builder.add_embedded(context_manifest(), context_factory)?;
         builder.add_embedded(execution_manifest(authority.clone()), execution_factory)?;
+        builder.add_embedded(
+            efficiency_evaluation_manifest(),
+            efficiency_evaluation_factory,
+        )?;
         builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
         let application_agent_tools = builder.application_agent_tools.clone();
         builder.add_embedded(
@@ -162,7 +169,6 @@ impl HarnessBuilder {
         builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
-        builder.add_embedded(hook_manifest(authority.clone()), hook_factory)?;
         builder.add_embedded(debug_manifest(authority.clone()), debug_factory)?;
         builder.add_embedded(options_manifest(), options_factory)?;
         builder.add_embedded(
@@ -178,6 +184,7 @@ impl HarnessBuilder {
             cli_component_manifest(authority.clone()),
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
+            efficiency_evaluation_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             application::application_agent_tool_component_manifest(authority.clone()),
             language_component_manifest(),
@@ -190,7 +197,6 @@ impl HarnessBuilder {
             helper_invocation_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
-            hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
@@ -215,6 +221,8 @@ impl HarnessBuilder {
             cli_manifest(authority.clone()),
             context_manifest(),
             execution_manifest(authority.clone()),
+            efficiency_evaluation_manifest(),
+            benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
@@ -288,6 +296,16 @@ impl HarnessBuilder {
         )?;
         builder.add_selected(
             &enabled,
+            efficiency_evaluation_manifest(),
+            efficiency_evaluation_factory,
+        )?;
+        builder.add_selected(
+            &enabled,
+            benchmark_outcome_manifest(),
+            benchmark_outcome_factory,
+        )?;
+        builder.add_selected(
+            &enabled,
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
@@ -343,6 +361,8 @@ impl HarnessBuilder {
             cli_component_manifest(authority.clone()),
             context_component_manifest(),
             execution_component_manifest(authority.clone()),
+            efficiency_evaluation_component_manifest(),
+            benchmark_outcome_component_manifest(),
             agent_loop_component_manifest(authority.clone()),
             language_component_manifest(),
             memory_component_manifest(),
@@ -562,11 +582,13 @@ mod tests {
         ServiceContribution, ServiceId, ServiceRole, SessionId,
     };
     use phenix_plugin_catalog::{
-        artifact_manifest, artifact_service, context_manifest, context_service, memory_service,
-        planning_manifest, planning_service, repository_work_queue_service, session_manifest,
-        session_service, ArtifactCommand, ArtifactProvenance, ArtifactResponse, ContextCommand,
-        ContextDescriptor, ContextResourceKind, ContextResponse, ContextScope, PlanningCommand,
-        PlanningResponse, RepositoryWorkSnapshot, SessionCommand, SessionResponse,
+        artifact_manifest, artifact_service, context_manifest, context_service,
+        efficiency_evaluation_service, memory_service, planning_manifest, planning_service,
+        repository_work_queue_service, session_manifest, session_service, ArtifactCommand,
+        ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
+        ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
+        EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
+        SessionCommand, SessionResponse,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -783,6 +805,78 @@ mod tests {
 
         assert_eq!(generation(true), generation(true));
         assert_ne!(generation(true), generation(false));
+    }
+
+    #[test]
+    fn efficiency_collection_requires_terminal_outcome_provider() {
+        let mut harness = HarnessBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+
+        let command = EfficiencyEvaluationCommand::CollectTask {
+            request: EfficiencyCollectionRequest {
+                task_fixture_revision: "fixture-1".into(),
+                root_execution_id: "root-without-outcome-provider".into(),
+                policy_revision: "policy-1".into(),
+                outcome_evaluator_identity: "fixture.tests".into(),
+                price_revision: "prices-1".into(),
+            },
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+        let error = harness
+            .invoke(
+                &efficiency_evaluation_service(),
+                &input,
+                &default_suite_authority(),
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("terminal outcome evidence unavailable")
+                || error.contains("unresolved")
+                || error.contains("provider"),
+            "unexpected evaluation error: {error}"
+        );
+    }
+
+    #[test]
+    fn benchmark_outcomes_are_opt_in_but_selectable() {
+        let benchmark = benchmark_outcome_manifest().id.as_str().to_owned();
+        let default = HarnessBuilder::with_default_suite().unwrap();
+        assert!(!default
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == benchmark));
+
+        let selected =
+            HarnessBuilder::with_selected_suite(&BTreeSet::from([benchmark.clone()])).unwrap();
+        assert!(selected
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == benchmark));
+        assert!(selected
+            .components
+            .iter()
+            .any(|component| component.owner.as_str() == benchmark));
+    }
+
+    #[test]
+    fn selected_efficiency_evaluation_pulls_in_execution_source() {
+        let evaluation = efficiency_evaluation_manifest().id.as_str().to_owned();
+        let execution = execution_manifest(default_suite_authority())
+            .id
+            .as_str()
+            .to_owned();
+        let builder = HarnessBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
+
+        assert!(builder
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == execution));
     }
 
     #[test]
