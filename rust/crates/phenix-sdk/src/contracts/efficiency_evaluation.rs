@@ -1010,6 +1010,116 @@ mod tests {
     }
 
     #[test]
+    fn durable_derivation_counts_delegated_attempt_work_once() {
+        fn settled_attempt(
+            attribution: super::super::UsageAttribution,
+            cost_microunits: u64,
+            input_tokens: u64,
+            output_tokens: u64,
+        ) -> super::super::StepAttemptRecord {
+            let mut attempt =
+                super::super::StepAttemptRecord::new(attribution.clone(), durable_plan()).unwrap();
+            attempt
+                .bind_reservation(format!("reservation-{}", attribution.attempt_id))
+                .unwrap();
+            attempt.bind_route(durable_route()).unwrap();
+            attempt
+                .bind_projection(super::super::ProjectionRevision {
+                    revision: 1,
+                    cache_epoch: 1,
+                })
+                .unwrap();
+            attempt
+                .mark_dispatched(format!("dispatch-{}", attribution.attempt_id))
+                .unwrap();
+            attempt
+                .settle_with_usage(
+                    AttemptOutcome::Succeeded,
+                    super::super::BudgetActual {
+                        fresh_input_tokens: input_tokens,
+                        output_tokens,
+                        cost_microunits: Some(cost_microunits),
+                        attempts: 1,
+                    },
+                    AttemptUsageRecord {
+                        attribution,
+                        usage: phenix_core::ModelTurnUsage {
+                            fresh_input_tokens: UsageQuantity::Reported {
+                                value: input_tokens,
+                            },
+                            cache_read_tokens: UsageQuantity::Reported { value: 0 },
+                            cache_write_tokens: UsageQuantity::Reported { value: 0 },
+                            output_tokens: UsageQuantity::Reported {
+                                value: output_tokens,
+                            },
+                            reasoning_tokens: UsageQuantity::Reported { value: 0 },
+                        },
+                        latency_ms: None,
+                        tool_input_bytes: 0,
+                        tool_result_bytes: 0,
+                        outcome: AttemptOutcome::Succeeded,
+                        reacquisition: Vec::new(),
+                    },
+                )
+                .unwrap();
+            attempt
+        }
+
+        let root = settled_attempt(
+            super::super::UsageAttribution {
+                root_execution_id: "root-1".into(),
+                execution_id: "root-1".into(),
+                attempt_id: "root-attempt".into(),
+                parent_attempt_id: None,
+                policy_revision: "policy-1".into(),
+                kind: super::super::UsageAttemptKind::Root,
+                task_id: None,
+            },
+            100,
+            20,
+            5,
+        );
+        let delegated = settled_attempt(
+            super::super::UsageAttribution {
+                root_execution_id: "root-1".into(),
+                execution_id: "delegated:task-1".into(),
+                attempt_id: "delegated-attempt".into(),
+                parent_attempt_id: Some("root-attempt".into()),
+                policy_revision: "policy-1".into(),
+                kind: super::super::UsageAttemptKind::Delegated,
+                task_id: Some("task-1".into()),
+            },
+            40,
+            7,
+            3,
+        );
+
+        let record = derive_efficiency_task_record_from_attempts(&EfficiencyDurableTaskEvidence {
+            task_fixture_revision: "task-1@1".into(),
+            root_execution_id: "root-1".into(),
+            policy_revision: "policy-1".into(),
+            outcome_evaluator_identity: "tests-v1".into(),
+            price_revision: "prices-v1".into(),
+            outcome: EvaluationOutcome::Succeeded,
+            outcome_evidence: EfficiencyOutcomeEvidence {
+                source_identity: "tests/task-1".into(),
+                evaluator_identity: "tests-v1".into(),
+                evidence_revision: "result-v1".into(),
+                outcome: EvaluationOutcome::Succeeded,
+            },
+            attempts: vec![root, delegated],
+            root_elapsed_ms: None,
+        })
+        .unwrap();
+
+        assert_eq!(record.known_cost_microunits, 140);
+        assert_eq!(record.usage.attempts, 2);
+        assert_eq!(record.usage.fresh_input_tokens.reported, 27);
+        assert_eq!(record.usage.output_tokens.reported, 8);
+        assert!(record.cost_complete);
+    }
+
+    #[test]
     fn task_derivation_requires_matching_terminal_outcome_evidence() {
         let mut evidence = EfficiencyTaskEvidence {
             task_fixture_revision: "task-0@1".into(),
