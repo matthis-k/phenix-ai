@@ -221,6 +221,40 @@ child shell
 
 A provider that claims filesystem/network confinement must enforce it at its process/backend boundary. Command inspection is not enforcement.
 
+## Transitive execution enforcement
+
+Environment policy applies to process creation, not to a particular shell or tool.
+
+Every `Exec` and `OpenProcess` request must pass through the selected Environment's process launcher. Before spawn, that launcher must compile the active filesystem policy into an execution view that the OS or remote backend enforces for the process and its complete descendant tree.
+
+This includes processes started indirectly by:
+
+- shell commands;
+- Git;
+- Python or another interpreter;
+- compilers and build systems;
+- language servers and debuggers;
+- model-facing tools;
+- plugin-provided tools;
+- persistent processes;
+- programs spawned by any of those processes.
+
+Executable identity never grants an exemption. A tool cannot bypass Environment policy by spawning another executable or by invoking a lower-level process API.
+
+A restricted Environment must not use an unrestricted native spawn path. If the provider cannot materialize the requested restrictions, process creation fails closed.
+
+An intentional broader view requires explicit allowance resolved before process creation. That allowance must select or derive a broader Environment policy through normal configuration/authority handling. It must not be inferred from command text, executable name, child behavior, or tool identity.
+
+The invariant is:
+
+```text
+tool -> Workspace/Environment -> policy resolution -> enforcing process launcher
+                                                   -> process
+                                                      -> descendants
+```
+
+No descendant receives more filesystem access than the Environment view created for its parent unless a separately authorized Environment operation explicitly creates that broader view.
+
 ## Authority
 
 Kernel authority and Environment confinement answer different questions.
@@ -293,6 +327,7 @@ Implemented in this PR:
 
 The local provider currently:
 
+- reports the `Unrestricted` filesystem policy through `EnvironmentDescription`;
 - uses the unrestricted host filesystem/process namespace;
 - treats its configured root as the default base/cwd, not a confinement boundary;
 - accepts absolute host paths through `EnvironmentInterface`;
@@ -332,6 +367,9 @@ The architecture is considered preserved only if tests prove:
 - replacing the Environment provider does not require changing Workspace or tool contracts.
 - future sandbox provider tests prove direct filesystem operations and shell-originated writes see the same view.
 - future sandbox provider tests prove arbitrary child processes cannot escape the view.
+- every restricted process path, including persistent processes, reaches the same enforcing launcher.
+- a tool or child executable cannot select an unrestricted spawn path implicitly.
+- broader filesystem access requires explicit pre-spawn policy selection/allowance.
 - unsupported requested confinement fails closed.
 
 ## Ownership summary
