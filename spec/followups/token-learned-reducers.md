@@ -12,10 +12,11 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 
 - [x] Added typed reducer request/proposal contracts pinned to projection, configuration, authority, capability generation, stage, helper reservation, and output bound.
 - [x] Proposal validation rejects fabricated/duplicate/missing item decisions, missing exact recovery for omitted payloads, source-less summaries, stale projections, and underreported encoded size.
+- [x] Added the provider-neutral `phenix.context-reducer@1` request/proposal interface; context imports it optionally with no persistence/canonical-state authority.
 
 ## Required implementation
 
-- [ ] Define the replaceable runtime reducer backend/invocation interface without canonical-state authority.
+- [x] Define the replaceable runtime reducer backend/invocation interface without canonical-state authority.
 - [x] Keep exact recovery references for every removed exact payload.
 - [ ] Benchmark SWE-Pruner-style code evidence reduction after deterministic graph/context filtering.
 - [ ] Benchmark ACON-style history reduction separately from TokenPilot-inspired cache/layout policy.

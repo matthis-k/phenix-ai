@@ -32,9 +32,11 @@ pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::{
-    CompactionCommit, CompactionProposal, CompactionValidationError,
-    ContextCheckpoint as ProjectionCheckpoint, ProjectionRevision, RetentionTransition,
-    ToolCallGroupReference,
+    context_reducer_service, CompactionCommit, CompactionProposal, CompactionValidationError,
+    ContextCheckpoint as ProjectionCheckpoint, ContextReducerCommand, ContextReducerInterface,
+    ContextReducerProposal, ContextReducerRequest, ContextReducerResponse, ContextReducerStage,
+    DerivedReductionSummary, ProjectionRevision, ReducerEligibleItem, ReducerValidationError,
+    RetentionTransition, ToolCallGroupReference, CONTEXT_REDUCER_SERVICE,
 };
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;

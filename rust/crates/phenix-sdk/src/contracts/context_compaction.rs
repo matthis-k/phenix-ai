@@ -1,7 +1,9 @@
 use super::{ContextRetention, ExactContextReference};
-use phenix_core::Bytes;
+use phenix_core::{Bytes, ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+pub const CONTEXT_REDUCER_SERVICE: &str = "phenix.context-reducer@1";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +102,36 @@ pub struct ContextReducerProposal {
     #[serde(default)]
     pub summaries: Vec<DerivedReductionSummary>,
     pub encoded_output_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ContextReducerCommand {
+    Reduce { request: ContextReducerRequest },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ContextReducerResponse {
+    Proposal { proposal: ContextReducerProposal },
+}
+
+pub struct ContextReducerInterface;
+
+impl ComponentInterface for ContextReducerInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(CONTEXT_REDUCER_SERVICE)
+            .expect("static context reducer interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<ContextReducerCommand, ContextReducerResponse>()
+    }
+}
+
+#[must_use]
+pub fn context_reducer_service() -> ServiceId {
+    ServiceId::parse(CONTEXT_REDUCER_SERVICE).expect("static context reducer service id is valid")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -389,6 +421,15 @@ mod tests {
                 recovery: Some(exact("context:history-1")),
             }],
         }
+    }
+
+    #[test]
+    fn reducer_backend_has_a_replaceable_provider_neutral_interface() {
+        assert_eq!(
+            ContextReducerInterface::interface_id().as_str(),
+            CONTEXT_REDUCER_SERVICE
+        );
+        assert_eq!(context_reducer_service().as_str(), CONTEXT_REDUCER_SERVICE);
     }
 
     #[test]
