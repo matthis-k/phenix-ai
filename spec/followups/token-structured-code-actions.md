@@ -12,6 +12,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 
 - [x] Workspace now exposes a distinct crash-recoverable `CommitBatch` path with strict whole-batch version preconditions, durable operation/intent identity, exact before/after version receipts, idempotent replay, and startup roll-forward of prepared commits. Legacy `WriteBatch` remains explicitly precondition-checked sequential.
 - [x] Commit journals are hidden from ordinary workspace read/search paths; shell-capable or external writers remain outside the cooperative atomicity guarantee.
+- [x] Added a bounded provider-neutral entity-source read pinned to logical entity/revision, exact workspace revision, and negotiated UTF-8/16/32 position encoding; stale source fails before content is returned.
 
 ## Required implementation
 
