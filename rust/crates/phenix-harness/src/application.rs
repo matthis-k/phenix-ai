@@ -2863,6 +2863,7 @@ mod tests {
         );
         let report = crate::model_surface_fixture::model_surface_report(
             &phenix_core::ModelInferenceRequest {
+                session_id: None,
                 model: phenix_core::ModelId::parse("fixture-introspection").unwrap(),
                 input: Bytes::new(b"show available capabilities".to_vec()),
                 options: BTreeMap::new(),
@@ -3017,6 +3018,7 @@ mod tests {
         ));
 
         let request = phenix_core::ModelInferenceRequest {
+            session_id: None,
             model: phenix_core::ModelId::parse("gpt-fixture").unwrap(),
             input: Bytes::new(b"run the command".to_vec()),
             options: BTreeMap::new(),

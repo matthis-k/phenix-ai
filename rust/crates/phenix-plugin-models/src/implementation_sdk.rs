@@ -238,6 +238,7 @@ fn handle_dispatch(
     match command {
         ModelDispatchCommand::PrepareResolved {
             decision,
+            session_id,
             input,
             cache,
             tools,
@@ -288,6 +289,7 @@ fn handle_dispatch(
             let request = encode_request(
                 context,
                 &decision.target,
+                session_id,
                 input,
                 cache.clone(),
                 tools,
@@ -500,6 +502,7 @@ fn ensure_authenticated(
 fn encode_request(
     context: &ModelContext<'_, '_, '_>,
     target: &ModelTarget,
+    session_id: Option<phenix_core::SessionId>,
     input: phenix_core::Bytes,
     cache: phenix_core::ModelCacheControl,
     tools: Vec<phenix_core::ModelToolDescriptor>,
@@ -507,6 +510,7 @@ fn encode_request(
 ) -> Result<phenix_core::Bytes, ModelInferenceFailure> {
     let request = ModelInferenceRequest {
         model: target.model.clone(),
+        session_id,
         input,
         options: target.options.clone(),
         cache,

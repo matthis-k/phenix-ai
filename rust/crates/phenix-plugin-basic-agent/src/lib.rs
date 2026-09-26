@@ -205,6 +205,7 @@ mod tests {
             basic_model_component_manifest(),
             &model_inference_service(),
             &ModelInferenceRequest {
+                session_id: None,
                 model: ModelId::parse("direct").unwrap(),
                 input: b"hello".to_vec().into(),
                 options: BTreeMap::new(),

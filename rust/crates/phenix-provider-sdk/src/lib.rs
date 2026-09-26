@@ -459,6 +459,7 @@ mod tests {
             .invoke(
                 &model_inference_service(),
                 &serde_json::to_vec(&phenix_core::PhenixValue::from(&ModelInferenceRequest {
+                    session_id: None,
                     model: phenix_core::ModelId::parse("model-a").unwrap(),
                     input: b"hello".to_vec().into(),
                     options: BTreeMap::new(),

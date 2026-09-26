@@ -314,6 +314,7 @@ fn policy(max_input: u64) -> UsagePolicy {
 
 fn request(max_input: u64) -> PlannedStepRequest {
     PlannedStepRequest {
+        session_id: None,
         attribution: UsageAttribution {
             root_execution_id: "root".into(),
             execution_id: "root".into(),

@@ -1,6 +1,6 @@
 use crate::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
-    ModelId, PhenixSchema, PhenixValue, ServiceId, SkillId,
+    ModelId, PhenixSchema, PhenixValue, ServiceId, SessionId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -112,6 +112,8 @@ pub struct ModelCacheControl {
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelInferenceRequest {
     pub model: ModelId,
+    #[serde(default)]
+    pub session_id: Option<SessionId>,
     pub input: Bytes,
     #[serde(default)]
     pub options: BTreeMap<String, PhenixValue>,

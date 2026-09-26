@@ -162,6 +162,7 @@ mod tests {
     #[test]
     fn report_reflects_exact_model_visible_tools_and_skill_sections() {
         let request = ModelInferenceRequest {
+            session_id: None,
             model: ModelId::parse("fixture-introspection").unwrap(),
             input: Bytes::new(
                 b"--- phenix instruction [phenix] ---\nidentity\n\n--- phenix skill [skills/review/SKILL.md] ---\nreview carefully\n\n--- phenix project-context [README.md] ---\nproject body\n\n--- phenix request [user] ---\nlist what you can see\n"
@@ -195,6 +196,7 @@ mod tests {
     #[test]
     fn raw_unmaterialized_input_is_reported_as_the_request() {
         let request = ModelInferenceRequest {
+            session_id: None,
             model: ModelId::parse("fixture-introspection").unwrap(),
             input: Bytes::new(b"hello".to_vec()),
             options: BTreeMap::new(),
