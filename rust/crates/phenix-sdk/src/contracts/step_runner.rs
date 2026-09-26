@@ -229,7 +229,7 @@ pub enum StepRunnerCommand {
     },
     RunResolved {
         request: PlannedStepRequest,
-        decision: RouteDecision,
+        decision: Box<RouteDecision>,
     },
 }
 
