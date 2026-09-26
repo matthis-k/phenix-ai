@@ -1706,15 +1706,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-runtime"
-version = "0.1.0"
-dependencies = [
- "phenix-client",
- "phenix-core",
- "serde_json",
-]
-
-[[package]]
 name = "phenix-contract"
 version = "0.1.0"
 dependencies = [
@@ -1754,10 +1745,10 @@ dependencies = [
  "parking_lot",
  "phenix-acp-stdio",
  "phenix-application-interface",
- "phenix-runtime",
  "phenix-core",
  "phenix-plugin-catalog",
  "phenix-provider-sdk",
+ "phenix-runtime",
  "phenix-sdk",
  "serde",
  "serde_json",
@@ -2133,6 +2124,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "phenix-runtime"
+version = "0.1.0"
+dependencies = [
+ "phenix-client",
+ "phenix-core",
+ "serde_json",
 ]
 
 [[package]]

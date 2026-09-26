@@ -5,8 +5,8 @@ use phenix_core::{
     ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    ExecutionInterface, ExecutionResourceInterface, StepAttemptInterface,
-    StepTransactionInterface, WorkspaceInterface,
+    ExecutionInterface, ExecutionResourceInterface, StepAttemptInterface, StepTransactionInterface,
+    WorkspaceInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
