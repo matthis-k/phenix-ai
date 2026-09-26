@@ -1,6 +1,6 @@
 # Success-normalized efficiency evaluation
 
-status: implementation-in-progress
+status: implemented
 
 Tracks #516 slices 1 and 10 plus the rollout rule in `token-efficiency.md`.
 
@@ -21,7 +21,7 @@ Merged runtime work records typed usage, cache counters where available, attempt
 
 ## Required implementation
 
-- [ ] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. (Settled attempts already normalize plan/route/context projection/actual usage and durable root-attempt collection is implemented. Terminal evidence is provider-resolved rather than caller-supplied, and `phenix.benchmark-outcomes` now supplies canonical immutable benchmark/test evidence. Remaining: include delegated attempts once the delegated worker path in #593 is active.)
+- [x] Build derived efficiency records from existing durable attempt, usage, routing, context, delegation, and outcome facts. The collector reads the complete durable root-attempt set. `UsageAttemptKind::Delegated` records emitted by the #593 worker use the same root identity, so they enter the same derivation without a second collector. The durable derivation regression covers root plus delegated work and parent reacquisition without double-counting.
 - [x] Keep fresh input, cache reads, cache writes, output, reasoning, retries, reacquisition, latency, and cost separate in the evaluation contract/report. (Helper/delegated source-record construction remains.)
 - [x] Define task-level success/outcome evidence without creating a second canonical task state; derived task records require a matching evaluator/source evidence identity and revision.
 - [x] Compare policy variants only after validating the same task fixture set.
