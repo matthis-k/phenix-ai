@@ -16,7 +16,7 @@ use phenix_sdk::{
     ExecutionResourceResponse, ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand,
     ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
     ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision, ReasoningBudget,
-    RouteSelection, RouteSelectionPolicy, RoutingEstimateMode, StepAttemptCommand,
+    RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingEstimateMode, StepAttemptCommand,
     StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
     StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
     StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
@@ -1809,15 +1809,14 @@ fn is_helper_attempt(kind: UsageAttemptKind) -> bool {
 }
 
 fn reservation_purpose(kind: UsageAttemptKind) -> Result<BudgetReservationPurpose, String> {
-    match kind {
-        UsageAttemptKind::Root => Ok(BudgetReservationPurpose::RootStep),
-        UsageAttemptKind::Retry => Ok(BudgetReservationPurpose::Retry),
-        UsageAttemptKind::Delegated => Ok(BudgetReservationPurpose::Delegation),
-        UsageAttemptKind::Helper => Ok(BudgetReservationPurpose::Helper),
-        UsageAttemptKind::Verification => Ok(BudgetReservationPurpose::Verification),
-        UsageAttemptKind::RecoveryClassifier => Ok(BudgetReservationPurpose::RecoveryClassifier),
-        _ => Err(format!("unsupported planned step attempt kind: {kind:?}")),
-    }
+    Ok(match kind {
+        UsageAttemptKind::Root => BudgetReservationPurpose::RootStep,
+        UsageAttemptKind::Retry => BudgetReservationPurpose::Retry,
+        UsageAttemptKind::Delegated => BudgetReservationPurpose::Delegation,
+        UsageAttemptKind::Helper => BudgetReservationPurpose::Helper,
+        UsageAttemptKind::Verification => BudgetReservationPurpose::Verification,
+        UsageAttemptKind::RecoveryClassifier => BudgetReservationPurpose::RecoveryClassifier,
+    })
 }
 
 fn parent_reservation(

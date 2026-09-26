@@ -4,7 +4,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     DecisionRecord, ExplorationCandidate, ExplorationCostEstimate, ExplorationOpportunity,
-    ExplorationPolicy, HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep,
+    HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep,
     PlanningCommand, PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
 };
 use serde::{Deserialize, Serialize};
@@ -699,7 +699,7 @@ mod tests {
                     child_cost_microunits: Some(100),
                     expected_result_input_tokens: 800,
                 },
-                policy: ExplorationPolicy {
+                policy: phenix_sdk::ExplorationPolicy {
                     enabled: true,
                     min_parent_input_tokens_saved: 1_000,
                     max_child_input_tokens: 2_000,

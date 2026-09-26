@@ -19,6 +19,7 @@ Tracks #516 slice 5.
 - [x] Durably admitted delegated tasks expose a read-only runnable projection for scheduler/recovery discovery; starting a task removes it from that projection without creating a second task store.
 - [x] Completed delegated results have a context-owned readmission operation that loads the exact result once, re-prepares current parent context, and commits through ordinary context admission.
 - [x] Delegated task bindings persist optional originating-attempt identity so later child/retry/reacquisition accounting has a stable parent attribution key.
+- [x] The delegated worker allocates its first charged attempt with that originating attempt as the parent and the durable task ID; retries inherit the same task identity and remain under the delegated reservation lineage.
 - [x] Delegated retries remain inside the delegated task lineage: retry eligibility includes the initial delegated attempt, retry validation stops at the delegated/root boundary, and allocated retries inherit the task identity/reservation lineage.
 - [x] Removed the dead delegated-task variants from the generic execution API; the execution-resource service is the single durable owner of delegated task admission/lifecycle state.
 
