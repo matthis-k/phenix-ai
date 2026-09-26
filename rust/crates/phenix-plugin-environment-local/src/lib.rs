@@ -1134,6 +1134,119 @@ mod tests {
         let _ = fs::remove_dir_all(outside);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn restricted_policies_block_symlink_escape_for_direct_and_process_writes() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_file = outside.join("escape.txt");
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let mut kernel = restricted_kernel(
+            &root,
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
+        );
+
+        let direct = invoke_result(
+            &mut kernel,
+            EnvironmentCommand::WriteFile {
+                path: root.join("escape/direct.txt").to_string_lossy().into_owned(),
+                content: b"nope".to_vec(),
+                create_parents: false,
+            },
+        )
+        .unwrap_err();
+        assert!(direct.contains("confined write") || direct.contains("confined open"));
+        assert!(!outside.join("direct.txt").exists());
+
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    r#"printf nope > escape/process.txt"#.into(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            process,
+            EnvironmentResponse::Process { exit_code, .. } if exit_code != 0
+        ));
+        assert!(!outside.join("process.txt").exists());
+        assert!(!outside_file.exists());
+
+        let _ = fs::remove_file(root.join("escape"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn restricted_persistent_process_keeps_descendants_confined() {
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_write = outside.join("persistent.txt");
+        let mut kernel = restricted_kernel(
+            &root,
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
+        );
+
+        let handle = match invoke(
+            &mut kernel,
+            EnvironmentCommand::OpenProcess {
+                program: "sh".into(),
+                arguments: Vec::new(),
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        ) {
+            EnvironmentResponse::ProcessOpened { handle } => handle,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        let command = format!(
+            "sh -c 'printf inside > nested.txt; printf nope > "$1"' sh {}; exit\n",
+            outside_write.to_string_lossy()
+        );
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                EnvironmentCommand::WriteProcess {
+                    handle: handle.clone(),
+                    input: command.into_bytes(),
+                },
+            ),
+            EnvironmentResponse::Written
+        ));
+
+        let mut exited = false;
+        for _ in 0..100 {
+            if let EnvironmentResponse::ProcessOutput { exit_code, .. } = invoke(
+                &mut kernel,
+                EnvironmentCommand::PollProcess {
+                    handle: handle.clone(),
+                },
+            ) {
+                if exit_code.is_some() {
+                    exited = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(exited);
+        assert_eq!(fs::read(root.join("nested.txt")).unwrap(), b"inside");
+        assert!(!outside_write.exists());
+        let _ = invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle });
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
     #[test]
     fn local_provider_supports_persistent_process_handles() {
         let root = temp_root();
