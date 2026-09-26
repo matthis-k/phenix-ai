@@ -161,17 +161,6 @@ impl LocalEnvironment {
         }
     }
 
-    fn require_native_policy(&self, operation: &str) -> Result<(), String> {
-        if self.filesystem_policy == EnvironmentFilesystemPolicy::Unrestricted {
-            Ok(())
-        } else {
-            Err(format!(
-                "local environment policy {:?} has no enforcing backend for {operation}; refusing unrestricted fallback",
-                self.filesystem_policy
-            ))
-        }
-    }
-
     fn resolve(&self, path: &str) -> PathBuf {
         let path = Path::new(path);
         if path.is_absolute() {
@@ -181,9 +170,51 @@ impl LocalEnvironment {
         }
     }
 
-    // This is the only process-construction path for the unrestricted local provider.
-    // Restricted local policies must replace this native construction with an enforcing
-    // launcher before spawn; callers and executable identity never bypass that boundary.
+    fn requested_working_directory(&self, working_directory: Option<&str>) -> Result<PathBuf, String> {
+        let cwd = working_directory
+            .map(|path| self.resolve(path))
+            .unwrap_or_else(|| self.root.clone());
+        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted
+            && !cwd.starts_with(&self.root)
+        {
+            return Err(format!(
+                "restricted local environment working directory escapes root: {}",
+                cwd.display()
+            ));
+        }
+        Ok(cwd)
+    }
+
+    fn add_parent_dirs(command: &mut Command, path: &Path) {
+        let mut parents = path.ancestors().collect::<Vec<_>>();
+        parents.reverse();
+        for parent in parents {
+            if parent.as_os_str().is_empty() || parent == Path::new("/") || parent == path {
+                continue;
+            }
+            command.arg("--dir").arg(parent);
+        }
+    }
+
+    fn add_runtime_readonly_paths(command: &mut Command) {
+        for path in ["/nix/store", "/usr", "/bin", "/lib", "/lib64"] {
+            command.arg("--ro-bind-try").arg(path).arg(path);
+        }
+        command.arg("--dir").arg("/etc");
+        for path in [
+            "/etc/ld.so.cache",
+            "/etc/ld.so.conf",
+            "/etc/nsswitch.conf",
+            "/etc/resolv.conf",
+            "/etc/hosts",
+            "/etc/ssl",
+        ] {
+            command.arg("--ro-bind-try").arg(path).arg(path);
+        }
+    }
+
+    // All Environment-mediated process creation goes through this method.
+    // Restricted policies compile to a Bubblewrap filesystem view before spawn.
     fn process_command(
         &self,
         program: &str,
@@ -191,15 +222,53 @@ impl LocalEnvironment {
         working_directory: Option<&str>,
         environment: &BTreeMap<String, String>,
     ) -> Result<Command, String> {
-        self.require_native_policy("process spawn")?;
-        let mut command = Command::new(program);
-        command.args(arguments);
-        command.current_dir(
-            working_directory
-                .map(|path| self.resolve(path))
-                .unwrap_or_else(|| self.root.clone()),
-        );
-        command.envs(environment);
+        let cwd = self.requested_working_directory(working_directory)?;
+        if self.filesystem_policy == EnvironmentFilesystemPolicy::Unrestricted {
+            let mut command = Command::new(program);
+            command.args(arguments);
+            command.current_dir(cwd);
+            command.envs(environment);
+            return Ok(command);
+        }
+
+        let mut command = Command::new("bwrap");
+        command
+            .arg("--die-with-parent")
+            .arg("--new-session")
+            .arg("--unshare-user")
+            .arg("--unshare-pid")
+            .arg("--proc")
+            .arg("/proc")
+            .arg("--dev")
+            .arg("/dev");
+
+        match self.filesystem_policy {
+            EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
+                command.arg("--ro-bind").arg("/").arg("/");
+                command.arg("--bind").arg(&self.root).arg(&self.root);
+            }
+            EnvironmentFilesystemPolicy::WorkingDirectoryOnly => {
+                Self::add_parent_dirs(&mut command, &self.root);
+                Self::add_runtime_readonly_paths(&mut command);
+                command.arg("--bind").arg(&self.root).arg(&self.root);
+            }
+        }
+
+        command
+            .arg("--tmpfs")
+            .arg("/tmp")
+            .arg("--setenv")
+            .arg("TMPDIR")
+            .arg("/tmp")
+            .arg("--chdir")
+            .arg(&cwd);
+
+        for (key, value) in environment {
+            command.arg("--setenv").arg(key).arg(value);
+        }
+
+        command.arg("--").arg(program).args(arguments);
         Ok(command)
     }
 }
@@ -211,6 +280,19 @@ impl PluginInstance for LocalEnvironment {
                 "local environment root is not a directory: {}",
                 self.root.display()
             ));
+        }
+        self.root = fs::canonicalize(&self.root)
+            .map_err(|error| format!("canonicalize local environment root: {error}"))?;
+        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+            let status = Command::new("bwrap")
+                .arg("--version")
+                .status()
+                .map_err(|error| format!(
+                    "restricted local environment requires bubblewrap: {error}"
+                ))?;
+            if !status.success() {
+                return Err("restricted local environment bubblewrap probe failed".into());
+            }
         }
         Ok(())
     }
@@ -258,8 +340,17 @@ impl LocalEnvironment {
                 },
             }),
             EnvironmentCommand::Stat { path } => {
-                self.require_native_policy("direct filesystem stat")?;
                 let resolved = self.resolve(&path);
+                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                    let canonical = fs::canonicalize(&resolved)
+                        .map_err(|error| format!("canonicalize stat {path}: {error}"))?;
+                    if !canonical.starts_with(&self.root) {
+                        return Err(format!(
+                            "environment filesystem policy denies stat outside working directory: {}",
+                            resolved.display()
+                        ));
+                    }
+                }
                 let kind = match fs::metadata(&resolved) {
                     Ok(metadata) if metadata.is_file() => Some(EnvironmentFileKind::File),
                     Ok(metadata) if metadata.is_dir() => Some(EnvironmentFileKind::Directory),
@@ -270,8 +361,17 @@ impl LocalEnvironment {
                 Ok(EnvironmentResponse::Metadata { kind })
             }
             EnvironmentCommand::ReadFile { path } => {
-                self.require_native_policy("direct filesystem read")?;
                 let resolved = self.resolve(&path);
+                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                    let canonical = fs::canonicalize(&resolved)
+                        .map_err(|error| format!("canonicalize read {path}: {error}"))?;
+                    if !canonical.starts_with(&self.root) {
+                        return Err(format!(
+                            "environment filesystem policy denies read outside working directory: {}",
+                            resolved.display()
+                        ));
+                    }
+                }
                 let content = match fs::read(&resolved) {
                     Ok(content) => Some(content),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -284,8 +384,20 @@ impl LocalEnvironment {
                 content,
                 create_parents,
             } => {
-                self.require_native_policy("direct filesystem write")?;
                 let resolved = self.resolve(&path);
+                if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+                    let parent = resolved.parent().ok_or_else(|| {
+                        format!("write path has no parent: {}", resolved.display())
+                    })?;
+                    let canonical_parent = fs::canonicalize(parent)
+                        .map_err(|error| format!("canonicalize write parent for {path}: {error}"))?;
+                    if !canonical_parent.starts_with(&self.root) {
+                        return Err(format!(
+                            "environment filesystem policy denies write outside working directory: {}",
+                            resolved.display()
+                        ));
+                    }
+                }
                 if create_parents {
                     if let Some(parent) = resolved.parent() {
                         fs::create_dir_all(parent)
@@ -296,8 +408,17 @@ impl LocalEnvironment {
                 Ok(EnvironmentResponse::Written)
             }
             EnvironmentCommand::ReadDir { path } => {
-                self.require_native_policy("direct directory read")?;
                 let resolved = self.resolve(&path);
+                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                    let canonical = fs::canonicalize(&resolved)
+                        .map_err(|error| format!("canonicalize directory {path}: {error}"))?;
+                    if !canonical.starts_with(&self.root) {
+                        return Err(format!(
+                            "environment filesystem policy denies directory read outside working directory: {}",
+                            resolved.display()
+                        ));
+                    }
+                }
                 let mut entries = fs::read_dir(&resolved)
                     .map_err(|error| format!("read directory {path}: {error}"))?
                     .collect::<Result<Vec<_>, _>>()
