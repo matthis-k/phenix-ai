@@ -2063,6 +2063,51 @@ mod tests {
         };
         assert_eq!(repeated, revisions);
 
+        let LanguageResponse::EntityRevisions {
+            revisions: located,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::IngestDocumentSymbolsWithEncoding {
+                observation_id: "lsp-symbols-1".into(),
+                repository_id: "repo-1".into(),
+                position_encoding: phenix_sdk::CodePositionEncoding::Utf16,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected source-located entity revisions");
+        };
+        assert_eq!(located, revisions);
+
+        let first = &revisions[0];
+        let LanguageResponse::EntitySourceLocator {
+            locator: Some(locator),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntitySourceLocator {
+                repository_id: first.entity.repository_id.clone(),
+                entity_id: first.entity.id.clone(),
+                revision: first.revision.clone(),
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected source locator for normalized entity revision");
+        };
+        assert_eq!(locator.entity, first.entity);
+        assert_eq!(locator.revision, first.revision);
+        assert_eq!(locator.document, fallback.document);
+        assert_eq!(
+            locator.position_encoding,
+            phenix_sdk::CodePositionEncoding::Utf16
+        );
+        assert_eq!(locator.range.start.line, 0);
+        assert_eq!(locator.range.start.character, 0);
+        assert_eq!(locator.range.end.line, 0);
+        assert_eq!(locator.range.end.character, 34);
+        assert_eq!(locator.selection_range.start.character, 7);
+        assert_eq!(locator.selection_range.end.character, 12);
+
         let LanguageResponse::EntityChanges { page } = invoke(
             &mut kernel,
             LanguageCommand::GetEntityChanges {
