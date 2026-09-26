@@ -150,7 +150,7 @@ fn persistence_authority() -> Authority {
 
 fn persistence_read_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid"),
+        CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid")
     ])
 }
 
