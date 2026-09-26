@@ -498,8 +498,8 @@ mod tests {
     use super::*;
     use crate::workspace_component_manifest;
     use phenix_core::{
-        ComponentExport, ComponentId, ComponentManifest, Kernel, KernelConfig, PhenixValue, Project,
-        ResolvedHarness, ResolvedHarnessActivation,
+        ComponentExport, ComponentId, ComponentManifest, Kernel, KernelConfig, PhenixValue,
+        Project, ResolvedHarness, ResolvedHarnessActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -572,7 +572,9 @@ mod tests {
             host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
             if service != &environment_service() {
-                return Err(format!("unsupported fixture environment service: {service}"));
+                return Err(format!(
+                    "unsupported fixture environment service: {service}"
+                ));
             }
 
             let context = PluginContext::new(host, (), (), ());
@@ -601,11 +603,7 @@ mod tests {
                     stderr: Vec::new(),
                     truncated: false,
                 },
-                other => {
-                    return Err(format!(
-                        "unexpected fixture environment command: {other:?}"
-                    ))
-                }
+                other => return Err(format!("unexpected fixture environment command: {other:?}")),
             };
 
             context
