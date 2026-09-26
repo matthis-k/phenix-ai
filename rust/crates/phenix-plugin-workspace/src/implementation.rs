@@ -4,10 +4,9 @@ use phenix_core::{
 };
 use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface,
-    EnvironmentResponse,
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
-    WORKSPACE_SERVICE,
+    EnvironmentResponse, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
