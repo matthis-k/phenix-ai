@@ -826,12 +826,71 @@ mod delegated_worker_runtime {
         let StepAttemptResponse::Attempts { attempts } = attempts else {
             panic!("expected root attempt list");
         };
-        assert!(attempts.iter().any(|attempt| {
-            attempt.attribution.kind == UsageAttemptKind::Delegated
-                && attempt.attribution.task_id.as_deref() == Some("delegated-task-1")
-                && attempt.attribution.parent_attempt_id.as_deref() == Some("root-attempt")
-                && attempt.outcome == Some(AttemptOutcome::Succeeded)
-        }));
+        let delegated_attempt = attempts
+            .iter()
+            .find(|attempt| {
+                attempt.attribution.kind == UsageAttemptKind::Delegated
+                    && attempt.attribution.task_id.as_deref() == Some("delegated-task-1")
+                    && attempt.attribution.parent_attempt_id.as_deref() == Some("root-attempt")
+                    && attempt.outcome == Some(AttemptOutcome::Succeeded)
+            })
+            .expect("delegated attempt must be durably attributed");
+        let root_attempt = attempts
+            .iter()
+            .find(|attempt| attempt.attribution.attempt_id == "root-attempt")
+            .expect("originating attempt must remain available");
+        assert_eq!(root_attempt.reacquisition.len(), 1);
+        let reacquisition = &root_attempt.reacquisition[0];
+        assert_eq!(
+            reacquisition.reacquisition_id,
+            "delegation:delegated-task-1:parent-context"
+        );
+        assert_eq!(
+            reacquisition.cause_identity,
+            "delegation:delegated-task-1"
+        );
+        assert_eq!(
+            reacquisition.source_attempt_id.as_deref(),
+            Some(delegated_attempt.attribution.attempt_id.as_str())
+        );
+        assert!(matches!(
+            &reacquisition.fresh_input_tokens,
+            phenix_core::UsageQuantity::Estimated { value, .. } if *value > 0
+        ));
+
+        let replayed: DelegatedWorkerResponse = invoke(
+            &mut kernel,
+            delegated_worker_service(),
+            &DelegatedWorkerCommand::RunTask {
+                task_id: "delegated-task-1".into(),
+                now_ms: 2_001,
+            },
+        )
+        .unwrap();
+        let DelegatedWorkerResponse::Processed {
+            parent_admitted, ..
+        } = replayed
+        else {
+            panic!("expected completed delegated task replay");
+        };
+        assert!(parent_admitted);
+
+        let attempts: StepAttemptResponse = invoke(
+            &mut kernel,
+            step_attempt_service(),
+            &StepAttemptCommand::ListRoot {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attempts { attempts } = attempts else {
+            panic!("expected root attempt list after replay");
+        };
+        let root_attempt = attempts
+            .iter()
+            .find(|attempt| attempt.attribution.attempt_id == "root-attempt")
+            .expect("originating attempt must remain available");
+        assert_eq!(root_attempt.reacquisition.len(), 1);
 
         let idle: DelegatedWorkerResponse = invoke(
             &mut kernel,
