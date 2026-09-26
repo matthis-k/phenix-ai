@@ -1,6 +1,7 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentInterface, ContentReference, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
+    ServiceId,
 };
 use phenix_plugin_artifacts::{
     ArtifactCommand, ArtifactInterface, ArtifactProvenance, ArtifactResponse,
@@ -436,12 +437,15 @@ fn process_reference(
             content: content.to_vec(),
             provenance,
         }) {
-        Ok(ArtifactResponse::Stored { artifact, .. }) => {
-            (Some(artifact.content_reference("application/octet-stream")), None)
-        }
+        Ok(ArtifactResponse::Stored { artifact, .. }) => (
+            Some(artifact.content_reference("application/octet-stream")),
+            None,
+        ),
         Ok(other) => (
             None,
-            Some(format!("artifact store returned an unexpected response: {other:?}")),
+            Some(format!(
+                "artifact store returned an unexpected response: {other:?}"
+            )),
         ),
         Err(error) => (None, Some(format!("artifact store unavailable: {error}"))),
     }

@@ -3092,8 +3092,7 @@ mod tests {
         assert_eq!(reference.bytes, 1_048_577);
         assert!(stdout_reference_error.is_none());
 
-        let phenix_core::ContentLocator::Service { service, resource } =
-            reference.locator.clone()
+        let phenix_core::ContentLocator::Service { service, resource } = reference.locator.clone()
         else {
             panic!("process artifacts must use the artifact service locator");
         };
