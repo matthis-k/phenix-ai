@@ -420,6 +420,7 @@ mod tests {
 
         StepPlan {
             policy_revision: "policy-1".into(),
+            historical_estimator_snapshot: None,
             routing: RoutingRequirements {
                 context: ContextDemand::default(),
                 required_capabilities: BTreeSet::new(),
