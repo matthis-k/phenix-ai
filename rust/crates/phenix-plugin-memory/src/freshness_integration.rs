@@ -185,6 +185,7 @@ impl PluginInstance for RevalidationProvider {
             }
         };
         serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {
+            attempt_id: "fixture-helper-attempt".into(),
             output: Bytes::new(output),
             tool_calls: Vec::new(),
         }))

@@ -16,6 +16,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Context can request a reduction from the optional backend only for the current projection, then revalidates every returned proposal against the pinned request and current projection before exposing it; the backend still has no commit path.
 - [x] Reducer stages are independently opt-in at the context owner; the default context factory enables none, and disabled stages fail before invoking an optional backend.
 - [x] The optional reducer import executes with empty authority and can only return a proposal; canonical context, persistence, routing, memory, and usage-policy mutation remain context/owner-controlled.
+- [x] Ordinary helper invocation responses expose the durable charged attempt ID, so reducer backends can return verifiable helper-attempt evidence instead of inventing an opaque accounting identifier.
 
 ## Required implementation
 
@@ -42,7 +43,7 @@ Phenix owns the reducer contract and evaluation. External learned models/provide
 
 ## Baseline and dependencies
 
-Checked against `main` at `46aa246361a7`. Extend the existing context proposal/commit mechanism and ordinary helper-attempt accounting. #592 supplies exact observation capture; #591 owns cache/layout policy; #599 must supply evaluation before default enablement. #594 can narrow code evidence when available, but a code graph is optional. Evaluation must also work with file/search baselines.
+Checked against `main` at `46aa246361a7`. Extend the existing context proposal/commit mechanism and ordinary helper-attempt accounting. #592 supplies exact observation capture; #591 owns cache/layout policy; #599 must supply evaluation before default enablement. Helper invocation now returns its durable attempt identity; reducer proposal validation still needs to bind that identity to the recorded helper attempt before attribution is complete. #594 can narrow code evidence when available, but a code graph is optional. Evaluation must also work with file/search baselines.
 
 ## Implementation draft
 

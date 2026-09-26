@@ -509,11 +509,18 @@ impl PluginInstance for InvocationPackage {
             let response: StepRunnerResponse =
                 value.project().map_err(|error| error.to_string())?;
             let StepRunnerResponse::Completed {
-                output, tool_calls, ..
+                attempt,
+                output,
+                tool_calls,
+                ..
             } = response;
             return context
                 .kernel
-                .encode_value(&HelperInvocationResponse { output, tool_calls })
+                .encode_value(&HelperInvocationResponse {
+                    attempt_id: attempt.attribution.attempt_id,
+                    output,
+                    tool_calls,
+                })
                 .map_err(|error| error.to_string());
         }
 
