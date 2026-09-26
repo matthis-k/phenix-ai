@@ -246,25 +246,25 @@ impl LocalEnvironment {
             .arg("--dev")
             .arg("/dev");
 
-        match self.filesystem_policy {
+        let scratch = match self.filesystem_policy {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
                 command.arg("--ro-bind").arg("/").arg("/");
+                "/phenix-tmp"
             }
             EnvironmentFilesystemPolicy::WorkingDirectoryOnly => {
                 Self::add_parent_dirs(&mut command, &self.root);
                 Self::add_runtime_readonly_paths(&mut command);
+                "/tmp"
             }
-        }
+        };
 
-        command
-            .arg("--tmpfs")
-            .arg("/tmp");
+        command.arg("--tmpfs").arg(scratch);
         command.arg("--bind").arg(&self.root).arg(&self.root);
         command
             .arg("--setenv")
             .arg("TMPDIR")
-            .arg("/tmp")
+            .arg(scratch)
             .arg("--chdir")
             .arg(&cwd);
 
