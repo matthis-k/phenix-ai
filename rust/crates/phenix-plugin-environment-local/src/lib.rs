@@ -763,58 +763,141 @@ mod tests {
         let _ = fs::remove_dir_all(outside);
     }
 
+    fn restricted_kernel(
+        root: &Path,
+        policy: EnvironmentFilesystemPolicy,
+    ) -> Kernel {
+        let manifest = local_environment_manifest();
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        let provider_root = root.to_path_buf();
+        kernel
+            .register_embedded_factory(plugin, move || {
+                local_environment_factory_for_policy(provider_root.clone(), policy)
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+        kernel
+    }
+
     #[test]
-    fn restricted_local_policies_fail_closed_until_enforcing_backend_exists() {
-        for policy in [
-            EnvironmentFilesystemPolicy::WorkingDirectoryOnly,
+    fn host_read_working_directory_write_confines_process_tree() {
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_read = outside.join("read.txt");
+        let outside_write = outside.join("write.txt");
+        fs::write(&outside_read, b"outside").unwrap();
+
+        let mut kernel = restricted_kernel(
+            &root,
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
-        ] {
-            let root = temp_root();
-            let manifest = local_environment_manifest();
-            let plugin = manifest.id.clone();
-            let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
-            let provider_root = root.clone();
-            kernel
-                .register_embedded_factory(plugin, move || {
-                    local_environment_factory_for_policy(provider_root.clone(), policy)
-                })
-                .unwrap();
-            kernel.activate_all().unwrap();
+        );
 
-            assert!(matches!(
-                invoke(&mut kernel, EnvironmentCommand::Describe),
-                EnvironmentResponse::Description { environment }
-                    if environment.filesystem_policy == policy
-            ));
-
-            for command in [
+        assert!(matches!(
+            invoke(
+                &mut kernel,
                 EnvironmentCommand::ReadFile {
-                    path: "value.txt".into(),
-                },
-                EnvironmentCommand::WriteFile {
-                    path: "value.txt".into(),
-                    content: b"nope".to_vec(),
-                    create_parents: true,
-                },
-                EnvironmentCommand::Exec {
-                    program: "sh".into(),
-                    arguments: vec!["-c".into(), "true".into()],
-                    working_directory: None,
-                    environment: BTreeMap::new(),
-                },
-                EnvironmentCommand::OpenProcess {
-                    program: "sh".into(),
-                    arguments: Vec::new(),
-                    working_directory: None,
-                    environment: BTreeMap::new(),
-                },
-            ] {
-                let error = invoke_result(&mut kernel, command).unwrap_err();
-                assert!(error.contains("refusing unrestricted fallback"));
-            }
+                    path: outside_read.to_string_lossy().into_owned(),
+                }
+            ),
+            EnvironmentResponse::File { content: Some(content) } if content == b"outside"
+        ));
+        assert!(invoke_result(
+            &mut kernel,
+            EnvironmentCommand::WriteFile {
+                path: outside_write.to_string_lossy().into_owned(),
+                content: b"nope".to_vec(),
+                create_parents: false,
+            },
+        )
+        .unwrap_err()
+        .contains("denies write outside working directory"));
 
-            let _ = fs::remove_dir_all(root);
-        }
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    "cat "$1" >/dev/null && printf ok > inside.txt && (printf nope > "$2")".into(),
+                    "sh".into(),
+                    outside_read.to_string_lossy().into_owned(),
+                    outside_write.to_string_lossy().into_owned(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            process,
+            EnvironmentResponse::Process { exit_code, .. } if exit_code != 0
+        ));
+        assert_eq!(fs::read(root.join("inside.txt")).unwrap(), b"ok");
+        assert!(!outside_write.exists());
+
+        let scratch = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    "printf scratch > "$TMPDIR/value" && cat "$TMPDIR/value"".into(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            scratch,
+            EnvironmentResponse::Process { exit_code: 0, stdout, .. }
+                if stdout == b"scratch"
+        ));
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn working_directory_only_hides_unrelated_host_data_and_confines_children() {
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_read = outside.join("read.txt");
+        fs::write(&outside_read, b"outside").unwrap();
+
+        let mut kernel =
+            restricted_kernel(&root, EnvironmentFilesystemPolicy::WorkingDirectoryOnly);
+
+        assert!(invoke_result(
+            &mut kernel,
+            EnvironmentCommand::ReadFile {
+                path: outside_read.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap_err()
+        .contains("denies read outside working directory"));
+
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    "printf ok > inside.txt; cat "$1" >/dev/null".into(),
+                    "sh".into(),
+                    outside_read.to_string_lossy().into_owned(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            process,
+            EnvironmentResponse::Process { exit_code, .. } if exit_code != 0
+        ));
+        assert_eq!(fs::read(root.join("inside.txt")).unwrap(), b"ok");
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
