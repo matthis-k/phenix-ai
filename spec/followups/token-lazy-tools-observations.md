@@ -13,6 +13,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Artifact content identities are bounded digest references independent of payload size.
 - [x] Workspace process capture now reports stdout/stderr completeness explicitly; truncation can no longer masquerade as exact output.
 - [x] Process capture computes full-stream byte counts and content digests before truncation, so bounded views retain a stable identity even before artifact persistence is wired.
+- [x] Workspace process capture persists exact stdout/stderr artifacts before bounded model projection and reports typed references or explicit persistence errors per stream.
 - [x] The tool service exposes bounded, revision-bound descriptor search with schema identities and selected schema loading; stale cursors and catalog revisions fail closed.
 - [x] The agent loop accepts conflict-checked schema activations from an authorized tool executor and projects newly activated descriptors only into the following model turn, enabling portable deferred loading without replaying the session.
 - [x] Usage planning now makes eager schemas the deterministic default: all allowed tools are initial and bounded by `max_tool_schemas`; deferred initial/expandable sets require the explicit `tools.deferred_schemas` routing capability.
@@ -23,7 +24,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [ ] Load full schemas only for the selected task-relevant tool set.
 - [x] Preserve a deterministic eager fallback for providers without deferred tool support.
 - [ ] Define one typed tool observation with compact model view, exact source/artifact reference, content identity, and invalidation metadata.
-- [ ] Promote large raw outputs to artifacts before collapsing their model view.
+- [x] Promote large raw outputs to artifacts before collapsing their model view.
 - [ ] Reuse unchanged observations only when the tool declares safe invalidation semantics.
 - [ ] Run deterministic filtering/joining/aggregation outside the frontier-model context.
 - [ ] Keep tool call/result groups intact across pruning and compaction.
@@ -31,7 +32,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 ## Acceptance
 
 - [ ] Inactive tool schemas do not enter a deferred-capable model request.
-- [ ] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
+- [x] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
 - [ ] Repeated unchanged observations avoid reinserting the full payload.
 - [ ] Volatile shell output is never reused merely because command text matches.
 - [ ] Disabling lazy/result reduction restores a bounded eager path or typed exhaustion.
@@ -42,7 +43,7 @@ Tool plugins own semantic parsing and invalidation. Artifacts own exact payloads
 
 ## Baseline and dependencies
 
-Checked against `main` at `46aa246361a7`. Reuse `StepPlan.tools`, `ContentReference`, and the artifact plugin's `RecordRead`/`LookupRead` dependency checks. They already implement parts of exact retention and reuse. `phenix-plugin-command-toolbelt` inventories executables; process capture belongs to the workspace/process provider. Its current `capture` truncates bytes and decodes UTF-8 lossily, so exact large-output recovery requires an earlier capture change. Coordinate schema epoch changes with #591 and usage attribution with #599.
+Checked against `main` at `46aa246361a7`. Reuse `StepPlan.tools`, `ContentReference`, and the artifact plugin's `RecordRead`/`LookupRead` dependency checks. They already implement parts of exact retention and reuse. `phenix-plugin-command-toolbelt` inventories executables; process capture belongs to the workspace/process provider. Process capture now persists the exact raw stdout/stderr artifacts before constructing the bounded UTF-8-lossy model view; failed artifact persistence is explicit per stream. Coordinate schema epoch changes with #591 and usage attribution with #599.
 
 ## Implementation draft
 

@@ -2749,6 +2749,9 @@ mod tests {
         RenameSession, ResumeSession,
     };
     use phenix_core::{Bytes, LocalPersistence, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_plugin_catalog::{
+        artifact_service, workspace_service, ArtifactCommand, ArtifactResponse,
+    };
     use std::{
         fs,
         path::PathBuf,
@@ -3055,6 +3058,67 @@ mod tests {
         assert_eq!(output["tag"], "Process");
         assert_eq!(output["value"]["exit_code"], 0);
         assert_eq!(output["value"]["stdout"], "phenix-runtime-bash");
+    }
+
+    #[test]
+    fn large_bash_output_keeps_a_recoverable_exact_reference() {
+        let worker = application_worker();
+        let command = WorkspaceCommand::Shell {
+            command: "head -c 1048577 /dev/zero | tr '\\000' x".into(),
+        };
+        let encoded = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+        let output = worker
+            .harness
+            .lock()
+            .invoke(&workspace_service(), &encoded, &worker.authority, None)
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = WorkspaceResponse::try_from(Project(&value)).unwrap();
+        let WorkspaceResponse::Process {
+            stdout,
+            stdout_complete,
+            stdout_bytes,
+            stdout_reference: Some(reference),
+            stdout_reference_error,
+            ..
+        } = response
+        else {
+            panic!("workspace shell must return a referenced process response");
+        };
+
+        assert_eq!(stdout.len(), 1024 * 1024);
+        assert!(!stdout_complete);
+        assert_eq!(stdout_bytes, Some(1_048_577));
+        assert_eq!(reference.bytes, 1_048_577);
+        assert!(stdout_reference_error.is_none());
+
+        let phenix_core::ContentLocator::Service { service, resource } =
+            reference.locator.clone()
+        else {
+            panic!("process artifacts must use the artifact service locator");
+        };
+        assert_eq!(service, artifact_service().as_str());
+
+        let get = ArtifactCommand::Get {
+            id: resource,
+            content_identity: reference.digest.to_string(),
+        };
+        let encoded = serde_json::to_vec(&PhenixValue::from(&get)).unwrap();
+        let output = worker
+            .harness
+            .lock()
+            .invoke(&artifact_service(), &encoded, &worker.authority, None)
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = ArtifactResponse::try_from(Project(&value)).unwrap();
+        let ArtifactResponse::Artifact {
+            artifact: Some(artifact),
+        } = response
+        else {
+            panic!("exact process artifact must be retrievable");
+        };
+        assert_eq!(artifact.content.len(), 1_048_577);
+        assert!(artifact.content.iter().all(|byte| *byte == b'x'));
     }
 
     #[test]

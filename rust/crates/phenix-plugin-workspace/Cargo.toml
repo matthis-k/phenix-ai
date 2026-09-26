@@ -9,6 +9,7 @@ role = "runtime-plugin"
 
 [dependencies]
 phenix-core = { path = "../phenix-core" }
+phenix-plugin-artifacts = { path = "../phenix-plugin-artifacts" }
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-sdk-macros = { path = "../phenix-sdk-macros" }
 serde.workspace = true

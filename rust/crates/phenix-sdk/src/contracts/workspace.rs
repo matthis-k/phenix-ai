@@ -1,4 +1,4 @@
-use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
+use phenix_core::{ComponentInterface, ContentReference, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 
@@ -118,5 +118,13 @@ pub enum WorkspaceResponse {
         stdout_content_hash: Option<String>,
         #[serde(default)]
         stderr_content_hash: Option<String>,
+        #[serde(default)]
+        stdout_reference: Option<ContentReference>,
+        #[serde(default)]
+        stderr_reference: Option<ContentReference>,
+        #[serde(default)]
+        stdout_reference_error: Option<String>,
+        #[serde(default)]
+        stderr_reference_error: Option<String>,
     },
 }
