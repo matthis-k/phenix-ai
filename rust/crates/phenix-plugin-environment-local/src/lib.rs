@@ -457,7 +457,7 @@ fn bounded(bytes: Vec<u8>) -> (Vec<u8>, bool) {
 mod tests {
     use super::*;
     use phenix_core::{Kernel, KernelConfig, PhenixValue, Project};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn temp_root() -> PathBuf {
         let nonce = SystemTime::now()
@@ -564,11 +564,37 @@ mod tests {
             ),
             EnvironmentResponse::Written
         ));
-        let closed = invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle });
+        let mut output = Vec::new();
+        let mut exited = false;
+        for _ in 0..100 {
+            match invoke(
+                &mut kernel,
+                EnvironmentCommand::PollProcess {
+                    handle: handle.clone(),
+                },
+            ) {
+                EnvironmentResponse::ProcessOutput {
+                    stdout, exit_code, ..
+                } => {
+                    output.extend(stdout);
+                    if exit_code.is_some() {
+                        exited = true;
+                        break;
+                    }
+                }
+                other => panic!("unexpected response: {other:?}"),
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(exited, "persistent process did not exit");
+        assert!(String::from_utf8_lossy(&output).contains("persistent"));
+
         assert!(matches!(
-            closed,
-            EnvironmentResponse::ProcessClosed { stdout, .. }
-                if String::from_utf8_lossy(&stdout).contains("persistent")
+            invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle }),
+            EnvironmentResponse::ProcessClosed {
+                exit_code: Some(0),
+                ..
+            }
         ));
     }
 }
