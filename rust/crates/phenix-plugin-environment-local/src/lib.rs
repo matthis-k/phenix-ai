@@ -22,6 +22,7 @@ use std::{
 pub const LOCAL_ENVIRONMENT_PLUGIN: &str = "phenix.environment.local";
 const LOCAL_ENVIRONMENT_COMPONENT: &str = "phenix.environment.local";
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+const LOCAL_FILESYSTEM_POLICY_ENV: &str = "PHENIX_LOCAL_FILESYSTEM_POLICY";
 
 #[must_use]
 pub fn local_environment_manifest() -> PluginManifest {
@@ -65,9 +66,8 @@ pub fn local_environment_component_manifest() -> ComponentManifest {
 
 #[must_use]
 pub fn local_environment_factory() -> Box<dyn PluginInstance> {
-    Box::new(LocalEnvironment::new(
+    Box::new(LocalEnvironment::configured(
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        EnvironmentFilesystemPolicy::Unrestricted,
     ))
 }
 
@@ -146,7 +146,7 @@ impl PersistentProcess {
 
 struct LocalEnvironment {
     root: PathBuf,
-    filesystem_policy: EnvironmentFilesystemPolicy,
+    filesystem_policy: Result<EnvironmentFilesystemPolicy, String>,
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
 }
@@ -155,10 +155,44 @@ impl LocalEnvironment {
     fn new(root: PathBuf, filesystem_policy: EnvironmentFilesystemPolicy) -> Self {
         Self {
             root,
+            filesystem_policy: Ok(filesystem_policy),
+            processes: BTreeMap::new(),
+            next_process_id: 1,
+        }
+    }
+
+    fn configured(root: PathBuf) -> Self {
+        let filesystem_policy = match std::env::var(LOCAL_FILESYSTEM_POLICY_ENV) {
+            Ok(value) => match value.as_str() {
+                "unrestricted" | "local" => Ok(EnvironmentFilesystemPolicy::Unrestricted),
+                "working-directory-only" | "working-dir" => {
+                    Ok(EnvironmentFilesystemPolicy::WorkingDirectoryOnly)
+                }
+                "host-read-working-directory-write" | "workdir-write" => {
+                    Ok(EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite)
+                }
+                _ => Err(format!(
+                    "{LOCAL_FILESYSTEM_POLICY_ENV} has unsupported value {value:?}"
+                )),
+            },
+            Err(std::env::VarError::NotPresent) => Ok(EnvironmentFilesystemPolicy::Unrestricted),
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+                "{LOCAL_FILESYSTEM_POLICY_ENV} must be valid UTF-8"
+            )),
+        };
+        Self {
+            root,
             filesystem_policy,
             processes: BTreeMap::new(),
             next_process_id: 1,
         }
+    }
+
+    fn filesystem_policy(&self) -> Result<EnvironmentFilesystemPolicy, String> {
+        self.filesystem_policy
+            .as_ref()
+            .copied()
+            .map_err(Clone::clone)
     }
 
     fn resolve(&self, path: &str) -> PathBuf {
@@ -177,11 +211,11 @@ impl LocalEnvironment {
         let mut cwd = working_directory
             .map(|path| self.resolve(path))
             .unwrap_or_else(|| self.root.clone());
-        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+        if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted {
             cwd = fs::canonicalize(&cwd)
                 .map_err(|error| format!("canonicalize restricted working directory: {error}"))?;
         }
-        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted
+        if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted
             && !cwd.starts_with(&self.root)
         {
             return Err(format!(
@@ -230,7 +264,7 @@ impl LocalEnvironment {
         environment: &BTreeMap<String, String>,
     ) -> Result<Command, String> {
         let cwd = self.requested_working_directory(working_directory)?;
-        if self.filesystem_policy == EnvironmentFilesystemPolicy::Unrestricted {
+        if self.filesystem_policy()? == EnvironmentFilesystemPolicy::Unrestricted {
             let mut command = Command::new(program);
             command.args(arguments);
             command.current_dir(cwd);
@@ -249,7 +283,7 @@ impl LocalEnvironment {
             .arg("--dev")
             .arg("/dev");
 
-        let scratch = match self.filesystem_policy {
+        let scratch = match self.filesystem_policy()? {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
                 command.arg("--ro-bind").arg("/").arg("/");
@@ -290,7 +324,7 @@ impl PluginInstance for LocalEnvironment {
         }
         self.root = fs::canonicalize(&self.root)
             .map_err(|error| format!("canonicalize local environment root: {error}"))?;
-        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+        if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted {
             let status = Command::new("bwrap")
                 .arg("--version")
                 .status()
@@ -301,6 +335,7 @@ impl PluginInstance for LocalEnvironment {
                 return Err("restricted local environment bubblewrap probe failed".into());
             }
         }
+        self.filesystem_policy()?;
         Ok(())
     }
 
@@ -341,7 +376,7 @@ impl LocalEnvironment {
             EnvironmentCommand::Describe => Ok(EnvironmentResponse::Description {
                 environment: EnvironmentDescription {
                     provider: LOCAL_ENVIRONMENT_PLUGIN.into(),
-                    filesystem_policy: self.filesystem_policy,
+                    filesystem_policy: self.filesystem_policy()?,
                     persistent_processes: true,
                     pty: false,
                 },
@@ -392,7 +427,7 @@ impl LocalEnvironment {
                 create_parents,
             } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+                if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted {
                     let parent = resolved.parent().ok_or_else(|| {
                         format!("write path has no parent: {}", resolved.display())
                     })?;
