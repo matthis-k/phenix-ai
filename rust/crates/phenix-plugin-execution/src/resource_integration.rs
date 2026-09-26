@@ -515,7 +515,8 @@ mod delegation_policy {
         let mut kernel = kernel(&path);
         register(&mut kernel);
         let child = authority(&["workspace.read"]);
-        let first_binding = binding(child.clone());
+        let mut first_binding = binding(child.clone());
+        first_binding.parent_plan = Some(step_plan(1));
         invoke(
             &mut kernel,
             ExecutionResourceCommand::AdmitDelegated {
@@ -529,7 +530,8 @@ mod delegation_policy {
             },
         )
         .unwrap();
-        let second_binding = binding(child.clone());
+        let mut second_binding = binding(child.clone());
+        second_binding.parent_plan = Some(step_plan(1));
         let error = invoke(
             &mut kernel,
             ExecutionResourceCommand::AdmitDelegated {
