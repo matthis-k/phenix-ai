@@ -81,6 +81,7 @@ const fn complete_capture() -> bool {
     true
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum WorkspaceResponse {

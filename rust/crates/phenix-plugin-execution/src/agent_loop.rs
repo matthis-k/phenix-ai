@@ -463,7 +463,7 @@ fn activate_tools(
             .iter()
             .find(|existing: &&ModelToolDescriptor| existing.id == tool.id)
         {
-            if *existing != &tool {
+            if *existing != tool {
                 return Err(format!(
                     "tool executor returned conflicting activated descriptors {}",
                     tool.id
