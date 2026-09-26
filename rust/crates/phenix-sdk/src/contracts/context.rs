@@ -1,8 +1,9 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
     CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
-    ContinuationExportResult, ContinuationImportProjection, ContinuationImportRequest,
-    ContinuationProjectionRequest, ProjectionRevision,
+    ContextReducerProposal, ContextReducerRequest, ContinuationExportResult,
+    ContinuationImportProjection, ContinuationImportRequest, ContinuationProjectionRequest,
+    ProjectionRevision,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
@@ -163,6 +164,9 @@ pub enum ContextCommand {
     Admit {
         request: ContextAdmissionRequest,
     },
+    RequestReduction {
+        request: ContextReducerRequest,
+    },
     EvaluateCompactionCost {
         request: CacheCompactionDecisionRequest,
     },
@@ -224,6 +228,9 @@ pub enum ContextResponse {
     Admission {
         result: ContextAdmissionResult,
         projection: ProjectionRevision,
+    },
+    ReductionProposed {
+        proposal: ContextReducerProposal,
     },
     CompactionCostDecision {
         decision: CacheCompactionDecision,

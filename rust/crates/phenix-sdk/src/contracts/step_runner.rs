@@ -265,6 +265,7 @@ pub enum DelegatedWorkerResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct HelperInvocationResponse {
+    pub attempt_id: String,
     pub output: Bytes,
     #[serde(default)]
     pub tool_calls: Vec<ModelToolCall>,

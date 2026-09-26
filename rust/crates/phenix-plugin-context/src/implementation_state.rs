@@ -16,15 +16,17 @@ use phenix_sdk::{
     ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
-    ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
-    ContextSource, ContinuationExportResult, ContinuationImportRequest,
-    ContinuationProjectionRequest, ExactContextReference, ExecutionCommand,
-    ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
+    ContextReducerCommand, ContextReducerInterface, ContextReducerRequest, ContextReducerResponse,
+    ContextReducerStage, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    ContextRetention, ContextScope, ContextSource, ContinuationExportResult,
+    ContinuationImportRequest, ContinuationProjectionRequest, ExactContextReference,
+    ExecutionCommand, ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
     WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 const CONTEXT_PLUGIN: &str = "phenix.context";
 const CONTEXT_NAMESPACE: &str = "phenix.context.state";
@@ -36,6 +38,7 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
+    reducer: SdkClient<'host, 'runtime, ContextReducerInterface>,
 }
 
 type ContextPluginContext<'host, 'runtime> =
@@ -49,6 +52,7 @@ fn context<'host, 'runtime>(
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
             resources: SdkClient::new(host, context_component_id()),
+            reducer: SdkClient::new(host, context_component_id()),
         },
         (),
         (),
@@ -79,8 +83,16 @@ pub fn context_manifest() -> PluginManifest {
 
 #[must_use]
 pub fn context_factory() -> Box<dyn PluginInstance> {
+    context_factory_with_reducer_stages(BTreeSet::new())
+}
+
+#[must_use]
+pub fn context_factory_with_reducer_stages(
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
+) -> Box<dyn PluginInstance> {
     Box::new(ContextPlugin {
         state: ContextStateService::default(),
+        enabled_reducer_stages,
     })
 }
 
@@ -94,6 +106,7 @@ fn capability(value: &str) -> CapabilityId {
 
 struct ContextPlugin {
     state: ContextStateService,
+    enabled_reducer_stages: BTreeSet<ContextReducerStage>,
 }
 
 impl PluginInstance for ContextPlugin {
@@ -126,11 +139,25 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
+        if let ContextCommand::RequestReduction { request } = &command {
+            require_reducer_stage_enabled(&self.enabled_reducer_stages, request.stage)?;
+        }
         let response = handle(&context, &mut self.state, command)?;
         context
             .kernel
             .encode_value(&response)
             .map_err(|error| error.to_string())
+    }
+}
+
+fn require_reducer_stage_enabled(
+    enabled: &BTreeSet<ContextReducerStage>,
+    stage: ContextReducerStage,
+) -> Result<(), String> {
+    if enabled.contains(&stage) {
+        Ok(())
+    } else {
+        Err(format!("context reducer stage {stage:?} is disabled"))
     }
 }
 
@@ -254,6 +281,10 @@ fn handle(
                 .map_err(|error| format!("cache compaction cost evaluation failed: {error:?}"))?;
             Ok(ContextResponse::CompactionCostDecision { decision })
         }
+        ContextCommand::RequestReduction { request } => {
+            require_active_execution(context, &request.execution_id)?;
+            request_reduction(context, state, request)
+        }
         ContextCommand::ExportContinuation { request } => {
             Ok(ContextResponse::ContinuationExported {
                 result: export_continuation(context, state, request)?,
@@ -272,6 +303,32 @@ fn handle(
             Err("context projection command leaked past state dispatcher".into())
         }
     }
+}
+
+fn request_reduction(
+    context: &ContextPluginContext<'_, '_>,
+    state: &ContextStateService,
+    request: ContextReducerRequest,
+) -> Result<ContextResponse, String> {
+    let actual_projection = state.projection_revision(&request.execution_id);
+    if request.expected_projection != actual_projection {
+        return Err(format!(
+            "context reducer request is stale: expected {:?}, actual {:?}",
+            request.expected_projection, actual_projection
+        ));
+    }
+    let response: ContextReducerResponse = context
+        .sdk
+        .reducer
+        .invoke_projected(&ContextReducerCommand::Reduce {
+            request: request.clone(),
+        })
+        .map_err(|error| format!("context reducer unavailable or failed: {error}"))?;
+    let ContextReducerResponse::Proposal { proposal } = response;
+    proposal
+        .validate_against(&request, &actual_projection)
+        .map_err(|error| format!("context reducer proposal rejected: {error:?}"))?;
+    Ok(ContextResponse::ReductionProposed { proposal })
 }
 
 fn import_continuation(

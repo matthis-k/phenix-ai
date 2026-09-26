@@ -103,6 +103,7 @@ impl PluginInstance for HelperProvider {
             }
         };
         serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {
+            attempt_id: "fixture-helper-attempt".into(),
             output: Bytes::new(output.as_bytes().to_vec()),
             tool_calls: Vec::new(),
         }))

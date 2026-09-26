@@ -35,11 +35,13 @@ pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
 pub use context_compaction::{
-    choose_cache_aware_compaction, CacheCompactionChoice, CacheCompactionCostError,
-    CacheCompactionDecision, CacheCompactionDecisionBasis, CacheCompactionDecisionRequest,
-    CacheCostScenario, CompactionCommit, CompactionProposal, CompactionValidationError,
-    ContextCheckpoint as ProjectionCheckpoint, ProjectionRevision, RetentionTransition,
-    ToolCallGroupReference,
+    choose_cache_aware_compaction, context_reducer_service, CacheCompactionChoice,
+    CacheCompactionCostError, CacheCompactionDecision, CacheCompactionDecisionBasis,
+    CacheCompactionDecisionRequest, CacheCostScenario, CompactionCommit, CompactionProposal,
+    CompactionValidationError, ContextCheckpoint as ProjectionCheckpoint, ContextReducerCommand,
+    ContextReducerInterface, ContextReducerProposal, ContextReducerRequest, ContextReducerResponse,
+    ContextReducerStage, DerivedReductionSummary, ProjectionRevision, ReducerEligibleItem,
+    ReducerValidationError, RetentionTransition, ToolCallGroupReference, CONTEXT_REDUCER_SERVICE,
 };
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;

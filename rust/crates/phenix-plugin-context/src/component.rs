@@ -3,8 +3,8 @@ use phenix_core::{
     ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest, PluginId,
 };
 use phenix_sdk::{
-    ContextCompactionInterface, ContextExpansionInterface, ContextInterface, ExecutionInterface,
-    ExecutionResourceInterface,
+    ContextCompactionInterface, ContextExpansionInterface, ContextInterface,
+    ContextReducerInterface, ExecutionInterface, ExecutionResourceInterface,
 };
 
 const CONTEXT_COMPONENT: &str = "phenix.context";
@@ -46,6 +46,12 @@ pub fn context_component_manifest() -> ComponentManifest {
             },
             optional_import::<ContextCompactionInterface>(&authority),
             optional_import::<ContextExpansionInterface>(&authority),
+            ComponentImport {
+                interface: ContextReducerInterface::interface_id(),
+                schema: ContextReducerInterface::schema(),
+                required: false,
+                authority: phenix_core::Authority::default(),
+            },
         ],
         exports: vec![ComponentExport {
             interface: ContextInterface::interface_id(),
@@ -129,5 +135,18 @@ mod tests {
             )
             .unwrap()
             .is_none());
+        assert!(graph
+            .import_handle(
+                &context_component_id(),
+                &ContextReducerInterface::interface_id()
+            )
+            .unwrap()
+            .is_none());
+        let reducer_import = context_component_manifest()
+            .imports
+            .into_iter()
+            .find(|import| import.interface == ContextReducerInterface::interface_id())
+            .expect("context declares the optional reducer backend");
+        assert_eq!(reducer_import.authority, Authority::default());
     }
 }
