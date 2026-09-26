@@ -1,6 +1,6 @@
 use super::{
-    AttemptOutcome, ProjectionRevision, ReacquisitionUsage, RouteDecision, StepPlan,
-    UsageAttemptKind, UsageAttribution,
+    AttemptOutcome, AttemptUsageRecord, BudgetActual, ProjectionRevision, ReacquisitionUsage,
+    RouteDecision, StepPlan, UsageAttemptKind, UsageAttribution,
 };
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,10 @@ pub struct StepAttemptRecord {
     pub outcome: Option<AttemptOutcome>,
     #[serde(default)]
     pub reacquisition: Vec<ReacquisitionUsage>,
+    #[serde(default)]
+    pub settled_actual: Option<BudgetActual>,
+    #[serde(default)]
+    pub usage: Option<AttemptUsageRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -54,6 +58,11 @@ pub enum StepAttemptTransitionError {
     },
     EmptyIdentity {
         field: String,
+    },
+    UsageAttributionMismatch,
+    UsageOutcomeMismatch {
+        expected: AttemptOutcome,
+        observed: AttemptOutcome,
     },
     InvalidReacquisitionPhase {
         actual: StepAttemptPhase,
@@ -90,6 +99,8 @@ impl StepAttemptRecord {
             dispatch_id: None,
             outcome: None,
             reacquisition: Vec::new(),
+            settled_actual: None,
+            usage: None,
         })
     }
 
@@ -153,6 +164,29 @@ impl StepAttemptRecord {
     pub fn settle(&mut self, outcome: AttemptOutcome) -> Result<(), StepAttemptTransitionError> {
         self.require_phase(StepAttemptPhase::Dispatched)?;
         self.outcome = Some(outcome);
+        self.phase = StepAttemptPhase::Settled;
+        Ok(())
+    }
+
+    pub fn settle_with_usage(
+        &mut self,
+        outcome: AttemptOutcome,
+        actual: BudgetActual,
+        usage: AttemptUsageRecord,
+    ) -> Result<(), StepAttemptTransitionError> {
+        self.require_phase(StepAttemptPhase::Dispatched)?;
+        if usage.attribution != self.attribution {
+            return Err(StepAttemptTransitionError::UsageAttributionMismatch);
+        }
+        if usage.outcome != outcome {
+            return Err(StepAttemptTransitionError::UsageOutcomeMismatch {
+                expected: outcome,
+                observed: usage.outcome,
+            });
+        }
+        self.outcome = Some(outcome);
+        self.settled_actual = Some(actual);
+        self.usage = Some(usage);
         self.phase = StepAttemptPhase::Settled;
         Ok(())
     }

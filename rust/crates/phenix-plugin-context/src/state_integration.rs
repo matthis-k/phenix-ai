@@ -120,6 +120,7 @@ fn plan(input_tokens: u64) -> StepPlan {
     };
     StepPlan {
         policy_revision: "policy-1".into(),
+        historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
             required_capabilities: BTreeSet::new(),
@@ -385,106 +386,6 @@ mod admission_restart {
     }
 }
 
-mod compaction_cas {
-    use super::*;
-
-    #[test]
-    fn prepare_and_commit_advance_one_projection_revision() {
-        let path = temp_db("compaction-cas");
-        let mut kernel = kernel(&path);
-        create_execution(&mut kernel, "exec-1");
-        invoke(
-            &mut kernel,
-            ContextCommand::Admit {
-                request: admission("exec-1"),
-            },
-        )
-        .unwrap();
-        invoke(
-            &mut kernel,
-            ContextCommand::PrepareCompaction {
-                proposal: proposal("exec-1", "checkpoint-1"),
-            },
-        )
-        .unwrap();
-        let committed = invoke(
-            &mut kernel,
-            ContextCommand::CommitCompaction {
-                execution_id: "exec-1".into(),
-                checkpoint_id: "checkpoint-1".into(),
-            },
-        )
-        .unwrap();
-        let ContextResponse::CompactionCommitted { commit } = committed else {
-            panic!("expected compaction commit");
-        };
-        assert_eq!(commit.committed_projection.revision, 2);
-        assert_eq!(commit.committed_projection.cache_epoch, 2);
-        let _ = fs::remove_file(path);
-    }
-}
-
-mod injection_invalidation {
-    use super::*;
-
-    #[test]
-    fn context_injection_invalidates_prepared_compaction_in_same_owner_state() {
-        let path = temp_db("injection-invalidation");
-        let mut kernel = kernel(&path);
-        create_execution(&mut kernel, "exec-1");
-        invoke(
-            &mut kernel,
-            ContextCommand::Admit {
-                request: admission("exec-1"),
-            },
-        )
-        .unwrap();
-        invoke(
-            &mut kernel,
-            ContextCommand::PrepareCompaction {
-                proposal: proposal("exec-1", "checkpoint-stale"),
-            },
-        )
-        .unwrap();
-        let registered = invoke(
-            &mut kernel,
-            ContextCommand::Register {
-                resource_id: ContextResourceId::parse("skill:steering").unwrap(),
-                kind: ContextResourceKind::Skill,
-                source: "skills/steering/SKILL.md".into(),
-                scope: ContextScope::Workspace,
-                content: b"new context".to_vec().into(),
-            },
-        )
-        .unwrap();
-        let ContextResponse::Registered { resource } = registered else {
-            panic!("expected registered resource");
-        };
-        invoke(
-            &mut kernel,
-            ContextCommand::Load {
-                execution_id: "exec-1".into(),
-                resource_id: resource.descriptor.resource_id,
-                revision: resource.descriptor.revision,
-                requester: ContextInjectionRequester::User,
-                lifetime: ContextInjectionLifetime::Execution,
-                reason: "steering".into(),
-            },
-        )
-        .unwrap();
-        let error = invoke(
-            &mut kernel,
-            ContextCommand::CommitCompaction {
-                execution_id: "exec-1".into(),
-                checkpoint_id: "checkpoint-stale".into(),
-            },
-        )
-        .unwrap_err();
-        assert!(error.contains("UnknownPreparedCheckpoint"));
-        let _ = fs::remove_file(path);
-    }
-}
-
 #[test]
 fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admission() {
     let path = temp_db("delegated-result-readmission");
@@ -652,4 +553,104 @@ fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admiss
     assert!(String::from_utf8_lossy(materialization.input.as_ref()).contains("delegated summary"));
 
     let _ = fs::remove_file(path);
+}
+
+mod compaction_cas {
+    use super::*;
+
+    #[test]
+    fn prepare_and_commit_advance_one_projection_revision() {
+        let path = temp_db("compaction-cas");
+        let mut kernel = kernel(&path);
+        create_execution(&mut kernel, "exec-1");
+        invoke(
+            &mut kernel,
+            ContextCommand::Admit {
+                request: admission("exec-1"),
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            ContextCommand::PrepareCompaction {
+                proposal: proposal("exec-1", "checkpoint-1"),
+            },
+        )
+        .unwrap();
+        let committed = invoke(
+            &mut kernel,
+            ContextCommand::CommitCompaction {
+                execution_id: "exec-1".into(),
+                checkpoint_id: "checkpoint-1".into(),
+            },
+        )
+        .unwrap();
+        let ContextResponse::CompactionCommitted { commit } = committed else {
+            panic!("expected compaction commit");
+        };
+        assert_eq!(commit.committed_projection.revision, 2);
+        assert_eq!(commit.committed_projection.cache_epoch, 2);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod injection_invalidation {
+    use super::*;
+
+    #[test]
+    fn context_injection_invalidates_prepared_compaction_in_same_owner_state() {
+        let path = temp_db("injection-invalidation");
+        let mut kernel = kernel(&path);
+        create_execution(&mut kernel, "exec-1");
+        invoke(
+            &mut kernel,
+            ContextCommand::Admit {
+                request: admission("exec-1"),
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            ContextCommand::PrepareCompaction {
+                proposal: proposal("exec-1", "checkpoint-stale"),
+            },
+        )
+        .unwrap();
+        let registered = invoke(
+            &mut kernel,
+            ContextCommand::Register {
+                resource_id: ContextResourceId::parse("skill:steering").unwrap(),
+                kind: ContextResourceKind::Skill,
+                source: "skills/steering/SKILL.md".into(),
+                scope: ContextScope::Workspace,
+                content: b"new context".to_vec().into(),
+            },
+        )
+        .unwrap();
+        let ContextResponse::Registered { resource } = registered else {
+            panic!("expected registered resource");
+        };
+        invoke(
+            &mut kernel,
+            ContextCommand::Load {
+                execution_id: "exec-1".into(),
+                resource_id: resource.descriptor.resource_id,
+                revision: resource.descriptor.revision,
+                requester: ContextInjectionRequester::User,
+                lifetime: ContextInjectionLifetime::Execution,
+                reason: "steering".into(),
+            },
+        )
+        .unwrap();
+        let error = invoke(
+            &mut kernel,
+            ContextCommand::CommitCompaction {
+                execution_id: "exec-1".into(),
+                checkpoint_id: "checkpoint-stale".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("UnknownPreparedCheckpoint"));
+        let _ = fs::remove_file(path);
+    }
 }
