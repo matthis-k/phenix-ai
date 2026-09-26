@@ -532,6 +532,72 @@ mod tests {
     }
 
     #[test]
+    fn local_provider_root_is_default_cwd_not_confinement() {
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_read = outside.join("read.txt");
+        let outside_direct_write = outside.join("direct-write.txt");
+        let outside_process_write = outside.join("process-write.txt");
+        fs::write(&outside_read, b"outside").unwrap();
+
+        let manifest = local_environment_manifest();
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        let provider_root = root.clone();
+        kernel
+            .register_embedded_factory(plugin, move || {
+                local_environment_factory_for(provider_root.clone())
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                EnvironmentCommand::ReadFile {
+                    path: outside_read.to_string_lossy().into_owned(),
+                }
+            ),
+            EnvironmentResponse::File { content: Some(content) } if content == b"outside"
+        ));
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                EnvironmentCommand::WriteFile {
+                    path: outside_direct_write.to_string_lossy().into_owned(),
+                    content: b"direct".to_vec(),
+                    create_parents: false,
+                }
+            ),
+            EnvironmentResponse::Written
+        ));
+        assert_eq!(fs::read(&outside_direct_write).unwrap(), b"direct");
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                EnvironmentCommand::Exec {
+                    program: "sh".into(),
+                    arguments: vec![
+                        "-c".into(),
+                        "printf process > \"$1\"".into(),
+                        "sh".into(),
+                        outside_process_write.to_string_lossy().into_owned(),
+                    ],
+                    working_directory: None,
+                    environment: BTreeMap::new(),
+                }
+            ),
+            EnvironmentResponse::Process { exit_code: 0, .. }
+        ));
+        assert_eq!(fs::read(&outside_process_write).unwrap(), b"process");
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
     fn local_provider_supports_persistent_process_handles() {
         let root = temp_root();
         let manifest = local_environment_manifest();
