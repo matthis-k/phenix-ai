@@ -383,7 +383,7 @@ impl LocalEnvironment {
             }),
             EnvironmentCommand::Stat { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
                     let canonical = fs::canonicalize(&resolved)
                         .map_err(|error| format!("canonicalize stat {path}: {error}"))?;
                     if !canonical.starts_with(&self.root) {
@@ -404,7 +404,7 @@ impl LocalEnvironment {
             }
             EnvironmentCommand::ReadFile { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
                     let canonical = fs::canonicalize(&resolved)
                         .map_err(|error| format!("canonicalize read {path}: {error}"))?;
                     if !canonical.starts_with(&self.root) {
@@ -452,7 +452,7 @@ impl LocalEnvironment {
             }
             EnvironmentCommand::ReadDir { path } => {
                 let resolved = self.resolve(&path);
-                if self.filesystem_policy == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
+                if self.filesystem_policy()? == EnvironmentFilesystemPolicy::WorkingDirectoryOnly {
                     let canonical = fs::canonicalize(&resolved)
                         .map_err(|error| format!("canonicalize directory {path}: {error}"))?;
                     if !canonical.starts_with(&self.root) {
