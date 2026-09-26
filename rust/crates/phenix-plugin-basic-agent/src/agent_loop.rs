@@ -1,9 +1,6 @@
-use crate::{
-    agent_loop_component_id, AgentLoopControlInterface, AgentLoopInterface,
-    AgentLoopProgressInterface, AgentToolExecutionInterface,
-};
 use phenix_core::{
-    Authority, Bytes, CallableId, ComponentInterface, ModelToolCall, ModelToolDescriptor,
+    Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
     SessionId,
@@ -21,6 +18,58 @@ pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
 pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
 pub const DEFAULT_MAX_MODEL_TURNS: u32 = 16;
 pub const DEFAULT_MAX_TOOL_CALLS_PER_TURN: u32 = 10;
+const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
+
+pub struct AgentLoopInterface;
+
+impl ComponentInterface for AgentLoopInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<AgentLoopCommand, AgentLoopResponse>()
+    }
+}
+
+pub struct AgentLoopControlInterface;
+
+impl ComponentInterface for AgentLoopControlInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(AGENT_LOOP_CONTROL_SERVICE)
+            .expect("static agent loop control interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<AgentLoopControlRequest, AgentLoopControlResponse>()
+    }
+}
+
+pub struct AgentToolExecutionInterface;
+
+impl ComponentInterface for AgentToolExecutionInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(AGENT_TOOL_EXECUTION_SERVICE)
+            .expect("static agent tool execution interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<AgentToolExecutionRequest, AgentToolExecutionResponse>()
+    }
+}
+
+pub struct AgentLoopProgressInterface;
+
+impl ComponentInterface for AgentLoopProgressInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(AGENT_LOOP_PROGRESS_SERVICE)
+            .expect("static agent loop progress interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<AgentLoopProgressRecord, AgentLoopProgressResponse>()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentLoopPolicy {
@@ -149,6 +198,11 @@ pub enum AgentLoopProgressResponse {
 }
 
 #[must_use]
+pub fn agent_loop_component_id() -> ComponentId {
+    ComponentId::parse(AGENT_LOOP_COMPONENT).expect("static agent loop component id is valid")
+}
+
+#[must_use]
 pub fn agent_loop_service() -> ServiceId {
     ServiceId::parse(AGENT_LOOP_SERVICE).expect("static agent loop service id is valid")
 }
@@ -185,6 +239,48 @@ pub fn agent_loop_manifest(maximum_authority: Authority) -> PluginManifest {
             required_authority: Authority::default(),
         }],
         resource_namespaces: Vec::new(),
+        maximum_authority,
+    }
+}
+
+#[must_use]
+pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentManifest {
+    ComponentManifest {
+        listeners: Vec::new(),
+        id: agent_loop_component_id(),
+        owner: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
+        imports: vec![
+            ComponentImport {
+                interface: DefaultInvocationInterface::interface_id(),
+                schema: DefaultInvocationInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
+            ComponentImport {
+                interface: AgentLoopControlInterface::interface_id(),
+                schema: AgentLoopControlInterface::schema(),
+                required: true,
+                authority: Authority::default(),
+            },
+            ComponentImport {
+                interface: AgentToolExecutionInterface::interface_id(),
+                schema: AgentToolExecutionInterface::schema(),
+                required: true,
+                authority: Authority::default(),
+            },
+            ComponentImport {
+                interface: AgentLoopProgressInterface::interface_id(),
+                schema: AgentLoopProgressInterface::schema(),
+                required: true,
+                authority: Authority::default(),
+            },
+        ],
+        exports: vec![ComponentExport {
+            interface: AgentLoopInterface::interface_id(),
+            schema: AgentLoopInterface::schema(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }],
         maximum_authority,
     }
 }
