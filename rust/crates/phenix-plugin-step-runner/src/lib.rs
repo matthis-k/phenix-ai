@@ -273,6 +273,7 @@ impl InvocationPackage {
         let step = StepRunnerCommand::Run {
             request: PlannedStepRequest {
                 attribution,
+                session_id: request.session_id,
                 profile_id: params.profile_id,
                 callable_id: request.callable_id,
                 input: request.input,

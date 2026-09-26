@@ -317,6 +317,7 @@ fn replacement_component_satisfies_the_same_basic_model_import_without_consumer_
     kernel.activate_all().unwrap();
 
     let request = ModelInferenceRequest {
+        session_id: None,
         model: ModelId::parse("same-request").unwrap(),
         input: b"hello".to_vec().into(),
         options: BTreeMap::new(),
