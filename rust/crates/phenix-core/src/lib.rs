@@ -70,8 +70,8 @@ pub use agent::{
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
     ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SkillCommand,
     SkillDefinition, SkillResponse, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand,
-    ToolDefinition, ToolResponse, UsageQuantity,
-    CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
+    ToolDefinition, ToolResponse, UsageQuantity, CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE,
+    SKILL_SERVICE, TOOL_SERVICE,
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;

@@ -1,6 +1,6 @@
 use crate::{
-    ArtifactRevision, Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
-    ModelId, PhenixSchema, PhenixValue, ServiceId, SkillId,
+    ArtifactRevision, Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId,
+    InterfaceId, ModelId, PhenixSchema, PhenixValue, ServiceId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -292,8 +292,12 @@ pub struct ToolCatalogCursor {
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ToolCommand {
-    Register { tool: ToolDefinition },
-    Get { id: CallableId },
+    Register {
+        tool: ToolDefinition,
+    },
+    Get {
+        id: CallableId,
+    },
     List,
     Search {
         query: String,
@@ -304,14 +308,21 @@ pub enum ToolCommand {
         ids: Vec<CallableId>,
         catalog_revision: ArtifactRevision,
     },
-    Invoke { id: CallableId, input: Bytes },
+    Invoke {
+        id: CallableId,
+        input: Bytes,
+    },
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum ToolResponse {
-    Tool { tool: Option<ToolDefinition> },
-    Tools { tools: Vec<ToolDefinition> },
+    Tool {
+        tool: Option<ToolDefinition>,
+    },
+    Tools {
+        tools: Vec<ToolDefinition>,
+    },
     Catalog {
         descriptors: Vec<ToolCatalogDescriptor>,
         next_cursor: Option<ToolCatalogCursor>,
@@ -321,7 +332,9 @@ pub enum ToolResponse {
         tools: Vec<ToolDefinition>,
         catalog_revision: ArtifactRevision,
     },
-    Output { output: Bytes },
+    Output {
+        output: Bytes,
+    },
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

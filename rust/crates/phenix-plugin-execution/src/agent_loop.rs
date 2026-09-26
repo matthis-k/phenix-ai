@@ -435,7 +435,10 @@ fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
     let mut ids = std::collections::BTreeSet::new();
     for tool in tools {
         if !ids.insert(tool.id.clone()) {
-            return Err(format!("agent loop received duplicate tool descriptor {}", tool.id));
+            return Err(format!(
+                "agent loop received duplicate tool descriptor {}",
+                tool.id
+            ));
         }
     }
     Ok(())

@@ -3000,7 +3000,8 @@ mod tests {
         let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
         let AgentToolExecutionResponse::Completed {
             result: rejected, ..
-        } = rejected else {
+        } = rejected
+        else {
             panic!("unadvertised tool must be reported as a tool failure");
         };
         assert!(rejected.is_error);

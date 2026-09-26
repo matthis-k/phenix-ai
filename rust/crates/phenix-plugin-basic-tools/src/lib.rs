@@ -1,8 +1,8 @@
 use phenix_core::{
-    Authority, CallableId, CapabilityId, ComponentId, ComponentInterface, ComponentManifest,
-    ArtifactRevision, InterfaceId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
-    ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition, ToolResponse,
-    TransactionOp, TOOL_SERVICE,
+    ArtifactRevision, Authority, CallableId, CapabilityId, ComponentId, ComponentInterface,
+    ComponentManifest, InterfaceId, PluginContext, PluginInstance, PluginManifest,
+    ResourceNamespace, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition,
+    ToolResponse, TransactionOp, TOOL_SERVICE,
 };
 use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 
@@ -96,7 +96,11 @@ fn handle(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        ToolCommand::Search { query, cursor, limit } => search_catalog(context, query, cursor, limit),
+        ToolCommand::Search {
+            query,
+            cursor,
+            limit,
+        } => search_catalog(context, query, cursor, limit),
         ToolCommand::LoadSchemas {
             ids,
             catalog_revision,
