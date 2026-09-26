@@ -12,15 +12,17 @@ use phenix_core::{
 use phenix_sdk::{
     assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
     context_service, derive_continuation_delta, project_continuation_import,
-    select_continuation_export, AdmittedContextItem, CachePlacement, ContextCandidate,
-    ContextCommand, ContextDescriptor, ContextInjection, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextInterface, ContextInvocationMaterialization,
-    ContextInvocationPreparation, ContextProjectionForm, ContextResourceKind,
-    ContextResourceRevision, ContextResponse, ContextRetention, ContextScope, ContextSource,
-    ContinuationExportResult, ContinuationImportRequest, ContinuationProjectionRequest,
-    ExactContextReference, ExecutionCommand, ExecutionContextProjection, ExecutionInterface,
-    ExecutionResponse, ExecutionState, ProjectedContextEntry, ProjectionCheckpoint,
-    ProjectionRevision, RepositoryContextSource,
+    select_continuation_export, AdmittedContextItem, CachePlacement, ContextAdmissionRequest,
+    ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
+    ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
+    ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
+    ContextSource, ContinuationExportResult, ContinuationImportRequest,
+    ContinuationProjectionRequest, ExactContextReference, ExecutionCommand,
+    ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
+    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
+    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
+    WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
 
@@ -33,6 +35,7 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
+    resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
 }
 
 type ContextPluginContext<'host, 'runtime> =
@@ -45,6 +48,7 @@ fn context<'host, 'runtime>(
         host,
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
+            resources: SdkClient::new(host, context_component_id()),
         },
         (),
         (),
@@ -176,6 +180,41 @@ fn handle(
             let (injection, resource) = load_context(
                 context,
                 state,
+                execution_id,
+                resource_id,
+                revision,
+                requester,
+                lifetime,
+                reason,
+            )?;
+            Ok(ContextResponse::Loaded {
+                injection,
+                resource,
+            })
+        }
+        ContextCommand::LoadDelegatedResult { task_id } => {
+            let (injection, resource) = load_delegated_result(context, state, task_id)?;
+            Ok(ContextResponse::Loaded {
+                injection,
+                resource,
+            })
+        }
+        ContextCommand::AdmitDelegatedResult { task_id } => {
+            admit_delegated_result(context, state, task_id)
+        }
+        ContextCommand::LoadOnce {
+            admission_id,
+            execution_id,
+            resource_id,
+            revision,
+            requester,
+            lifetime,
+            reason,
+        } => {
+            let (injection, resource) = load_context_once(
+                context,
+                state,
+                admission_id,
                 execution_id,
                 resource_id,
                 revision,
@@ -485,9 +524,160 @@ fn project_file_kind(path: &str) -> Option<ContextResourceKind> {
     }
 }
 
+fn load_delegated_result(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    task_id: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    validate_identity("delegated task id", &task_id)?;
+    let response: ExecutionResourceResponse = context
+        .sdk
+        .resources
+        .invoke_projected(&ExecutionResourceCommand::GetDelegated {
+            task_id: task_id.clone(),
+        })
+        .map_err(|error| format!("delegated task lookup failed: {error}"))?;
+    let ExecutionResourceResponse::DelegatedTaskLookup { task: Some(record) } = response else {
+        return Err(format!("unknown delegated task: {task_id}"));
+    };
+    if !matches!(record.task.state, WorkerTaskState::Completed { .. }) {
+        return Err(format!("delegated task is not completed: {task_id}"));
+    }
+    let result = record
+        .result
+        .as_ref()
+        .ok_or_else(|| format!("completed delegated task has no result: {task_id}"))?;
+    let draft = result
+        .context_draft(&task_id, &record.binding)
+        .map_err(|error| format!("invalid delegated result: {error:?}"))?;
+    let resource = register_resource(
+        context,
+        draft.resource_id.clone(),
+        ContextResourceKind::External,
+        draft.source,
+        ContextScope::Workspace,
+        draft.content,
+    )?;
+    load_context_once(
+        context,
+        state,
+        format!("delegation-result:{task_id}"),
+        record.task.parent_execution,
+        resource.descriptor.resource_id,
+        resource.descriptor.revision,
+        ContextInjectionRequester::Orchestration,
+        ContextInjectionLifetime::Execution,
+        format!("delegated result {task_id}"),
+    )
+}
+
+fn admit_delegated_result(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    task_id: String,
+) -> Result<ContextResponse, String> {
+    let (injection, resource) = load_delegated_result(context, state, task_id.clone())?;
+    let response: ExecutionResourceResponse = context
+        .sdk
+        .resources
+        .invoke_projected(&ExecutionResourceCommand::GetDelegated {
+            task_id: task_id.clone(),
+        })
+        .map_err(|error| format!("delegated task lookup failed: {error}"))?;
+    let ExecutionResourceResponse::DelegatedTaskLookup { task: Some(record) } = response else {
+        return Err(format!(
+            "unknown delegated task after result load: {task_id}"
+        ));
+    };
+    let parent_plan = record
+        .binding
+        .parent_plan
+        .clone()
+        .ok_or_else(|| format!("delegated task has no parent plan: {task_id}"))?;
+    let parent_execution = record.task.parent_execution;
+    let preparation = prepare_invocation(
+        context,
+        state,
+        parent_execution.clone(),
+        Bytes::from(Vec::new()),
+    )?;
+    let admitted = handle_state_command(
+        context,
+        state,
+        ContextCommand::Admit {
+            request: ContextAdmissionRequest {
+                execution_id: parent_execution,
+                step_plan: parent_plan,
+                candidates: preparation.candidates,
+                cache_epoch: preparation.projection.cache_epoch,
+            },
+        },
+    )?;
+    let ContextResponse::Admission { result, projection } = admitted else {
+        return Err("context state service returned a non-admission response".into());
+    };
+    Ok(ContextResponse::DelegatedResultAdmitted {
+        injection,
+        resource,
+        result,
+        projection,
+    })
+}
+
 fn load_context(
     context: &ContextPluginContext<'_, '_>,
     state: &mut ContextStateService,
+    execution_id: String,
+    resource_id: ContextResourceId,
+    revision: ContextRevisionId,
+    requester: ContextInjectionRequester,
+    lifetime: ContextInjectionLifetime,
+    reason: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    load_context_internal(
+        context,
+        state,
+        None,
+        execution_id,
+        resource_id,
+        revision,
+        requester,
+        lifetime,
+        reason,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_context_once(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    admission_id: String,
+    execution_id: String,
+    resource_id: ContextResourceId,
+    revision: ContextRevisionId,
+    requester: ContextInjectionRequester,
+    lifetime: ContextInjectionLifetime,
+    reason: String,
+) -> Result<(ContextInjection, ContextResourceRevision), String> {
+    validate_identity("context admission id", &admission_id)?;
+    load_context_internal(
+        context,
+        state,
+        Some(admission_id),
+        execution_id,
+        resource_id,
+        revision,
+        requester,
+        lifetime,
+        reason,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_context_internal(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    admission_id: Option<String>,
     execution_id: String,
     resource_id: ContextResourceId,
     revision: ContextRevisionId,
@@ -500,6 +690,35 @@ fn load_context(
     require_active_execution(context, &execution_id)?;
     let resource = read_resource(context, &resource_id, &revision)?
         .ok_or_else(|| format!("unknown context revision: {resource_id}@{revision}"))?;
+    let source = ExactContextReference {
+        resource_id,
+        revision,
+    };
+
+    let receipt = admission_id
+        .as_deref()
+        .map(|admission_id| injection_admission_key(&execution_id, admission_id));
+    if let Some(receipt_key) = receipt.as_deref() {
+        if let Some(existing) = read_raw(context, receipt_key)? {
+            let existing: ContextInjection =
+                serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+            if existing.execution_id != execution_id
+                || existing.source != source
+                || existing.requester != requester
+                || existing.lifetime != lifetime
+                || existing.reason != reason
+            {
+                return Err(format!(
+                    "context admission identity reused with changed injection: {}",
+                    admission_id
+                        .as_deref()
+                        .expect("receipt implies admission id")
+                ));
+            }
+            return Ok((existing, resource));
+        }
+    }
+
     let key = injections_key(&execution_id);
     let old_injections = read_raw(context, &key)?;
     let mut injections = decode_injections(old_injections.as_deref())?;
@@ -509,10 +728,7 @@ fn load_context(
     let injection = ContextInjection {
         sequence,
         execution_id: execution_id.clone(),
-        source: ExactContextReference {
-            resource_id,
-            revision,
-        },
+        source,
         requester,
         lifetime,
         reason,
@@ -540,6 +756,16 @@ fn load_context(
             value: serde_json::to_vec(&injections).map_err(|error| error.to_string())?,
         },
     ];
+    if let Some(receipt_key) = receipt {
+        operations.push(TransactionOp::AssertValue {
+            key: receipt_key.clone(),
+            expected: None,
+        });
+        operations.push(TransactionOp::Put {
+            key: receipt_key,
+            value: serde_json::to_vec(&injection).map_err(|error| error.to_string())?,
+        });
+    }
     if let Some(next_state_bytes) = next_state_bytes {
         operations.push(TransactionOp::AssertValue {
             key: CONTEXT_PROJECTION_STATE_KEY.into(),
@@ -821,6 +1047,10 @@ fn resource_key(resource_id: &ContextResourceId, revision: &ContextRevisionId) -
 
 fn injections_key(execution_id: &str) -> String {
     format!("injections/{execution_id}")
+}
+
+fn injection_admission_key(execution_id: &str, admission_id: &str) -> String {
+    format!("injection-admission/{execution_id}/{admission_id}")
 }
 
 fn validate_identity(label: &str, value: &str) -> Result<(), String> {

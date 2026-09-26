@@ -255,6 +255,74 @@ mod retry_lineage {
     }
 }
 
+mod delegated_retry_identity {
+    use super::*;
+
+    #[test]
+    fn retry_allocation_inherits_delegated_task_identity() {
+        let path = temp_db("delegated-retry-identity");
+        let mut kernel = kernel(&path);
+        create(&mut kernel, "attempt-1", UsageAttemptKind::Root, None);
+
+        let allocated = invoke(
+            &mut kernel,
+            StepAttemptCommand::AllocateDelegatedIdentity {
+                root_execution_id: "root".into(),
+                execution_id: "child-1".into(),
+                parent_attempt_id: "attempt-1".into(),
+                policy_revision: "policy-1".into(),
+                task_id: "task-1".into(),
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attribution {
+            attribution: delegated,
+        } = allocated
+        else {
+            panic!("expected delegated attribution");
+        };
+        invoke(
+            &mut kernel,
+            StepAttemptCommand::Create {
+                attribution: delegated.clone(),
+                plan: plan(),
+            },
+        )
+        .unwrap();
+        advance_to_dispatched(&mut kernel, &delegated.attempt_id);
+        invoke(
+            &mut kernel,
+            StepAttemptCommand::Settle {
+                attempt_id: delegated.attempt_id.clone(),
+                outcome: AttemptOutcome::Failed,
+            },
+        )
+        .unwrap();
+
+        let retry = invoke(
+            &mut kernel,
+            StepAttemptCommand::AllocateIdentity {
+                root_execution_id: "root".into(),
+                execution_id: "child-1".into(),
+                parent_attempt_id: Some(delegated.attempt_id.clone()),
+                policy_revision: "policy-1".into(),
+                kind: UsageAttemptKind::Retry,
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attribution { attribution } = retry else {
+            panic!("expected retry attribution");
+        };
+        assert_eq!(attribution.kind, UsageAttemptKind::Retry);
+        assert_eq!(
+            attribution.parent_attempt_id.as_deref(),
+            Some(delegated.attempt_id.as_str())
+        );
+        assert_eq!(attribution.task_id.as_deref(), Some("task-1"));
+        let _ = fs::remove_file(path);
+    }
+}
+
 mod restart_identity {
     use super::*;
 

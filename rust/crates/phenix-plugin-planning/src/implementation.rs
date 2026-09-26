@@ -3,8 +3,9 @@ use phenix_core::{
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    DecisionRecord, HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep,
-    PlanningCommand, PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
+    DecisionRecord, ExplorationCandidate, ExplorationCostEstimate, ExplorationOpportunity,
+    HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep, PlanningCommand,
+    PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -110,6 +111,24 @@ fn handle(
         } => Ok(PlanningResponse::Plan {
             plan: Some(create_plan(context, id, objective_id, goal, steps)?),
         }),
+        PlanningCommand::PrepareExplorationOpportunity {
+            candidate,
+            estimate,
+        } => Ok(PlanningResponse::ExplorationOpportunity {
+            opportunity: prepare_exploration_opportunity(candidate, estimate)?,
+        }),
+        PlanningCommand::AssessExplorationOpportunity {
+            candidate,
+            estimate,
+            policy,
+        } => {
+            let opportunity = prepare_exploration_opportunity(candidate, estimate)?;
+            let decision = policy.assess(&opportunity);
+            Ok(PlanningResponse::ExplorationAssessment {
+                opportunity,
+                decision,
+            })
+        }
         PlanningCommand::RecordDecision {
             id,
             objective_id,
@@ -191,6 +210,27 @@ fn create_plan(
     };
     insert_record(context, PLAN_INDEX, &plan_key(&record.id), &record)?;
     Ok(record)
+}
+
+fn prepare_exploration_opportunity(
+    candidate: ExplorationCandidate,
+    estimate: ExplorationCostEstimate,
+) -> Result<ExplorationOpportunity, String> {
+    validate_identity("exploration task id", &candidate.task_id)?;
+    validate_text("exploration description", &candidate.description)?;
+    Ok(ExplorationOpportunity {
+        task_id: candidate.task_id,
+        description: candidate.description,
+        separable: candidate.separable,
+        requires_parent_transcript: candidate.requires_parent_transcript,
+        parent_input_tokens_if_inline: estimate.parent_input_tokens_if_inline,
+        inline_parent_reacquisition_tokens: estimate.inline_parent_reacquisition_tokens,
+        delegated_parent_reacquisition_tokens: estimate.delegated_parent_reacquisition_tokens,
+        child_input_tokens: estimate.child_input_tokens,
+        child_output_tokens: estimate.child_output_tokens,
+        child_cost_microunits: estimate.child_cost_microunits,
+        expected_result_input_tokens: estimate.expected_result_input_tokens,
+    })
 }
 
 fn record_decision(
@@ -575,6 +615,115 @@ mod tests {
                 Err(message)
             }
         }
+    }
+
+    #[test]
+    fn planning_packages_explicit_exploration_estimates_without_spawning_work() {
+        let path = temp_db("planning-exploration-opportunity");
+        let mut kernel = kernel_with(&path);
+        let response = invoke(
+            &mut kernel,
+            PlanningCommand::PrepareExplorationOpportunity {
+                candidate: ExplorationCandidate {
+                    task_id: "inspect-subsystem".into(),
+                    description: "Inspect an isolated subsystem".into(),
+                    separable: true,
+                    requires_parent_transcript: false,
+                },
+                estimate: ExplorationCostEstimate {
+                    parent_input_tokens_if_inline: 5_000,
+                    inline_parent_reacquisition_tokens: 400,
+                    delegated_parent_reacquisition_tokens: 100,
+                    child_input_tokens: 1_000,
+                    child_output_tokens: 300,
+                    child_cost_microunits: Some(1_500),
+                    expected_result_input_tokens: 500,
+                },
+            },
+        )
+        .unwrap();
+
+        let PlanningResponse::ExplorationOpportunity { opportunity } = response else {
+            panic!("expected exploration opportunity");
+        };
+        assert_eq!(opportunity.task_id, "inspect-subsystem");
+        assert!(opportunity.separable);
+        assert!(!opportunity.requires_parent_transcript);
+        assert_eq!(opportunity.parent_input_tokens_if_inline, 5_000);
+        assert_eq!(opportunity.delegated_parent_reacquisition_tokens, 100);
+        assert_eq!(opportunity.child_cost_microunits, Some(1_500));
+
+        let invalid = invoke(
+            &mut kernel,
+            PlanningCommand::PrepareExplorationOpportunity {
+                candidate: ExplorationCandidate {
+                    task_id: "".into(),
+                    description: "invalid".into(),
+                    separable: true,
+                    requires_parent_transcript: false,
+                },
+                estimate: ExplorationCostEstimate {
+                    parent_input_tokens_if_inline: 1,
+                    inline_parent_reacquisition_tokens: 0,
+                    delegated_parent_reacquisition_tokens: 0,
+                    child_input_tokens: 1,
+                    child_output_tokens: 1,
+                    child_cost_microunits: Some(1),
+                    expected_result_input_tokens: 1,
+                },
+            },
+        );
+        assert!(invalid.unwrap_err().contains("exploration task id"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn exploration_policy_is_assessed_only_from_a_complete_opportunity() {
+        let path = temp_db("planning-exploration-assessment");
+        let mut kernel = kernel_with(&path);
+        let response = invoke(
+            &mut kernel,
+            PlanningCommand::AssessExplorationOpportunity {
+                candidate: ExplorationCandidate {
+                    task_id: "inspect-subsystem".into(),
+                    description: "Inspect an isolated subsystem".into(),
+                    separable: true,
+                    requires_parent_transcript: false,
+                },
+                estimate: ExplorationCostEstimate {
+                    parent_input_tokens_if_inline: 5_000,
+                    inline_parent_reacquisition_tokens: 500,
+                    delegated_parent_reacquisition_tokens: 100,
+                    child_input_tokens: 1_000,
+                    child_output_tokens: 500,
+                    child_cost_microunits: Some(100),
+                    expected_result_input_tokens: 800,
+                },
+                policy: phenix_sdk::ExplorationPolicy {
+                    enabled: true,
+                    min_parent_input_tokens_saved: 1_000,
+                    max_child_input_tokens: 2_000,
+                    max_child_output_tokens: 1_000,
+                    max_child_cost_microunits: Some(500),
+                    max_result_bytes: 64 * 1024,
+                },
+            },
+        )
+        .unwrap();
+
+        let PlanningResponse::ExplorationAssessment {
+            opportunity,
+            decision,
+        } = response
+        else {
+            panic!("expected exploration assessment");
+        };
+        assert_eq!(opportunity.task_id, "inspect-subsystem");
+        assert!(matches!(
+            decision,
+            phenix_sdk::ExplorationDecision::Delegate { .. }
+        ));
+        let _ = fs::remove_file(path);
     }
 
     #[test]

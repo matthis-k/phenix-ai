@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 
 pub const EXECUTION_RESOURCE_SERVICE: &str = "phenix.execution.resources@1";
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedReservationReference {
+    pub root_execution_id: String,
+    pub reservation_id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExecutionResourceCommand {
@@ -34,6 +41,7 @@ pub enum ExecutionResourceCommand {
         root_execution_id: String,
         reservation_id: String,
     },
+    RunnableDelegated,
     AdmitDelegated {
         root_execution_id: String,
         reservation: BudgetReservationRequest,
@@ -47,6 +55,10 @@ pub enum ExecutionResourceCommand {
         task_id: String,
         execution_id: String,
         now_ms: u64,
+    },
+    CancelDelegatedBeforeStart {
+        task_id: String,
+        cause: String,
     },
     CompleteDelegated {
         task_id: String,
@@ -63,6 +75,9 @@ pub enum ExecutionResourceCommand {
     GetDelegated {
         task_id: String,
     },
+    GetDelegatedReservation {
+        task_id: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -74,11 +89,17 @@ pub enum ExecutionResourceResponse {
     Remaining {
         budget: RemainingBudget,
     },
+    DelegatedRunnableTasks {
+        task_ids: Vec<String>,
+    },
     DelegatedTask {
         task: DelegatedWorkerTaskRecord,
     },
     DelegatedTaskLookup {
         task: Option<DelegatedWorkerTaskRecord>,
+    },
+    DelegatedReservation {
+        reservation: Option<DelegatedReservationReference>,
     },
 }
 

@@ -1,3 +1,4 @@
+use phenix_core::ArtifactRevision;
 use phenix_sdk::{
     DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationAdmissionError,
     DelegationResourcePolicy, DelegationTaskBinding, ExecutionAuthority, WorkerTaskRecord,
@@ -13,13 +14,33 @@ pub(crate) struct DelegatedTaskStore {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DelegatedTaskStoreError {
-    DuplicateTask { task_id: String },
-    UnknownTask { task_id: String },
+    DuplicateTask {
+        task_id: String,
+    },
+    UnknownTask {
+        task_id: String,
+    },
     AuthorityExpanded,
     BindingAuthorityMismatch,
-    NotRunnable { task_id: String },
-    InvalidState { task_id: String },
-    ExecutionMismatch { task_id: String },
+    MissingParentPlan,
+    ParentPolicyRevisionMismatch {
+        expected: String,
+        observed: String,
+    },
+    ParentDelegationPolicyMismatch,
+    ContractRevisionMismatch {
+        expected: ArtifactRevision,
+        observed: ArtifactRevision,
+    },
+    NotRunnable {
+        task_id: String,
+    },
+    InvalidState {
+        task_id: String,
+    },
+    ExecutionMismatch {
+        task_id: String,
+    },
     Admission(DelegationAdmissionError),
 }
 
@@ -37,6 +58,27 @@ impl DelegatedTaskStore {
         }
         if task.delegated_authority != binding.resources.authority {
             return Err(DelegatedTaskStoreError::BindingAuthorityMismatch);
+        }
+        let observed_contract_revision =
+            ArtifactRevision::from_content(binding.contract.as_slice());
+        if observed_contract_revision != binding.contract_revision {
+            return Err(DelegatedTaskStoreError::ContractRevisionMismatch {
+                expected: binding.contract_revision.clone(),
+                observed: observed_contract_revision,
+            });
+        }
+        let parent_plan = binding
+            .parent_plan
+            .as_ref()
+            .ok_or(DelegatedTaskStoreError::MissingParentPlan)?;
+        if parent_plan.policy_revision != binding.parent_policy_revision {
+            return Err(DelegatedTaskStoreError::ParentPolicyRevisionMismatch {
+                expected: binding.parent_policy_revision.clone(),
+                observed: parent_plan.policy_revision.clone(),
+            });
+        }
+        if &parent_plan.delegation != policy {
+            return Err(DelegatedTaskStoreError::ParentDelegationPolicyMismatch);
         }
         if !task
             .delegated_authority
@@ -97,6 +139,26 @@ impl DelegatedTaskStore {
             })
             .map(|record| record.task.id.clone())
             .collect()
+    }
+
+    pub(crate) fn cancel_pending(
+        &mut self,
+        task_id: &str,
+        cause: String,
+    ) -> Result<&DelegatedWorkerTaskRecord, DelegatedTaskStoreError> {
+        let record =
+            self.tasks
+                .get_mut(task_id)
+                .ok_or_else(|| DelegatedTaskStoreError::UnknownTask {
+                    task_id: task_id.to_owned(),
+                })?;
+        if !matches!(record.task.state, WorkerTaskState::Pending) {
+            return Err(DelegatedTaskStoreError::InvalidState {
+                task_id: task_id.to_owned(),
+            });
+        }
+        record.task.state = WorkerTaskState::Cancelled { cause };
+        Ok(record)
     }
 
     pub(crate) fn start(
@@ -203,9 +265,11 @@ impl DelegatedTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{ArtifactRevision, CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
     use phenix_sdk::{
-        BudgetReservation, DelegatedWorkResources, ModelTarget, RouteDecision, RoutingEstimate,
+        BudgetReservation, ContextDemand, DelegatedWorkResources, ModelTarget, ReasoningBudget,
+        RetryBudget, RouteDecision, RoutingEstimate, RoutingRequirements, SkillProvisionBudget,
+        StepPlan, ToolProvisionBudget,
     };
     use std::collections::BTreeMap;
 
@@ -216,7 +280,10 @@ mod tests {
     fn binding(authority: ExecutionAuthority) -> DelegationTaskBinding {
         DelegationTaskBinding {
             contract_revision: ArtifactRevision::from_content(b"contract"),
+            contract: b"contract".to_vec().into(),
             parent_policy_revision: "policy-1".into(),
+            parent_plan: Some(step_plan()),
+            originating_attempt_id: None,
             resources: DelegatedWorkResources {
                 target: RouteDecision {
                     target: ModelTarget {
@@ -252,6 +319,73 @@ mod tests {
             max_attempts: 2,
             max_result_bytes: 64 * 1024,
         }
+    }
+
+    fn step_plan() -> StepPlan {
+        StepPlan {
+            policy_revision: "policy-1".into(),
+            historical_estimator_snapshot: None,
+            routing: RoutingRequirements {
+                context: ContextDemand::default(),
+                required_capabilities: BTreeSet::new(),
+                require_known_capacity: false,
+            },
+            context: ContextDemand::default(),
+            reasoning: ReasoningBudget::BackendDefault,
+            tools: ToolProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_schemas: 0,
+                max_result_bytes: 0,
+            },
+            skills: SkillProvisionBudget {
+                initial: BTreeSet::new(),
+                expandable: BTreeSet::new(),
+                max_loaded: 0,
+            },
+            delegation: policy(),
+            retry: RetryBudget {
+                max_attempts: 1,
+                reserved_attempts: 1,
+            },
+            reservation: BudgetReservation {
+                input_tokens: 1_000,
+                output_tokens: 200,
+                cost_microunits: None,
+            },
+            deadline_at_ms: Some(10_000),
+            reducible_input_dropped_tokens: 0,
+        }
+    }
+
+    #[test]
+    fn delegated_admission_rejects_contract_revision_mismatch() {
+        let mut store = DelegatedTaskStore::default();
+        let child = authority(&["workspace.read"]);
+        let mut delegated = binding(child.clone());
+        let expected = delegated.contract_revision.clone();
+        delegated.contract = b"different contract".to_vec().into();
+        let observed = ArtifactRevision::from_content(delegated.contract.as_slice());
+        let task = WorkerTaskRecord {
+            id: "task-contract-mismatch".into(),
+            parent_execution: "root".into(),
+            graph_generation: "g1".into(),
+            description: "inspect".into(),
+            depends_on: BTreeSet::new(),
+            delegated_authority: child,
+            state: WorkerTaskState::Pending,
+        };
+
+        assert_eq!(
+            store.create(
+                task,
+                delegated,
+                &authority(&["workspace.read"]),
+                &policy(),
+                0
+            ),
+            Err(DelegatedTaskStoreError::ContractRevisionMismatch { expected, observed })
+        );
     }
 
     #[test]
