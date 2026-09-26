@@ -1,18 +1,17 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentInterface, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ServiceContribution, ServiceId,
+    PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
+    EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
     WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
     WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
-    fs,
+    collections::{BTreeMap, BTreeSet},
     path::{Component, Path, PathBuf},
-    process::Command,
 };
 
 const WORKSPACE_PLUGIN: &str = "phenix.workspace";
@@ -20,16 +19,25 @@ const WORKSPACE_READ: &str = "workspace.read";
 const WORKSPACE_WRITE: &str = "workspace.write";
 const WORKSPACE_SHELL: &str = "workspace.shell";
 const WORKSPACE_GIT: &str = "workspace.git";
-const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+struct WorkspaceSdk<'host, 'runtime> {
+    environment: SdkClient<'host, 'runtime, EnvironmentInterface>,
+}
 
 type WorkspaceContext<'host, 'runtime, 'state> =
-    PluginContext<'host, 'runtime, (), (), &'state Path>;
+    PluginContext<'host, 'runtime, WorkspaceSdk<'host, 'runtime>, (), &'state Path>;
 
 fn context<'host, 'runtime, 'state>(
     host: &'host PluginHost<'runtime>,
     root: &'state Path,
 ) -> WorkspaceContext<'host, 'runtime, 'state> {
-    PluginContext::new(host, (), (), root)
+    PluginContext::new(
+        host,
+        WorkspaceSdk {
+            environment: SdkClient::new(host, crate::workspace_component_id()),
+        },
+        (),
+        root,
+    )
 }
 
 #[must_use]
@@ -174,10 +182,36 @@ fn require(context: &WorkspaceContext<'_, '_, '_>, value: &str) -> Result<(), St
     }
 }
 
+fn environment(
+    context: &WorkspaceContext<'_, '_, '_>,
+    command: EnvironmentCommand,
+) -> Result<EnvironmentResponse, String> {
+    context
+        .sdk
+        .environment
+        .invoke_projected::<EnvironmentCommand, EnvironmentResponse>(&command)
+        .map_err(|error| error.to_string())
+}
+
+fn environment_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 fn read(context: &WorkspaceContext<'_, '_, '_>, path: String) -> Result<WorkspaceResponse, String> {
     require(context, WORKSPACE_READ)?;
     let resolved = resolve(context, &path)?;
-    let bytes = fs::read(&resolved).map_err(|error| format!("read {path}: {error}"))?;
+    let response = environment(
+        context,
+        EnvironmentCommand::ReadFile {
+            path: environment_path(&resolved),
+        },
+    )?;
+    let EnvironmentResponse::File {
+        content: Some(bytes),
+    } = response
+    else {
+        return Err(format!("read {path}: file not found"));
+    };
     let version = version_for_bytes(&bytes);
     let content = String::from_utf8(bytes)
         .map_err(|_| format!("workspace read requires UTF-8 text: {path}"))?;
@@ -196,13 +230,13 @@ fn write(
 ) -> Result<WorkspaceResponse, String> {
     require(context, WORKSPACE_WRITE)?;
     let resolved = resolve(context, &path)?;
-    let observed = inspect_version(&resolved, &path)?;
+    let observed = inspect_version(context, &resolved, &path)?;
     if observed != expected_version {
         return Err(format!(
             "workspace version conflict for {path}: expected {expected_version:?}, observed {observed:?}"
         ));
     }
-    write_resolved(&resolved, &path, &content)?;
+    write_resolved(context, &resolved, &path, &content)?;
     Ok(WorkspaceResponse::Written {
         path,
         version: version_for_bytes(content.as_bytes()),
@@ -229,7 +263,7 @@ fn write_batch(
             ));
         }
         let resolved = resolve(context, &write.path)?;
-        let observed = inspect_version(&resolved, &write.path)?;
+        let observed = inspect_version(context, &resolved, &write.path)?;
         let desired = version_for_bytes(write.content.as_bytes());
         if observed != write.expected_version && observed != desired {
             conflicts.push(WorkspaceVersionConflict {
@@ -247,11 +281,8 @@ fn write_batch(
 
     let mut files = Vec::with_capacity(prepared.len());
     for (write, resolved, observed, desired) in prepared {
-        // Treat an already-materialized desired version as an idempotent retry. This is
-        // required when a caller crashes after the workspace mutation but before it can
-        // durably record its own terminal state.
         if observed != desired {
-            write_resolved(&resolved, &write.path, &write.content)?;
+            write_resolved(context, &resolved, &write.path, &write.content)?;
         }
         files.push(WorkspaceWrittenFile {
             path: write.path,
@@ -261,21 +292,46 @@ fn write_batch(
     Ok(WorkspaceResponse::WrittenBatch { files })
 }
 
-fn inspect_version(resolved: &Path, path: &str) -> Result<WorkspaceFileVersion, String> {
-    match fs::read(resolved) {
-        Ok(bytes) => Ok(version_for_bytes(&bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(WorkspaceFileVersion::Absent)
-        }
-        Err(error) => Err(format!("inspect {path}: {error}")),
+fn inspect_version(
+    context: &WorkspaceContext<'_, '_, '_>,
+    resolved: &Path,
+    path: &str,
+) -> Result<WorkspaceFileVersion, String> {
+    match environment(
+        context,
+        EnvironmentCommand::ReadFile {
+            path: environment_path(resolved),
+        },
+    )? {
+        EnvironmentResponse::File {
+            content: Some(bytes),
+        } => Ok(version_for_bytes(&bytes)),
+        EnvironmentResponse::File { content: None } => Ok(WorkspaceFileVersion::Absent),
+        other => Err(format!(
+            "inspect {path}: environment returned unexpected response {other:?}"
+        )),
     }
 }
 
-fn write_resolved(resolved: &Path, path: &str, content: &str) -> Result<(), String> {
-    if let Some(parent) = resolved.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("create parent for {path}: {error}"))?;
+fn write_resolved(
+    context: &WorkspaceContext<'_, '_, '_>,
+    resolved: &Path,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    match environment(
+        context,
+        EnvironmentCommand::WriteFile {
+            path: environment_path(resolved),
+            content: content.as_bytes().to_vec(),
+            create_parents: true,
+        },
+    )? {
+        EnvironmentResponse::Written => Ok(()),
+        other => Err(format!(
+            "write {path}: environment returned unexpected response {other:?}"
+        )),
     }
-    fs::write(resolved, content.as_bytes()).map_err(|error| format!("write {path}: {error}"))
 }
 
 fn search(
@@ -292,6 +348,7 @@ fn search(
     let root = resolve(context, &relative)?;
     let mut matches = Vec::new();
     search_path(
+        context,
         context.plugin.state,
         &root,
         &needle,
@@ -307,6 +364,7 @@ fn search(
 }
 
 fn search_path(
+    context: &WorkspaceContext<'_, '_, '_>,
     workspace_root: &Path,
     path: &Path,
     needle: &str,
@@ -316,56 +374,89 @@ fn search_path(
     if path.file_name().is_some_and(|name| name == ".git") {
         return Ok(());
     }
-    if path.is_dir() {
-        let mut entries = fs::read_dir(path)
-            .map_err(|error| format!("search {}: {error}", path.display()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            search_path(
-                workspace_root,
-                &entry.path(),
-                needle,
-                case_sensitive,
-                matches,
+    let kind = match environment(
+        context,
+        EnvironmentCommand::Stat {
+            path: environment_path(path),
+        },
+    )? {
+        EnvironmentResponse::Metadata { kind } => kind,
+        other => {
+            return Err(format!(
+                "search {}: environment returned unexpected response {other:?}",
+                path.display()
+            ))
+        }
+    };
+    match kind {
+        Some(EnvironmentFileKind::Directory) => {
+            let response = environment(
+                context,
+                EnvironmentCommand::ReadDir {
+                    path: environment_path(path),
+                },
             )?;
+            let EnvironmentResponse::Directory { entries } = response else {
+                return Err(format!(
+                    "search {}: environment returned non-directory response",
+                    path.display()
+                ));
+            };
+            for entry in entries {
+                search_path(
+                    context,
+                    workspace_root,
+                    Path::new(&entry.path),
+                    needle,
+                    case_sensitive,
+                    matches,
+                )?;
+            }
+            Ok(())
         }
-        return Ok(());
-    }
-    if !path.is_file() {
-        return Ok(());
-    }
-    let Ok(bytes) = fs::read(path) else {
-        return Ok(());
-    };
-    let Ok(content) = String::from_utf8(bytes) else {
-        return Ok(());
-    };
-    let query = if case_sensitive {
-        needle.to_owned()
-    } else {
-        needle.to_lowercase()
-    };
-    for (index, line) in content.lines().enumerate() {
-        let candidate = if case_sensitive {
-            line.to_owned()
-        } else {
-            line.to_lowercase()
-        };
-        if candidate.contains(&query) {
-            let relative = path.strip_prefix(workspace_root).unwrap_or(path);
-            matches.push(WorkspaceSearchMatch {
-                path: relative.to_string_lossy().into_owned(),
-                line: u64::try_from(index)
-                    .ok()
-                    .and_then(|line| line.checked_add(1))
-                    .ok_or_else(|| "workspace search line overflow".to_owned())?,
-                text: line.to_owned(),
-            });
+        Some(EnvironmentFileKind::File) => {
+            let response = environment(
+                context,
+                EnvironmentCommand::ReadFile {
+                    path: environment_path(path),
+                },
+            )?;
+            let EnvironmentResponse::File {
+                content: Some(bytes),
+            } = response
+            else {
+                return Ok(());
+            };
+            let Ok(content) = String::from_utf8(bytes) else {
+                return Ok(());
+            };
+            let query = if case_sensitive {
+                needle.to_owned()
+            } else {
+                needle.to_lowercase()
+            };
+            for (index, line) in content.lines().enumerate() {
+                let candidate = if case_sensitive {
+                    line.to_owned()
+                } else {
+                    line.to_lowercase()
+                };
+                if candidate.contains(&query) {
+                    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+                    matches.push(WorkspaceSearchMatch {
+                        path: relative.to_string_lossy().into_owned(),
+                        line: u64::try_from(index)
+                            .ok()
+                            .and_then(|line| line.checked_add(1))
+                            .ok_or_else(|| "workspace search line overflow".to_owned())?,
+                        text: line.to_owned(),
+                    });
+                }
+            }
+            Ok(())
         }
+        Some(EnvironmentFileKind::Other) | None => Ok(()),
     }
-    Ok(())
 }
 
 fn process(
@@ -375,16 +466,29 @@ fn process(
     capability: &str,
 ) -> Result<WorkspaceResponse, String> {
     require(context, capability)?;
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(context.plugin.state)
-        .output()
-        .map_err(|error| format!("spawn {program}: {error}"))?;
-    Ok(WorkspaceResponse::Process {
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: capture(&output.stdout),
-        stderr: capture(&output.stderr),
-    })
+    match environment(
+        context,
+        EnvironmentCommand::Exec {
+            program: program.to_owned(),
+            arguments: args.to_vec(),
+            working_directory: Some(environment_path(context.plugin.state)),
+            environment: BTreeMap::new(),
+        },
+    )? {
+        EnvironmentResponse::Process {
+            exit_code,
+            stdout,
+            stderr,
+            ..
+        } => Ok(WorkspaceResponse::Process {
+            exit_code,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        }),
+        other => Err(format!(
+            "environment returned unexpected process response: {other:?}"
+        )),
+    }
 }
 
 fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
@@ -393,19 +497,14 @@ fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
     }
 }
 
-fn capture(bytes: &[u8]) -> String {
-    let bytes = if bytes.len() > MAX_CAPTURE_BYTES {
-        &bytes[..MAX_CAPTURE_BYTES]
-    } else {
-        bytes
-    };
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, PhenixValue, Project};
+    use phenix_core::{Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness};
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_factory_for,
+        local_environment_manifest,
+    };
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -423,11 +522,33 @@ mod tests {
     }
 
     fn kernel(root: PathBuf) -> Kernel {
-        let manifest = workspace_manifest();
-        let plugin = manifest.id.clone();
-        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = local_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                local_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        let workspace_root = root.clone();
         kernel
-            .register_embedded_factory(plugin, move || workspace_factory_for(root.clone()))
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(workspace_root.clone())
+            })
+            .unwrap();
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                local_environment_factory_for(root.clone())
+            })
             .unwrap();
         kernel.activate_all().unwrap();
         kernel

@@ -20,6 +20,8 @@ use phenix_plugin_catalog::{
     execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
     frontend_factory, frontend_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
+    local_environment_component_manifest, local_environment_factory, local_environment_manifest,
+    LOCAL_ENVIRONMENT_PLUGIN,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     memory_component_manifest, memory_factory, memory_manifest, model_routing_component_manifest,
     model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
@@ -156,6 +158,7 @@ impl HarnessBuilder {
         builder.add_embedded(language_manifest(), language_factory)?;
         builder.add_embedded(memory_manifest(), memory_factory)?;
         builder.add_embedded(planning_manifest(), planning_factory)?;
+        builder.add_embedded(local_environment_manifest(), local_environment_factory)?;
         builder.add_embedded(workspace_manifest(), workspace_factory)?;
         builder.add_embedded(
             model_routing_manifest(authority.clone()),
@@ -190,6 +193,7 @@ impl HarnessBuilder {
             language_component_manifest(),
             memory_component_manifest(),
             planning_component_manifest(),
+            local_environment_component_manifest(),
             workspace_component_manifest(),
             model_routing_component_manifest(authority.clone()),
             openai_codex_component_manifest(),
@@ -227,6 +231,7 @@ impl HarnessBuilder {
             language_manifest(),
             memory_manifest(),
             planning_manifest(),
+            local_environment_manifest(),
             workspace_manifest(),
             model_routing_manifest(authority.clone()),
             step_runner_manifest(authority.clone()),
@@ -258,6 +263,9 @@ impl HarnessBuilder {
         }
 
         let mut enabled = enabled.clone();
+        if enabled.contains("phenix.workspace") {
+            enabled.insert(LOCAL_ENVIRONMENT_PLUGIN.to_owned());
+        }
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
         while let Some(plugin) = pending.pop() {
             let manifest = available
@@ -323,6 +331,11 @@ impl HarnessBuilder {
         builder.add_selected(&enabled, language_manifest(), language_factory)?;
         builder.add_selected(&enabled, memory_manifest(), memory_factory)?;
         builder.add_selected(&enabled, planning_manifest(), planning_factory)?;
+        builder.add_selected(
+            &enabled,
+            local_environment_manifest(),
+            local_environment_factory,
+        )?;
         builder.add_selected(&enabled, workspace_manifest(), workspace_factory)?;
         builder.add_selected(
             &enabled,
@@ -367,6 +380,7 @@ impl HarnessBuilder {
             language_component_manifest(),
             memory_component_manifest(),
             planning_component_manifest(),
+            local_environment_component_manifest(),
             workspace_component_manifest(),
             model_routing_component_manifest(authority.clone()),
             step_runner_component_manifest(authority.clone()),

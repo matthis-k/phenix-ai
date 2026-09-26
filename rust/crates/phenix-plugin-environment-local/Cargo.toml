@@ -1,5 +1,5 @@
 [package]
-name = "phenix-plugin-workspace"
+name = "phenix-plugin-environment-local"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -10,10 +10,4 @@ role = "runtime-plugin"
 [dependencies]
 phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
-phenix-sdk-macros = { path = "../phenix-sdk-macros" }
-serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-
-[dev-dependencies]
-phenix-plugin-environment-local = { path = "../phenix-plugin-environment-local" }

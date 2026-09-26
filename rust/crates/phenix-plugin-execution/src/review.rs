@@ -445,7 +445,11 @@ mod tests {
     use super::*;
     use phenix_core::{
         Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,
-        PluginManifest, Project, ServiceContribution,
+        PluginManifest, Project, ResolvedHarness, ServiceContribution,
+    };
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_factory_for,
+        local_environment_manifest,
     };
     use sha2::{Digest, Sha256};
     use std::{
@@ -498,18 +502,39 @@ mod tests {
     fn kernel(db: &Path, root: &Path) -> Kernel {
         let review = review_manifest();
         let review_id = review.id.clone();
+        let environment = local_environment_manifest();
+        let environment_id = environment.id.clone();
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [review.clone(), environment.clone(), workspace.clone()],
+            [
+                local_environment_component_manifest(),
+                phenix_plugin_workspace::workspace_component_manifest(),
+            ],
+            [],
+            &authority(),
+        )
+        .unwrap();
         let persistence = LocalPersistence::open(db).unwrap();
-        let mut kernel =
-            Kernel::with_persistence(KernelConfig::new([review, workspace]).unwrap(), persistence);
+        let mut kernel = Kernel::with_persistence(
+            KernelConfig::new([review, environment, workspace]).unwrap(),
+            persistence,
+        );
+        kernel.activate_resolved_harness(&resolved).unwrap();
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();
-        let root = root.to_path_buf();
+        let environment_root = root.to_path_buf();
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                local_environment_factory_for(environment_root.clone())
+            })
+            .unwrap();
+        let workspace_root = root.to_path_buf();
         kernel
             .register_embedded_factory(workspace_id, move || {
-                phenix_plugin_workspace::workspace_factory_for(root.clone())
+                phenix_plugin_workspace::workspace_factory_for(workspace_root.clone())
             })
             .unwrap();
         kernel.activate_all().unwrap();

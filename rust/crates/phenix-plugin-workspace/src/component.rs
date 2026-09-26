@@ -1,8 +1,9 @@
 use crate::workspace_manifest;
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
+    PluginId,
 };
-use phenix_sdk::WorkspaceInterface;
+use phenix_sdk::{EnvironmentInterface, WorkspaceInterface};
 
 const WORKSPACE_COMPONENT: &str = "phenix.workspace";
 const WORKSPACE_PLUGIN: &str = "phenix.workspace";
@@ -18,7 +19,12 @@ pub fn workspace_component_manifest() -> ComponentManifest {
         listeners: Vec::new(),
         id: workspace_component_id(),
         owner: PluginId::parse(WORKSPACE_PLUGIN).expect("static workspace plugin id is valid"),
-        imports: Vec::new(),
+        imports: vec![ComponentImport {
+            interface: EnvironmentInterface::interface_id(),
+            schema: EnvironmentInterface::schema(),
+            required: true,
+            authority: Authority::default(),
+        }],
         exports: vec![ComponentExport {
             interface: WorkspaceInterface::interface_id(),
             schema: WorkspaceInterface::schema(),
@@ -33,7 +39,11 @@ pub fn workspace_component_manifest() -> ComponentManifest {
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityId, ComponentImport, PluginExecution, PluginManifest, ResolvedComponentGraph,
+        CapabilityId, ComponentImport, ComponentGraphError, PluginExecution, PluginManifest,
+        ResolvedComponentGraph,
+    };
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_manifest,
     };
 
     fn capability(value: &str) -> CapabilityId {
@@ -68,6 +78,24 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn workspace_requires_an_environment_provider() {
+        let error = ResolvedComponentGraph::compile(
+            [workspace_manifest()],
+            [workspace_component_manifest()],
+            &workspace_manifest().maximum_authority,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ComponentGraphError::MissingRequiredImport { component, interface }
+                if component == workspace_component_id()
+                    && interface == EnvironmentInterface::interface_id()
+        ));
+    }
+
     #[test]
     fn workspace_typed_binding_attenuates_to_consumer_authority() {
         let read = capability("workspace.read");
@@ -76,10 +104,12 @@ mod tests {
         let graph = ResolvedComponentGraph::compile(
             [
                 consumer_manifest(consumer_authority.clone()),
+                local_environment_manifest(),
                 workspace_manifest(),
             ],
             [
                 consumer_component(consumer_authority.clone()),
+                local_environment_component_manifest(),
                 workspace_component_manifest(),
             ],
             &workspace_manifest().maximum_authority,

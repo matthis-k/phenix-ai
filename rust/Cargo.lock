@@ -1856,6 +1856,7 @@ dependencies = [
  "phenix-plugin-context",
  "phenix-plugin-debug",
  "phenix-plugin-efficiency-evaluation",
+ "phenix-plugin-environment-local",
  "phenix-plugin-execution",
  "phenix-plugin-frontend",
  "phenix-plugin-hooks",
@@ -1881,6 +1882,7 @@ name = "phenix-plugin-command-toolbelt"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-environment-local",
  "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",
@@ -1926,11 +1928,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-environment-local"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "phenix-plugin-execution"
 version = "0.1.0"
 dependencies = [
  "phenix-application-interface",
  "phenix-core",
+ "phenix-plugin-environment-local",
  "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",
@@ -1980,6 +1992,7 @@ name = "phenix-plugin-language"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-environment-local",
  "phenix-plugin-workspace",
  "phenix-sdk",
  "phenix-sdk-macros",
@@ -2113,6 +2126,7 @@ name = "phenix-plugin-workspace"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
+ "phenix-plugin-environment-local",
  "phenix-sdk",
  "phenix-sdk-macros",
  "serde",
