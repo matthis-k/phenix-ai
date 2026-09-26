@@ -207,7 +207,7 @@ impl PhenixBackend {
             && request.tools.presentation() != Some(ToolPresentation::Native)
         {
             return Err(BackendError::Unsupported(
-                "Phenix backend requires native conductor tool presentation".to_owned(),
+                "Phenix backend requires native runtime tool presentation".to_owned(),
             ));
         }
         Ok(())
