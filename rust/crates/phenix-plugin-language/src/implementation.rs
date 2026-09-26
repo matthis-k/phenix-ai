@@ -6,7 +6,7 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator,
+    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
     CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
     CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
@@ -344,6 +344,25 @@ fn handle(
                     &repository_id,
                     &entity_id,
                     &revision,
+                )?,
+            })
+        }
+        LanguageCommand::ReadEntitySource {
+            repository_id,
+            entity_id,
+            revision,
+            max_bytes,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntitySource {
+                view: read_entity_source(
+                    context,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                    max_bytes,
                 )?,
             })
         }
@@ -972,6 +991,184 @@ fn read_entity_source_locator(
         .map_err(|error| error.to_string())?
         .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
         .transpose()
+}
+
+fn read_entity_source(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    max_bytes: u64,
+) -> Result<Option<CodeEntitySourceView>, String> {
+    if max_bytes == 0 {
+        return Err("entity source read requires a non-zero byte bound".into());
+    }
+    let Some(locator) =
+        read_entity_source_locator(context, repository_id, entity_id, revision)?
+    else {
+        return Ok(None);
+    };
+    if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
+        return Err("entity source read requires workspace-backed provenance".into());
+    }
+    let expected_version = locator
+        .document
+        .file_version
+        .as_deref()
+        .ok_or_else(|| "entity source read requires an exact workspace revision".to_owned())?;
+
+    let input = context
+        .kernel
+        .encode_value(&WorkspaceCommand::Read {
+            path: locator.document.path.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+    let output = context
+        .kernel
+        .invoke_service_abi(&workspace_service(), &input, context.call.authority, None)
+        .map_err(|error| error.to_string())?;
+    let response = context
+        .kernel
+        .decode_projected::<WorkspaceResponse>(&WorkspaceInterface::interface_id(), &output)
+        .map_err(|error| error.to_string())?;
+    let WorkspaceResponse::Read {
+        path,
+        content,
+        version,
+    } = response
+    else {
+        return Err("workspace returned a non-read response for entity source".into());
+    };
+    if path != locator.document.path {
+        return Err(format!(
+            "entity source path mismatch: expected {}, observed {path}",
+            locator.document.path
+        ));
+    }
+    let WorkspaceFileVersion::Present { content_hash } = version else {
+        return Err(format!("entity source path is absent: {path}"));
+    };
+    if !workspace_revision_matches(&content_hash, expected_version) {
+        return Err(format!(
+            "entity source revision is stale: expected {expected_version}, current {}",
+            workspace_revision_label(&content_hash)
+        ));
+    }
+
+    let source = source_range_slice(&content, &locator.range, locator.position_encoding)?;
+    let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+    let (content, complete) = bounded_utf8(source, max_bytes);
+    Ok(Some(CodeEntitySourceView {
+        entity: locator.entity,
+        revision: locator.revision,
+        document: locator.document,
+        position_encoding: locator.position_encoding,
+        range: locator.range,
+        content,
+        complete,
+    }))
+}
+
+fn source_range_slice<'source>(
+    source: &'source str,
+    range: &CodeSourceRange,
+    encoding: CodePositionEncoding,
+) -> Result<&'source str, String> {
+    let start = source_position_offset(source, &range.start, encoding)?;
+    let end = source_position_offset(source, &range.end, encoding)?;
+    if end < start {
+        return Err("entity source range end precedes start".into());
+    }
+    source
+        .get(start..end)
+        .ok_or_else(|| "entity source range is not on UTF-8 boundaries".to_owned())
+}
+
+fn source_position_offset(
+    source: &str,
+    position: &CodeSourcePosition,
+    encoding: CodePositionEncoding,
+) -> Result<usize, String> {
+    let (line_start, line_end) = source_line_bounds(source, position.line)?;
+    let line = &source[line_start..line_end];
+    let character = usize::try_from(position.character)
+        .map_err(|_| "source character offset cannot be represented".to_owned())?;
+    let within_line = match encoding {
+        CodePositionEncoding::Utf8 => {
+            if character > line.len() || !line.is_char_boundary(character) {
+                return Err("UTF-8 source position is not on a character boundary".into());
+            }
+            character
+        }
+        CodePositionEncoding::Utf16 => {
+            let mut units = 0usize;
+            let mut result = None;
+            for (byte, value) in line.char_indices() {
+                if units == character {
+                    result = Some(byte);
+                    break;
+                }
+                units = units.saturating_add(value.len_utf16());
+                if units > character {
+                    return Err("UTF-16 source position splits a scalar value".into());
+                }
+            }
+            if result.is_none() && units == character {
+                result = Some(line.len());
+            }
+            result.ok_or_else(|| "UTF-16 source position exceeds line length".to_owned())?
+        }
+        CodePositionEncoding::Utf32 => {
+            if character == 0 {
+                0
+            } else {
+                line.char_indices()
+                    .nth(character)
+                    .map(|(byte, _)| byte)
+                    .or_else(|| (line.chars().count() == character).then_some(line.len()))
+                    .ok_or_else(|| "UTF-32 source position exceeds line length".to_owned())?
+            }
+        }
+    };
+    Ok(line_start + within_line)
+}
+
+fn source_line_bounds(source: &str, target_line: u32) -> Result<(usize, usize), String> {
+    let target_line =
+        usize::try_from(target_line).map_err(|_| "source line cannot be represented".to_owned())?;
+    let bytes = source.as_bytes();
+    let mut line = 0usize;
+    let mut start = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        if line == target_line {
+            let end = if index > start && bytes[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            return Ok((start, end));
+        }
+        line = line.saturating_add(1);
+        start = index.saturating_add(1);
+    }
+    if line == target_line {
+        return Ok((start, source.len()));
+    }
+    Err(format!("source line {target_line} is out of range"))
+}
+
+fn bounded_utf8(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_owned(), true);
+    }
+    let mut end = max_bytes.min(value.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_owned(), false)
 }
 
 fn validate_lsp_range(range: &LspRange) -> Result<(), String> {
@@ -1821,6 +2018,108 @@ mod tests {
                 revision.starts_with("sha256:") && revision.len() > "sha256:".len()
             }));
         assert_eq!(fallback.content, "fn fallback() {}\n");
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn entity_source_read_is_revision_checked_bounded_and_encoding_aware() {
+        let path = temp_db("entity-source-read");
+        let root = std::env::temp_dir().join(format!(
+            "phenix-language-entity-source-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "fn café() {}\n").unwrap();
+        let mut kernel = kernel_with_workspace(&path, &root);
+
+        let LanguageResponse::FileFallback { fallback } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadFileFallback {
+                workspace_id: "workspace".into(),
+                path: "src/lib.rs".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected exact workspace fallback");
+        };
+
+        activate(&mut kernel, 9);
+        invoke(
+            &mut kernel,
+            LanguageCommand::Consume {
+                observation_id: "symbols-source".into(),
+                execution_id: "execution-source".into(),
+                workspace_id: "workspace".into(),
+                provider_id: "rust-analyzer".into(),
+                epoch: epoch(9),
+                result: LanguageOperationResult {
+                    operation: LanguageOperationKind::DocumentSymbols,
+                    payload: serde_json::json!([{
+                        "name": "café",
+                        "kind": 12,
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 12}
+                        },
+                        "selectionRange": {
+                            "start": {"line": 0, "character": 3},
+                            "end": {"line": 0, "character": 7}
+                        }
+                    }])
+                    .into(),
+                    documents: vec![fallback.document],
+                },
+            },
+        )
+        .unwrap();
+
+        let LanguageResponse::EntityRevisions { revisions } = invoke(
+            &mut kernel,
+            LanguageCommand::IngestDocumentSymbolsWithEncoding {
+                observation_id: "symbols-source".into(),
+                repository_id: "repo-source".into(),
+                position_encoding: CodePositionEncoding::Utf16,
+            },
+        )
+        .unwrap() else {
+            panic!("expected entity revisions");
+        };
+        let revision = &revisions[0];
+
+        let LanguageResponse::EntitySource { view: Some(view) } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntitySource {
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                max_bytes: 7,
+            },
+        )
+        .unwrap() else {
+            panic!("expected bounded entity source");
+        };
+        assert_eq!(view.content, "fn café");
+        assert!(!view.complete);
+        assert_eq!(view.position_encoding, CodePositionEncoding::Utf16);
+
+        fs::write(root.join("src/lib.rs"), "fn changed() {}\n").unwrap();
+        let error = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntitySource {
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                max_bytes: 1024,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("stale"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(root);
