@@ -96,12 +96,8 @@ impl WorkspacePlugin {
 
 impl PluginInstance for WorkspacePlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
-        if !self.root.is_dir() {
-            return Err(format!(
-                "workspace root is not a directory: {}",
-                self.root.display()
-            ));
-        }
+        // The workspace root is an Environment-namespace path. Validating it with
+        // host filesystem APIs would make remote/container providers impossible.
         Ok(())
     }
 
@@ -572,6 +568,45 @@ mod tests {
                 serde_json::from_slice(&output).map_err(|error| error.to_string())?;
             WorkspaceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
         }
+    }
+
+    #[test]
+    fn workspace_root_is_an_environment_namespace_path() {
+        let environment_root = temp_workspace("environment-root");
+        let workspace_root = environment_root.join("provider-only-workspace");
+        assert!(!workspace_root.exists());
+
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = local_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                local_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(workspace_root.clone())
+            })
+            .unwrap();
+        let cleanup_root = environment_root.clone();
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                local_environment_factory_for(environment_root.clone())
+            })
+            .unwrap();
+
+        kernel.activate_all().unwrap();
+        let _ = fs::remove_dir_all(cleanup_root);
     }
 
     #[test]
