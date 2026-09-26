@@ -171,9 +171,13 @@ impl LocalEnvironment {
     }
 
     fn requested_working_directory(&self, working_directory: Option<&str>) -> Result<PathBuf, String> {
-        let cwd = working_directory
+        let mut cwd = working_directory
             .map(|path| self.resolve(path))
             .unwrap_or_else(|| self.root.clone());
+        if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted {
+            cwd = fs::canonicalize(&cwd)
+                .map_err(|error| format!("canonicalize restricted working directory: {error}"))?;
+        }
         if self.filesystem_policy != EnvironmentFilesystemPolicy::Unrestricted
             && !cwd.starts_with(&self.root)
         {
@@ -246,18 +250,18 @@ impl LocalEnvironment {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
                 command.arg("--ro-bind").arg("/").arg("/");
-                command.arg("--bind").arg(&self.root).arg(&self.root);
             }
             EnvironmentFilesystemPolicy::WorkingDirectoryOnly => {
                 Self::add_parent_dirs(&mut command, &self.root);
                 Self::add_runtime_readonly_paths(&mut command);
-                command.arg("--bind").arg(&self.root).arg(&self.root);
             }
         }
 
         command
             .arg("--tmpfs")
-            .arg("/tmp")
+            .arg("/tmp");
+        command.arg("--bind").arg(&self.root).arg(&self.root);
+        command
             .arg("--setenv")
             .arg("TMPDIR")
             .arg("/tmp")
