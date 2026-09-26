@@ -473,7 +473,25 @@ impl PluginInstance for LocalEnvironment {
         }
         self.root = fs::canonicalize(&self.root)
             .map_err(|error| format!("canonicalize local environment root: {error}"))?;
+        self.root_fd = Some(
+            rfs::open(
+                &self.root,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|error| format!("open local environment root: {error}"))?,
+        );
         if self.filesystem_policy()? != EnvironmentFilesystemPolicy::Unrestricted {
+            rfs::openat2(
+                self.root_fd()?.as_fd(),
+                ".",
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+            )
+            .map_err(|error| {
+                format!("restricted local environment requires usable Linux openat2: {error}")
+            })?;
             let status = Command::new("bwrap")
                 .arg("--version")
                 .status()
