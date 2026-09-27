@@ -176,6 +176,27 @@ fn invoke_routing(kernel: &mut Kernel, command: ModelCommand) -> Result<ModelRes
     ModelResponse::try_from(Project(&output)).map_err(|error| error.to_string())
 }
 
+fn apply_provider_catalog(
+    kernel: &mut Kernel,
+    provider: &str,
+    profiles: Vec<RoutingProfile>,
+) -> Result<Vec<RoutingProfile>, String> {
+    let response = invoke_routing(
+        kernel,
+        ModelCommand::PrepareProviderCatalogProfiles {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            profiles,
+        },
+    )?;
+    let ModelResponse::PreparedProfiles { mutation, profiles } = response else {
+        return Err("expected prepared provider catalog profiles".into());
+    };
+    kernel
+        .transact_prepared(&[mutation])
+        .map_err(|error| error.to_string())?;
+    Ok(profiles)
+}
+
 fn invoke_dispatch_outcome(
     kernel: &mut Kernel,
     command: ModelDispatchCommand,
@@ -253,6 +274,87 @@ mod profile_store {
         };
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].providers.len(), 3);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_catalog_refresh_retires_missing_models_without_deleting_durable_routes() {
+        let path = temp_db("routing-provider-catalog");
+        let provider = "provider.catalog";
+        let fixed = |id: &str, model: &str| RoutingProfile {
+            id: RoutingProfileId::parse(id).unwrap(),
+            default_target: target(provider, model),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        let first = fixed("catalog.model-a", "model-a");
+        let second = fixed("catalog.model-b", "model-b");
+
+        {
+            let mut kernel = kernel_with(&path);
+            apply_provider_catalog(
+                &mut kernel,
+                provider,
+                vec![first.clone(), second.clone()],
+            )
+            .unwrap();
+
+            let ModelResponse::Profiles { profiles } =
+                invoke_routing(&mut kernel, ModelCommand::ListProfiles).unwrap()
+            else {
+                panic!("expected profiles response");
+            };
+            assert_eq!(
+                profiles
+                    .iter()
+                    .map(|profile| profile.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["catalog.model-a", "catalog.model-b"]
+            );
+
+            apply_provider_catalog(&mut kernel, provider, vec![second.clone()]).unwrap();
+            let ModelResponse::Profiles { profiles } =
+                invoke_routing(&mut kernel, ModelCommand::ListProfiles).unwrap()
+            else {
+                panic!("expected profiles response");
+            };
+            assert_eq!(profiles.len(), 1);
+            assert_eq!(profiles[0].id, second.id);
+
+            assert_eq!(
+                invoke_routing(
+                    &mut kernel,
+                    ModelCommand::GetProfile {
+                        id: first.id.clone()
+                    },
+                )
+                .unwrap(),
+                ModelResponse::Profile {
+                    profile: Some(first.clone())
+                }
+            );
+        }
+
+        let mut restored = kernel_with(&path);
+        let ModelResponse::Profiles { profiles } =
+            invoke_routing(&mut restored, ModelCommand::ListProfiles).unwrap()
+        else {
+            panic!("expected profiles response");
+        };
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, second.id);
+        assert_eq!(
+            invoke_routing(
+                &mut restored,
+                ModelCommand::GetProfile {
+                    id: first.id.clone()
+                },
+            )
+            .unwrap(),
+            ModelResponse::Profile {
+                profile: Some(first)
+            }
+        );
         let _ = fs::remove_file(path);
     }
 
