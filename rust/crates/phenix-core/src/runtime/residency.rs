@@ -57,6 +57,7 @@ impl Kernel {
     /// The first implementation requires identical durable schemas so trial
     /// execution cannot migrate shared persistence underneath another resident
     /// generation.
+    #[cfg(test)]
     pub(crate) fn make_generation_resident(
         &mut self,
         candidate: &ResolvedHarness,
@@ -208,7 +209,7 @@ impl Kernel {
         self.promote_generation(generation)
     }
 
-    pub(crate) fn promote_generation(
+    fn promote_generation(
         &mut self,
         generation: &GraphGenerationId,
     ) -> Result<(), KernelError> {
@@ -260,6 +261,7 @@ impl Kernel {
         self.retire_generation_with_authority(generation, Some(constraints.authority()))
     }
 
+    #[cfg(test)]
     pub(crate) fn retire_generation(
         &mut self,
         generation: &GraphGenerationId,
