@@ -266,7 +266,7 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
                 interface: AgentToolExecutionInterface::interface_id(),
                 schema: AgentToolExecutionInterface::schema(),
                 required: true,
-                authority: Authority::default(),
+                authority: maximum_authority.clone(),
             },
             ComponentImport {
                 interface: AgentLoopProgressInterface::interface_id(),
@@ -535,6 +535,17 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_execution_import_carries_agent_loop_authority() {
+        let shell = phenix_core::CapabilityId::parse("workspace.shell").unwrap();
+        let component = agent_loop_component_manifest(Authority::new([shell.clone()]));
+
+        assert!(
+            component.imports[2].authority.permits(&shell),
+            "agent-loop tool calls must carry the authority granted to the agent loop"
+        );
+    }
 
     #[test]
     fn default_progression_policy_preserves_existing_limits() {
