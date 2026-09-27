@@ -701,6 +701,7 @@ struct RuntimeServices<'a> {
 
 struct GenerationRuntimeState {
     runtime: RuntimeGeneration,
+    authority_ceiling: Option<Authority>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     subscriptions: Vec<EventSubscription>,
     states: BTreeMap<PluginId, PluginState>,
@@ -717,6 +718,7 @@ impl GenerationRuntimeState {
             .collect();
         Self {
             runtime: RuntimeGeneration::bootstrap(config),
+            authority_ceiling: None,
             durable_schemas: Vec::new(),
             subscriptions: Vec::new(),
             states,
@@ -724,6 +726,12 @@ impl GenerationRuntimeState {
             invocations: BTreeMap::new(),
             active: false,
         }
+    }
+
+    fn constrain_root_authority(&self, authority: &Authority) -> Authority {
+        self.authority_ceiling
+            .as_ref()
+            .map_or_else(|| authority.clone(), |ceiling| authority.attenuate(ceiling))
     }
 }
 

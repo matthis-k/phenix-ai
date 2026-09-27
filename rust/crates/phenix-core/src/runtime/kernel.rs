@@ -78,9 +78,10 @@ impl Kernel {
         authority_ceiling: Authority,
     ) {
         if self.authority_ceiling.is_none() {
-            self.authority_ceiling = Some(authority_ceiling);
+            self.authority_ceiling = Some(authority_ceiling.clone());
         }
         self.generation_state.runtime = generation;
+        self.generation_state.authority_ceiling = Some(authority_ceiling);
         self.generation_state.durable_schemas = durable_schemas;
     }
 
@@ -478,9 +479,12 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
+        let root_authority = self
+            .generation_state
+            .constrain_root_authority(caller_authority);
         let scope = CallScope::external(
             Arc::new(self.generation_state.runtime.clone()),
-            caller_authority,
+            &root_authority,
         );
         invoke_component_service_with(
             runtime,
@@ -518,9 +522,12 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
+        let root_authority = self
+            .generation_state
+            .constrain_root_authority(caller_authority);
         let scope = CallScope::external(
             Arc::new(self.generation_state.runtime.clone()),
-            caller_authority,
+            &root_authority,
         );
         invoke_service_with(runtime, service, input, binding, scope)
     }

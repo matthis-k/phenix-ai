@@ -112,6 +112,10 @@ impl Kernel {
                 .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
         };
         Self::validate_root_execution_constraints(state, generation, constraints)?;
+        let effective_constraints = RootExecutionConstraints {
+            authority: state.constrain_root_authority(constraints.authority()),
+            pinned_bindings: constraints.pinned_bindings.clone(),
+        };
 
         let prepared_mutations = PreparedMutationScope::new(Some(generation));
         let runtime = RuntimeServices {
@@ -125,8 +129,10 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope =
-            CallScope::external_with_constraints(Arc::new(state.runtime.clone()), constraints);
+        let scope = CallScope::external_with_constraints(
+            Arc::new(state.runtime.clone()),
+            &effective_constraints,
+        );
         dispatch::invoke_service_with(runtime, service, input, binding, scope)
     }
 
@@ -456,6 +462,7 @@ impl Kernel {
 
         Ok(GenerationRuntimeState {
             runtime,
+            authority_ceiling: Some(candidate.authority_ceiling().clone()),
             durable_schemas: candidate.durable_schemas().to_vec(),
             subscriptions,
             states,
@@ -514,6 +521,73 @@ mod tests {
         ) -> Result<Vec<u8>, String> {
             Ok(self.0.to_vec())
         }
+    }
+
+    struct AuthorityEcho(CapabilityId);
+
+    impl PluginInstance for AuthorityEcho {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            _service: &ServiceId,
+            _input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(if host.authority().permits(&self.0) {
+                b"permitted".to_vec()
+            } else {
+                b"denied".to_vec()
+            })
+        }
+    }
+
+    #[test]
+    fn selected_generation_ceiling_attenuates_explicit_and_default_roots() {
+        let read = CapabilityId::parse("fixture.read").unwrap();
+        let write = CapabilityId::parse("fixture.write").unwrap();
+        let broad = Authority::new([read.clone(), write.clone()]);
+        let narrow = Authority::new([read]);
+        let mut plugin_manifest = manifest("fixture.residency.authority");
+        plugin_manifest.maximum_authority = broad.clone();
+
+        let first =
+            ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
+        let second =
+            ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        let write_for_factory = write.clone();
+        kernel.preload_embedded_factory(plugin_manifest.id, move || {
+            Box::new(AuthorityEcho(write_for_factory.clone()))
+        });
+        kernel.activate_all().unwrap();
+        let constraints = kernel
+            .capture_root_execution_constraints(&broad, [])
+            .unwrap();
+
+        assert_eq!(
+            kernel.invoke(&service(), &[], &broad, None).unwrap(),
+            b"permitted"
+        );
+
+        kernel.make_generation_resident(&second).unwrap();
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"denied"
+        );
+
+        kernel.promote_generation(&second_generation).unwrap();
+        assert_eq!(
+            kernel.invoke(&service(), &[], &broad, None).unwrap(),
+            b"denied"
+        );
     }
 
     #[test]
