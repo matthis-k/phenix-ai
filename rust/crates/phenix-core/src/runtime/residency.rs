@@ -61,6 +61,18 @@ impl Kernel {
         &mut self,
         candidate: &ResolvedHarness,
     ) -> Result<GraphGenerationId, KernelError> {
+        let trusted_host_constraints = RootExecutionConstraints {
+            authority: candidate.authority_ceiling().clone(),
+            pinned_bindings: BTreeMap::new(),
+        };
+        self.make_generation_resident_under_constraints(candidate, &trusted_host_constraints)
+    }
+
+    pub(crate) fn make_generation_resident_under_constraints(
+        &mut self,
+        candidate: &ResolvedHarness,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<GraphGenerationId, KernelError> {
         let candidate_generation = candidate.generation().clone();
         if self.graph_generation() == Some(&candidate_generation)
             || self
@@ -75,6 +87,11 @@ impl Kernel {
             .cloned()
             .ok_or(KernelError::ResolvedGenerationMissing)?;
         self.validate_generation_authority(candidate)?;
+        Self::validate_component_graph_root_execution_constraints(
+            candidate.component_graph(),
+            &candidate_generation,
+            constraints,
+        )?;
         if candidate.durable_schemas() != self.generation_state.durable_schemas.as_slice() {
             return Err(KernelError::ResidentGenerationDurableMismatch {
                 active: active_generation,
@@ -82,7 +99,11 @@ impl Kernel {
             });
         }
 
-        let state = self.stage_resident_generation(candidate)?;
+        let lifecycle_authority_ceiling = candidate
+            .authority_ceiling()
+            .attenuate(constraints.authority());
+        let state =
+            self.stage_resident_generation(candidate, &lifecycle_authority_ceiling)?;
         self.events.replace_generation_subscriptions(
             candidate_generation.clone(),
             state.subscriptions.clone(),
@@ -141,10 +162,20 @@ impl Kernel {
         generation: &GraphGenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
+        Self::validate_component_graph_root_execution_constraints(
+            state.runtime.component_graph(),
+            generation,
+            constraints,
+        )
+    }
+
+    fn validate_component_graph_root_execution_constraints(
+        component_graph: &ResolvedComponentGraph,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), KernelError> {
         for ((component, interface), pinned) in &constraints.pinned_bindings {
-            let matches = state
-                .runtime
-                .component_graph()
+            let matches = component_graph
                 .provider_plan(component, interface)
                 .ok()
                 .flatten()
@@ -228,7 +259,7 @@ impl Kernel {
 
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
-            authority_ceiling: state.authority_ceiling.as_ref(),
+            lifecycle_authority_ceiling: state.lifecycle_authority_ceiling.as_ref(),
             states: &state.states,
             instances: &state.instances,
             invocations: &state.invocations,
@@ -251,6 +282,7 @@ impl Kernel {
     fn stage_resident_generation(
         &self,
         candidate: &ResolvedHarness,
+        lifecycle_authority_ceiling: &Authority,
     ) -> Result<GenerationRuntimeState, KernelError> {
         let runtime = candidate.runtime_generation().clone();
         let config = runtime.config().clone();
@@ -290,11 +322,11 @@ impl Kernel {
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
                         let provider_authority = constrain_authority_to_ceiling(
-                            Some(candidate.authority_ceiling()),
+                            Some(lifecycle_authority_ceiling),
                             &provider_manifest.maximum_authority,
                         );
                         let guest_authority = constrain_authority_to_ceiling(
-                            Some(candidate.authority_ceiling()),
+                            Some(lifecycle_authority_ceiling),
                             &manifest.maximum_authority,
                         );
                         let provider =
@@ -373,7 +405,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
-                            authority_ceiling: Some(candidate.authority_ceiling()),
+                            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -434,7 +466,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
-                            authority_ceiling: Some(candidate.authority_ceiling()),
+                            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -476,7 +508,7 @@ impl Kernel {
                 &staged,
                 reconciliation::StopView {
                     runtime: &runtime,
-                    authority_ceiling: Some(candidate.authority_ceiling()),
+                    lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
                     states: &states,
                     instances: &instances,
                     invocations: &invocations,
@@ -492,6 +524,7 @@ impl Kernel {
         Ok(GenerationRuntimeState {
             runtime,
             authority_ceiling: Some(candidate.authority_ceiling().clone()),
+            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling.clone()),
             durable_schemas: candidate.durable_schemas().to_vec(),
             subscriptions,
             states,
