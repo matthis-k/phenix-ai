@@ -12,12 +12,16 @@ use phenix_sdk::{
 use rustix::{
     fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
     io::Errno,
+    process::{kill_process_group, Pid, Signal},
 };
 use std::{
     collections::BTreeMap,
     fs,
     io::{Read, Write},
-    os::fd::{AsFd, OwnedFd},
+    os::{
+        fd::{AsFd, OwnedFd},
+        unix::process::CommandExt,
+    },
     path::{Component, Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
@@ -117,6 +121,7 @@ impl CaptureBuffer {
 
 struct PersistentProcess {
     child: Child,
+    process_group: Option<Pid>,
     stdin: Option<ChildStdin>,
     stdout: Arc<Mutex<CaptureBuffer>>,
     stderr: Arc<Mutex<CaptureBuffer>>,
@@ -125,6 +130,13 @@ struct PersistentProcess {
 }
 
 impl PersistentProcess {
+    fn terminate_tree(&mut self) {
+        if let Some(process_group) = self.process_group {
+            let _ = kill_process_group(process_group, Signal::KILL);
+        }
+        let _ = self.child.kill();
+    }
+
     fn finish_readers(&mut self) {
         if let Some(reader) = self.stdout_reader.take() {
             let _ = reader.join();
@@ -153,6 +165,7 @@ struct LocalEnvironment {
     root: PathBuf,
     root_fd: Option<OwnedFd>,
     filesystem_policy: Result<EnvironmentFilesystemPolicy, String>,
+    bubblewrap_program: PathBuf,
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
 }
@@ -163,6 +176,7 @@ impl LocalEnvironment {
             root,
             root_fd: None,
             filesystem_policy: Ok(filesystem_policy),
+            bubblewrap_program: PathBuf::from("bwrap"),
             processes: BTreeMap::new(),
             next_process_id: 1,
         }
@@ -191,6 +205,7 @@ impl LocalEnvironment {
             root,
             root_fd: None,
             filesystem_policy,
+            bubblewrap_program: PathBuf::from("bwrap"),
             processes: BTreeMap::new(),
             next_process_id: 1,
         }
@@ -417,10 +432,11 @@ impl LocalEnvironment {
             command.args(arguments);
             command.current_dir(cwd);
             command.envs(environment);
+            command.process_group(0);
             return Ok(command);
         }
 
-        let mut command = Command::new("bwrap");
+        let mut command = Command::new(&self.bubblewrap_program);
         command
             .arg("--die-with-parent")
             .arg("--new-session")
@@ -498,7 +514,7 @@ impl PluginInstance for LocalEnvironment {
             .map_err(|error| {
                 format!("restricted local environment requires usable Linux openat2: {error}")
             })?;
-            let status = Command::new("bwrap")
+            let status = Command::new(&self.bubblewrap_program)
                 .arg("--version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -516,7 +532,8 @@ impl PluginInstance for LocalEnvironment {
 
     fn stop(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         for (_, mut process) in std::mem::take(&mut self.processes) {
-            let _ = process.child.kill();
+            process.stdin.take();
+            process.terminate_tree();
             let _ = process.child.wait();
             process.finish_readers();
         }
@@ -697,22 +714,57 @@ impl LocalEnvironment {
                 working_directory,
                 environment,
             } => {
-                let output = self
+                let owns_process_group =
+                    self.filesystem_policy()? == EnvironmentFilesystemPolicy::Unrestricted;
+                let mut child = self
                     .process_command(
                         &program,
                         &arguments,
                         working_directory.as_deref(),
                         &environment,
                     )?
-                    .output()
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
                     .map_err(|error| format!("spawn {program}: {error}"))?;
-                let (stdout, stdout_truncated) = bounded(output.stdout);
-                let (stderr, stderr_truncated) = bounded(output.stderr);
+                let process_group = owns_process_group.then(|| {
+                    Pid::from_raw(child.id() as i32)
+                        .expect("spawned process id is a non-zero process-group id")
+                });
+                let stdout = child
+                    .stdout
+                    .take()
+                    .ok_or_else(|| format!("spawn {program}: stdout was not piped"))?;
+                let stderr = child
+                    .stderr
+                    .take()
+                    .ok_or_else(|| format!("spawn {program}: stderr was not piped"))?;
+                let stdout_capture = Arc::new(Mutex::new(CaptureBuffer::default()));
+                let stderr_capture = Arc::new(Mutex::new(CaptureBuffer::default()));
+                let stdout_reader = spawn_reader(stdout, Arc::clone(&stdout_capture));
+                let stderr_reader = spawn_reader(stderr, Arc::clone(&stderr_capture));
+                let mut process = PersistentProcess {
+                    child,
+                    process_group,
+                    stdin: None,
+                    stdout: stdout_capture,
+                    stderr: stderr_capture,
+                    stdout_reader: Some(stdout_reader),
+                    stderr_reader: Some(stderr_reader),
+                };
+                let status = process
+                    .child
+                    .wait()
+                    .map_err(|error| format!("wait {program}: {error}"))?;
+                process.terminate_tree();
+                process.finish_readers();
+                let (stdout, stderr, truncated) = process.take_output()?;
                 Ok(EnvironmentResponse::Process {
-                    exit_code: output.status.code().unwrap_or(-1),
+                    exit_code: status.code().unwrap_or(-1),
                     stdout,
                     stderr,
-                    truncated: stdout_truncated || stderr_truncated,
+                    truncated,
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -721,6 +773,8 @@ impl LocalEnvironment {
                 working_directory,
                 environment,
             } => {
+                let owns_process_group =
+                    self.filesystem_policy()? == EnvironmentFilesystemPolicy::Unrestricted;
                 let mut child = self
                     .process_command(
                         &program,
@@ -733,6 +787,10 @@ impl LocalEnvironment {
                     .stderr(Stdio::piped())
                     .spawn()
                     .map_err(|error| format!("spawn persistent {program}: {error}"))?;
+                let process_group = owns_process_group.then(|| {
+                    Pid::from_raw(child.id() as i32)
+                        .expect("spawned process id is a non-zero process-group id")
+                });
                 let stdin = child.stdin.take();
                 let stdout = child
                     .stdout
@@ -752,6 +810,7 @@ impl LocalEnvironment {
                     handle.clone(),
                     PersistentProcess {
                         child,
+                        process_group,
                         stdin,
                         stdout: stdout_capture,
                         stderr: stderr_capture,
@@ -788,6 +847,7 @@ impl LocalEnvironment {
                     .map(|status| status.code().unwrap_or(-1));
                 if exit_code.is_some() {
                     process.stdin.take();
+                    process.terminate_tree();
                     process.finish_readers();
                 }
                 let (stdout, stderr, truncated) = process.take_output()?;
@@ -804,22 +864,17 @@ impl LocalEnvironment {
                     .remove(&handle)
                     .ok_or_else(|| format!("unknown environment process handle: {handle}"))?;
                 process.stdin.take();
-                let status = match process.child.try_wait() {
-                    Ok(Some(status)) => Some(status),
-                    Ok(None) => {
-                        let _ = process.child.kill();
-                        process.child.wait().ok()
-                    }
-                    Err(error) => {
-                        return Err(format!("close environment process {handle}: {error}"))
-                    }
-                };
+                process.terminate_tree();
+                let status = process
+                    .child
+                    .wait()
+                    .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
                 let (stdout, stderr, truncated) = process.take_output()?;
                 Ok(EnvironmentResponse::ProcessClosed {
                     stdout,
                     stderr,
-                    exit_code: status.map(|status| status.code().unwrap_or(-1)),
+                    exit_code: Some(status.code().unwrap_or(-1)),
                     truncated,
                 })
             }
@@ -848,13 +903,6 @@ fn spawn_reader(
     })
 }
 
-fn bounded(bytes: Vec<u8>) -> (Vec<u8>, bool) {
-    if bytes.len() <= MAX_CAPTURE_BYTES {
-        (bytes, false)
-    } else {
-        (bytes[..MAX_CAPTURE_BYTES].to_vec(), true)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1019,6 +1067,237 @@ mod tests {
             .unwrap();
         kernel.activate_all().unwrap();
         kernel
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_process_exit(pid: u32) {
+        let proc_path = PathBuf::from(format!("/proc/{pid}"));
+        for _ in 0..100 {
+            if !proc_path.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("descendant process {pid} survived Environment cleanup");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_background_child(kernel: &mut Kernel) -> (String, u32) {
+        let handle = match invoke(
+            kernel,
+            EnvironmentCommand::OpenProcess {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    r#"sleep 60 >/dev/null 2>&1 & child=$!; printf '%s\n' "$child"; wait"#.into(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        ) {
+            EnvironmentResponse::ProcessOpened { handle } => handle,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        let mut output = Vec::new();
+        for _ in 0..100 {
+            match invoke(
+                kernel,
+                EnvironmentCommand::PollProcess {
+                    handle: handle.clone(),
+                },
+            ) {
+                EnvironmentResponse::ProcessOutput { stdout, .. } => {
+                    output.extend(stdout);
+                    if let Some(pid) = String::from_utf8_lossy(&output)
+                        .lines()
+                        .find_map(|line| line.trim().parse::<u32>().ok())
+                    {
+                        return (handle, pid);
+                    }
+                }
+                other => panic!("unexpected response: {other:?}"),
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!(
+            "persistent process did not report its descendant pid; stdout={:?}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    #[test]
+    fn restricted_provider_fails_closed_when_bubblewrap_is_missing() {
+        let root = temp_root();
+        let manifest = local_environment_manifest();
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        let provider_root = root.clone();
+        kernel
+            .register_embedded_factory(plugin, move || {
+                let mut environment = LocalEnvironment::new(
+                    provider_root.clone(),
+                    EnvironmentFilesystemPolicy::WorkingDirectoryOnly,
+                );
+                environment.bubblewrap_program = provider_root.join("missing-bubblewrap");
+                Box::new(environment)
+            })
+            .unwrap();
+
+        let error = kernel.activate_all().unwrap_err();
+        assert!(
+            error.to_string().contains("requires bubblewrap"),
+            "unexpected activation error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restricted_policy_is_reported_and_child_environment_cannot_widen_it() {
+        let root = temp_root();
+        let outside = temp_root();
+        let outside_write = outside.join("write.txt");
+        let mut kernel = restricted_kernel(
+            &root,
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
+        );
+
+        assert!(matches!(
+            invoke(&mut kernel, EnvironmentCommand::Describe),
+            EnvironmentResponse::Description { environment }
+                if environment.filesystem_policy
+                    == EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite
+        ));
+
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    r#"printf nope > "$1""#.into(),
+                    "sh".into(),
+                    outside_write.to_string_lossy().into_owned(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::from([(
+                    LOCAL_FILESYSTEM_POLICY_ENV.to_owned(),
+                    "unrestricted".to_owned(),
+                )]),
+            },
+        );
+        assert!(matches!(
+            process,
+            EnvironmentResponse::Process { exit_code, .. } if exit_code != 0
+        ));
+        assert!(!outside_write.exists());
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn one_shot_exec_terminates_background_descendants() {
+        let root = temp_root();
+        let mut kernel =
+            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    r#"sleep 60 >/dev/null 2>&1 & printf '%s\n' "$!""#.into(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        let pid = match process {
+            EnvironmentResponse::Process {
+                exit_code: 0,
+                stdout,
+                ..
+            } => String::from_utf8(stdout)
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .unwrap(),
+            other => panic!("unexpected response: {other:?}"),
+        };
+        wait_for_process_exit(pid);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn closing_persistent_process_terminates_descendants() {
+        let root = temp_root();
+        let mut kernel =
+            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+        let (handle, pid) = open_background_child(&mut kernel);
+
+        assert!(matches!(
+            invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle }),
+            EnvironmentResponse::ProcessClosed { .. }
+        ));
+        wait_for_process_exit(pid);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn provider_stop_terminates_persistent_descendants() {
+        let root = temp_root();
+        let plugin = local_environment_manifest().id;
+        let mut kernel =
+            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+        let (_handle, pid) = open_background_child(&mut kernel);
+
+        kernel.stop(&plugin).unwrap();
+        wait_for_process_exit(pid);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn working_directory_only_runtime_dependencies_are_read_only_mounts() {
+        let root = temp_root();
+        let mut kernel =
+            restricted_kernel(&root, EnvironmentFilesystemPolicy::WorkingDirectoryOnly);
+
+        let process = invoke(
+            &mut kernel,
+            EnvironmentCommand::Exec {
+                program: "sh".into(),
+                arguments: vec![
+                    "-c".into(),
+                    r#"found=
+while IFS=' ' read -r _ _ _ _ mount_point options _; do
+    if [ "$mount_point" = /nix/store ]; then
+        case ",$options," in
+            *,ro,*) found=1 ;;
+        esac
+    fi
+done < /proc/self/mountinfo
+test -n "$found""#
+                        .into(),
+                ],
+                working_directory: None,
+                environment: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(
+            process,
+            EnvironmentResponse::Process { exit_code: 0, .. }
+        ));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

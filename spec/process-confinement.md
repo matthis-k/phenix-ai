@@ -1,6 +1,6 @@
 # Process confinement
 
-status: partial
+status: implemented
 
 ## Goal
 
@@ -73,7 +73,7 @@ Host home/config paths remain governed by the selected policy. A host-read/cwd-w
 
 A persistent process is pinned to the effective Environment policy and filesystem view used at creation.
 
-A later policy change does not widen or narrow the existing OS process in place. If the new policy is incompatible with a live persistent process, the Environment invalidates or terminates that process and requires a new process under the new policy.
+The local provider's policy is immutable for its lifetime. Replacing that provider stops its persistent processes before a provider with another policy becomes active. Child environment variables cannot change the provider's effective policy.
 
 Scratch and persistent processes use the same launcher and confinement rules.
 

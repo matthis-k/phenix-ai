@@ -1,6 +1,6 @@
 # Environment, Workspace, and tool boundary
 
-status: partial
+status: implemented
 coverage:
   - rust/crates/phenix-sdk/src/contracts/environment.rs
   - rust/crates/phenix-plugin-environment-local/src/lib.rs
@@ -362,7 +362,7 @@ The architecture is considered preserved only if tests prove:
 - Environment process execution uses the requested Environment working directory.
 - the unrestricted local provider can read/write absolute paths outside its configured root, including from child processes.
 - persistent process handles are provider-owned opaque strings.
-- persistent process cleanup happens on explicit close and provider stop.
+- one-shot and persistent process cleanup terminates ordinary descendant processes, including on explicit close and provider stop.
 - replacing the Environment provider does not require changing Workspace or tool contracts.
 - restricted local tests prove direct filesystem operations and shell-originated writes enforce the same policy.
 - restricted local tests prove arbitrary child processes cannot escape the filesystem view.
@@ -373,7 +373,7 @@ The architecture is considered preserved only if tests prove:
 - symlink traversal cannot turn an allowed lexical path into an out-of-policy write.
 - writable scratch is Environment-private rather than host-writable `/tmp`.
 - runtime dependency mounts are read-only and do not become general host-data exceptions.
-- persistent processes remain pinned to their creation policy and cannot survive an incompatible policy change with broader access.
+- a child cannot widen its active filesystem policy by changing process environment, and provider replacement stops the old provider's processes before a new policy takes effect.
 - embedded native plugins are treated as trusted host code; untrusted plugin execution uses an isolated runtime rather than claiming Environment confinement.
 - filesystem confinement is not described as network, IPC, device, or secret isolation.
 
