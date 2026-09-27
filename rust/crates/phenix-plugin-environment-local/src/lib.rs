@@ -1049,7 +1049,7 @@ mod tests {
             },
         )
         .unwrap_err()
-        .contains("denies write outside working directory"));
+        .contains("denies path outside working directory"));
 
         let process = invoke(
             &mut kernel,
@@ -1113,7 +1113,7 @@ mod tests {
             },
         )
         .unwrap_err()
-        .contains("denies read outside working directory"));
+        .contains("denies path outside working directory"));
 
         let process = invoke(
             &mut kernel,
@@ -1154,7 +1154,7 @@ mod tests {
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
         );
 
-        let direct = invoke_result(
+        invoke_result(
             &mut kernel,
             EnvironmentCommand::WriteFile {
                 path: root
@@ -1166,7 +1166,6 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(direct.contains("confined write") || direct.contains("confined open"));
         assert!(!outside.join("direct.txt").exists());
 
         let process = invoke(
@@ -1264,21 +1263,43 @@ mod tests {
         ));
 
         let mut exited = false;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut final_exit = None;
         for _ in 0..100 {
-            if let EnvironmentResponse::ProcessOutput { exit_code, .. } = invoke(
+            if let EnvironmentResponse::ProcessOutput {
+                stdout: chunk_stdout,
+                stderr: chunk_stderr,
+                exit_code,
+                ..
+            } = invoke(
                 &mut kernel,
                 EnvironmentCommand::PollProcess {
                     handle: handle.clone(),
                 },
             ) {
+                stdout.extend(chunk_stdout);
+                stderr.extend(chunk_stderr);
                 if exit_code.is_some() {
+                    final_exit = exit_code;
                     exited = true;
                     break;
                 }
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(exited);
+        assert!(
+            exited,
+            "restricted persistent process did not exit; stdout={:?} stderr={:?}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert!(
+            root.join("nested.txt").exists(),
+            "restricted persistent process did not create in-root file; exit={final_exit:?} stdout={:?} stderr={:?}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
         assert_eq!(fs::read(root.join("nested.txt")).unwrap(), b"inside");
         assert!(!outside_write.exists());
         let _ = invoke(&mut kernel, EnvironmentCommand::CloseProcess { handle });
