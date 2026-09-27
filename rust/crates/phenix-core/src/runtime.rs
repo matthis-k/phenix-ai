@@ -250,10 +250,31 @@ pub(super) struct InvocationStack {
     frames: Vec<InvocationFrame>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RootExecutionConstraints {
+    authority: Authority,
+    pinned_bindings: BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>,
+}
+
+impl RootExecutionConstraints {
+    pub fn authority(&self) -> &Authority {
+        &self.authority
+    }
+
+    pub fn pinned_bindings(
+        &self,
+    ) -> impl Iterator<Item = (&ComponentId, &InterfaceId, &ResolvedImportHandle)> {
+        self.pinned_bindings
+            .iter()
+            .map(|((component, interface), handle)| (component, interface, handle))
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CallScope {
     generation: Arc<RuntimeGeneration>,
     authority: Authority,
+    pinned_bindings: Arc<BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>>,
     cancellation: Option<CallCancellationToken>,
     stack: InvocationStack,
     transactions: TransactionContext,
@@ -262,9 +283,23 @@ pub(super) struct CallScope {
 
 impl CallScope {
     pub(super) fn external(generation: Arc<RuntimeGeneration>, authority: &Authority) -> Self {
+        Self::external_with_constraints(
+            generation,
+            &RootExecutionConstraints {
+                authority: authority.clone(),
+                pinned_bindings: BTreeMap::new(),
+            },
+        )
+    }
+
+    pub(super) fn external_with_constraints(
+        generation: Arc<RuntimeGeneration>,
+        constraints: &RootExecutionConstraints,
+    ) -> Self {
         Self {
             generation,
-            authority: authority.clone(),
+            authority: constraints.authority.clone(),
+            pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation: None,
             stack: InvocationStack::default(),
             transactions: TransactionContext::unscoped(),
@@ -281,6 +316,7 @@ impl CallScope {
         Self {
             generation,
             authority: authority.clone(),
+            pinned_bindings: Arc::new(BTreeMap::new()),
             cancellation,
             stack: InvocationStack::root(plugin),
             transactions: TransactionContext::unscoped(),
@@ -292,6 +328,7 @@ impl CallScope {
         Self {
             generation: Arc::clone(&self.generation),
             authority,
+            pinned_bindings: Arc::clone(&self.pinned_bindings),
             cancellation: self.cancellation.clone(),
             stack: self.stack.clone(),
             transactions,
