@@ -1229,6 +1229,7 @@ mod tests {
 
     fn model_request() -> ModelInferenceRequest {
         ModelInferenceRequest {
+            session_id: None,
             model: phenix_core::ModelId::parse("gpt-5.6-terra").unwrap(),
             input: b"hello".to_vec().into(),
             options: BTreeMap::from([

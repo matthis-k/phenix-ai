@@ -449,6 +449,7 @@ mod resolved_dispatch {
         let response = invoke_dispatch(
             kernel,
             ModelDispatchCommand::PrepareResolved {
+                session_id: None,
                 decision,
                 input: input.to_vec().into(),
                 cache: Default::default(),
@@ -515,6 +516,7 @@ mod resolved_dispatch {
         let response = invoke_dispatch(
             &mut kernel,
             ModelDispatchCommand::PrepareResolved {
+                session_id: None,
                 decision: decision(target, "generation-1"),
                 input: b"canonical context".to_vec().into(),
                 cache: phenix_core::ModelCacheControl {
@@ -561,6 +563,7 @@ mod resolved_dispatch {
         let response = invoke_dispatch(
             &mut kernel,
             ModelDispatchCommand::PrepareResolved {
+                session_id: None,
                 decision: decision(target, "generation-1"),
                 input: b"same context without cache support".to_vec().into(),
                 cache: phenix_core::ModelCacheControl {
@@ -670,6 +673,7 @@ mod resolved_dispatch {
         let failure = dispatch_failure(
             &mut kernel,
             ModelDispatchCommand::PrepareResolved {
+                session_id: None,
                 decision,
                 input: b"must-not-run".to_vec().into(),
                 cache: Default::default(),
@@ -701,6 +705,7 @@ mod resolved_dispatch {
         let failure = dispatch_failure(
             &mut kernel,
             ModelDispatchCommand::PrepareResolved {
+                session_id: None,
                 decision: decision(target, "generation-1"),
                 input: b"must-not-run".to_vec().into(),
                 cache: Default::default(),

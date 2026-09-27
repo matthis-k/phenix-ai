@@ -1,7 +1,7 @@
 use super::{ModelInferenceResponse, RouteDecision};
 use phenix_core::{
     Bytes, ComponentInterface, InterfaceId, ModelCacheControl, ModelInferenceFailure,
-    ModelToolDescriptor, ModelToolTurn, ServiceId,
+    ModelToolDescriptor, ModelToolTurn, ServiceId, SessionId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,8 @@ impl PreparedDispatch {
 pub enum ModelDispatchCommand {
     PrepareResolved {
         decision: RouteDecision,
+        #[serde(default)]
+        session_id: Option<SessionId>,
         input: Bytes,
         #[serde(default)]
         cache: ModelCacheControl,

@@ -5,7 +5,7 @@ use phenix_core::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PHENIX_HARNESS_IDENTITY: &str = "You are an AI agent powered by Phenix.";
+pub const PHENIX_HARNESS_IDENTITY: &str = "You are an AI agent powered by Phenix. The default Phenix application provides a workspace-backed shell tool, durable session history that survives runtime restarts, persistent memory services, and skill/context loading. Active skills appear as instruction sections, and the tools attached to each request are the callable tool surface for that turn. When asked about your environment or memory, report the concrete tools, active skills/context, and supplied conversation history; do not infer that a Phenix subsystem is absent only because it is not exposed as a separate tool.";
 
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
@@ -219,6 +219,14 @@ mod tests {
 
         assert_eq!(assembly.sections.len(), 2);
         assert_eq!(assembly.sections[1].source, "AGENTS.md");
+    }
+
+    #[test]
+    fn fixed_identity_describes_default_runtime_surfaces() {
+        assert!(PHENIX_HARNESS_IDENTITY.contains("workspace-backed shell tool"));
+        assert!(PHENIX_HARNESS_IDENTITY.contains("durable session history"));
+        assert!(PHENIX_HARNESS_IDENTITY.contains("persistent memory"));
+        assert!(PHENIX_HARNESS_IDENTITY.contains("Active skills"));
     }
 
     #[test]

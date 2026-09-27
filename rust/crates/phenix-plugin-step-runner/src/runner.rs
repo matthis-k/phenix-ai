@@ -416,6 +416,7 @@ fn run_delegated_task(
     };
     let request = PlannedStepRequest {
         attribution,
+        session_id: None,
         profile_id: RoutingProfileId::parse("delegated-worker")
             .expect("static delegated worker profile id is valid"),
         callable_id: None,
@@ -1022,6 +1023,7 @@ fn run_with_retry_route(
     let retry_template = request.clone();
     let PlannedStepRequest {
         attribution,
+        session_id,
         profile_id,
         callable_id,
         input,
@@ -1533,6 +1535,7 @@ fn run_with_retry_route(
                 ModelDispatchFailure,
             >(&ModelDispatchCommand::PrepareResolved {
                 decision: decision.clone(),
+                session_id,
                 input: model_input,
                 cache: phenix_core::ModelCacheControl {
                     explicit_prefix_bytes: cache_prefix_bytes,

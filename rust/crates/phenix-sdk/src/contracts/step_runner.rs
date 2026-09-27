@@ -205,6 +205,8 @@ pub enum StepSettlementBasis {
 #[serde(deny_unknown_fields)]
 pub struct PlannedStepRequest {
     pub attribution: UsageAttribution,
+    #[serde(default)]
+    pub session_id: Option<SessionId>,
     pub profile_id: RoutingProfileId,
     pub callable_id: Option<CallableId>,
     pub input: Bytes,

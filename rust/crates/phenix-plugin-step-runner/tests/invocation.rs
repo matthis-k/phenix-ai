@@ -4,7 +4,7 @@ use phenix_core::{
     LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
-    ServiceContribution, ServiceId, ServiceRole, ValueError,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -79,10 +79,17 @@ impl PluginInstance for FixtureProvider {
             )
             .map_err(|error| error.to_string());
         }
+        let output = if let Some(session_id) = request.session_id.as_ref() {
+            let mut output = format!("session:{}\n", session_id.as_str()).into_bytes();
+            output.extend_from_slice(request.input.as_ref());
+            output.into()
+        } else {
+            request.input
+        };
         context
             .kernel
             .encode_value(&ModelInferenceResponse {
-                output: request.input,
+                output,
                 provider_metadata: BTreeMap::new(),
                 usage: Default::default(),
                 tool_calls: Vec::new(),
@@ -492,11 +499,13 @@ fn context_limit_prunes_reducible_context_and_retries_same_target() {
 
     let mut params = params("context-limit-policy");
     params.policy.max_retries = 1;
+    let mut invocation = request();
+    invocation.session_id = Some(SessionId::parse("session-retry").unwrap());
     let response: StepRunnerResponse = invoke(
         &mut kernel,
         invocation_service(),
         &InvocationCommand::Invoke {
-            request: request(),
+            request: invocation,
             params,
         },
     );
@@ -511,6 +520,7 @@ fn context_limit_prunes_reducible_context_and_retries_same_target() {
     let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
     assert!(!text.contains("overflow-only-context"));
     assert!(text.contains("overflow-doc@"));
+    assert!(text.contains("session:session-retry"));
 
     let attempts: StepAttemptResponse = invoke(
         &mut kernel,

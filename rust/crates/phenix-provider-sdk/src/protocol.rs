@@ -6,7 +6,7 @@ use phenix_core::{
     ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
     ValueCodec,
 };
-use reqwest::header::CONTENT_TYPE;
+use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -53,7 +53,7 @@ impl ProtocolAdapter for Protocol {
             Self::OpenAiResponses => openai_responses_request(endpoint, request),
             Self::OpenAiChatCompletions => openai_chat_request(endpoint, request),
             Self::AnthropicMessages => anthropic_request(endpoint, request),
-            Self::OpenCodeGo => opencode_go_protocol(request).encode(endpoint, request),
+            Self::OpenCodeGo => opencode_go_request(endpoint, request),
             Self::OpenCodeZen => opencode_zen_protocol(request)?.encode(endpoint, request),
         }
     }
@@ -80,6 +80,26 @@ fn opencode_go_protocol(request: &ModelInferenceRequest) -> Protocol {
         return Protocol::AnthropicMessages;
     }
     Protocol::OpenAiChatCompletions
+}
+
+const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+const PHENIX_USER_AGENT: &str = concat!("phenix-ai/", env!("CARGO_PKG_VERSION"));
+
+fn opencode_go_request(
+    endpoint: &Endpoint,
+    request: &ModelInferenceRequest,
+) -> Result<ProviderRequest, ProviderError> {
+    let mut outgoing = opencode_go_protocol(request).encode(endpoint, request)?;
+    if let Some(session_id) = request.session_id.as_ref() {
+        outgoing.headers.insert(
+            OPENCODE_SESSION_HEADER.to_owned(),
+            session_id.as_str().to_owned(),
+        );
+    }
+    outgoing
+        .headers
+        .insert(USER_AGENT.as_str().to_owned(), PHENIX_USER_AGENT.to_owned());
+    Ok(outgoing)
 }
 
 fn opencode_zen_protocol(request: &ModelInferenceRequest) -> Result<Protocol, ProviderError> {
@@ -1216,11 +1236,12 @@ fn error_message(body: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::{DurationMs, ProviderResponse};
-    use phenix_core::{Key, PhenixValue};
+    use phenix_core::{Key, PhenixValue, SessionId};
     use std::collections::BTreeMap;
 
     fn request() -> ModelInferenceRequest {
         ModelInferenceRequest {
+            session_id: None,
             model: phenix_core::ModelId::parse("test-model").unwrap(),
             input: b"hello".to_vec().into(),
             options: BTreeMap::new(),
@@ -1233,6 +1254,7 @@ mod tests {
     fn request_for_model(model: &str) -> ModelInferenceRequest {
         let mut request = request();
         request.model = phenix_core::ModelId::parse(model).unwrap();
+        request.session_id = Some(SessionId::parse("session-test").unwrap());
         request
     }
 
@@ -1593,6 +1615,50 @@ mod tests {
                 encoded.url
             );
         }
+    }
+
+    #[test]
+    fn opencode_go_forwards_stable_session_identity_and_user_agent() {
+        let endpoint = Endpoint::parse("https://opencode.ai/zen/go/v1").unwrap();
+        let mut request = request_for_model("qwen3.7-plus");
+        request.session_id = Some(SessionId::parse("session-a").unwrap());
+
+        let first = Protocol::OpenCodeGo.encode(&endpoint, &request).unwrap();
+        let second = Protocol::OpenCodeGo.encode(&endpoint, &request).unwrap();
+        assert_eq!(
+            first
+                .headers
+                .get(OPENCODE_SESSION_HEADER)
+                .map(String::as_str),
+            Some("session-a")
+        );
+        assert_eq!(
+            second.headers.get(OPENCODE_SESSION_HEADER),
+            first.headers.get(OPENCODE_SESSION_HEADER)
+        );
+        assert_eq!(
+            first.headers.get(USER_AGENT.as_str()).map(String::as_str),
+            Some(PHENIX_USER_AGENT)
+        );
+
+        request.session_id = Some(SessionId::parse("session-b").unwrap());
+        let other = Protocol::OpenCodeGo.encode(&endpoint, &request).unwrap();
+        assert_eq!(
+            other
+                .headers
+                .get(OPENCODE_SESSION_HEADER)
+                .map(String::as_str),
+            Some("session-b")
+        );
+
+        let mut missing = request_for_model("qwen3.7-plus");
+        missing.session_id = None;
+        let missing = Protocol::OpenCodeGo.encode(&endpoint, &missing).unwrap();
+        assert!(!missing.headers.contains_key(OPENCODE_SESSION_HEADER));
+        assert_eq!(
+            missing.headers.get(USER_AGENT.as_str()).map(String::as_str),
+            Some(PHENIX_USER_AGENT)
+        );
     }
 
     #[test]
