@@ -430,12 +430,12 @@ impl LocalEnvironment {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
                 command.arg("--ro-bind").arg("/").arg("/");
-                "/phenix-tmp"
+                "/.phenix-tmp"
             }
             EnvironmentFilesystemPolicy::WorkingDirectoryOnly => {
                 Self::add_parent_dirs(&mut command, &self.root);
                 Self::add_runtime_readonly_paths(&mut command);
-                "/tmp"
+                "/.phenix-tmp"
             }
         };
 
