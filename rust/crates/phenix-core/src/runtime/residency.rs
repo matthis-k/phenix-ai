@@ -637,9 +637,11 @@ mod tests {
         }
     }
 
+    type LifecycleObservation = (&'static str, GraphGenerationId, bool);
+
     struct AuthorityEcho {
         capability: CapabilityId,
-        lifecycle: Arc<Mutex<Vec<(&'static str, GraphGenerationId, bool)>>>,
+        lifecycle: Arc<Mutex<Vec<LifecycleObservation>>>,
     }
 
     impl AuthorityEcho {

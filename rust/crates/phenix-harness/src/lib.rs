@@ -1026,6 +1026,7 @@ mod tests {
         let alternate = serde_json::to_vec(&SessionResponse::Session { session: None }).unwrap();
         let alternate_factory = alternate.clone();
         let mut builder = HarnessBuilder::new();
+        builder.set_component_authority(session_authority());
         builder
             .add_embedded(session_manifest(), session_factory)
             .unwrap();
@@ -1062,6 +1063,7 @@ mod tests {
         .unwrap();
         let alternate_factory = alternate.clone();
         let mut builder = HarnessBuilder::new();
+        builder.set_component_authority(default_suite_authority());
         builder
             .add_embedded(
                 execution_manifest(default_suite_authority()),
