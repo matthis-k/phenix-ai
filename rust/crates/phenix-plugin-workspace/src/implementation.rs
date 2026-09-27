@@ -696,9 +696,7 @@ mod tests {
                         kind: Some(EnvironmentFileKind::Directory),
                     }
                 }
-                EnvironmentCommand::ReadDir { path }
-                    if Path::new(&path) == self.root.as_path() =>
-                {
+                EnvironmentCommand::ReadDir { path } if Path::new(&path) == self.root.as_path() => {
                     EnvironmentResponse::Directory {
                         entries: vec![phenix_sdk::EnvironmentDirEntry {
                             path: self.outside.to_string_lossy().into_owned(),
@@ -706,9 +704,7 @@ mod tests {
                         }],
                     }
                 }
-                EnvironmentCommand::Stat { path }
-                    if Path::new(&path) == self.outside.as_path() =>
-                {
+                EnvironmentCommand::Stat { path } if Path::new(&path) == self.outside.as_path() => {
                     EnvironmentResponse::Metadata {
                         kind: Some(EnvironmentFileKind::File),
                     }
