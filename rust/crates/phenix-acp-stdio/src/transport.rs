@@ -281,6 +281,10 @@ impl SdkApplicationService {
                 "schema".to_owned(),
                 PhenixValue::String(format!("{:?}", metadata.schema)),
             ),
+            (
+                "snapshot_policy".to_owned(),
+                PhenixValue::String(format!("{:?}", metadata.snapshot_policy).to_lowercase()),
+            ),
             ("value".to_owned(), value),
         ])))
     }
