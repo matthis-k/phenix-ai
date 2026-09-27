@@ -608,7 +608,9 @@ mod tests {
             Err(KernelError::EmbeddedFactoryMissing(failing_manifest.id))
         );
         assert_eq!(kernel.graph_generation(), Some(&first_generation));
-        assert!(!kernel.resident_generation_ids().contains(&failing_generation));
+        assert!(!kernel
+            .resident_generation_ids()
+            .contains(&failing_generation));
         assert_eq!(
             kernel
                 .invoke(&service(), &[], &Authority::default(), None)
