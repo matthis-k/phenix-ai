@@ -264,14 +264,24 @@ impl Display for KernelError {
                 f.write_str("listener topology requires an active resolved generation")
             }
             Self::UnknownGeneration(generation) => {
-                write!(f, "graph generation is not resident: {generation}")
+                write!(
+                    f,
+                    "graph generation is not resident: {}",
+                    generation.as_str()
+                )
             }
             Self::DefaultGenerationCannotRetire(generation) => {
-                write!(f, "default graph generation cannot retire: {generation}")
+                write!(
+                    f,
+                    "default graph generation cannot retire: {}",
+                    generation.as_str()
+                )
             }
             Self::ResidentGenerationDurableMismatch { active, candidate } => write!(
                 f,
-                "graph generation {candidate} cannot reside beside {active}: durable schemas differ"
+                "graph generation {} cannot reside beside {}: durable schemas differ",
+                candidate.as_str(),
+                active.as_str()
             ),
             Self::PluginStop { plugin, message } => {
                 write!(f, "plugin {plugin} failed to stop: {message}")
