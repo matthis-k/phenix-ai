@@ -179,9 +179,9 @@ impl Kernel {
             .remove(generation)
             .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
 
-        // The current default has only ambient subscriptions until it becomes
-        // resident. Preserve them under its generation before changing the
-        // ambient default so explicit old-generation roots keep their topology.
+        // Preserve the current default under its generation before changing
+        // ambient delivery. Activation normally installs this snapshot already;
+        // promotion enforces the invariant at the lifecycle boundary.
         self.events.replace_generation_subscriptions(
             current_generation.clone(),
             self.generation_state.subscriptions.clone(),
