@@ -85,6 +85,7 @@ Plugins that want generic live-state inspection should publish relevant state th
 The execution service owns the execution projection.
 
 Read-only projection operations expose all execution and worker-task records. They do not mutate lifecycle state or authority.
+The projection service has direct regression coverage for execution lookup, execution listing, task listing, and preservation of the underlying execution state.
 
 The agent-facing DAG query filters that projection from the current root.
 
