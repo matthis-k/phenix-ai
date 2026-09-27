@@ -5,7 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
-    pub(super) lifecycle_authority_ceiling: Option<&'a Authority>,
+    pub(super) lifecycle_constraints: Option<&'a RootExecutionConstraints>,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -27,9 +27,26 @@ impl StopView<'_> {
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
         let plugin_authority = constrain_authority_to_ceiling(
-            self.lifecycle_authority_ceiling,
+            self.lifecycle_constraints
+                .map(RootExecutionConstraints::authority),
             &manifest.maximum_authority,
         );
+        let scope = if let Some(constraints) = self.lifecycle_constraints {
+            CallScope::root_with_constraints(
+                Arc::new((*self.runtime).clone()),
+                plugin,
+                &plugin_authority,
+                constraints,
+                Some(live_call.cancellation_token().clone()),
+            )
+        } else {
+            CallScope::root(
+                Arc::new((*self.runtime).clone()),
+                plugin,
+                &plugin_authority,
+                Some(live_call.cancellation_token().clone()),
+            )
+        };
         let host = PluginHost {
             runtime: RuntimeServices {
                 states: self.states,
@@ -43,12 +60,7 @@ impl StopView<'_> {
                 provenance: self.provenance,
             },
             plugin,
-            scope: CallScope::root(
-                Arc::new((*self.runtime).clone()),
-                plugin,
-                &plugin_authority,
-                Some(live_call.cancellation_token().clone()),
-            ),
+            scope,
             continuation: None,
         };
         let mut instance = instance
@@ -68,6 +80,10 @@ impl Kernel {
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
         self.validate_generation_authority(candidate)?;
+        let candidate_lifecycle_constraints = RootExecutionConstraints {
+            authority: candidate.authority_ceiling().clone(),
+            pinned_bindings: BTreeMap::new(),
+        };
         let has_active = self
             .generation_state
             .states
@@ -233,7 +249,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
-                                lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
+                                lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -295,7 +311,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
-                                lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
+                                lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -338,7 +354,7 @@ impl Kernel {
                     &staged,
                     StopView {
                         runtime: candidate_runtime,
-                        lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
+                        lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -368,8 +384,7 @@ impl Kernel {
             .collect();
 
         let old_runtime = self.generation_state.runtime.clone();
-        let old_lifecycle_authority_ceiling =
-            self.generation_state.lifecycle_authority_ceiling.clone();
+        let old_lifecycle_constraints = self.generation_state.lifecycle_constraints.clone();
         let old_states = self.generation_state.states.clone();
         let old_instances = self.generation_state.instances.clone();
         let old_invocations = self.generation_state.invocations.clone();
@@ -391,7 +406,7 @@ impl Kernel {
 
         let retired_view = StopView {
             runtime: &old_runtime,
-            lifecycle_authority_ceiling: old_lifecycle_authority_ceiling.as_ref(),
+            lifecycle_constraints: old_lifecycle_constraints.as_ref(),
             states: &old_states,
             instances: &old_instances,
             invocations: &old_invocations,
