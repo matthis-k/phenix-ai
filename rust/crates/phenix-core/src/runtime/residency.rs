@@ -234,8 +234,7 @@ impl Kernel {
             current_generation.clone(),
             self.generation_state.subscriptions.clone(),
         )?;
-        self.events
-            .replace_subscriptions(candidate_subscriptions)?;
+        self.events.replace_subscriptions(candidate_subscriptions)?;
 
         let candidate = self
             .resident_generations
