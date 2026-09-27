@@ -1,7 +1,7 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentListener, ComponentManifest, EventBus,
     EventEnvelope, EventError, EventHandler, EventSubscription, InterfaceCompatibility,
-    InterfaceId, InterfaceSchemaMismatch, PluginExecution, PluginId, PluginManifest,
+    InterfaceId, InterfaceSchema, InterfaceSchemaMismatch, PluginExecution, PluginId, PluginManifest,
     ProviderCompositionPolicy, ProviderSelectionReason, SubscriptionSpec,
 };
 use std::sync::Arc;
@@ -124,7 +124,9 @@ impl Error for ComponentGraphError {}
 pub struct ResolvedImportHandle {
     importer: ComponentId,
     interface: InterfaceId,
+    import_schema: InterfaceSchema,
     exporter: ComponentId,
+    export_schema: InterfaceSchema,
     owning_plugin: PluginId,
     owning_plugin_version: u32,
     execution: PluginExecution,
@@ -244,6 +246,7 @@ pub struct ResolvedComponentGraph {
 
 struct EligibleProvider<'a> {
     component: &'a ComponentManifest,
+    export_schema: &'a InterfaceSchema,
     effective_authority: Authority,
     priority: i32,
     explicit: bool,
@@ -370,6 +373,7 @@ impl ResolvedComponentGraph {
                                 });
                                 eligible.push(EligibleProvider {
                                     component: candidate,
+                                    export_schema: &export.schema,
                                     effective_authority,
                                     priority,
                                     explicit: explicit.is_some_and(|id| id == &candidate.id),
@@ -418,7 +422,9 @@ impl ResolvedComponentGraph {
                         ResolvedImportHandle {
                             importer: manifest.id.clone(),
                             interface: import.interface.clone(),
+                            import_schema: import.schema.clone(),
                             exporter: candidate.component.id.clone(),
+                            export_schema: candidate.export_schema.clone(),
                             owning_plugin: candidate.component.owner.clone(),
                             owning_plugin_version: exporter_owner.version,
                             execution: exporter_owner.execution.clone(),
