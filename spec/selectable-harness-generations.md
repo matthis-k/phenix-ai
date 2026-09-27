@@ -64,6 +64,21 @@ generation-local tasks and process/runtime handles
 
 Durable state remains owned by Plugin/resource identity according to the existing persistence contracts. A generation does not receive a private durable namespace merely because it is resident beside another generation.
 
+## Boundary rules
+
+| Owner | May do | Must not own |
+| --- | --- | --- |
+| Kernel/runtime | Hold shared persistence, task/event infrastructure, resident runtime state, and root constraints | Plugin-development policy or agent UX |
+| GraphReconciler | Stage, promote, roll back, and retire resolved generations | Root authority, Environment semantics, or persistence backends |
+| Root dispatcher | Select one already-resident generation under captured constraints | Mid-call generation switching or graph mutation |
+| GenerationRuntimeState | Hold one generation's instances, invocations, listeners, and resolved topology | Shared durable state or global host policy |
+| EventBus | Route ambient delivery to the default topology and causal delivery to the pinned generation | Generation lifecycle decisions |
+| Plugin code | Execute through scoped host APIs inside its selected generation | Mutable kernel access, resident-registry access, or direct promotion/retirement |
+
+Core keeps the mutable generation lifecycle behind `GraphReconciler`. Host-facing execution may select a resident generation, but selection does not expose lifecycle mutation.
+
+`phenix-plugin-dev` must call a management operation that lowers to `GraphReconciler`. It must not receive direct access to `Kernel`, the resident registry, `EventBus` subscription maps, or persistence handles.
+
 ## Root execution constraints
 
 Generation choice is inside a fixed root constraint set.
