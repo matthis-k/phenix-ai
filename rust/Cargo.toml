@@ -28,6 +28,7 @@ members = [
   "crates/phenix-plugin-context",
   "crates/phenix-plugin-debug",
   "crates/phenix-plugin-execution",
+  "crates/phenix-plugin-environment-local",
   "crates/phenix-plugin-efficiency-evaluation",
   "crates/phenix-plugin-frontend",
   "crates/phenix-plugin-hooks",
@@ -69,6 +70,7 @@ petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls"] }
 rmcp = { version = "3.3", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled"] }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

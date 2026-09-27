@@ -9,9 +9,9 @@ use phenix_plugin_catalog::{
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
     cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
     execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
-    memory_manifest, model_routing_manifest, options_manifest, planning_manifest,
-    repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
-    workspace_manifest, OptionStartupPrecedence,
+    local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
+    planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
+    session_tree_manifest, workspace_manifest, OptionStartupPrecedence,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -196,6 +196,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (language_manifest(), true),
         (memory_manifest(), true),
         (planning_manifest(), true),
+        (local_environment_manifest(), true),
         (workspace_manifest(), true),
         (model_routing_manifest(authority.clone()), true),
         (job_manifest(), true),
@@ -431,6 +432,15 @@ mod tests {
             .unwrap();
         assert!(!enabled.contains(&configured));
         assert!(enabled.contains(&added));
+    }
+
+    #[test]
+    fn configured_local_environment_is_a_bundled_plugin() {
+        let plugin = local_environment_manifest().id.as_str().to_owned();
+        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&plugin))
+            .unwrap()
+            .unwrap();
+        assert!(enabled.contains(&plugin));
     }
 
     #[test]

@@ -35,15 +35,20 @@ Patch responses return the resulting versions for changed files.
 
 ## Authority
 
-Generic process execution must preserve filesystem authority.
+Process admission and filesystem reach are separate.
 
-A read-authority invocation receives a read-only workspace execution environment. A write-authority invocation may receive the writable workspace or the existing transactional overlay. The provider enforces this at the filesystem or process boundary.
+Workspace capabilities decide whether the caller may invoke a Workspace operation. The selected Environment decides what the resulting process can observe and mutate.
 
-Do not classify shell strings as read-only or mutating. A command such as `python`, `git`, or `sh` can perform arbitrary writes, so command inspection cannot enforce the policy.
+For the current unrestricted local Environment, Shell or future Exec processes may read and write anywhere allowed by the host OS. The workspace root is their default working directory, not a confinement boundary.
 
-`Patch` requires write authority.
+Future confined Environments may instead enforce either:
 
-Removing dedicated read and write operations is gated on this enforcement. Until `Exec` receives a read-only filesystem view for read authority, shell execution can bypass the existing `workspace.write` distinction.
+- read and write only inside the working directory tree;
+- host-wide reads with writes limited to the working directory tree.
+
+Those policies must be enforced by the Environment for the full process tree. Command inspection is not enforcement.
+
+`Patch` requires `workspace.write`. Direct Workspace read/write capability checks remain independent from process filesystem policy.
 
 ## Placement
 
@@ -73,8 +78,8 @@ They migrate in this order:
 2. Route current shell behavior and command-toolbelt probes through `Exec`.
 3. Remove the dedicated `Git` operation and `workspace.git` capability.
 4. Add conflict-checked `Patch` while retaining the existing exact-version guarantee.
-5. Make local execution enforce read-only and writable workspace views from effective authority.
-6. Prove the same contract through a second provider that does not use the local filesystem and local process namespace.
+5. Add confined Environment policies for working-directory-only and working-directory-write with host-wide reads; keep `phenix.environment.local` unrestricted.
+6. Prove the same contract through a provider that does not use the local filesystem and local process namespace.
 7. Remove agent-facing `Read`, `Write`, and `Search` unless benchmarks show a concrete token, latency, reliability, or policy advantage.
 
 The migration keeps compatibility only while required to land the authority boundary safely. The final contract should not retain duplicate ways to execute the same common CLI operation.
@@ -88,8 +93,8 @@ Cancellation terminates the workspace-side process or process group. Remote prov
 ## Invariants
 
 - Workspace-sensitive commands execute through the selected workspace provider.
-- Read authority cannot mutate the workspace through `Exec`.
-- Write authority is explicit and attenuated before provider invocation.
+- Workspace authority gates API admission; Environment policy governs process filesystem reach.
+- Confined process policies are enforced by the Environment, never by command classification.
 - `Patch` rejects stale observed versions before mutation.
 - Common CLI availability metadata describes the selected workspace.
 - Provider replacement can relocate execution without changing agent-facing tools.

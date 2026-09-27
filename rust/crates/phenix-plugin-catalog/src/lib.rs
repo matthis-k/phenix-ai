@@ -59,6 +59,11 @@ pub use phenix_plugin_efficiency_evaluation::{
     EFFICIENCY_EVALUATION_PLUGIN, EFFICIENCY_EVALUATION_SERVICE,
     EFFICIENCY_OUTCOME_EVIDENCE_SERVICE,
 };
+pub use phenix_plugin_environment_local::{
+    local_environment_component_id, local_environment_component_manifest,
+    local_environment_factory, local_environment_factory_for, local_environment_manifest,
+    LOCAL_ENVIRONMENT_PLUGIN,
+};
 pub use phenix_plugin_execution::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,
