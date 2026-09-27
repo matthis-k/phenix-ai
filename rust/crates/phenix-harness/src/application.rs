@@ -2838,23 +2838,22 @@ fn inspect_execution_dag(
             message: format!("unexpected execution-list response: {executions:?}"),
         });
     };
-    if !executions
-        .iter()
-        .any(|execution| execution.id == execution_id)
-    {
+    let Some(root) = executions.iter().find(|execution| execution.id == execution_id) else {
         return Err(ApplicationError::NotFound {
             resource: execution_id.to_owned(),
         });
-    }
+    };
+    let root_generation = root.graph_generation.clone();
 
     let mut included = BTreeSet::from([execution_id.to_owned()]);
     loop {
         let before = included.len();
         for execution in &executions {
-            if execution
-                .parent_execution
-                .as_ref()
-                .is_some_and(|parent| included.contains(parent))
+            if execution.graph_generation == root_generation
+                && execution
+                    .parent_execution
+                    .as_ref()
+                    .is_some_and(|parent| included.contains(parent))
             {
                 included.insert(execution.id.clone());
             }
@@ -2881,12 +2880,16 @@ fn inspect_execution_dag(
 
     let executions = executions
         .into_iter()
-        .filter(|execution| included.contains(&execution.id))
+        .filter(|execution| {
+            execution.graph_generation == root_generation && included.contains(&execution.id)
+        })
         .map(|execution| execution.to_value())
         .collect();
     let tasks = tasks
         .into_iter()
-        .filter(|task| included.contains(&task.parent_execution))
+        .filter(|task| {
+            task.graph_generation == root_generation && included.contains(&task.parent_execution)
+        })
         .map(|task| task.to_value())
         .collect();
 
@@ -2894,6 +2897,10 @@ fn inspect_execution_dag(
         (
             "root_execution".to_owned(),
             PhenixValue::String(execution_id.to_owned()),
+        ),
+        (
+            "generation".to_owned(),
+            PhenixValue::String(root_generation),
         ),
         ("executions".to_owned(), PhenixValue::List(executions)),
         ("tasks".to_owned(), PhenixValue::List(tasks)),

@@ -57,7 +57,7 @@ Inspection runs inside the current model execution. Graph inspection reads the c
 
 A resident trial generation therefore sees its own resolved graph. Inspection must not silently switch to the default generation.
 
-Execution records carry their graph generation. A DAG query starts at the current execution and includes only descendants reachable through `parent_execution`.
+Execution records carry their graph generation. A DAG query starts at the current execution and includes only same-generation descendants reachable through `parent_execution`. Cross-generation parent links are excluded even if malformed or stale durable state contains one.
 
 ## Values
 
