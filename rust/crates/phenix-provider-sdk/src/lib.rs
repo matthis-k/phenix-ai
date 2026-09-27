@@ -576,6 +576,60 @@ mod tests {
     }
 
     #[test]
+    fn declared_models_remain_available_when_remote_discovery_fails() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = r#"{"error":{"message":"catalog unavailable"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let definition = ProviderDefinition::new(
+            PluginId::parse("provider.catalog-fallback").unwrap(),
+            Endpoint::parse(format!("http://{address}/v1")).unwrap(),
+            Protocol::OpenAiResponses,
+            auth::Definition::none(),
+        )
+        .with_declared_models([ModelId::parse("model-declared").unwrap()]);
+        let manifest = definition.manifest();
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        kernel
+            .register_embedded_factory(plugin.clone(), definition.factory())
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let output = kernel
+            .invoke(
+                &provider_models_service(),
+                &serde_json::to_vec(&ProviderModelsCommand::List).unwrap(),
+                &network_authority(),
+                Some(&plugin),
+            )
+            .unwrap();
+        let response: ProviderModelsResponse = serde_json::from_slice(&output).unwrap();
+        assert_eq!(
+            response,
+            ProviderModelsResponse::Models {
+                models: vec![ProviderModel {
+                    id: ModelId::parse("model-declared").unwrap(),
+                    origin: ProviderModelOrigin::Declared,
+                }],
+            }
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
     fn nonstandard_protocol_can_publish_declared_models_without_discovery() {
         let definition = ProviderDefinition::new(
             PluginId::parse("provider.declared").unwrap(),
