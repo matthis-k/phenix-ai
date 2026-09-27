@@ -107,9 +107,11 @@ impl ProviderPreset {
         if self.declared_models.is_empty() {
             definition
         } else {
-            definition.with_declared_models(self.declared_models.iter().map(|model| {
-                ModelId::parse(*model).expect("common provider model id is valid")
-            }))
+            definition.with_declared_models(
+                self.declared_models.iter().map(|model| {
+                    ModelId::parse(*model).expect("common provider model id is valid")
+                }),
+            )
         }
     }
 }

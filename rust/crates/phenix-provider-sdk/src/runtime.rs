@@ -1,14 +1,14 @@
 use crate::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore,
-    HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderModel,
-    ProviderModelOrigin, ProviderModelsCommand, ProviderModelsResponse, ProviderRequest,
-    ProviderResponse, ProviderSpec, RateLimits, Token,
+    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth,
+    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
+    ProviderError, ProviderModel, ProviderModelOrigin, ProviderModelsCommand,
+    ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
-    model_inference_service, ArtifactRevision, ComponentInterface, ModelId, ModelInferenceInterface,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginHost,
-    PluginInstance, ServiceId,
+    model_inference_service, ArtifactRevision, ComponentInterface, ModelId,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
+    PluginContext, PluginHost, PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use std::{

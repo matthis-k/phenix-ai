@@ -130,12 +130,13 @@ fn decode_standard_model_catalog(
     response: &ProviderResponse,
 ) -> Result<Vec<ModelId>, ProviderError> {
     let value = parse_json(response)?;
-    let data = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| ProviderError::Protocol {
-            message: "provider model catalog response is missing data[]".to_owned(),
-        })?;
+    let data =
+        value
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ProviderError::Protocol {
+                message: "provider model catalog response is missing data[]".to_owned(),
+            })?;
     let mut models = Vec::with_capacity(data.len());
     for item in data {
         let id = item

@@ -12,9 +12,9 @@ pub use types::*;
 
 use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
-    ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelInferenceInterface,
-    ModelId, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId, PluginInstance,
-    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelId,
+    ModelInferenceInterface, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId,
+    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -259,10 +259,7 @@ impl ProviderDefinition {
     }
 
     #[must_use]
-    pub fn with_declared_models(
-        self,
-        models: impl IntoIterator<Item = ModelId>,
-    ) -> Self {
+    pub fn with_declared_models(self, models: impl IntoIterator<Item = ModelId>) -> Self {
         let mut declared_models = models.into_iter().collect::<Vec<_>>();
         declared_models.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         declared_models.dedup();
