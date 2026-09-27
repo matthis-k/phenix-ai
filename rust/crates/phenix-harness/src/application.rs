@@ -74,6 +74,7 @@ pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
+const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
 
 #[must_use]
 pub fn session_projection_value_id() -> ValueId {
@@ -2735,15 +2736,38 @@ fn execute_runtime_inspect_tool_call(
     }
 }
 
+fn require_runtime_inspection_read(authority: &Authority) -> Result<(), ApplicationError> {
+    let capability = CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
+        .expect("static runtime inspection read capability is valid");
+    if authority.permits(&capability) {
+        Ok(())
+    } else {
+        Err(ApplicationError::PermissionDenied {
+            message: format!(
+                "phenix.inspect query requires {RUNTIME_INSPECTION_READ_CAPABILITY}"
+            ),
+        })
+    }
+}
+
 fn inspect_runtime(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
     query: &str,
 ) -> Result<PhenixValue, ApplicationError> {
     match query {
-        "values" => run.service.inspect_values(),
-        "execution" => inspect_execution(context, &run.execution_id),
-        "dag" => inspect_execution_dag(context, &run.execution_id),
+        "values" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            run.service.inspect_values()
+        }
+        "execution" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            inspect_execution(context, &run.execution_id)
+        }
+        "dag" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            inspect_execution_dag(context, &run.execution_id)
+        }
         "graph" => Ok(inspect_component_graph(context)),
         "help" => Ok(PhenixValue::List(
             ["graph", "execution", "dag", "values", "value <value-id>"]
@@ -2758,6 +2782,7 @@ fn inspect_runtime(
                         message: "value query requires a ValueId".to_owned(),
                     });
                 }
+                require_runtime_inspection_read(context.call.authority)?;
                 return run.service.inspect_value(id);
             }
             Err(ApplicationError::InvalidInput {
@@ -3054,6 +3079,19 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
+    }
+
+    #[test]
+    fn runtime_inspection_state_requires_persistence_read_authority() {
+        let denied = Authority::default();
+        assert!(matches!(
+            require_runtime_inspection_read(&denied),
+            Err(ApplicationError::PermissionDenied { .. })
+        ));
+
+        let allowed = Authority::new([CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
+            .expect("static runtime inspection capability is valid")]);
+        assert_eq!(require_runtime_inspection_read(&allowed), Ok(()));
     }
 
     fn persistent_application_worker(path: &PathBuf) -> ApplicationWorker {
