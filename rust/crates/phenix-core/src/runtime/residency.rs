@@ -607,7 +607,7 @@ mod tests {
     fn ambient_and_causal_listener_delivery_use_only_the_selected_generation() {
         let plugin_id = plugin("fixture.residency.events");
         let component_id = ComponentId::parse("fixture.residency.events").unwrap();
-        let mut first_manifest = manifest(plugin_id.as_str());
+        let first_manifest = manifest(plugin_id.as_str());
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
         let component = ComponentManifest {
@@ -674,7 +674,7 @@ mod tests {
             seen.lock()
                 .expect("listener observation mutex poisoned")
                 .as_slice(),
-            [first_generation.as_ref()]
+            &[first_generation.clone()]
         );
         seen.lock()
             .expect("listener observation mutex poisoned")
@@ -699,7 +699,7 @@ mod tests {
             seen.lock()
                 .expect("listener observation mutex poisoned")
                 .as_slice(),
-            [second_generation.as_ref()]
+            &[second_generation.clone()]
         );
     }
 
