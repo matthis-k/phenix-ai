@@ -29,9 +29,9 @@ fn test_host<'a>(
 ) -> PluginHost<'a> {
     PluginHost {
         runtime: RuntimeServices {
-            states: &kernel.states,
-            instances: &kernel.instances,
-            invocations: &kernel.invocations,
+            states: &kernel.generation_state.states,
+            instances: &kernel.generation_state.instances,
+            invocations: &kernel.generation_state.invocations,
             events: &kernel.events,
             tasks: &kernel.tasks,
             persistence: &kernel.persistence,
@@ -705,7 +705,7 @@ fn persistence_host_rejects_unowned_namespace_before_backend_access() {
     let authority = Authority::new([capability(PERSISTENCE_SCHEMA)]);
     let owner_plugin = plugin("owner");
     let prepared_mutations = PreparedMutationScope::new(kernel.graph_generation());
-    let generation = Arc::new(kernel.runtime_generation.clone());
+    let generation = Arc::new(kernel.generation_state.runtime.clone());
     let host = test_host(
         &kernel,
         generation,
