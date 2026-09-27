@@ -534,6 +534,9 @@ mod tests {
         kernel.preload_embedded_factory(first_manifest.id.clone(), || Box::new(Echo(b"first")));
         kernel.preload_embedded_factory(second_manifest.id.clone(), || Box::new(Echo(b"second")));
         kernel.activate_all().unwrap();
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
 
         kernel.make_generation_resident(&second).unwrap();
         assert_eq!(
@@ -548,7 +551,7 @@ mod tests {
                     &second_generation,
                     &service(),
                     &[],
-                    &Authority::default(),
+                    &constraints,
                     None,
                 )
                 .unwrap(),
@@ -569,7 +572,7 @@ mod tests {
                     &first_generation,
                     &service(),
                     &[],
-                    &Authority::default(),
+                    &constraints,
                     None,
                 )
                 .unwrap(),
@@ -591,10 +594,112 @@ mod tests {
                 &second_generation,
                 &service(),
                 &[],
-                &Authority::default(),
+                &constraints,
                 None,
             ),
             Err(KernelError::UnknownGeneration(second_generation))
+        );
+    }
+
+    #[test]
+    fn selected_generation_cannot_change_a_pinned_binding() {
+        let consumer = plugin("fixture.residency.consumer");
+        let first_provider = plugin("fixture.residency.provider-a");
+        let second_provider = plugin("fixture.residency.provider-b");
+        let consumer_component = ComponentId::parse("fixture.residency.consumer").unwrap();
+        let first_component = ComponentId::parse("fixture.residency.provider-a").unwrap();
+        let second_component = ComponentId::parse("fixture.residency.provider-b").unwrap();
+        let interface = InterfaceId::parse("fixture.residency.environment@1").unwrap();
+
+        let plugin_only = |id: PluginId| PluginManifest {
+            id,
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: Vec::new(),
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        };
+        let consumer_manifest = plugin_only(consumer.clone());
+        let first_provider_manifest = plugin_only(first_provider.clone());
+        let second_provider_manifest = plugin_only(second_provider.clone());
+        let consumer_node = ComponentManifest {
+            id: consumer_component.clone(),
+            owner: consumer.clone(),
+            imports: vec![crate::ComponentImport {
+                interface: interface.clone(),
+                schema: Default::default(),
+                required: true,
+                authority: Authority::default(),
+            }],
+            exports: Vec::new(),
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        };
+        let provider_node = |id: ComponentId, owner: PluginId| ComponentManifest {
+            id,
+            owner,
+            imports: Vec::new(),
+            exports: vec![crate::ComponentExport {
+                interface: interface.clone(),
+                schema: Default::default(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        };
+
+        let first = ResolvedHarness::resolve(
+            [consumer_manifest.clone(), first_provider_manifest],
+            [
+                consumer_node.clone(),
+                provider_node(first_component, first_provider.clone()),
+            ],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let second = ResolvedHarness::resolve(
+            [consumer_manifest, second_provider_manifest],
+            [
+                consumer_node,
+                provider_node(second_component, second_provider.clone()),
+            ],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(consumer, || Box::new(Echo(b"consumer")));
+        kernel.preload_embedded_factory(first_provider, || Box::new(Echo(b"provider-a")));
+        kernel.preload_embedded_factory(second_provider, || Box::new(Echo(b"provider-b")));
+        kernel.activate_all().unwrap();
+        let constraints = kernel
+            .capture_root_execution_constraints(
+                &Authority::default(),
+                [(consumer_component.clone(), interface.clone())],
+            )
+            .unwrap();
+
+        kernel.make_generation_resident(&second).unwrap();
+
+        assert_eq!(
+            kernel.invoke_in_generation(
+                &second_generation,
+                &service(),
+                &[],
+                &constraints,
+                None,
+            ),
+            Err(KernelError::PinnedBindingChanged {
+                generation: second_generation,
+                component: consumer_component,
+                interface,
+            })
         );
     }
 
