@@ -24,14 +24,14 @@ use phenix_application_interface::{
     ResumeSession, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId, ComponentExport,
-    ComponentId, ComponentImport, ComponentInterface, ComponentManifest, ContractId,
-    HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
+    ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
+    ContractId, HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor,
+    ModelToolResult, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
+    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
@@ -51,8 +51,7 @@ use phenix_sdk::{
     execution_resource_service, execution_service, model_routing_service, options_service,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand,
-    OptionContext, OptionKey,
+    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
     RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
@@ -1719,10 +1718,8 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: ExecutionInspectionInterface::interface_id(),
                 schema: ExecutionInspectionInterface::schema(),
                 required: false,
-                authority: Authority::new([
-                    CapabilityId::parse("kernel.persistence.read")
-                        .expect("static persistence read capability is valid"),
-                ]),
+                authority: Authority::new([CapabilityId::parse("kernel.persistence.read")
+                    .expect("static persistence read capability is valid")]),
             },
         ],
         exports: vec![
@@ -2789,9 +2786,11 @@ fn inspect_execution(
         ExecutionInspectionResponse::ExecutionLookup {
             execution: Some(execution),
         } => Ok(execution.to_value()),
-        ExecutionInspectionResponse::ExecutionLookup { execution: None } => Err(ApplicationError::NotFound {
-            resource: execution_id.to_owned(),
-        }),
+        ExecutionInspectionResponse::ExecutionLookup { execution: None } => {
+            Err(ApplicationError::NotFound {
+                resource: execution_id.to_owned(),
+            })
+        }
         other => Err(ApplicationError::InvalidResponse {
             message: format!("unexpected execution inspection response: {other:?}"),
         }),
@@ -2816,7 +2815,10 @@ fn inspect_execution_dag(
             message: format!("unexpected execution-list response: {executions:?}"),
         });
     };
-    if !executions.iter().any(|execution| execution.id == execution_id) {
+    if !executions
+        .iter()
+        .any(|execution| execution.id == execution_id)
+    {
         return Err(ApplicationError::NotFound {
             resource: execution_id.to_owned(),
         });
@@ -2910,9 +2912,7 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
                                 binding
                                     .effective_authority()
                                     .capabilities()
-                                    .map(|capability| {
-                                        PhenixValue::String(capability.to_string())
-                                    })
+                                    .map(|capability| PhenixValue::String(capability.to_string()))
                                     .collect(),
                             ),
                         );
@@ -3289,8 +3289,13 @@ mod tests {
             assert!(!inspected.is_error, "{query} inspection failed");
             match (query, inspected.output) {
                 ("graph", PhenixValue::Map(graph)) => {
-                    assert!(matches!(graph.get("generation"), Some(PhenixValue::String(_))));
-                    assert!(matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty()));
+                    assert!(matches!(
+                        graph.get("generation"),
+                        Some(PhenixValue::String(_))
+                    ));
+                    assert!(
+                        matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty())
+                    );
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
