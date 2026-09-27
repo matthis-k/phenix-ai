@@ -77,6 +77,15 @@ Durable state remains owned by Plugin/resource identity according to the existin
 
 Core keeps the mutable generation lifecycle behind `GraphReconciler`. Host-facing execution may select a resident generation, but selection does not expose lifecycle mutation.
 
+Resident admission through `GraphReconciler` requires `RootExecutionConstraints`. Core validates pinned bindings before candidate lifecycle code runs. The resident generation stores two separate ceilings:
+
+```text
+execution authority = candidate Harness ceiling
+lifecycle authority = candidate Harness ceiling ∩ admitting root authority
+```
+
+The lifecycle ceiling is fixed for that resident generation. Promotion and retirement do not widen it. A trusted kernel-internal host path may stage without root pins, but agent-facing tooling must not use that path.
+
 The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
 
 `phenix-plugin-dev` must call a management operation that lowers to `GraphReconciler`. It must not receive direct access to `Kernel`, the resident registry, `EventBus` subscription maps, or persistence handles.
@@ -335,6 +344,8 @@ This keeps host constraints outside agent-controlled Harness composition while l
 - Multiple compatible generations may be resident.
 - Exactly one generation is the default for new unqualified roots and ambient delivery.
 - Generation selection cannot widen initial authority.
+- Candidate lifecycle is bounded by the authority of the root that admitted the resident generation.
+- Pinned bindings are validated before resident candidate lifecycle runs.
 - Generation selection cannot change a pinned Environment or other host binding.
 - Harness generations never mix providers dynamically across generation boundaries.
 - Plugin instances, listeners, tasks, and runtime handles are generation-local.
