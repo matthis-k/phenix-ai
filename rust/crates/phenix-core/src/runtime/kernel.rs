@@ -81,7 +81,8 @@ impl Kernel {
             self.authority_ceiling = Some(authority_ceiling.clone());
         }
         self.generation_state.runtime = generation;
-        self.generation_state.authority_ceiling = Some(authority_ceiling);
+        self.generation_state.authority_ceiling = Some(authority_ceiling.clone());
+        self.generation_state.lifecycle_authority_ceiling = Some(authority_ceiling);
         self.generation_state.durable_schemas = durable_schemas;
     }
 
@@ -328,7 +329,10 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &self.generation_state.runtime,
-                            authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
+                            lifecycle_authority_ceiling: self
+                                .generation_state
+                                .lifecycle_authority_ceiling
+                                .as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -387,7 +391,10 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &self.generation_state.runtime,
-                            authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
+                            lifecycle_authority_ceiling: self
+                                .generation_state
+                                .lifecycle_authority_ceiling
+                                .as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -434,7 +441,10 @@ impl Kernel {
                     &staged,
                     reconciliation::StopView {
                         runtime: &self.generation_state.runtime,
-                        authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
+                        lifecycle_authority_ceiling: self
+                            .generation_state
+                            .lifecycle_authority_ceiling
+                            .as_ref(),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
