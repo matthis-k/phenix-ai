@@ -887,6 +887,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resident_lifecycle_is_bounded_by_admitting_root_authority() {
+        let read = CapabilityId::parse("fixture.read").unwrap();
+        let write = CapabilityId::parse("fixture.write").unwrap();
+        let broad = Authority::new([read.clone(), write.clone()]);
+        let narrow = Authority::new([read]);
+
+        let mut first_manifest = manifest("fixture.residency.admission-authority");
+        first_manifest.maximum_authority = broad.clone();
+        let mut second_manifest = first_manifest.clone();
+        second_manifest.version += 1;
+
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let lifecycle = Arc::new(Mutex::new(Vec::new()));
+        let lifecycle_for_factory = Arc::clone(&lifecycle);
+        let write_for_factory = write.clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(first_manifest.id, move || {
+            Box::new(AuthorityEcho {
+                capability: write_for_factory.clone(),
+                lifecycle: Arc::clone(&lifecycle_for_factory),
+            })
+        });
+        kernel.activate_all().unwrap();
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&narrow, [])
+            .unwrap();
+        kernel
+            .make_generation_resident_under_constraints(&second, &constraints)
+            .unwrap();
+
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"denied"
+        );
+        assert_eq!(
+            lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .as_slice(),
+            &[
+                ("start", first_generation, true),
+                ("start", second_generation.clone(), false),
+            ]
+        );
+
+        kernel.retire_generation(&second_generation).unwrap();
+        assert_eq!(
+            lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .last(),
+            Some(&("stop", second_generation, false))
+        );
+    }
+
     struct GenerationTaskPlugin {
         started: std::sync::mpsc::Sender<GraphGenerationId>,
         cancelled: std::sync::mpsc::Sender<GraphGenerationId>,
