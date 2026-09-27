@@ -167,15 +167,18 @@ pub use phenix_plugin_workspace::{
     WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WORKSPACE_SERVICE,
 };
 pub use phenix_sdk::{
-    context_service, execution_service, step_runner_service, CallableRecord, ContextCommand,
-    ContextDescriptor, ContextInterface, ContextResourceRevision, ContextResponse, DecisionRecord,
-    ExecutionAuthority, ExecutionCommand, ExecutionInterface, ExecutionRecord, ExecutionResponse,
-    ExecutionState, HistoryEntry, HistoryKind, JobCommand, JobInterface, JobResponse,
+    context_service, execution_inspection_service, execution_service, step_runner_service,
+    CallableRecord, ContextCommand, ContextDescriptor, ContextInterface, ContextResourceRevision,
+    ContextResponse, DecisionRecord, ExecutionAuthority, ExecutionCommand,
+    ExecutionInspectionCommand, ExecutionInspectionInterface, ExecutionInspectionResponse,
+    ExecutionInterface, ExecutionRecord, ExecutionResponse, ExecutionState, HistoryEntry,
+    HistoryKind, JobCommand, JobInterface, JobResponse,
     ModelInferenceInterface, ObjectiveRecord, PlanRecord, PlanStep, PlannedStepRequest,
     PlanningCommand, PlanningInterface, PlanningResponse, RepositoryContextSource,
     RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState, StepRunnerCommand,
     StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, WorkerTaskRecord,
-    WorkerTaskState, CONTEXT_SERVICE, EXECUTION_SERVICE, JOB_SERVICE, PLANNING_SERVICE,
+    WorkerTaskState, CONTEXT_SERVICE, EXECUTION_INSPECTION_SERVICE, EXECUTION_SERVICE, JOB_SERVICE,
+    PLANNING_SERVICE,
     STEP_RUNNER_SERVICE,
 };
 
