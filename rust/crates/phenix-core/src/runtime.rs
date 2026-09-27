@@ -660,18 +660,38 @@ struct RuntimeServices<'a> {
     provenance: &'a ProvenanceBuffer,
 }
 
-pub struct Kernel {
-    runtime_generation: RuntimeGeneration,
+struct GenerationRuntimeState {
+    runtime: RuntimeGeneration,
     states: BTreeMap<PluginId, PluginState>,
-    embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
-    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
+    active: bool,
+}
+
+impl GenerationRuntimeState {
+    fn bootstrap(config: KernelConfig) -> Self {
+        let states = config
+            .manifests()
+            .map(|manifest| (manifest.id.clone(), PluginState::Registered))
+            .collect();
+        Self {
+            runtime: RuntimeGeneration::bootstrap(config),
+            states,
+            instances: BTreeMap::new(),
+            invocations: BTreeMap::new(),
+            active: false,
+        }
+    }
+}
+
+pub struct Kernel {
+    generation_state: GenerationRuntimeState,
+    embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
+    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
     persistence_bootstrap: Option<crate::ResolvedPersistenceBootstrap>,
     trace_sink: Arc<dyn RuntimeTraceSink>,
     provenance: Arc<ProvenanceBuffer>,
-    runtime_active: bool,
 }
