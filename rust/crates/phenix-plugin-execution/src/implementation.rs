@@ -390,7 +390,9 @@ fn mutate(
         }
         ExecutionCommand::AllocateExecution { .. }
         | ExecutionCommand::GetExecution { .. }
+        | ExecutionCommand::ListExecutions
         | ExecutionCommand::GetTask { .. }
+        | ExecutionCommand::ListTasks
         | ExecutionCommand::InvokeCallable { .. } => {
             Err("non-mutation execution command reached mutation path".into())
         }
