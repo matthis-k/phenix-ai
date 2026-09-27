@@ -220,6 +220,12 @@ impl Kernel {
             .resident_generations
             .remove(generation)
             .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
+
+        // Invalidate generation-local admission before teardown. Deliveries that
+        // already captured this subscription set observe the revision change and
+        // cancel before starting another listener level.
+        self.events.remove_generation_subscriptions(generation);
+
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
             states: &state.states,
@@ -238,7 +244,6 @@ impl Kernel {
                     .publish(KernelEvent::PluginStopped(plugin.clone()));
             }
         }
-        self.events.remove_generation_subscriptions(generation);
         Ok(())
     }
 
