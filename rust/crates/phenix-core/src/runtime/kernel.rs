@@ -39,6 +39,7 @@ impl Kernel {
         Self {
             generation_state: GenerationRuntimeState::bootstrap(config),
             resident_generations: BTreeMap::new(),
+            authority_ceiling: None,
             embedded_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
@@ -74,9 +75,32 @@ impl Kernel {
         &mut self,
         generation: RuntimeGeneration,
         durable_schemas: Vec<DurableSchemaRegistration>,
+        authority_ceiling: Authority,
     ) {
+        if self.authority_ceiling.is_none() {
+            self.authority_ceiling = Some(authority_ceiling);
+        }
         self.generation_state.runtime = generation;
         self.generation_state.durable_schemas = durable_schemas;
+    }
+
+    pub fn authority_ceiling(&self) -> Option<&Authority> {
+        self.authority_ceiling.as_ref()
+    }
+
+    pub(crate) fn validate_generation_authority(
+        &self,
+        candidate: &crate::ResolvedHarness,
+    ) -> Result<(), KernelError> {
+        let Some(ceiling) = &self.authority_ceiling else {
+            return Ok(());
+        };
+        if ceiling.permits_all(candidate.authority_ceiling()) {
+            return Ok(());
+        }
+        Err(KernelError::GenerationAuthorityExpansion(
+            candidate.generation().clone(),
+        ))
     }
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
