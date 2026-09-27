@@ -1718,7 +1718,7 @@ pub(crate) fn application_agent_tool_component_manifest(
             ComponentImport {
                 interface: ExecutionInspectionInterface::interface_id(),
                 schema: ExecutionInspectionInterface::schema(),
-                required: true,
+                required: false,
                 authority: Authority::new([
                     CapabilityId::parse("kernel.persistence.read")
                         .expect("static persistence read capability is valid"),
