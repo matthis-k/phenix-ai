@@ -1,5 +1,6 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, InterfaceId,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, GraphGenerationId,
+    InterfaceId,
     PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph, ResolvedProviderPlan,
     ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
@@ -124,6 +125,12 @@ pub enum KernelError {
     },
     EventTopology(EventError),
     ResolvedGenerationMissing,
+    UnknownGeneration(GraphGenerationId),
+    DefaultGenerationCannotRetire(GraphGenerationId),
+    ResidentGenerationDurableMismatch {
+        active: GraphGenerationId,
+        candidate: GraphGenerationId,
+    },
     PluginStop {
         plugin: PluginId,
         message: String,
@@ -257,6 +264,16 @@ impl Display for KernelError {
             Self::ResolvedGenerationMissing => {
                 f.write_str("listener topology requires an active resolved generation")
             }
+            Self::UnknownGeneration(generation) => {
+                write!(f, "graph generation is not resident: {generation}")
+            }
+            Self::DefaultGenerationCannotRetire(generation) => {
+                write!(f, "default graph generation cannot retire: {generation}")
+            }
+            Self::ResidentGenerationDurableMismatch { active, candidate } => write!(
+                f,
+                "graph generation {candidate} cannot reside beside {active}: durable schemas differ"
+            ),
             Self::PluginStop { plugin, message } => {
                 write!(f, "plugin {plugin} failed to stop: {message}")
             }
