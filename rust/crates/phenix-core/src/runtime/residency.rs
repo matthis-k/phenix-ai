@@ -19,6 +19,38 @@ impl Kernel {
         generations
     }
 
+    /// Capture host-owned constraints from the current default generation.
+    ///
+    /// The authority is permanently attenuated by the kernel's initial ceiling.
+    /// Selected component imports are pinned to their exact resolved provider
+    /// endpoint, including execution artifact and effective authority.
+    pub fn capture_root_execution_constraints(
+        &self,
+        caller_authority: &Authority,
+        pinned_bindings: impl IntoIterator<Item = (ComponentId, InterfaceId)>,
+    ) -> Result<RootExecutionConstraints, KernelError> {
+        let authority = self
+            .authority_ceiling
+            .as_ref()
+            .map_or_else(|| caller_authority.clone(), |ceiling| caller_authority.attenuate(ceiling));
+        let mut pinned = BTreeMap::new();
+        for (component, interface) in pinned_bindings {
+            let plan = self
+                .component_graph()
+                .provider_plan(&component, &interface)
+                .map_err(KernelError::ComponentGraph)?
+                .ok_or_else(|| KernelError::PinnedBindingUnavailable {
+                    component: component.clone(),
+                    interface: interface.clone(),
+                })?;
+            pinned.insert((component, interface), plan.primary().clone());
+        }
+        Ok(RootExecutionConstraints {
+            authority,
+            pinned_bindings: pinned,
+        })
+    }
+
     /// Stage one resolved Harness beside the current default generation.
     ///
     /// Residency does not change the default generation or ambient listener set.
@@ -69,17 +101,18 @@ impl Kernel {
         generation: &GraphGenerationId,
         service: &ServiceId,
         input: &[u8],
-        caller_authority: &Authority,
+        constraints: &RootExecutionConstraints,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        if self.graph_generation() == Some(generation) {
-            return self.invoke(service, input, caller_authority, binding);
-        }
+        let state = if self.graph_generation() == Some(generation) {
+            &self.generation_state
+        } else {
+            self.resident_generations
+                .get(generation)
+                .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
+        };
+        Self::validate_root_execution_constraints(state, generation, constraints)?;
 
-        let state = self
-            .resident_generations
-            .get(generation)
-            .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
         let prepared_mutations = PreparedMutationScope::new(Some(generation));
         let runtime = RuntimeServices {
             states: &state.states,
@@ -92,8 +125,33 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope = CallScope::external(Arc::new(state.runtime.clone()), caller_authority);
+        let scope =
+            CallScope::external_with_constraints(Arc::new(state.runtime.clone()), constraints);
         dispatch::invoke_service_with(runtime, service, input, binding, scope)
+    }
+
+    fn validate_root_execution_constraints(
+        state: &GenerationRuntimeState,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), KernelError> {
+        for ((component, interface), pinned) in &constraints.pinned_bindings {
+            let matches = state
+                .runtime
+                .component_graph()
+                .provider_plan(component, interface)
+                .ok()
+                .flatten()
+                .is_some_and(|plan| plan.primary() == pinned);
+            if !matches {
+                return Err(KernelError::PinnedBindingChanged {
+                    generation: generation.clone(),
+                    component: component.clone(),
+                    interface: interface.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Make a resident generation the default for future unqualified roots and
