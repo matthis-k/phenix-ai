@@ -241,6 +241,12 @@ impl Kernel {
                         let provider_manifest = config
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
+                        let provider_authority = self
+                            .generation_state
+                            .constrain_plugin_authority(&provider_manifest.maximum_authority);
+                        let guest_authority = self
+                            .generation_state
+                            .constrain_plugin_authority(&manifest.maximum_authority);
                         let provider =
                             next_instances
                                 .get(&binding.provider)
@@ -270,7 +276,7 @@ impl Kernel {
                             scope: CallScope::root(
                                 Arc::new(self.generation_state.runtime.clone()),
                                 &binding.provider,
-                                &provider_manifest.maximum_authority,
+                                &provider_authority,
                                 Some(cancellation.clone()),
                             ),
                             continuation: None,
@@ -287,7 +293,7 @@ impl Kernel {
                                 RuntimePluginCandidate {
                                     manifest,
                                     artifact,
-                                    guest_authority: &manifest.maximum_authority,
+                                    guest_authority: &guest_authority,
                                 },
                                 &host,
                             )
@@ -322,6 +328,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &self.generation_state.runtime,
+                            authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -339,6 +346,9 @@ impl Kernel {
                 let live_call = self.tasks.begin_call(plugin, self.graph_generation());
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+                let plugin_authority = self
+                    .generation_state
+                    .constrain_plugin_authority(&manifest.maximum_authority);
                 let host = PluginHost {
                     runtime: RuntimeServices {
                         states: &next_states,
@@ -355,7 +365,7 @@ impl Kernel {
                     scope: CallScope::root(
                         Arc::new(self.generation_state.runtime.clone()),
                         plugin,
-                        &manifest.maximum_authority,
+                        &plugin_authority,
                         Some(cancellation.clone()),
                     ),
                     continuation: None,
@@ -377,6 +387,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &self.generation_state.runtime,
+                            authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -423,6 +434,7 @@ impl Kernel {
                     &staged,
                     reconciliation::StopView {
                         runtime: &self.generation_state.runtime,
+                        authority_ceiling: self.generation_state.authority_ceiling.as_ref(),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -544,6 +556,9 @@ impl Kernel {
             let live_call = self.tasks.begin_call(plugin, generation);
             let cancellation = live_call.cancellation_token().clone();
             let prepared_mutations = PreparedMutationScope::new(generation);
+            let plugin_authority = self
+                .generation_state
+                .constrain_plugin_authority(&manifest.maximum_authority);
             let host = PluginHost {
                 runtime: RuntimeServices {
                     states: &self.generation_state.states,
@@ -560,7 +575,7 @@ impl Kernel {
                 scope: CallScope::root(
                     Arc::new(self.generation_state.runtime.clone()),
                     plugin,
-                    &manifest.maximum_authority,
+                    &plugin_authority,
                     Some(cancellation.clone()),
                 ),
                 continuation: None,
