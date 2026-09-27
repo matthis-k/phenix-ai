@@ -10,6 +10,7 @@ raw_invoke_pattern='\.invoke_value[[:space:]]*\('
 legacy_plugin_authoring_pattern='phenix_plugin![[:space:]]*'
 hidden_static_discovery_pattern='inventory::|linkme::|link_section'
 host_process_spawn_pattern='std::process::Command|process::Command|Command::new[[:space:]]*\('
+workspace_host_fs_pattern='std::fs::|[[:space:]]fs::(read|write|metadata|read_dir|create_dir|create_dir_all|remove_|rename|copy)'
 
 check_fixture() {
   local pattern="$1"
@@ -133,6 +134,12 @@ for crate in rust/crates/phenix-{adapter,plugin}-*; do
     fi
   done < <(find "$crate/src" -type f -name '*.rs' -print0)
 done
+
+workspace_impl="rust/crates/phenix-plugin-workspace/src/implementation.rs"
+if awk '/#\[cfg\(test\)\]/{exit} {print}' "$workspace_impl" | grep -n -E "$workspace_host_fs_pattern"; then
+  printf '%s\n' "Workspace host filesystem access must route through Environment" >&2
+  exit 1
+fi
 
 fixture='pub type ErasedBoundary = Box<dyn std::any::Any>;'
 if PHENIX_STRUCTURAL_BOUNDARY_FIXTURE="$fixture" \
