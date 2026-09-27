@@ -124,7 +124,9 @@ An agent can use logs to find the relevant identity, then use `phenix.inspect` t
 
 ## Security
 
-Inspection obeys the caller's generation and runtime boundary.
+Inspection obeys the caller's generation, authority, and runtime boundary.
+
+State-bearing queries (`execution`, `dag`, `values`, and `value <id>`) require the caller to hold `kernel.persistence.read`. Graph and help queries do not grant access to runtime values or services.
 
 Inspection never returns secret values merely because a secret provider exists. Secret-bearing plugins expose redacted descriptors or explicit safe inspection values.
 
