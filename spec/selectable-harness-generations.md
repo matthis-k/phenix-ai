@@ -392,5 +392,6 @@ The implementation is complete when tests prove:
 - A and B generation-local tasks do not cancel each other.
 - retiring A waits for or explicitly cancels A leases without affecting B.
 - a failed B activation leaves A default and usable.
+- a failed promotion leaves the current default unchanged and keeps the candidate resident for retry or inspection.
 - incompatible durable-schema changes reject concurrent residency.
 - promotion and rollback preserve shared kernel persistence rather than constructing a second runtime.
