@@ -635,13 +635,9 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let second = ResolvedHarness::resolve(
-            [second_manifest],
-            [component],
-            [],
-            &Authority::default(),
-        )
-        .unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest], [component], [], &Authority::default())
+                .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -685,13 +681,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &second_generation,
-                    &service(),
-                    &[],
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None,)
                 .unwrap(),
             b"delivered"
         );
@@ -828,13 +818,7 @@ mod tests {
         kernel.make_generation_resident(&second).unwrap();
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &second_generation,
-                    &service(),
-                    &[],
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None,)
                 .unwrap(),
             b"spawned"
         );
