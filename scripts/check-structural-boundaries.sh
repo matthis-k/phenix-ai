@@ -9,6 +9,7 @@ json_field_pattern='pub[[:space:]]+[[:alnum:]_]+[[:space:]]*:[^,]*serde_json::Va
 raw_invoke_pattern='\.invoke_value[[:space:]]*\('
 legacy_plugin_authoring_pattern='phenix_plugin![[:space:]]*'
 hidden_static_discovery_pattern='inventory::|linkme::|link_section'
+host_process_spawn_pattern='std::process::Command|process::Command|Command::new[[:space:]]*\('
 
 check_fixture() {
   local pattern="$1"
@@ -120,6 +121,18 @@ if git grep -n -E "$hidden_static_discovery_pattern" -- rust/crates/phenix-sdk-m
   printf '%s\n' "static plugin wiring must not use hidden global discovery" >&2
   exit 1
 fi
+
+for crate in rust/crates/phenix-{adapter,plugin}-*; do
+  [[ -d "$crate/src" ]] || continue
+  [[ "$crate" == "rust/crates/phenix-plugin-environment-local" ]] && continue
+  while IFS= read -r -d '' file; do
+    if awk '/#\[cfg\(test\)\]/{exit} {print}' "$file" | grep -n -E "$host_process_spawn_pattern"; then
+      printf '%s\n' "runtime plugin host process execution must route through Environment" >&2
+      printf '%s\n' "offending file: $file" >&2
+      exit 1
+    fi
+  done < <(find "$crate/src" -type f -name '*.rs' -print0)
+done
 
 fixture='pub type ErasedBoundary = Box<dyn std::any::Any>;'
 if PHENIX_STRUCTURAL_BOUNDARY_FIXTURE="$fixture" \
