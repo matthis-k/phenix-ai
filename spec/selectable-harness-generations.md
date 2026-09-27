@@ -156,6 +156,8 @@ A request that does not explicitly select a generation uses the default.
 
 Other compatible generations may remain resident for explicit roots. Residency means the runtime can execute them. It does not make them global ambient topology.
 
+Residency is executable activation, not a dry run. Core may run the candidate Plugin lifecycle needed to make explicit roots callable. Those lifecycle calls stay inside the candidate generation and fixed authority, but they can still mutate shared persistence or perform other granted Host Capability operations. Core does not roll back arbitrary external side effects. Use a separate Environment or persistence binding when a trial requires side-effect isolation.
+
 ```text
 generation A [resident]
 generation B [resident]
