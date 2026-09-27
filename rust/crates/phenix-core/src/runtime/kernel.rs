@@ -38,6 +38,7 @@ impl Kernel {
     ) -> Self {
         Self {
             generation_state: GenerationRuntimeState::bootstrap(config),
+            resident_generations: BTreeMap::new(),
             embedded_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
@@ -69,8 +70,13 @@ impl Kernel {
         self.generation_state.runtime.generation()
     }
 
-    pub(crate) fn install_runtime_generation(&mut self, generation: RuntimeGeneration) {
+    pub(crate) fn install_runtime_generation(
+        &mut self,
+        generation: RuntimeGeneration,
+        durable_schemas: Vec<DurableSchemaRegistration>,
+    ) {
         self.generation_state.runtime = generation;
+        self.generation_state.durable_schemas = durable_schemas;
     }
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
@@ -409,8 +415,9 @@ impl Kernel {
         self.events.replace_subscriptions(subscriptions.clone())?;
         if let Some(generation) = self.graph_generation().cloned() {
             self.events
-                .replace_generation_subscriptions(generation, subscriptions)?;
+                .replace_generation_subscriptions(generation, subscriptions.clone())?;
         }
+        self.generation_state.subscriptions = subscriptions;
         self.generation_state.states = next_states;
         self.generation_state.instances = next_instances;
         self.generation_state.invocations = next_invocations;
