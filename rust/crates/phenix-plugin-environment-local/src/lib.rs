@@ -276,8 +276,8 @@ impl LocalEnvironment {
         };
         let mut accumulated = PathBuf::new();
         for component in parent.components() {
-            match component {
-                Component::Normal(name) => accumulated.push(name),
+            let name = match component {
+                Component::Normal(name) => name,
                 Component::CurDir => continue,
                 Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                     return Err(format!(
@@ -285,7 +285,8 @@ impl LocalEnvironment {
                         relative.display()
                     ));
                 }
-            }
+            };
+            accumulated.push(name);
 
             match rfs::openat2(
                 self.root_fd()?.as_fd(),
