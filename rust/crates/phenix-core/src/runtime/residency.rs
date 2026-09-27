@@ -209,10 +209,7 @@ impl Kernel {
         self.promote_generation(generation)
     }
 
-    fn promote_generation(
-        &mut self,
-        generation: &GraphGenerationId,
-    ) -> Result<(), KernelError> {
+    fn promote_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Ok(());
         }
