@@ -1884,7 +1884,7 @@ fn execute_application_agent_tool(
     let change = if dispatch_call.callable_id.as_str() == "bash" {
         execute_runtime_model_tool_call(&context.sdk.workspace, &dispatch_call)
     } else if dispatch_call.callable_id.as_str() == "phenix.inspect" {
-        execute_runtime_inspect_tool_call(&context, &run, &dispatch_call)
+        execute_runtime_inspect_tool_call(context, &run, &dispatch_call)
     } else {
         execute_admitted_client_tool_call(
             &run.service,
