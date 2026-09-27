@@ -406,7 +406,11 @@ impl Kernel {
             }
         };
 
-        self.events.replace_subscriptions(subscriptions)?;
+        self.events.replace_subscriptions(subscriptions.clone())?;
+        if let Some(generation) = self.graph_generation().cloned() {
+            self.events
+                .replace_generation_subscriptions(generation, subscriptions)?;
+        }
         self.generation_state.states = next_states;
         self.generation_state.instances = next_instances;
         self.generation_state.invocations = next_invocations;
