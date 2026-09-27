@@ -1556,7 +1556,14 @@ mod tests {
         let environment_id = environment.id.clone();
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
-        let authority = workspace.maximum_authority.clone();
+        let authority = Authority::new(
+            language
+                .maximum_authority
+                .capabilities()
+                .chain(environment.maximum_authority.capabilities())
+                .chain(workspace.maximum_authority.capabilities())
+                .cloned(),
+        );
         let resolved = ResolvedHarness::resolve(
             [language.clone(), environment.clone(), workspace.clone()],
             [

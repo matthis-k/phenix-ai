@@ -94,6 +94,7 @@ mod tests {
         manifest.maximum_authority =
             Authority::new([CapabilityId::parse("kernel.persistence.read").unwrap()]);
         let mut builder = HarnessBuilder::new();
+        builder.set_component_authority(manifest.maximum_authority.clone());
         let plugin_calls = Arc::clone(&calls);
         builder
             .add_embedded(manifest, move || {

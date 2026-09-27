@@ -13,6 +13,10 @@ phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-plugin-artifacts = { path = "../phenix-plugin-artifacts" }
 phenix-plugin-basic-agent = { path = "../phenix-plugin-basic-agent" }
+phenix-plugin-basic-context = { path = "../phenix-plugin-basic-context" }
+phenix-plugin-basic-model = { path = "../phenix-plugin-basic-model" }
+phenix-plugin-basic-skills = { path = "../phenix-plugin-basic-skills" }
+phenix-plugin-basic-tools = { path = "../phenix-plugin-basic-tools" }
 phenix-plugin-command-toolbelt = { path = "../phenix-plugin-command-toolbelt" }
 phenix-plugin-context = { path = "../phenix-plugin-context" }
 phenix-plugin-debug = { path = "../phenix-plugin-debug" }

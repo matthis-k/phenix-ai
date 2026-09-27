@@ -118,16 +118,28 @@ pub struct ReconciliationResult {
 
 #[derive(Clone, Debug)]
 pub struct GraphReconciler {
-    active: ResolvedHarness,
+    pub(super) active: ResolvedHarness,
+    pub(super) resident: BTreeMap<GraphGenerationId, ResolvedHarness>,
 }
 
 impl GraphReconciler {
     pub fn new(active: ResolvedHarness) -> Self {
-        Self { active }
+        Self {
+            active,
+            resident: BTreeMap::new(),
+        }
     }
 
     pub fn active(&self) -> &ResolvedHarness {
         &self.active
+    }
+
+    pub fn resident(&self, generation: &GraphGenerationId) -> Option<&ResolvedHarness> {
+        self.resident.get(generation)
+    }
+
+    pub fn resident_generations(&self) -> impl Iterator<Item = &GraphGenerationId> {
+        self.resident.keys()
     }
 
     pub fn resolve_candidate(

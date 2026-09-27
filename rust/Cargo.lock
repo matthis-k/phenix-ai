@@ -1793,6 +1793,7 @@ dependencies = [
  "phenix-plugin-basic-skills",
  "phenix-plugin-basic-tools",
  "phenix-sdk",
+ "phenix-sdk-macros",
  "serde",
  "serde_json",
 ]
@@ -1843,6 +1844,10 @@ dependencies = [
  "phenix-plugin-api",
  "phenix-plugin-artifacts",
  "phenix-plugin-basic-agent",
+ "phenix-plugin-basic-context",
+ "phenix-plugin-basic-model",
+ "phenix-plugin-basic-skills",
+ "phenix-plugin-basic-tools",
  "phenix-plugin-command-toolbelt",
  "phenix-plugin-context",
  "phenix-plugin-debug",
@@ -1934,6 +1939,7 @@ version = "0.1.0"
 dependencies = [
  "phenix-application-interface",
  "phenix-core",
+ "phenix-plugin-basic-agent",
  "phenix-plugin-environment-local",
  "phenix-plugin-workspace",
  "phenix-sdk",

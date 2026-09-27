@@ -2,14 +2,15 @@ use crate::{
     plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
     ArtifactRevision, Authority, CallCancellationToken, CapabilityId, ComponentGraphError,
     ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
-    EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
-    EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError, KernelEvent,
-    KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact, PluginExecution,
-    PluginId, PluginManifest, ProviderBinding, ProviderFallbackReason, ProviderSelectionReason,
-    ResolvedComponentGraph, ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan,
-    ResolvedListener, ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan,
-    ResourceNamespace, RuntimeGeneration, RuntimeId, SchemaMigration, ServiceId, ServiceRole,
-    SkillResourceMetadata, TaskRuntime, TaskScope, TransactionOp,
+    DurableSchemaRegistration, EventAdmissionReceipt, EventBus, EventEnvelope, EventError,
+    EventHandler, EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig,
+    KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend,
+    PluginArtifact, PluginExecution, PluginId, PluginManifest, ProviderBinding,
+    ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
+    ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener,
+    ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace,
+    RuntimeGeneration, RuntimeId, SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata,
+    TaskRuntime, TaskScope, TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -27,6 +28,7 @@ mod listener;
 mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
+mod residency;
 #[cfg(test)]
 mod tests;
 mod trace;
@@ -248,10 +250,51 @@ pub(super) struct InvocationStack {
     frames: Vec<InvocationFrame>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RootExecutionConstraints {
+    authority: Authority,
+    pinned_bindings: BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>,
+}
+
+impl RootExecutionConstraints {
+    pub fn authority(&self) -> &Authority {
+        &self.authority
+    }
+
+    pub fn pinned_bindings(
+        &self,
+    ) -> impl Iterator<Item = (&ComponentId, &InterfaceId, &ResolvedImportHandle)> {
+        self.pinned_bindings
+            .iter()
+            .map(|((component, interface), handle)| (component, interface, handle))
+    }
+
+    fn with_authority(&self, authority: Authority) -> Self {
+        Self {
+            authority,
+            pinned_bindings: self.pinned_bindings.clone(),
+        }
+    }
+
+    fn with_authority_and_additional_pins(&self, authority: Authority, additional: &Self) -> Self {
+        let mut pinned_bindings = self.pinned_bindings.clone();
+        for (key, handle) in &additional.pinned_bindings {
+            pinned_bindings
+                .entry(key.clone())
+                .or_insert_with(|| handle.clone());
+        }
+        Self {
+            authority,
+            pinned_bindings,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CallScope {
     generation: Arc<RuntimeGeneration>,
     authority: Authority,
+    pinned_bindings: Arc<BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>>,
     cancellation: Option<CallCancellationToken>,
     stack: InvocationStack,
     transactions: TransactionContext,
@@ -260,9 +303,23 @@ pub(super) struct CallScope {
 
 impl CallScope {
     pub(super) fn external(generation: Arc<RuntimeGeneration>, authority: &Authority) -> Self {
+        Self::external_with_constraints(
+            generation,
+            &RootExecutionConstraints {
+                authority: authority.clone(),
+                pinned_bindings: BTreeMap::new(),
+            },
+        )
+    }
+
+    pub(super) fn external_with_constraints(
+        generation: Arc<RuntimeGeneration>,
+        constraints: &RootExecutionConstraints,
+    ) -> Self {
         Self {
             generation,
-            authority: authority.clone(),
+            authority: constraints.authority.clone(),
+            pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation: None,
             stack: InvocationStack::default(),
             transactions: TransactionContext::unscoped(),
@@ -276,9 +333,29 @@ impl CallScope {
         authority: &Authority,
         cancellation: Option<CallCancellationToken>,
     ) -> Self {
+        Self::root_with_constraints(
+            generation,
+            plugin,
+            authority,
+            &RootExecutionConstraints {
+                authority: authority.clone(),
+                pinned_bindings: BTreeMap::new(),
+            },
+            cancellation,
+        )
+    }
+
+    pub(super) fn root_with_constraints(
+        generation: Arc<RuntimeGeneration>,
+        plugin: &PluginId,
+        authority: &Authority,
+        constraints: &RootExecutionConstraints,
+        cancellation: Option<CallCancellationToken>,
+    ) -> Self {
         Self {
             generation,
             authority: authority.clone(),
+            pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation,
             stack: InvocationStack::root(plugin),
             transactions: TransactionContext::unscoped(),
@@ -290,6 +367,7 @@ impl CallScope {
         Self {
             generation: Arc::clone(&self.generation),
             authority,
+            pinned_bindings: Arc::clone(&self.pinned_bindings),
             cancellation: self.cancellation.clone(),
             stack: self.stack.clone(),
             transactions,
@@ -660,18 +738,68 @@ struct RuntimeServices<'a> {
     provenance: &'a ProvenanceBuffer,
 }
 
-pub struct Kernel {
-    runtime_generation: RuntimeGeneration,
+struct GenerationRuntimeState {
+    runtime: RuntimeGeneration,
+    authority_ceiling: Option<Authority>,
+    lifecycle_constraints: Option<RootExecutionConstraints>,
+    durable_schemas: Vec<DurableSchemaRegistration>,
+    subscriptions: Vec<EventSubscription>,
     states: BTreeMap<PluginId, PluginState>,
-    embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
-    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
+    active: bool,
+}
+
+impl GenerationRuntimeState {
+    fn bootstrap(config: KernelConfig) -> Self {
+        let states = config
+            .manifests()
+            .map(|manifest| (manifest.id.clone(), PluginState::Registered))
+            .collect();
+        Self {
+            runtime: RuntimeGeneration::bootstrap(config),
+            authority_ceiling: None,
+            lifecycle_constraints: None,
+            durable_schemas: Vec::new(),
+            subscriptions: Vec::new(),
+            states,
+            instances: BTreeMap::new(),
+            invocations: BTreeMap::new(),
+            active: false,
+        }
+    }
+
+    fn constrain_root_authority(&self, authority: &Authority) -> Authority {
+        constrain_authority_to_ceiling(self.authority_ceiling.as_ref(), authority)
+    }
+
+    fn constrain_plugin_authority(&self, authority: &Authority) -> Authority {
+        constrain_authority_to_ceiling(
+            self.lifecycle_constraints
+                .as_ref()
+                .map(RootExecutionConstraints::authority),
+            authority,
+        )
+    }
+}
+
+fn constrain_authority_to_ceiling(
+    authority_ceiling: Option<&Authority>,
+    authority: &Authority,
+) -> Authority {
+    authority_ceiling.map_or_else(|| authority.clone(), |ceiling| authority.attenuate(ceiling))
+}
+
+pub struct Kernel {
+    generation_state: GenerationRuntimeState,
+    resident_generations: BTreeMap<GraphGenerationId, GenerationRuntimeState>,
+    authority_ceiling: Option<Authority>,
+    embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
+    prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
     tasks: Arc<TaskRuntime>,
     persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
     persistence_bootstrap: Option<crate::ResolvedPersistenceBootstrap>,
     trace_sink: Arc<dyn RuntimeTraceSink>,
     provenance: Arc<ProvenanceBuffer>,
-    runtime_active: bool,
 }

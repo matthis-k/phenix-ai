@@ -36,24 +36,18 @@ impl Kernel {
         persistence: Box<dyn PersistenceBackend>,
         persistence_bootstrap: Option<crate::ResolvedPersistenceBootstrap>,
     ) -> Self {
-        let states = config
-            .manifests()
-            .map(|manifest| (manifest.id.clone(), PluginState::Registered))
-            .collect();
         Self {
-            runtime_generation: RuntimeGeneration::bootstrap(config),
-            states,
+            generation_state: GenerationRuntimeState::bootstrap(config),
+            resident_generations: BTreeMap::new(),
+            authority_ceiling: None,
             embedded_factories: BTreeMap::new(),
             prepared_embedded_instances: BTreeMap::new(),
-            instances: BTreeMap::new(),
-            invocations: BTreeMap::new(),
             events: Arc::new(EventBus::default()),
             tasks: Arc::new(TaskRuntime::default()),
             persistence: Arc::new(Mutex::new(persistence)),
             persistence_bootstrap,
             trace_sink: Arc::new(RuntimeTraceBuffer::default()),
             provenance: Arc::new(ProvenanceBuffer::default()),
-            runtime_active: false,
         }
     }
 
@@ -62,11 +56,11 @@ impl Kernel {
     }
 
     pub fn runtime_generation(&self) -> &RuntimeGeneration {
-        &self.runtime_generation
+        &self.generation_state.runtime
     }
 
     pub fn config(&self) -> &KernelConfig {
-        self.runtime_generation.config()
+        self.generation_state.runtime.config()
     }
 
     pub fn persistence_bootstrap(&self) -> Option<&crate::ResolvedPersistenceBootstrap> {
@@ -74,23 +68,56 @@ impl Kernel {
     }
 
     pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
-        self.runtime_generation.generation()
+        self.generation_state.runtime.generation()
     }
 
-    pub(crate) fn install_runtime_generation(&mut self, generation: RuntimeGeneration) {
-        self.runtime_generation = generation;
+    pub(crate) fn install_runtime_generation(
+        &mut self,
+        generation: RuntimeGeneration,
+        durable_schemas: Vec<DurableSchemaRegistration>,
+        authority_ceiling: Authority,
+    ) {
+        if self.authority_ceiling.is_none() {
+            self.authority_ceiling = Some(authority_ceiling.clone());
+        }
+        self.generation_state.runtime = generation;
+        self.generation_state.authority_ceiling = Some(authority_ceiling.clone());
+        self.generation_state.lifecycle_constraints = Some(RootExecutionConstraints {
+            authority: authority_ceiling,
+            pinned_bindings: BTreeMap::new(),
+        });
+        self.generation_state.durable_schemas = durable_schemas;
+    }
+
+    pub fn authority_ceiling(&self) -> Option<&Authority> {
+        self.authority_ceiling.as_ref()
+    }
+
+    pub(crate) fn validate_generation_authority(
+        &self,
+        candidate: &crate::ResolvedHarness,
+    ) -> Result<(), KernelError> {
+        let Some(ceiling) = &self.authority_ceiling else {
+            return Ok(());
+        };
+        if ceiling.permits_all(candidate.authority_ceiling()) {
+            return Ok(());
+        }
+        Err(KernelError::GenerationAuthorityExpansion(
+            candidate.generation().clone(),
+        ))
     }
 
     pub fn component_graph(&self) -> &ResolvedComponentGraph {
-        self.runtime_generation.component_graph()
+        self.generation_state.runtime.component_graph()
     }
 
     pub fn dispatch_topology(&self) -> &ResolvedDispatchTopology {
-        self.runtime_generation.dispatch_topology()
+        self.generation_state.runtime.dispatch_topology()
     }
 
     pub fn active_resources(&self) -> &[SkillResourceMetadata] {
-        self.runtime_generation.resources()
+        self.generation_state.runtime.resources()
     }
 
     pub fn events(&self) -> Arc<EventBus> {
@@ -113,7 +140,7 @@ impl Kernel {
     }
 
     pub fn state(&self, plugin: &PluginId) -> Option<PluginState> {
-        self.states.get(plugin).copied()
+        self.generation_state.states.get(plugin).copied()
     }
 
     pub fn register_embedded_factory<F>(
@@ -169,8 +196,9 @@ impl Kernel {
     }
 
     pub fn activate_all(&mut self) -> Result<(), KernelError> {
-        if self.runtime_active
+        if self.generation_state.active
             && self
+                .generation_state
                 .states
                 .values()
                 .all(|state| *state == PluginState::Active)
@@ -178,8 +206,8 @@ impl Kernel {
             return Ok(());
         }
         let config = self.config().clone();
-        let mut next_states = if self.runtime_active {
-            self.states.clone()
+        let mut next_states = if self.generation_state.active {
+            self.generation_state.states.clone()
         } else {
             config
                 .manifests()
@@ -187,13 +215,13 @@ impl Kernel {
                 .collect()
         };
         let mut next_instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>> =
-            if self.runtime_active {
-                self.instances.clone()
+            if self.generation_state.active {
+                self.generation_state.instances.clone()
             } else {
                 BTreeMap::new()
             };
-        let mut next_invocations = if self.runtime_active {
-            self.invocations.clone()
+        let mut next_invocations = if self.generation_state.active {
+            self.generation_state.invocations.clone()
         } else {
             BTreeMap::new()
         };
@@ -217,6 +245,12 @@ impl Kernel {
                         let provider_manifest = config
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
+                        let provider_authority = self
+                            .generation_state
+                            .constrain_plugin_authority(&provider_manifest.maximum_authority);
+                        let guest_authority = self
+                            .generation_state
+                            .constrain_plugin_authority(&manifest.maximum_authority);
                         let provider =
                             next_instances
                                 .get(&binding.provider)
@@ -244,9 +278,9 @@ impl Kernel {
                             },
                             plugin: &binding.provider,
                             scope: CallScope::root(
-                                Arc::new(self.runtime_generation.clone()),
+                                Arc::new(self.generation_state.runtime.clone()),
                                 &binding.provider,
-                                &provider_manifest.maximum_authority,
+                                &provider_authority,
                                 Some(cancellation.clone()),
                             ),
                             continuation: None,
@@ -263,7 +297,7 @@ impl Kernel {
                                 RuntimePluginCandidate {
                                     manifest,
                                     artifact,
-                                    guest_authority: &manifest.maximum_authority,
+                                    guest_authority: &guest_authority,
                                 },
                                 &host,
                             )
@@ -297,7 +331,11 @@ impl Kernel {
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                            runtime: &self.runtime_generation,
+                            runtime: &self.generation_state.runtime,
+                            lifecycle_constraints: self
+                                .generation_state
+                                .lifecycle_constraints
+                                .as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -315,6 +353,9 @@ impl Kernel {
                 let live_call = self.tasks.begin_call(plugin, self.graph_generation());
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+                let plugin_authority = self
+                    .generation_state
+                    .constrain_plugin_authority(&manifest.maximum_authority);
                 let host = PluginHost {
                     runtime: RuntimeServices {
                         states: &next_states,
@@ -329,9 +370,9 @@ impl Kernel {
                     },
                     plugin,
                     scope: CallScope::root(
-                        Arc::new(self.runtime_generation.clone()),
+                        Arc::new(self.generation_state.runtime.clone()),
                         plugin,
-                        &manifest.maximum_authority,
+                        &plugin_authority,
                         Some(cancellation.clone()),
                     ),
                     continuation: None,
@@ -352,7 +393,11 @@ impl Kernel {
                     reconciliation::cleanup_staged(
                         &staged,
                         reconciliation::StopView {
-                            runtime: &self.runtime_generation,
+                            runtime: &self.generation_state.runtime,
+                            lifecycle_constraints: self
+                                .generation_state
+                                .lifecycle_constraints
+                                .as_ref(),
                             states: &next_states,
                             instances: &next_instances,
                             invocations: &next_invocations,
@@ -379,7 +424,7 @@ impl Kernel {
 
         let subscriptions = match self.graph_generation() {
             Some(_generation) => stage_listener_subscriptions(listener::ListenerRuntimeSources {
-                runtime: &self.runtime_generation,
+                runtime: &self.generation_state.runtime,
                 states: &next_states,
                 instances: &next_instances,
                 invocations: &next_invocations,
@@ -398,7 +443,8 @@ impl Kernel {
                 reconciliation::cleanup_staged(
                     &staged,
                     reconciliation::StopView {
-                        runtime: &self.runtime_generation,
+                        runtime: &self.generation_state.runtime,
+                        lifecycle_constraints: self.generation_state.lifecycle_constraints.as_ref(),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -413,11 +459,16 @@ impl Kernel {
             }
         };
 
-        self.events.replace_subscriptions(subscriptions)?;
-        self.states = next_states;
-        self.instances = next_instances;
-        self.invocations = next_invocations;
-        self.runtime_active = true;
+        self.events.replace_subscriptions(subscriptions.clone())?;
+        if let Some(generation) = self.graph_generation().cloned() {
+            self.events
+                .replace_generation_subscriptions(generation, subscriptions.clone())?;
+        }
+        self.generation_state.subscriptions = subscriptions;
+        self.generation_state.states = next_states;
+        self.generation_state.instances = next_instances;
+        self.generation_state.invocations = next_invocations;
+        self.generation_state.active = true;
         for plugin in staged {
             self.events.publish(KernelEvent::PluginActivated(plugin));
         }
@@ -440,9 +491,9 @@ impl Kernel {
         );
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         let runtime = RuntimeServices {
-            states: &self.states,
-            instances: &self.instances,
-            invocations: &self.invocations,
+            states: &self.generation_state.states,
+            instances: &self.generation_state.instances,
+            invocations: &self.generation_state.invocations,
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
@@ -450,8 +501,13 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope =
-            CallScope::external(Arc::new(self.runtime_generation.clone()), caller_authority);
+        let root_authority = self
+            .generation_state
+            .constrain_root_authority(caller_authority);
+        let scope = CallScope::external(
+            Arc::new(self.generation_state.runtime.clone()),
+            &root_authority,
+        );
         invoke_component_service_with(
             runtime,
             ComponentInvocationPlan {
@@ -478,9 +534,9 @@ impl Kernel {
     ) -> Result<Vec<u8>, KernelError> {
         let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
         let runtime = RuntimeServices {
-            states: &self.states,
-            instances: &self.instances,
-            invocations: &self.invocations,
+            states: &self.generation_state.states,
+            instances: &self.generation_state.instances,
+            invocations: &self.generation_state.invocations,
             events: &self.events,
             tasks: &self.tasks,
             persistence: &self.persistence,
@@ -488,8 +544,13 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope =
-            CallScope::external(Arc::new(self.runtime_generation.clone()), caller_authority);
+        let root_authority = self
+            .generation_state
+            .constrain_root_authority(caller_authority);
+        let scope = CallScope::external(
+            Arc::new(self.generation_state.runtime.clone()),
+            &root_authority,
+        );
         invoke_service_with(runtime, service, input, binding, scope)
     }
 
@@ -501,15 +562,18 @@ impl Kernel {
         let generation = self.graph_generation();
         self.tasks.cancel_calls(plugin, generation);
         self.tasks.cancel_plugin_generation(plugin, generation);
-        if let Some(instance) = self.instances.get(plugin) {
+        if let Some(instance) = self.generation_state.instances.get(plugin) {
             let live_call = self.tasks.begin_call(plugin, generation);
             let cancellation = live_call.cancellation_token().clone();
             let prepared_mutations = PreparedMutationScope::new(generation);
+            let plugin_authority = self
+                .generation_state
+                .constrain_plugin_authority(&manifest.maximum_authority);
             let host = PluginHost {
                 runtime: RuntimeServices {
-                    states: &self.states,
-                    instances: &self.instances,
-                    invocations: &self.invocations,
+                    states: &self.generation_state.states,
+                    instances: &self.generation_state.instances,
+                    invocations: &self.generation_state.invocations,
                     events: &self.events,
                     tasks: &self.tasks,
                     persistence: &self.persistence,
@@ -519,9 +583,9 @@ impl Kernel {
                 },
                 plugin,
                 scope: CallScope::root(
-                    Arc::new(self.runtime_generation.clone()),
+                    Arc::new(self.generation_state.runtime.clone()),
                     plugin,
-                    &manifest.maximum_authority,
+                    &plugin_authority,
                     Some(cancellation.clone()),
                 ),
                 continuation: None,
@@ -551,9 +615,10 @@ impl Kernel {
                 }
             }
         }
-        self.instances.remove(plugin);
-        self.invocations.remove(plugin);
+        self.generation_state.instances.remove(plugin);
+        self.generation_state.invocations.remove(plugin);
         let state = self
+            .generation_state
             .states
             .get_mut(plugin)
             .expect("plugin manifest and lifecycle state stay aligned");

@@ -293,6 +293,7 @@ pub struct ResolvedHarness {
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
+    authority_ceiling: Authority,
 }
 
 struct ResolutionInputs {
@@ -522,6 +523,7 @@ impl ResolvedHarness {
             configuration,
             layer_policies: inputs.layer_policies,
             provider_policy: inputs.provider_policy,
+            authority_ceiling: authority_ceiling.clone(),
         })
     }
 
@@ -608,6 +610,10 @@ impl ResolvedHarness {
         &self.provider_policy
     }
 
+    pub fn authority_ceiling(&self) -> &Authority {
+        &self.authority_ceiling
+    }
+
     pub(crate) fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
         self.runtime.incorporate_semantic_metadata(metadata);
     }
@@ -662,6 +668,7 @@ impl ResolvedHarness {
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
+            authority_ceiling: authority_ceiling.clone(),
         })
     }
 }

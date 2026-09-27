@@ -61,7 +61,27 @@ impl<'a> PluginHost<'a> {
                 interface: interface.clone(),
             })?;
         let plan = &dispatch.providers;
-        let (handle, fallback_reason) = if self.provider_available(plan.primary()) {
+        let pin_key = (component.clone(), interface.clone());
+        let pinned = self.scope.pinned_bindings.get(&pin_key);
+        let (handle, fallback_reason) = if let Some(pinned) = pinned {
+            if plan.primary() != pinned {
+                return Err(KernelError::PinnedBindingChanged {
+                    generation: self
+                        .scope
+                        .generation
+                        .generation()
+                        .expect("plugin import runs in a resolved generation")
+                        .clone(),
+                    component: component.clone(),
+                    interface: interface.clone(),
+                }
+                .into());
+            }
+            if !self.provider_available(pinned) {
+                return Err(KernelError::PluginNotActive(pinned.owning_plugin().clone()).into());
+            }
+            (pinned, None)
+        } else if self.provider_available(plan.primary()) {
             (plan.primary(), None)
         } else if let Some(fallback) = plan
             .fallbacks()
