@@ -195,9 +195,8 @@ pub use runtime::{
     PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
     RootExecutionConstraints, RuntimePluginCandidate, RuntimeTraceBuffer, RuntimeTraceEvent,
     RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
-    ServiceParticipantOutcome,
-    ServiceParticipantProvenance, SharedPluginInvocation, DEFAULT_PROVENANCE_CAPACITY,
-    DEFAULT_RUNTIME_TRACE_CAPACITY,
+    ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
+    DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
 };
 pub use sdk::{
     observable_delivery_schema, ResolvedSdkContributions, SdkContribution, SdkObservableResource,

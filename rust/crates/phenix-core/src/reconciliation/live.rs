@@ -71,14 +71,11 @@ impl GraphReconciler {
             });
         }
 
-        let candidate = self
-            .resident
-            .remove(generation)
-            .ok_or_else(|| {
-                LiveReconciliationError::Runtime(crate::KernelError::UnknownGeneration(
-                    generation.clone(),
-                ))
-            })?;
+        let candidate = self.resident.remove(generation).ok_or_else(|| {
+            LiveReconciliationError::Runtime(crate::KernelError::UnknownGeneration(
+                generation.clone(),
+            ))
+        })?;
         let preview = self.preview_candidate(&candidate);
         if let Err(error) = kernel.promote_generation(generation) {
             self.resident.insert(generation.clone(), candidate);

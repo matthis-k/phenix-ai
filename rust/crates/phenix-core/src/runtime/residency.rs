@@ -29,10 +29,10 @@ impl Kernel {
         caller_authority: &Authority,
         pinned_bindings: impl IntoIterator<Item = (ComponentId, InterfaceId)>,
     ) -> Result<RootExecutionConstraints, KernelError> {
-        let authority = self
-            .authority_ceiling
-            .as_ref()
-            .map_or_else(|| caller_authority.clone(), |ceiling| caller_authority.attenuate(ceiling));
+        let authority = self.authority_ceiling.as_ref().map_or_else(
+            || caller_authority.clone(),
+            |ceiling| caller_authority.attenuate(ceiling),
+        );
         let mut pinned = BTreeMap::new();
         for (component, interface) in pinned_bindings {
             let plan = self
@@ -192,7 +192,10 @@ impl Kernel {
     ///
     /// Explicit retirement cancels that generation's plugin calls and tasks
     /// through the existing generation-aware stop path.
-    pub(crate) fn retire_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
+    pub(crate) fn retire_generation(
+        &mut self,
+        generation: &GraphGenerationId,
+    ) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Err(KernelError::DefaultGenerationCannotRetire(
                 generation.clone(),
@@ -547,13 +550,7 @@ mod tests {
         );
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &second_generation,
-                    &service(),
-                    &[],
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None,)
                 .unwrap(),
             b"second"
         );
@@ -568,13 +565,7 @@ mod tests {
         );
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &first_generation,
-                    &service(),
-                    &[],
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&first_generation, &service(), &[], &constraints, None,)
                 .unwrap(),
             b"first"
         );
@@ -590,13 +581,7 @@ mod tests {
 
         kernel.retire_generation(&second_generation).unwrap();
         assert_eq!(
-            kernel.invoke_in_generation(
-                &second_generation,
-                &service(),
-                &[],
-                &constraints,
-                None,
-            ),
+            kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
             Err(KernelError::UnknownGeneration(second_generation))
         );
     }
@@ -688,13 +673,7 @@ mod tests {
         kernel.make_generation_resident(&second).unwrap();
 
         assert_eq!(
-            kernel.invoke_in_generation(
-                &second_generation,
-                &service(),
-                &[],
-                &constraints,
-                None,
-            ),
+            kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
             Err(KernelError::PinnedBindingChanged {
                 generation: second_generation,
                 component: consumer_component,
