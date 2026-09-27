@@ -27,9 +27,9 @@ impl StopView<'_> {
         let prepared_mutations = PreparedMutationScope::new(generation);
         let host = PluginHost {
             runtime: RuntimeServices {
-                states: self.states,
-                instances: self.instances,
-                invocations: self.invocations,
+                states: self.generation_state.states,
+                instances: self.generation_state.instances,
+                invocations: self.generation_state.invocations,
                 events: self.events,
                 tasks: self.tasks,
                 persistence: self.persistence,
@@ -70,11 +70,11 @@ impl Kernel {
             .states
             .values()
             .all(|state| *state == PluginState::Active);
-        if (self.runtime_active && !all_active) || (!self.runtime_active && has_active) {
+        if (self.generation_state.active && !all_active) || (!self.generation_state.active && has_active) {
             return Err(KernelError::PartiallyActiveRuntime);
         }
 
-        let active_runtime = self.runtime_active;
+        let active_runtime = self.generation_state.active;
         let candidate_runtime = candidate.runtime_generation();
         let candidate_config = candidate_runtime.config().clone();
         let old_manifests: BTreeMap<_, _> = self
@@ -104,10 +104,10 @@ impl Kernel {
                 && old_manifests.get(plugin) == Some(manifest);
             if retain {
                 next_states.insert(plugin.clone(), PluginState::Active);
-                if let Some(instance) = self.instances.get(plugin) {
+                if let Some(instance) = self.generation_state.instances.get(plugin) {
                     next_instances.insert(plugin.clone(), Arc::clone(instance));
                 }
-                if let Some(invocation) = self.invocations.get(plugin) {
+                if let Some(invocation) = self.generation_state.invocations.get(plugin) {
                     next_invocations.insert(plugin.clone(), Arc::clone(invocation));
                 }
             } else {
@@ -335,22 +335,22 @@ impl Kernel {
                     || restart_plugins.contains(*plugin)
             })
             .filter_map(|(plugin, _)| {
-                self.instances
+                self.generation_state.instances
                     .get(plugin)
                     .map(|instance| (plugin.clone(), Arc::clone(instance)))
             })
             .collect();
 
-        let old_runtime = self.runtime_generation.clone();
-        let old_states = self.states.clone();
-        let old_instances = self.instances.clone();
-        let old_invocations = self.invocations.clone();
+        let old_runtime = self.generation_state.runtime.clone();
+        let old_states = self.generation_state.states.clone();
+        let old_instances = self.generation_state.instances.clone();
+        let old_invocations = self.generation_state.invocations.clone();
         self.events.replace_subscriptions(subscriptions)?;
-        self.states = next_states;
-        self.instances = next_instances;
-        self.invocations = next_invocations;
+        self.generation_state.states = next_states;
+        self.generation_state.instances = next_instances;
+        self.generation_state.invocations = next_invocations;
         self.install_runtime_generation(candidate_runtime.clone());
-        self.runtime_active = active_runtime;
+        self.generation_state.active = active_runtime;
 
         let retired_view = StopView {
             runtime: &old_runtime,
