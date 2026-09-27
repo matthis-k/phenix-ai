@@ -180,21 +180,18 @@ fn apply_provider_catalog(
     kernel: &mut Kernel,
     provider: &str,
     profiles: Vec<RoutingProfile>,
-) -> Result<Vec<RoutingProfile>, String> {
+) -> Result<(), String> {
     let response = invoke_routing(
         kernel,
-        ModelCommand::PrepareProviderCatalogProfiles {
+        ModelCommand::PublishProviderCatalogProfiles {
             provider_plugin: PluginId::parse(provider).unwrap(),
             profiles,
         },
     )?;
-    let ModelResponse::PreparedProfiles { mutation, profiles } = response else {
-        return Err("expected prepared provider catalog profiles".into());
-    };
-    kernel
-        .transact_prepared(&[mutation])
-        .map_err(|error| error.to_string())?;
-    Ok(profiles)
+    if !matches!(response, ModelResponse::Profiles { .. }) {
+        return Err("expected published provider catalog profiles".into());
+    }
+    Ok(())
 }
 
 fn invoke_dispatch_outcome(
