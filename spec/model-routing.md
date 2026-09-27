@@ -192,6 +192,18 @@ Ranking handles preferences such as expected quality, reliability, latency, cost
 
 A routing profile is policy. Model metadata is fact. Learned estimates are evidence-derived beliefs. `StepPlan` is per-step resource intent. Keep those roles separate.
 
+## Provider catalog input
+
+Routing consumes normalized provider model catalogs. It does not own provider model discovery.
+
+A provider catalog entry identifies an available provider/model target. The provider SDK defines how those entries are discovered or declared. Routing may materialize a one-target profile for each selectable catalog entry. That materialization is derived state, not provider configuration.
+
+Model version churn must therefore stay below routing. If a provider adds or removes models through a discovery standard Phenix already supports, the next catalog refresh changes the derived fixed selections without editing routing configuration.
+
+Providers without model enumeration publish declared models through their provider plugin. Routing sees the same normalized catalog entries and does not branch on their origin.
+
+Multi-target routing profiles remain explicit policy. Dynamic catalog discovery does not synthesize quality, cost, fallback, or task-routing policy.
+
 ## Model indexing
 
 The model catalog indexes objective model and deployment properties. It does not materialize every combination of profile, task, difficulty, provider, and capability.
@@ -246,6 +258,9 @@ Exploration, if enabled, happens only after hard filtering and stays within prof
 The current unresolved turn cannot train or rerank its own target or plan. Historical evidence may affect later attempts/steps only through a versioned derived estimator snapshot.
 
 ## Client and plugin boundary
+
+Frontend clients consume normalized provider/model selections produced by Phenix. They do not own provider IDs, model lists, discovery endpoints, auth environment variables, or model-version compatibility tables.
+
 
 Clients and plugins operate on the same dynamic contract:
 
@@ -365,9 +380,12 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 
 ## Implementation order
 
-1. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
-2. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
-3. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
+1. Add the provider-owned normalized model catalog service with standards-based discovery and provider-declared fallback models.
+2. Materialize fixed one-target routing profiles from normalized provider catalog entries.
+3. Refresh derived fixed selections when provider catalogs change without rewriting explicit multi-target profiles.
+13. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
+11. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
+12. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
 4. Add owned profile contribution registration, replacement, removal, and lifetime cleanup.
 5. Route product configuration through the same contribution path.
 6. Route protocol-client contributions through the same path.
@@ -378,6 +396,7 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 
 ## Non-goals
 
+- Maintain provider model-version lists in Neovim or routing configuration when the provider supports discovery.
 - Make `PhenixValue` the routing plugin's internal state representation.
 - Let profile values bypass strict parsing.
 - Make routing the owner of context budgets, tool/skill provision, delegation, retries, or the root resource budget.
