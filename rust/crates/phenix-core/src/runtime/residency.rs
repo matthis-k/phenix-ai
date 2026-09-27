@@ -100,10 +100,12 @@ impl Kernel {
             });
         }
 
-        let lifecycle_authority_ceiling = candidate
-            .authority_ceiling()
-            .attenuate(constraints.authority());
-        let state = self.stage_resident_generation(candidate, &lifecycle_authority_ceiling)?;
+        let lifecycle_constraints = constraints.with_authority(
+            candidate
+                .authority_ceiling()
+                .attenuate(constraints.authority()),
+        );
+        let state = self.stage_resident_generation(candidate, &lifecycle_constraints)?;
         self.events.replace_generation_subscriptions(
             candidate_generation.clone(),
             state.subscriptions.clone(),
@@ -255,7 +257,7 @@ impl Kernel {
         generation: &GraphGenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
-        self.retire_generation_with_authority(generation, Some(constraints.authority()))
+        self.retire_generation_with_constraints(generation, Some(constraints))
     }
 
     #[cfg(test)]
@@ -263,13 +265,13 @@ impl Kernel {
         &mut self,
         generation: &GraphGenerationId,
     ) -> Result<(), KernelError> {
-        self.retire_generation_with_authority(generation, None)
+        self.retire_generation_with_constraints(generation, None)
     }
 
-    fn retire_generation_with_authority(
+    fn retire_generation_with_constraints(
         &mut self,
         generation: &GraphGenerationId,
-        operation_authority: Option<&Authority>,
+        operation_constraints: Option<&RootExecutionConstraints>,
     ) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Err(KernelError::DefaultGenerationCannotRetire(
@@ -287,18 +289,23 @@ impl Kernel {
         // cancel before starting another listener level.
         self.events.remove_generation_subscriptions(generation);
 
-        let lifecycle_authority_ceiling = match (
-            state.lifecycle_authority_ceiling.as_ref(),
-            operation_authority,
+        let lifecycle_constraints = match (
+            state.lifecycle_constraints.as_ref(),
+            operation_constraints,
         ) {
-            (Some(stored), Some(operation)) => Some(stored.attenuate(operation)),
+            (Some(stored), Some(operation)) => Some(
+                stored.with_authority_and_additional_pins(
+                    stored.authority().attenuate(operation.authority()),
+                    operation,
+                ),
+            ),
             (Some(stored), None) => Some(stored.clone()),
             (None, Some(operation)) => Some(operation.clone()),
             (None, None) => None,
         };
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
-            lifecycle_authority_ceiling: lifecycle_authority_ceiling.as_ref(),
+            lifecycle_constraints: lifecycle_constraints.as_ref(),
             states: &state.states,
             instances: &state.instances,
             invocations: &state.invocations,
@@ -321,7 +328,7 @@ impl Kernel {
     fn stage_resident_generation(
         &self,
         candidate: &ResolvedHarness,
-        lifecycle_authority_ceiling: &Authority,
+        lifecycle_constraints: &RootExecutionConstraints,
     ) -> Result<GenerationRuntimeState, KernelError> {
         let runtime = candidate.runtime_generation().clone();
         let config = runtime.config().clone();
@@ -361,11 +368,11 @@ impl Kernel {
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
                         let provider_authority = constrain_authority_to_ceiling(
-                            Some(lifecycle_authority_ceiling),
+                            Some(lifecycle_constraints.authority()),
                             &provider_manifest.maximum_authority,
                         );
                         let guest_authority = constrain_authority_to_ceiling(
-                            Some(lifecycle_authority_ceiling),
+                            Some(lifecycle_constraints.authority()),
                             &manifest.maximum_authority,
                         );
                         let provider =
@@ -388,10 +395,11 @@ impl Kernel {
                                 provenance: &self.provenance,
                             },
                             plugin: &binding.provider,
-                            scope: CallScope::root(
+                            scope: CallScope::root_with_constraints(
                                 Arc::new(runtime.clone()),
                                 &binding.provider,
                                 &provider_authority,
+                                lifecycle_constraints,
                                 Some(cancellation.clone()),
                             ),
                             continuation: None,
@@ -444,7 +452,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
-                            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
+                            lifecycle_constraints: Some(lifecycle_constraints),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -464,7 +472,7 @@ impl Kernel {
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(Some(&generation));
                 let plugin_authority = constrain_authority_to_ceiling(
-                    Some(lifecycle_authority_ceiling),
+                    Some(lifecycle_constraints.authority()),
                     &manifest.maximum_authority,
                 );
                 let host = PluginHost {
@@ -480,10 +488,11 @@ impl Kernel {
                         provenance: &self.provenance,
                     },
                     plugin,
-                    scope: CallScope::root(
+                    scope: CallScope::root_with_constraints(
                         Arc::new(runtime.clone()),
                         plugin,
                         &plugin_authority,
+                        lifecycle_constraints,
                         Some(cancellation.clone()),
                     ),
                     continuation: None,
@@ -505,7 +514,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
-                            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
+                            lifecycle_constraints: Some(lifecycle_constraints),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -547,7 +556,7 @@ impl Kernel {
                 &staged,
                 reconciliation::StopView {
                     runtime: &runtime,
-                    lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling),
+                    lifecycle_constraints: Some(lifecycle_constraints),
                     states: &states,
                     instances: &instances,
                     invocations: &invocations,
@@ -563,7 +572,7 @@ impl Kernel {
         Ok(GenerationRuntimeState {
             runtime,
             authority_ceiling: Some(candidate.authority_ceiling().clone()),
-            lifecycle_authority_ceiling: Some(lifecycle_authority_ceiling.clone()),
+            lifecycle_constraints: Some(lifecycle_constraints.clone()),
             durable_schemas: candidate.durable_schemas().to_vec(),
             subscriptions,
             states,
