@@ -168,7 +168,9 @@ impl GraphReconciler {
         if resident.is_empty() {
             Ok(())
         } else {
-            Err(LiveReconciliationError::ResidentGenerationsPresent(resident))
+            Err(LiveReconciliationError::ResidentGenerationsPresent(
+                resident,
+            ))
         }
     }
 }
@@ -380,9 +382,7 @@ mod tests {
             reconciler
                 .activate_candidate_on_kernel(&mut kernel, replacement)
                 .unwrap_err(),
-            LiveReconciliationError::ResidentGenerationsPresent(vec![
-                trial_generation.clone()
-            ])
+            LiveReconciliationError::ResidentGenerationsPresent(vec![trial_generation.clone()])
         );
         assert_eq!(kernel.graph_generation(), Some(&initial_generation));
         assert_eq!(reconciler.active().generation(), &initial_generation);

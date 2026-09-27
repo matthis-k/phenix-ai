@@ -1209,13 +1209,8 @@ mod tests {
                 _input: &[u8],
                 host: &PluginHost<'_>,
             ) -> Result<Vec<u8>, String> {
-                host.invoke_service_abi(
-                    &nested_service(),
-                    &[],
-                    host.authority(),
-                    None,
-                )
-                .map_err(|error| error.to_string())
+                host.invoke_service_abi(&nested_service(), &[], host.authority(), None)
+                    .map_err(|error| error.to_string())
             }
         }
 
@@ -1324,8 +1319,7 @@ mod tests {
         }
 
         let owner = plugin("fixture.residency.persistence");
-        let namespace =
-            ResourceNamespace::parse("fixture.residency.persistence.state").unwrap();
+        let namespace = ResourceNamespace::parse("fixture.residency.persistence.state").unwrap();
         let read = CapabilityId::parse("kernel.persistence.read").unwrap();
         let write = CapabilityId::parse("kernel.persistence.write").unwrap();
         let authority = Authority::new([read, write]);
@@ -1336,10 +1330,8 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
 
-        let schema = DurableSchemaRegistration::new(
-            owner.clone(),
-            DurableSchema::new(namespace.clone(), 1),
-        );
+        let schema =
+            DurableSchemaRegistration::new(owner.clone(), DurableSchema::new(namespace.clone(), 1));
         let first = ResolvedHarness::resolve_with_durable_schemas(
             [first_manifest],
             [],
@@ -1382,13 +1374,7 @@ mod tests {
         );
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &second_generation,
-                    &service(),
-                    b"read",
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&second_generation, &service(), b"read", &constraints, None,)
                 .unwrap(),
             b"from-a"
         );
@@ -1406,13 +1392,7 @@ mod tests {
         );
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &first_generation,
-                    &service(),
-                    b"read",
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&first_generation, &service(), b"read", &constraints, None,)
                 .unwrap(),
             b"from-b"
         );
@@ -1426,17 +1406,9 @@ mod tests {
         );
         assert_eq!(
             kernel
-                .invoke_in_generation(
-                    &first_generation,
-                    &service(),
-                    b"read",
-                    &constraints,
-                    None,
-                )
+                .invoke_in_generation(&first_generation, &service(), b"read", &constraints, None,)
                 .unwrap(),
             b"from-b"
         );
     }
-
-
 }
