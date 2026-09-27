@@ -46,7 +46,7 @@ Baseline queries:
 | `execution` | current root execution record |
 | `dag` | current root execution plus descendant executions and worker tasks |
 | `values` | all values in the application ObservableStore with owner, schema, version, snapshot policy, and current value |
-| `value <value-id>` | one observable root value with owner, schema, version, and current value |
+| `value <value-id>` | one observable root value with owner, schema, version, snapshot policy, and current value |
 | `help` | supported queries |
 
 The tool returns `PhenixValue`. It does not render a second text-only diagnostic format.
