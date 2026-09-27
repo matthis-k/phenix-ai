@@ -458,7 +458,7 @@ mod tests {
             vec![AuthKind::ApiToken, AuthKind::OAuth]
         );
         let manifest = definition.manifest();
-        assert_eq!(manifest.services.len(), 2);
+        assert_eq!(manifest.services.len(), 3);
         assert!(manifest
             .maximum_authority
             .permits(&capability(NETWORK_HTTP_CAPABILITY)));
@@ -504,11 +504,94 @@ mod tests {
             auth::Definition::none(),
         );
         let manifest = definition.manifest();
-        assert_eq!(manifest.services.len(), 1);
+        assert_eq!(manifest.services.len(), 2);
         assert!(!manifest
             .maximum_authority
             .permits(&capability(SECRETS_MANAGE_CAPABILITY)));
-        assert_eq!(definition.component_manifest().exports.len(), 1);
+        assert_eq!(definition.component_manifest().exports.len(), 2);
+    }
+
+    #[test]
+    fn provider_catalog_merges_standard_discovery_with_declared_models() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+
+            let body = r#"{"data":[{"id":"model-live"},{"id":"model-declared"}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let definition = ProviderDefinition::new(
+            PluginId::parse("provider.catalog").unwrap(),
+            Endpoint::parse(format!("http://{address}/v1")).unwrap(),
+            Protocol::OpenAiResponses,
+            auth::Definition::none(),
+        )
+        .with_declared_models([ModelId::parse("model-declared").unwrap()]);
+        let manifest = definition.manifest();
+        assert!(manifest
+            .services
+            .iter()
+            .any(|service| service.service == provider_models_service()));
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        kernel
+            .register_embedded_factory(plugin.clone(), definition.factory())
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let output = kernel
+            .invoke(
+                &provider_models_service(),
+                &serde_json::to_vec(&ProviderModelsCommand::List).unwrap(),
+                &network_authority(),
+                Some(&plugin),
+            )
+            .unwrap();
+        let response: ProviderModelsResponse = serde_json::from_slice(&output).unwrap();
+        assert_eq!(
+            response,
+            ProviderModelsResponse::Models {
+                models: vec![
+                    ProviderModel {
+                        id: ModelId::parse("model-declared").unwrap(),
+                        origin: ProviderModelOrigin::DiscoveredAndDeclared,
+                    },
+                    ProviderModel {
+                        id: ModelId::parse("model-live").unwrap(),
+                        origin: ProviderModelOrigin::Discovered,
+                    },
+                ],
+            }
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn nonstandard_protocol_can_publish_declared_models_without_discovery() {
+        let definition = ProviderDefinition::new(
+            PluginId::parse("provider.declared").unwrap(),
+            Endpoint::parse("https://api.example.com/v1").unwrap(),
+            Protocol::OpenCodeGo,
+            auth::Definition::none(),
+        )
+        .with_declared_models([ModelId::parse("model-a").unwrap()]);
+        assert!(definition
+            .manifest()
+            .services
+            .iter()
+            .any(|service| service.service == provider_models_service()));
     }
 
     #[test]
