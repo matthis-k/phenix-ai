@@ -1223,8 +1223,14 @@ impl ApplicationWorker {
                 });
             };
             for method in provider_methods {
+                let kind = match method.kind {
+                    AuthKind::ApiToken => "api_token",
+                    AuthKind::OAuth => "oauth",
+                };
                 methods.push(AuthenticationMethod {
                     id: authentication_method_id(&provider, &method.id)?,
+                    provider: provider.clone(),
+                    kind: kind.to_owned(),
                     name: method.name,
                     description: method.description,
                 });
@@ -1239,6 +1245,63 @@ impl ApplicationWorker {
         request: AuthenticateInput,
     ) -> Result<AuthenticationResult, ApplicationError> {
         let (provider, method) = parse_authentication_method_id(&request.method_id)?;
+        let available = match self
+            .invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?
+        {
+            ProviderAuthResponse::InteractiveMethods { methods } => methods,
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected interactive-auth response: {response:?}"
+                    ),
+                })
+            }
+        };
+        let descriptor = available
+            .into_iter()
+            .find(|candidate| candidate.id == method)
+            .ok_or_else(|| ApplicationError::InvalidInput {
+                message: format!(
+                    "provider {provider} does not expose authentication method {method:?}"
+                ),
+            })?;
+
+        if descriptor.kind == AuthKind::ApiToken {
+            let secret = request.secret.ok_or_else(|| ApplicationError::InvalidInput {
+                message: format!(
+                    "authentication method {method:?} for provider {provider} requires an API key"
+                ),
+            })?;
+            let source = auth::ApiToken::literal(secret).map_err(|error| {
+                ApplicationError::InvalidInput {
+                    message: format!("invalid API key for provider {provider}: {error}"),
+                }
+            })?;
+            let response = self.invoke_provider_auth(
+                &provider,
+                ProviderAuthCommand::Add {
+                    auth: Auth::ApiToken { source },
+                },
+            )?;
+            if !matches!(response, ProviderAuthResponse::Added { .. }) {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected credential-add response: {response:?}"
+                    ),
+                });
+            }
+            self.set_provider_authenticated(&provider)?;
+            return Ok(AuthenticationResult::Authenticated);
+        }
+
+        if request.secret.is_some() {
+            return Err(ApplicationError::InvalidInput {
+                message: format!(
+                    "authentication method {method:?} for provider {provider} does not accept a secret"
+                ),
+            });
+        }
+
         let response =
             self.invoke_provider_auth(&provider, ProviderAuthCommand::Authenticate { method })?;
         let ProviderAuthResponse::Authentication { authentication } = response else {
@@ -1404,7 +1467,10 @@ fn model_default_option() -> OptionKey {
     OptionKey::parse("model.default").expect("static model.default option key is valid")
 }
 
-fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, ApplicationError> {
+fn selection_info(
+    profile: &RoutingProfile,
+    authenticated: bool,
+) -> Result<SelectionInfo, ApplicationError> {
     let mut targets = BTreeMap::new();
     for target in std::iter::once(&profile.default_target)
         .chain(profile.fallback_targets.iter())
@@ -1422,9 +1488,13 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
             .into_values()
             .next()
             .expect("one routing target was counted");
+        let thinking = model_selection_thinking(target);
         return Ok(SelectionInfo {
             id: profile.id.clone(),
-            provider: profile.default_target.provider_plugin.clone(),
+            provider: target.provider_plugin.clone(),
+            model: Some(target.model.to_string()),
+            thinking,
+            authenticated,
             name: target.model.to_string(),
             description: Some(model_selection_description(target)),
             presentation: SelectionPresentation::Model,
@@ -1435,20 +1505,29 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
     Ok(SelectionInfo {
         id: profile.id.clone(),
         provider: profile.default_target.provider_plugin.clone(),
+        model: None,
+        thinking: None,
+        authenticated,
         name: profile.id.to_string(),
         description: Some(providers),
         presentation: SelectionPresentation::Router,
     })
 }
 
+fn model_selection_thinking(target: &phenix_sdk::ModelTarget) -> Option<String> {
+    let Some(PhenixValue::Map(inference)) = target.options.get("inference") else {
+        return None;
+    };
+    let Some(PhenixValue::String(effort)) = inference.get("effort") else {
+        return None;
+    };
+    (!effort.is_empty()).then(|| effort.clone())
+}
+
 fn model_selection_description(target: &phenix_sdk::ModelTarget) -> String {
     let mut details = vec![target.provider_plugin.to_string()];
-    if let Some(PhenixValue::Map(inference)) = target.options.get("inference") {
-        if let Some(PhenixValue::String(effort)) = inference.get("effort") {
-            if !effort.is_empty() {
-                details.push(format!("effort {effort}"));
-            }
-        }
+    if let Some(effort) = model_selection_thinking(target) {
+        details.push(format!("effort {effort}"));
     }
     details.join(" · ")
 }
@@ -1568,6 +1647,9 @@ fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
     if let Some(path) = env::var_os("PHENIX_STATE_DB") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(directory) = env::var_os("PHENIX_STATE_DIR") {
+        return Ok(PathBuf::from(directory).join("acp.sqlite"));
+    }
     if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
         return Ok(PathBuf::from(state_home).join("phenix/acp.sqlite"));
     }
@@ -1575,8 +1657,9 @@ fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
         return Ok(PathBuf::from(home).join(".local/state/phenix/acp.sqlite"));
     }
     Err(ConfiguredApplicationError::Configuration {
-        message: "cannot determine durable state path; set PHENIX_STATE_DB or XDG_STATE_HOME"
-            .to_owned(),
+        message:
+            "cannot determine durable state path; set PHENIX_STATE_DB, PHENIX_STATE_DIR, or XDG_STATE_HOME"
+                .to_owned(),
     })
 }
 
