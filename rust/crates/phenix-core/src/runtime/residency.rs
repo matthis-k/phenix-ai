@@ -25,7 +25,7 @@ impl Kernel {
     /// The first implementation requires identical durable schemas so trial
     /// execution cannot migrate shared persistence underneath another resident
     /// generation.
-    pub fn make_generation_resident(
+    pub(crate) fn make_generation_resident(
         &mut self,
         candidate: &ResolvedHarness,
     ) -> Result<GraphGenerationId, KernelError> {
@@ -97,7 +97,7 @@ impl Kernel {
 
     /// Make a resident generation the default for future unqualified roots and
     /// ambient event delivery. The previous default remains resident.
-    pub fn promote_generation(
+    pub(crate) fn promote_generation(
         &mut self,
         generation: &GraphGenerationId,
     ) -> Result<(), KernelError> {
@@ -133,7 +133,7 @@ impl Kernel {
     ///
     /// Explicit retirement cancels that generation's plugin calls and tasks
     /// through the existing generation-aware stop path.
-    pub fn retire_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
+    pub(crate) fn retire_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Err(KernelError::DefaultGenerationCannotRetire(
                 generation.clone(),
