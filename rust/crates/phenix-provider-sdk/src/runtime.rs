@@ -233,36 +233,45 @@ impl ProviderPlugin {
                 }
 
                 if self.spec.protocol.supports_model_catalog() {
-                    let request = self
-                        .spec
-                        .protocol
-                        .model_catalog_request(&self.spec.endpoint)?
-                        .ok_or_else(|| ProviderError::Protocol {
-                            message: format!(
-                                "protocol {} advertises model discovery without a request",
-                                self.spec.protocol.name()
-                            ),
-                        })?;
-                    let mut request = request;
-                    let auth = self.resolve_auth()?;
-                    apply_auth(&self.spec, &mut request.headers, auth.as_ref())?;
-                    let client = self.client()?.clone();
-                    let protocol = Arc::clone(&self.spec.protocol);
-                    let discovered = self.runtime()?.block_on(async move {
-                        let response = send_http(&client, request).await?;
-                        if !(200..300).contains(&response.status) {
-                            return Err(normalize_http_error(&response));
-                        }
-                        protocol.decode_model_catalog(&response)
-                    })?;
-                    for model in discovered {
-                        let origin = match models.get(&model) {
-                            Some(ProviderModelOrigin::Declared) => {
-                                ProviderModelOrigin::DiscoveredAndDeclared
+                    let discovered = (|| -> Result<Vec<ModelId>, ProviderError> {
+                        let request = self
+                            .spec
+                            .protocol
+                            .model_catalog_request(&self.spec.endpoint)?
+                            .ok_or_else(|| ProviderError::Protocol {
+                                message: format!(
+                                    "protocol {} advertises model discovery without a request",
+                                    self.spec.protocol.name()
+                                ),
+                            })?;
+                        let mut request = request;
+                        let auth = self.resolve_auth()?;
+                        apply_auth(&self.spec, &mut request.headers, auth.as_ref())?;
+                        let client = self.client()?.clone();
+                        let protocol = Arc::clone(&self.spec.protocol);
+                        self.runtime()?.block_on(async move {
+                            let response = send_http(&client, request).await?;
+                            if !(200..300).contains(&response.status) {
+                                return Err(normalize_http_error(&response));
                             }
-                            _ => ProviderModelOrigin::Discovered,
-                        };
-                        models.insert(model, origin);
+                            protocol.decode_model_catalog(&response)
+                        })
+                    })();
+
+                    match discovered {
+                        Ok(discovered) => {
+                            for model in discovered {
+                                let origin = match models.get(&model) {
+                                    Some(ProviderModelOrigin::Declared) => {
+                                        ProviderModelOrigin::DiscoveredAndDeclared
+                                    }
+                                    _ => ProviderModelOrigin::Discovered,
+                                };
+                                models.insert(model, origin);
+                            }
+                        }
+                        Err(error) if models.is_empty() => return Err(error),
+                        Err(_) => {}
                     }
                 }
 
