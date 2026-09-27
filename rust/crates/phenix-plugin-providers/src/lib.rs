@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use phenix_core::{Authority, PluginExecution, PluginId, PluginManifest};
+use phenix_core::{Authority, ModelId, PluginExecution, PluginId, PluginManifest};
 use phenix_provider_sdk::{auth, Auth, Endpoint, Protocol, ProviderDefinition};
 
 pub const PROVIDERS_PLUGIN: &str = "phenix.providers";
@@ -18,6 +18,7 @@ pub struct ProviderPreset {
     protocol: Protocol,
     api_token: ApiTokenAuth,
     environment: &'static str,
+    declared_models: &'static [&'static str],
 }
 
 impl ProviderPreset {
@@ -33,6 +34,7 @@ impl ProviderPreset {
             protocol,
             api_token: ApiTokenAuth::Bearer,
             environment,
+            declared_models: &[],
         }
     }
 
@@ -49,7 +51,13 @@ impl ProviderPreset {
             protocol,
             api_token: ApiTokenAuth::Header(header),
             environment,
+            declared_models: &[],
         }
+    }
+
+    pub const fn with_declared_models(mut self, models: &'static [&'static str]) -> Self {
+        self.declared_models = models;
+        self
     }
 
     pub const fn id(self) -> &'static str {
@@ -90,12 +98,19 @@ impl ProviderPreset {
 
     #[must_use]
     pub fn definition_with_auth(self, auth: auth::Definition) -> ProviderDefinition {
-        ProviderDefinition::new(
+        let definition = ProviderDefinition::new(
             PluginId::parse(self.id).expect("common provider plugin id is valid"),
             Endpoint::parse(self.endpoint).expect("common provider endpoint is valid"),
             self.protocol,
             auth,
-        )
+        );
+        if self.declared_models.is_empty() {
+            definition
+        } else {
+            definition.with_declared_models(self.declared_models.iter().map(|model| {
+                ModelId::parse(*model).expect("common provider model id is valid")
+            }))
+        }
     }
 }
 
@@ -124,13 +139,29 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "https://opencode.ai/zen/go/v1/",
         Protocol::OpenCodeGo,
         "OPENCODE_API_KEY",
-    ),
+    )
+    .with_declared_models(&[
+        "gpt-5.6-luna",
+        "deepseek-v4-flash",
+        "mimo-v2.5",
+        "minimax-m3",
+        "qwen3.7-plus",
+    ]),
     ProviderPreset::bearer(
         "opencode-zen",
         "https://opencode.ai/zen/v1/",
         Protocol::OpenCodeZen,
         "OPENCODE_API_KEY",
-    ),
+    )
+    .with_declared_models(&[
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+        "claude-sonnet-5",
+        "qwen3.7-plus",
+        "deepseek-v4-flash",
+        "mimo-v2.5-free",
+    ]),
     ProviderPreset::bearer(
         "groq",
         "https://api.groq.com/openai/v1",
@@ -277,8 +308,8 @@ mod tests {
     #[test]
     fn every_common_provider_exposes_auth_and_model_services() {
         for definition in common_provider_definitions() {
-            assert_eq!(definition.manifest().services.len(), 2);
-            assert_eq!(definition.component_manifest().exports.len(), 2);
+            assert_eq!(definition.manifest().services.len(), 3);
+            assert_eq!(definition.component_manifest().exports.len(), 3);
         }
     }
 
