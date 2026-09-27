@@ -1,14 +1,16 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{
+    execution_component_manifest, execution_factory, execution_manifest,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+};
+use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, execution_component_manifest, execution_factory,
-    execution_manifest, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
-    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
-    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage,
-    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
-    ExecutionConfigurationCommand, ExecutionConfigurationResponse, DEFAULT_MAX_MODEL_TURNS,
-    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    agent_tool_execution_service, AgentLoopCommand, AgentLoopControlInterface,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
+    AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
+    AgentToolExecutionResponse, DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,

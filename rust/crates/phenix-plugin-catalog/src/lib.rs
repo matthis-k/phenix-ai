@@ -23,20 +23,29 @@ pub use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,
     agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
-    basic_context_component_manifest, basic_context_factory, basic_context_manifest,
-    basic_durable_schema_registrations, basic_model_component_manifest, basic_model_factory,
-    basic_model_manifest, basic_skills_component_manifest, basic_skills_factory,
-    basic_skills_manifest, basic_tools_component_manifest, basic_tools_factory,
-    basic_tools_manifest, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
-    AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface, AgentLoopPolicy,
-    AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, BasicContextInterface,
-    BasicSkillsInterface, BasicToolsInterface, AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN,
+    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
+    AgentLoopFailure, AgentLoopInterface, AgentLoopPolicy, AgentLoopProgress,
+    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
+    AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
+    AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN,
     AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE, AGENT_TOOL_EXECUTION_SERVICE,
-    BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN, BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN,
-    BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN, BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN,
     DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+};
+pub use phenix_plugin_basic_context::{
+    basic_context_component_manifest, basic_context_factory, basic_context_manifest,
+    BasicContextInterface, BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN,
+};
+pub use phenix_plugin_basic_model::{
+    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
+    BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN,
+};
+pub use phenix_plugin_basic_skills::{
+    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
+    BasicSkillsInterface, BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN,
+};
+pub use phenix_plugin_basic_tools::{
+    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest, BasicToolsInterface,
+    BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN,
 };
 pub use phenix_plugin_command_toolbelt::{
     cli_auth_state_service, cli_component_id, cli_component_manifest, cli_discover_service,
@@ -194,9 +203,14 @@ pub fn first_party_durable_schema_registrations(
     if owner == &planning_manifest().id {
         return registrations::<phenix_plugin_planning::Plugin>(owner);
     }
-    let basic = basic_durable_schema_registrations(manifest);
-    if !basic.is_empty() {
-        return basic;
+    if owner == &basic_context_manifest().id {
+        return registrations::<phenix_plugin_basic_context::Plugin>(owner);
+    }
+    if owner == &basic_skills_manifest().id {
+        return registrations::<phenix_plugin_basic_skills::Plugin>(owner);
+    }
+    if owner == &basic_tools_manifest().id {
+        return registrations::<phenix_plugin_basic_tools::Plugin>(owner);
     }
     Vec::new()
 }
