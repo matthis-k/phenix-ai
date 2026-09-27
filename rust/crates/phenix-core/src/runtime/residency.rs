@@ -289,20 +289,16 @@ impl Kernel {
         // cancel before starting another listener level.
         self.events.remove_generation_subscriptions(generation);
 
-        let lifecycle_constraints = match (
-            state.lifecycle_constraints.as_ref(),
-            operation_constraints,
-        ) {
-            (Some(stored), Some(operation)) => Some(
-                stored.with_authority_and_additional_pins(
+        let lifecycle_constraints =
+            match (state.lifecycle_constraints.as_ref(), operation_constraints) {
+                (Some(stored), Some(operation)) => Some(stored.with_authority_and_additional_pins(
                     stored.authority().attenuate(operation.authority()),
                     operation,
-                ),
-            ),
-            (Some(stored), None) => Some(stored.clone()),
-            (None, Some(operation)) => Some(operation.clone()),
-            (None, None) => None,
-        };
+                )),
+                (Some(stored), None) => Some(stored.clone()),
+                (None, Some(operation)) => Some(operation.clone()),
+                (None, None) => None,
+            };
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
             lifecycle_constraints: lifecycle_constraints.as_ref(),
