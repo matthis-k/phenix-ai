@@ -425,7 +425,7 @@ impl Kernel {
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(Some(&generation));
                 let plugin_authority = constrain_authority_to_ceiling(
-                    Some(candidate.authority_ceiling()),
+                    Some(lifecycle_authority_ceiling),
                     &manifest.maximum_authority,
                 );
                 let host = PluginHost {
