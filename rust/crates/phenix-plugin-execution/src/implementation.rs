@@ -870,9 +870,7 @@ mod tests {
                 &ExecutionCommand::GetExecution { id: "root".into() },
             )
             .unwrap(),
-            ExecutionResponse::ExecutionLookup {
-                execution: Some(_)
-            }
+            ExecutionResponse::ExecutionLookup { execution: Some(_) }
         ));
         let _ = fs::remove_file(path);
     }
