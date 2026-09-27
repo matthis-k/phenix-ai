@@ -81,14 +81,15 @@ Durable state remains owned by Plugin/resource identity according to the existin
 
 Core keeps the mutable generation lifecycle behind `GraphReconciler`. Host-facing execution may select a resident generation, but selection does not expose lifecycle mutation.
 
-Resident admission through `GraphReconciler` requires `RootExecutionConstraints`. Core validates pinned bindings before candidate lifecycle code runs. The resident generation stores two separate ceilings:
+Resident admission through `GraphReconciler` requires `RootExecutionConstraints`. Core validates pinned bindings before candidate lifecycle code runs. The resident generation stores the execution authority ceiling and the admitted lifecycle constraints:
 
 ```text
 execution authority = candidate Harness ceiling
 lifecycle authority = candidate Harness ceiling ∩ admitting root authority
+lifecycle pins = admitting root pinned bindings
 ```
 
-The lifecycle ceiling is fixed for that resident generation. Promotion revalidates the caller's pinned bindings before changing the default. Retirement attenuates `stop` again by the authority of the caller that requested retirement. Production resident lifecycle has no rootless admission path. Test-only helpers may exercise lower-level transition mechanics without weakening that production boundary.
+The lifecycle constraints are fixed for that resident generation. Candidate `start` and later `stop` calls keep those pins. Promotion revalidates the caller's pinned bindings before changing the default. Retirement combines the stored pins with the retirement caller's pins and attenuates `stop` again by the retirement caller's authority. Production resident lifecycle has no rootless admission path. Test-only helpers may exercise lower-level transition mechanics without weakening that production boundary.
 
 The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
 
