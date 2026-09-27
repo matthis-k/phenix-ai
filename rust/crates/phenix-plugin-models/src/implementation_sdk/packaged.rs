@@ -23,16 +23,14 @@ fn manifest(context: &ModelContext<'_, '_, '_>) -> Result<(Option<Vec<u8>>, Mani
     Ok((bytes, value))
 }
 
-pub(super) fn retired(
+pub(super) fn ownership(
     context: &ModelContext<'_, '_, '_>,
-) -> Result<BTreeSet<RoutingProfileId>, String> {
+) -> Result<(BTreeSet<RoutingProfileId>, BTreeSet<RoutingProfileId>), String> {
     let (_, manifest) = manifest(context)?;
-    Ok(manifest
-        .owned
-        .keys()
-        .filter(|id| !manifest.active.contains(*id))
-        .cloned()
-        .collect())
+    Ok((
+        manifest.owned.keys().cloned().collect(),
+        manifest.active,
+    ))
 }
 
 fn normalize(mut profile: RoutingProfile) -> RoutingProfile {
