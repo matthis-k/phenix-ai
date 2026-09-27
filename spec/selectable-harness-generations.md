@@ -84,11 +84,13 @@ execution authority = candidate Harness ceiling
 lifecycle authority = candidate Harness ceiling ∩ admitting root authority
 ```
 
-The lifecycle ceiling is fixed for that resident generation. Promotion revalidates the caller's pinned bindings before changing the default. Retirement attenuates `stop` again by the authority of the caller that requested retirement. A trusted kernel-internal host path may stage without root pins, but agent-facing tooling must not use that path.
+The lifecycle ceiling is fixed for that resident generation. Promotion revalidates the caller's pinned bindings before changing the default. Retirement attenuates `stop` again by the authority of the caller that requested retirement. Production resident lifecycle has no rootless admission path. Test-only helpers may exercise lower-level transition mechanics without weakening that production boundary.
 
 The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
 
 `phenix-plugin-dev` must call a management operation that lowers to `GraphReconciler`. It must not receive direct access to `Kernel`, the resident registry, `EventBus` subscription maps, or persistence handles.
+
+Agent-facing management must inherit the current `RootExecutionConstraints` object. It must not recapture constraints from authority alone or reconstruct a guessed pin set, because doing so could drop a host-pinned Environment or another resolved binding. A pinned binding never falls back to a different provider; if that exact binding is unavailable, execution fails instead of changing worlds.
 
 ## Root execution constraints
 
