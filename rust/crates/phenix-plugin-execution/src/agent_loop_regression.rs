@@ -3,6 +3,13 @@ use crate::{
     execution_component_manifest, execution_factory, execution_manifest,
     ExecutionConfigurationCommand, ExecutionConfigurationResponse,
 };
+use phenix_core::{
+    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
+    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
+    SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+};
 use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
@@ -11,13 +18,6 @@ use phenix_plugin_basic_agent::{
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
     AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
     AgentToolExecutionResponse, DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
-};
-use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
-    SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,

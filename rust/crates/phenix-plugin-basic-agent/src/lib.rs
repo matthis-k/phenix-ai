@@ -43,9 +43,7 @@ pub use phenix_plugin_basic_tools::{
 
 #[cfg(test)]
 #[must_use]
-fn basic_durable_schema_registrations(
-    manifest: &PluginManifest,
-) -> Vec<DurableSchemaRegistration> {
+fn basic_durable_schema_registrations(manifest: &PluginManifest) -> Vec<DurableSchemaRegistration> {
     let owner = &manifest.id;
     if owner.as_str() == BASIC_CONTEXT_PLUGIN {
         return <phenix_plugin_basic_context::Plugin as StaticPluginResources>::durable_schema_registrations(owner);
