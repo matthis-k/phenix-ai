@@ -89,7 +89,7 @@ lifecycle authority = candidate Harness ceiling ∩ admitting root authority
 lifecycle pins = admitting root pinned bindings
 ```
 
-The lifecycle constraints are fixed for that resident generation. Candidate `start` and later `stop` calls keep those pins. Promotion revalidates the caller's pinned bindings before changing the default. Retirement combines the stored pins with the retirement caller's pins and attenuates `stop` again by the retirement caller's authority. Production resident lifecycle has no rootless admission path. Test-only helpers may exercise lower-level transition mechanics without weakening that production boundary.
+The lifecycle constraints are fixed for that resident generation. Candidate `start` and later `stop` calls keep those pins. Promotion revalidates the caller's pinned bindings before changing the default. Retirement validates the retirement caller's pins against the resident generation before removal, then combines those pins with the stored lifecycle pins and attenuates `stop` again by the retirement caller's authority. Production resident lifecycle has no rootless admission path. Test-only helpers may exercise lower-level transition mechanics without weakening that production boundary.
 
 The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
 
