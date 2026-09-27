@@ -77,6 +77,8 @@ Durable state remains owned by Plugin/resource identity according to the existin
 
 Core keeps the mutable generation lifecycle behind `GraphReconciler`. Host-facing execution may select a resident generation, but selection does not expose lifecycle mutation.
 
+The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
+
 `phenix-plugin-dev` must call a management operation that lowers to `GraphReconciler`. It must not receive direct access to `Kernel`, the resident registry, `EventBus` subscription maps, or persistence handles.
 
 ## Root execution constraints
