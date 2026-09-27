@@ -363,13 +363,6 @@ impl CallScope {
         }
     }
 
-    pub(super) fn root_execution_constraints(&self) -> RootExecutionConstraints {
-        RootExecutionConstraints {
-            authority: self.authority.clone(),
-            pinned_bindings: (*self.pinned_bindings).clone(),
-        }
-    }
-
     pub(super) fn delegated(&self, authority: Authority, transactions: TransactionContext) -> Self {
         Self {
             generation: Arc::clone(&self.generation),
