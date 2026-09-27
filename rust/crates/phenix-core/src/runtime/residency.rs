@@ -552,10 +552,29 @@ mod tests {
         }
     }
 
-    struct AuthorityEcho(CapabilityId);
+    struct AuthorityEcho {
+        capability: CapabilityId,
+        lifecycle: Arc<Mutex<Vec<(&'static str, GraphGenerationId, bool)>>>,
+    }
+
+    impl AuthorityEcho {
+        fn record(&self, phase: &'static str, host: &PluginHost<'_>) {
+            self.lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .push((
+                    phase,
+                    host.graph_generation()
+                        .expect("resolved lifecycle call has a generation")
+                        .clone(),
+                    host.authority().permits(&self.capability),
+                ));
+        }
+    }
 
     impl PluginInstance for AuthorityEcho {
-        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
+            self.record("start", host);
             Ok(())
         }
 
@@ -565,11 +584,16 @@ mod tests {
             _input: &[u8],
             host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
-            Ok(if host.authority().permits(&self.0) {
+            Ok(if host.authority().permits(&self.capability) {
                 b"permitted".to_vec()
             } else {
                 b"denied".to_vec()
             })
+        }
+
+        fn stop(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
+            self.record("stop", host);
+            Ok(())
         }
     }
 
@@ -766,13 +790,19 @@ mod tests {
 
         let first = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
         let second = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
+        let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
         kernel.activate_resolved_harness(&first).unwrap();
         let write_for_factory = write.clone();
+        let lifecycle = Arc::new(Mutex::new(Vec::new()));
+        let lifecycle_for_factory = Arc::clone(&lifecycle);
         kernel.preload_embedded_factory(plugin_manifest.id, move || {
-            Box::new(AuthorityEcho(write_for_factory.clone()))
+            Box::new(AuthorityEcho {
+                capability: write_for_factory.clone(),
+                lifecycle: Arc::clone(&lifecycle_for_factory),
+            })
         });
         kernel.activate_all().unwrap();
         let constraints = kernel
@@ -792,10 +822,35 @@ mod tests {
             b"denied"
         );
 
+        assert_eq!(
+            lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .as_slice(),
+            &[
+                ("start", first_generation.clone(), true),
+                ("start", second_generation.clone(), false),
+            ]
+        );
+
         kernel.promote_generation(&second_generation).unwrap();
         assert_eq!(
             kernel.invoke(&service(), &[], &broad, None).unwrap(),
             b"denied"
+        );
+
+        kernel.promote_generation(&first_generation).unwrap();
+        kernel.retire_generation(&second_generation).unwrap();
+        assert_eq!(
+            lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .as_slice(),
+            &[
+                ("start", first_generation, true),
+                ("start", second_generation.clone(), false),
+                ("stop", second_generation, false),
+            ]
         );
     }
 
