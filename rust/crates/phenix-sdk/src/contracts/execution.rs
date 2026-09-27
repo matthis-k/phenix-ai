@@ -103,6 +103,7 @@ pub enum ExecutionCommand {
     GetExecution {
         id: String,
     },
+    ListExecutions,
     FinishExecution {
         id: String,
         success: bool,
@@ -142,6 +143,7 @@ pub enum ExecutionCommand {
     GetTask {
         id: String,
     },
+    ListTasks,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -149,10 +151,12 @@ pub enum ExecutionCommand {
 pub enum ExecutionResponse {
     Execution { execution: ExecutionRecord },
     ExecutionLookup { execution: Option<ExecutionRecord> },
+    Executions { executions: Vec<ExecutionRecord> },
     Callable { callable: CallableRecord },
     Invocation { output: Vec<u8> },
     Task { task: WorkerTaskRecord },
     TaskLookup { task: Option<WorkerTaskRecord> },
+    Tasks { tasks: Vec<WorkerTaskRecord> },
     RunnableTasks { task_ids: Vec<String> },
 }
 
