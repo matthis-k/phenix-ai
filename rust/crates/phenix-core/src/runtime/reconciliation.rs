@@ -349,7 +349,11 @@ impl Kernel {
         let old_states = self.generation_state.states.clone();
         let old_instances = self.generation_state.instances.clone();
         let old_invocations = self.generation_state.invocations.clone();
-        self.events.replace_subscriptions(subscriptions)?;
+        self.events.replace_subscriptions(subscriptions.clone())?;
+        if let Some(generation) = candidate_runtime.generation().cloned() {
+            self.events
+                .replace_generation_subscriptions(generation, subscriptions)?;
+        }
         self.generation_state.states = next_states;
         self.generation_state.instances = next_instances;
         self.generation_state.invocations = next_invocations;
