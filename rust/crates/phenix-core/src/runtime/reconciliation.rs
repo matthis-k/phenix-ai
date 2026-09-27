@@ -5,6 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
+    pub(super) lifecycle_constraints: Option<&'a RootExecutionConstraints>,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -16,7 +17,7 @@ pub(super) struct StopView<'a> {
 }
 
 impl StopView<'_> {
-    fn stop(&self, plugin: &PluginId, instance: &Arc<Mutex<Box<dyn PluginInstance>>>) {
+    pub(super) fn stop(&self, plugin: &PluginId, instance: &Arc<Mutex<Box<dyn PluginInstance>>>) {
         let generation = self.runtime.generation();
         let Some(manifest) = self.runtime.config().manifest(plugin) else {
             return;
@@ -25,6 +26,27 @@ impl StopView<'_> {
         self.tasks.cancel_plugin_generation(plugin, generation);
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
+        let plugin_authority = constrain_authority_to_ceiling(
+            self.lifecycle_constraints
+                .map(RootExecutionConstraints::authority),
+            &manifest.maximum_authority,
+        );
+        let scope = if let Some(constraints) = self.lifecycle_constraints {
+            CallScope::root_with_constraints(
+                Arc::new((*self.runtime).clone()),
+                plugin,
+                &plugin_authority,
+                constraints,
+                Some(live_call.cancellation_token().clone()),
+            )
+        } else {
+            CallScope::root(
+                Arc::new((*self.runtime).clone()),
+                plugin,
+                &plugin_authority,
+                Some(live_call.cancellation_token().clone()),
+            )
+        };
         let host = PluginHost {
             runtime: RuntimeServices {
                 states: self.states,
@@ -38,12 +60,7 @@ impl StopView<'_> {
                 provenance: self.provenance,
             },
             plugin,
-            scope: CallScope::root(
-                Arc::new((*self.runtime).clone()),
-                plugin,
-                &manifest.maximum_authority,
-                Some(live_call.cancellation_token().clone()),
-            ),
+            scope,
             continuation: None,
         };
         let mut instance = instance
@@ -62,19 +79,28 @@ impl Kernel {
         candidate: &ResolvedHarness,
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
+        self.validate_generation_authority(candidate)?;
+        let candidate_lifecycle_constraints = RootExecutionConstraints {
+            authority: candidate.authority_ceiling().clone(),
+            pinned_bindings: BTreeMap::new(),
+        };
         let has_active = self
+            .generation_state
             .states
             .values()
             .any(|state| *state == PluginState::Active);
         let all_active = self
+            .generation_state
             .states
             .values()
             .all(|state| *state == PluginState::Active);
-        if (self.runtime_active && !all_active) || (!self.runtime_active && has_active) {
+        if (self.generation_state.active && !all_active)
+            || (!self.generation_state.active && has_active)
+        {
             return Err(KernelError::PartiallyActiveRuntime);
         }
 
-        let active_runtime = self.runtime_active;
+        let active_runtime = self.generation_state.active;
         let candidate_runtime = candidate.runtime_generation();
         let candidate_config = candidate_runtime.config().clone();
         let old_manifests: BTreeMap<_, _> = self
@@ -104,10 +130,10 @@ impl Kernel {
                 && old_manifests.get(plugin) == Some(manifest);
             if retain {
                 next_states.insert(plugin.clone(), PluginState::Active);
-                if let Some(instance) = self.instances.get(plugin) {
+                if let Some(instance) = self.generation_state.instances.get(plugin) {
                     next_instances.insert(plugin.clone(), Arc::clone(instance));
                 }
-                if let Some(invocation) = self.invocations.get(plugin) {
+                if let Some(invocation) = self.generation_state.invocations.get(plugin) {
                     next_invocations.insert(plugin.clone(), Arc::clone(invocation));
                 }
             } else {
@@ -135,6 +161,14 @@ impl Kernel {
                             let provider_manifest = candidate_config
                                 .manifest(&binding.provider)
                                 .expect("resolved runtime provider is configured");
+                            let provider_authority = constrain_authority_to_ceiling(
+                                Some(candidate.authority_ceiling()),
+                                &provider_manifest.maximum_authority,
+                            );
+                            let guest_authority = constrain_authority_to_ceiling(
+                                Some(candidate.authority_ceiling()),
+                                &manifest.maximum_authority,
+                            );
                             let provider =
                                 next_instances.get(&binding.provider).cloned().ok_or_else(
                                     || KernelError::PluginNotActive(binding.provider.clone()),
@@ -161,7 +195,7 @@ impl Kernel {
                                 scope: CallScope::root(
                                     Arc::new((*candidate_runtime).clone()),
                                     &binding.provider,
-                                    &provider_manifest.maximum_authority,
+                                    &provider_authority,
                                     Some(cancellation.clone()),
                                 ),
                                 continuation: None,
@@ -179,7 +213,7 @@ impl Kernel {
                                     RuntimePluginCandidate {
                                         manifest,
                                         artifact,
-                                        guest_authority: &manifest.maximum_authority,
+                                        guest_authority: &guest_authority,
                                     },
                                     &host,
                                 )
@@ -215,6 +249,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
+                                lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -235,6 +270,10 @@ impl Kernel {
                     let cancellation = live_call.cancellation_token().clone();
                     let prepared_mutations =
                         PreparedMutationScope::new(candidate_runtime.generation());
+                    let plugin_authority = constrain_authority_to_ceiling(
+                        Some(candidate.authority_ceiling()),
+                        &manifest.maximum_authority,
+                    );
                     let host = PluginHost {
                         runtime: RuntimeServices {
                             states: &next_states,
@@ -251,7 +290,7 @@ impl Kernel {
                         scope: CallScope::root(
                             Arc::new((*candidate_runtime).clone()),
                             plugin,
-                            &manifest.maximum_authority,
+                            &plugin_authority,
                             Some(cancellation.clone()),
                         ),
                         continuation: None,
@@ -272,6 +311,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
+                                lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -314,6 +354,7 @@ impl Kernel {
                     &staged,
                     StopView {
                         runtime: candidate_runtime,
+                        lifecycle_constraints: Some(&candidate_lifecycle_constraints),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -335,25 +376,44 @@ impl Kernel {
                     || restart_plugins.contains(*plugin)
             })
             .filter_map(|(plugin, _)| {
-                self.instances
+                self.generation_state
+                    .instances
                     .get(plugin)
                     .map(|instance| (plugin.clone(), Arc::clone(instance)))
             })
             .collect();
 
-        let old_runtime = self.runtime_generation.clone();
-        let old_states = self.states.clone();
-        let old_instances = self.instances.clone();
-        let old_invocations = self.invocations.clone();
-        self.events.replace_subscriptions(subscriptions)?;
-        self.states = next_states;
-        self.instances = next_instances;
-        self.invocations = next_invocations;
-        self.install_runtime_generation(candidate_runtime.clone());
-        self.runtime_active = active_runtime;
+        let old_runtime = self.generation_state.runtime.clone();
+        let old_lifecycle_constraints = self.generation_state.lifecycle_constraints.clone();
+        let old_states = self.generation_state.states.clone();
+        let old_instances = self.generation_state.instances.clone();
+        let old_invocations = self.generation_state.invocations.clone();
+        {
+            // Keep ambient admission outside the interval where the active
+            // subscriptions and canonical default generation are being replaced.
+            let events = Arc::clone(&self.events);
+            let _ambient_transition = events.lock_ambient_transition();
+
+            self.events.replace_subscriptions(subscriptions.clone())?;
+            if let Some(generation) = candidate_runtime.generation().cloned() {
+                self.events
+                    .replace_generation_subscriptions(generation, subscriptions.clone())?;
+            }
+            self.generation_state.subscriptions = subscriptions;
+            self.generation_state.states = next_states;
+            self.generation_state.instances = next_instances;
+            self.generation_state.invocations = next_invocations;
+            self.install_runtime_generation(
+                candidate_runtime.clone(),
+                candidate.durable_schemas().to_vec(),
+                candidate.authority_ceiling().clone(),
+            );
+            self.generation_state.active = active_runtime;
+        }
 
         let retired_view = StopView {
             runtime: &old_runtime,
+            lifecycle_constraints: old_lifecycle_constraints.as_ref(),
             states: &old_states,
             instances: &old_instances,
             invocations: &old_invocations,

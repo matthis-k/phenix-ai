@@ -1,7 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, InterfaceId,
-    PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph, ResolvedProviderPlan,
-    ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, GraphGenerationId,
+    InterfaceId, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
+    ResolvedProviderPlan, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -124,6 +124,22 @@ pub enum KernelError {
     },
     EventTopology(EventError),
     ResolvedGenerationMissing,
+    UnknownGeneration(GraphGenerationId),
+    DefaultGenerationCannotRetire(GraphGenerationId),
+    ResidentGenerationDurableMismatch {
+        active: GraphGenerationId,
+        candidate: GraphGenerationId,
+    },
+    GenerationAuthorityExpansion(GraphGenerationId),
+    PinnedBindingUnavailable {
+        component: ComponentId,
+        interface: InterfaceId,
+    },
+    PinnedBindingChanged {
+        generation: GraphGenerationId,
+        component: ComponentId,
+        interface: InterfaceId,
+    },
     PluginStop {
         plugin: PluginId,
         message: String,
@@ -257,6 +273,47 @@ impl Display for KernelError {
             Self::ResolvedGenerationMissing => {
                 f.write_str("listener topology requires an active resolved generation")
             }
+            Self::UnknownGeneration(generation) => {
+                write!(
+                    f,
+                    "graph generation is not resident: {}",
+                    generation.as_str()
+                )
+            }
+            Self::DefaultGenerationCannotRetire(generation) => {
+                write!(
+                    f,
+                    "default graph generation cannot retire: {}",
+                    generation.as_str()
+                )
+            }
+            Self::ResidentGenerationDurableMismatch { active, candidate } => write!(
+                f,
+                "graph generation {} cannot reside beside {}: durable schemas differ",
+                candidate.as_str(),
+                active.as_str()
+            ),
+            Self::GenerationAuthorityExpansion(generation) => write!(
+                f,
+                "graph generation {} exceeds the kernel's initial authority ceiling",
+                generation.as_str()
+            ),
+            Self::PinnedBindingUnavailable {
+                component,
+                interface,
+            } => write!(
+                f,
+                "cannot pin unresolved component binding {component}/{interface}"
+            ),
+            Self::PinnedBindingChanged {
+                generation,
+                component,
+                interface,
+            } => write!(
+                f,
+                "graph generation {} changes pinned component binding {component}/{interface}",
+                generation.as_str()
+            ),
             Self::PluginStop { plugin, message } => {
                 write!(f, "plugin {plugin} failed to stop: {message}")
             }

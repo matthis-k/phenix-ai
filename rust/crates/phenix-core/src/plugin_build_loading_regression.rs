@@ -105,7 +105,11 @@ fn bridge_manifest() -> PluginManifest {
 }
 
 fn active_fixture(plugins: impl IntoIterator<Item = PluginManifest>) -> (GraphReconciler, Kernel) {
-    let active = ResolvedHarness::resolve(plugins, [], [], &Authority::default()).unwrap();
+    // Plugin-management tests resolve candidates with this capability. The
+    // long-lived kernel must start with the same ceiling; reconciliation may
+    // attenuate it, but must never widen it.
+    let authority_ceiling = Authority::new([capability("plugin.runtime")]);
+    let active = ResolvedHarness::resolve(plugins, [], [], &authority_ceiling).unwrap();
     let mut kernel = Kernel::new(active.kernel_config().clone());
     kernel.activate_resolved_harness(&active).unwrap();
     (GraphReconciler::new(active), kernel)

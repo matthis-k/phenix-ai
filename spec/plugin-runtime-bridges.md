@@ -156,3 +156,9 @@ Post-commit retirement failure is operational failure and does not roll the grap
 - Active calls remain pinned across replacement.
 - Persistence ownership does not follow execution runtime or artifact revision.
 - Consumer component contracts do not expose provider runtime choice.
+
+## Resident replacement trials
+
+The implemented baseline commits replacement and then stops retired instances. `spec/selectable-harness-generations.md` proposes a development extension where compatible old and candidate generations may remain resident for explicit root execution before promotion.
+
+This does not add a reload lifecycle. Build, resolution, Plugin preparation, authority, persistence ownership, and Runtime Provider semantics remain the same. The extension changes generation residency and root selection, not the Plugin API.

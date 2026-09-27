@@ -521,3 +521,9 @@ This contract is complete when:
 - the active graph and proposed transitions are inspectable with source attribution;
 - Nix remains a first-class frontend but is not a privileged composition engine;
 - Lua, IPC, or another frontend/host can be added as ordinary plugins without changing the canonical resolver or core runtime semantics.
+
+## Selectable development generations
+
+`spec/selectable-harness-generations.md` defines the proposed runtime extension for retaining more than one validated `ResolvedHarness` during development.
+
+Configuration frontends still only produce declarative candidate input. They do not choose a generation for an in-flight call, widen the root authority ceiling, or replace pinned host bindings. Promotion changes the default generation only after the candidate passes those runtime checks.

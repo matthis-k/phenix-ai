@@ -1,7 +1,7 @@
 use crate::{
     GraphGenerationId, GraphReconciler, Kernel, LayerPolicy, MetadataReconciliationError, PluginId,
     PluginManifest, ReconciliationResult, ResolvedCompositionMetadata, ResolvedHarness,
-    ResolvedHarnessActivationError, ServiceId,
+    ResolvedHarnessActivationError, RootExecutionConstraints, ServiceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,6 +25,7 @@ pub enum LiveReconciliationError {
         kernel_layers: Vec<LayerPolicy>,
         resolved_layers: Vec<LayerPolicy>,
     },
+    ResidentGenerationsPresent(Vec<GraphGenerationId>),
     MetadataPolicy(MetadataReconciliationError),
     Runtime(crate::KernelError),
 }
@@ -35,6 +36,85 @@ impl GraphReconciler {
         kernel: &Kernel,
     ) -> Result<(), LiveReconciliationError> {
         validate_live_reconciliation(self, kernel)
+    }
+
+    /// Stage a resolved candidate beside the active generation without changing
+    /// the default generation.
+    pub fn make_candidate_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        candidate: ResolvedHarness,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<GraphGenerationId, LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        let generation = kernel
+            .make_generation_resident_under_constraints(&candidate, constraints)
+            .map_err(LiveReconciliationError::Runtime)?;
+        if generation != *self.active.generation() {
+            self.resident.insert(generation.clone(), candidate);
+        }
+        Ok(generation)
+    }
+
+    /// Promote one resident generation and retain the previous active Harness as
+    /// a resident rollback target.
+    pub fn promote_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<ReconciliationResult, LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        if generation == self.active.generation() {
+            return Ok(ReconciliationResult {
+                previous_generation: generation.clone(),
+                active_generation: generation.clone(),
+                diff: crate::GraphDiff::default(),
+                transition_plan: Vec::new(),
+            });
+        }
+
+        let candidate = self.resident.remove(generation).ok_or_else(|| {
+            LiveReconciliationError::Runtime(crate::KernelError::UnknownGeneration(
+                generation.clone(),
+            ))
+        })?;
+        let preview = self.preview_candidate(&candidate);
+        if let Err(error) = kernel.promote_generation_under_constraints(generation, constraints) {
+            self.resident.insert(generation.clone(), candidate);
+            return Err(LiveReconciliationError::Runtime(error));
+        }
+
+        let previous = std::mem::replace(&mut self.active, candidate);
+        self.resident
+            .insert(previous.generation().clone(), previous);
+        Ok(ReconciliationResult {
+            previous_generation: preview.active_generation,
+            active_generation: preview.candidate_generation,
+            diff: preview.diff,
+            transition_plan: preview.transition_plan,
+        })
+    }
+
+    /// Retire one non-active resident Harness and its generation-local runtime
+    /// state.
+    pub fn retire_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        if !self.resident.contains_key(generation) {
+            return Err(LiveReconciliationError::Runtime(
+                crate::KernelError::UnknownGeneration(generation.clone()),
+            ));
+        }
+        kernel
+            .retire_generation_under_constraints(generation, constraints)
+            .map_err(LiveReconciliationError::Runtime)?;
+        self.resident.remove(generation);
+        Ok(())
     }
 
     /// Apply one fully resolved development candidate to a live kernel.
@@ -49,6 +129,7 @@ impl GraphReconciler {
         candidate: ResolvedHarness,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
+        self.require_stable_replacement_mode()?;
         let preview = self.preview_candidate(&candidate);
         let restart_plugins =
             restart_plugins_for_plan(self.active(), &candidate, &preview.transition_plan);
@@ -71,6 +152,7 @@ impl GraphReconciler {
         candidate_metadata: &ResolvedCompositionMetadata,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
+        self.require_stable_replacement_mode()?;
         let preview = self
             .preview_candidate_with_metadata(active_metadata, &candidate, candidate_metadata)
             .map_err(LiveReconciliationError::MetadataPolicy)?;
@@ -82,6 +164,17 @@ impl GraphReconciler {
         let mut result = self.activate_candidate(candidate);
         result.transition_plan = preview.graph.transition_plan;
         Ok(result)
+    }
+
+    fn require_stable_replacement_mode(&self) -> Result<(), LiveReconciliationError> {
+        let resident = self.resident_generations().cloned().collect::<Vec<_>>();
+        if resident.is_empty() {
+            Ok(())
+        } else {
+            Err(LiveReconciliationError::ResidentGenerationsPresent(
+                resident,
+            ))
+        }
     }
 }
 
@@ -161,6 +254,9 @@ fn map_activation_validation_error(
         }
         ResolvedHarnessActivationError::DurableSchemaPreparation(_) => {
             unreachable!("configuration validation does not prepare durable schemas")
+        }
+        ResolvedHarnessActivationError::AuthorityCeiling(_) => {
+            unreachable!("configuration validation does not enforce activation authority")
         }
     }
 }
@@ -245,6 +341,129 @@ mod tests {
             resources: Vec::new(),
             configuration: Vec::new(),
         }
+    }
+
+    #[test]
+    fn one_shot_replacement_is_blocked_while_trial_generations_are_resident() {
+        let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
+        let initial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let trial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:trial")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let replacement = ResolvedHarness::resolve_with_resources(
+            [plugin],
+            [],
+            [resource("sha256:replacement")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let initial_generation = initial.generation().clone();
+        let trial_generation = trial.generation().clone();
+
+        let mut kernel = Kernel::new(initial.kernel_config().clone());
+        kernel.activate_resolved_harness(&initial).unwrap();
+        let mut reconciler = GraphReconciler::new(initial);
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+        reconciler
+            .make_candidate_resident_on_kernel(&mut kernel, trial, &constraints)
+            .unwrap();
+
+        assert_eq!(
+            reconciler
+                .activate_candidate_on_kernel(&mut kernel, replacement)
+                .unwrap_err(),
+            LiveReconciliationError::ResidentGenerationsPresent(vec![trial_generation.clone()])
+        );
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert!(reconciler.resident(&trial_generation).is_some());
+    }
+
+    #[test]
+    fn resident_lifecycle_keeps_reconciler_and_kernel_in_sync() {
+        let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
+        let initial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let trial = ResolvedHarness::resolve_with_resources(
+            [plugin],
+            [],
+            [resource("sha256:trial")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let initial_generation = initial.generation().clone();
+        let trial_generation = trial.generation().clone();
+
+        let mut kernel = Kernel::new(initial.kernel_config().clone());
+        kernel.activate_resolved_harness(&initial).unwrap();
+        let mut reconciler = GraphReconciler::new(initial);
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+
+        reconciler
+            .make_candidate_resident_on_kernel(&mut kernel, trial, &constraints)
+            .unwrap();
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert!(reconciler.resident(&trial_generation).is_some());
+        assert!(kernel.resident_generation_ids().contains(&trial_generation));
+
+        let promoted = reconciler
+            .promote_resident_on_kernel(&mut kernel, &trial_generation, &constraints)
+            .unwrap();
+        assert_eq!(promoted.previous_generation, initial_generation);
+        assert_eq!(promoted.active_generation, trial_generation);
+        assert_eq!(kernel.graph_generation(), Some(&trial_generation));
+        assert_eq!(reconciler.active().generation(), &trial_generation);
+        assert_eq!(
+            kernel.active_resources()[0].content_identity,
+            "sha256:trial"
+        );
+        assert!(reconciler.resident(&initial_generation).is_some());
+        assert!(kernel
+            .resident_generation_ids()
+            .contains(&initial_generation));
+
+        let rolled_back = reconciler
+            .promote_resident_on_kernel(&mut kernel, &initial_generation, &constraints)
+            .unwrap();
+        assert_eq!(rolled_back.previous_generation, trial_generation);
+        assert_eq!(rolled_back.active_generation, initial_generation);
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert_eq!(kernel.active_resources()[0].content_identity, "sha256:one");
+        assert!(reconciler.resident(&trial_generation).is_some());
+
+        reconciler
+            .retire_resident_on_kernel(&mut kernel, &trial_generation, &constraints)
+            .unwrap();
+        assert!(reconciler.resident(&trial_generation).is_none());
+        assert!(!kernel.resident_generation_ids().contains(&trial_generation));
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
     }
 
     #[test]
