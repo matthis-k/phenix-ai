@@ -118,8 +118,8 @@ pub struct ReconciliationResult {
 
 #[derive(Clone, Debug)]
 pub struct GraphReconciler {
-    active: ResolvedHarness,
-    resident: BTreeMap<GraphGenerationId, ResolvedHarness>,
+    pub(super) active: ResolvedHarness,
+    pub(super) resident: BTreeMap<GraphGenerationId, ResolvedHarness>,
 }
 
 impl GraphReconciler {

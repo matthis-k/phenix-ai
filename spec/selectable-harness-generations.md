@@ -1,6 +1,6 @@
 # Selectable Harness generations
 
-status: proposed
+status: partial
 depends_on:
   - spec/runtime-topology-generation.md
   - spec/configuration-frontends.md
