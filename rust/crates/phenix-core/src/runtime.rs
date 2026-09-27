@@ -268,6 +268,30 @@ impl RootExecutionConstraints {
             .iter()
             .map(|((component, interface), handle)| (component, interface, handle))
     }
+
+    fn with_authority(&self, authority: Authority) -> Self {
+        Self {
+            authority,
+            pinned_bindings: self.pinned_bindings.clone(),
+        }
+    }
+
+    fn with_authority_and_additional_pins(
+        &self,
+        authority: Authority,
+        additional: &Self,
+    ) -> Self {
+        let mut pinned_bindings = self.pinned_bindings.clone();
+        for (key, handle) in &additional.pinned_bindings {
+            pinned_bindings
+                .entry(key.clone())
+                .or_insert_with(|| handle.clone());
+        }
+        Self {
+            authority,
+            pinned_bindings,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -313,14 +337,40 @@ impl CallScope {
         authority: &Authority,
         cancellation: Option<CallCancellationToken>,
     ) -> Self {
+        Self::root_with_constraints(
+            generation,
+            plugin,
+            authority,
+            &RootExecutionConstraints {
+                authority: authority.clone(),
+                pinned_bindings: BTreeMap::new(),
+            },
+            cancellation,
+        )
+    }
+
+    pub(super) fn root_with_constraints(
+        generation: Arc<RuntimeGeneration>,
+        plugin: &PluginId,
+        authority: &Authority,
+        constraints: &RootExecutionConstraints,
+        cancellation: Option<CallCancellationToken>,
+    ) -> Self {
         Self {
             generation,
             authority: authority.clone(),
-            pinned_bindings: Arc::new(BTreeMap::new()),
+            pinned_bindings: Arc::new(constraints.pinned_bindings.clone()),
             cancellation,
             stack: InvocationStack::root(plugin),
             transactions: TransactionContext::unscoped(),
             selected_chain: None,
+        }
+    }
+
+    pub(super) fn root_execution_constraints(&self) -> RootExecutionConstraints {
+        RootExecutionConstraints {
+            authority: self.authority.clone(),
+            pinned_bindings: (*self.pinned_bindings).clone(),
         }
     }
 
@@ -702,7 +752,7 @@ struct RuntimeServices<'a> {
 struct GenerationRuntimeState {
     runtime: RuntimeGeneration,
     authority_ceiling: Option<Authority>,
-    lifecycle_authority_ceiling: Option<Authority>,
+    lifecycle_constraints: Option<RootExecutionConstraints>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     subscriptions: Vec<EventSubscription>,
     states: BTreeMap<PluginId, PluginState>,
@@ -720,7 +770,7 @@ impl GenerationRuntimeState {
         Self {
             runtime: RuntimeGeneration::bootstrap(config),
             authority_ceiling: None,
-            lifecycle_authority_ceiling: None,
+            lifecycle_constraints: None,
             durable_schemas: Vec::new(),
             subscriptions: Vec::new(),
             states,
@@ -735,7 +785,12 @@ impl GenerationRuntimeState {
     }
 
     fn constrain_plugin_authority(&self, authority: &Authority) -> Authority {
-        constrain_authority_to_ceiling(self.lifecycle_authority_ceiling.as_ref(), authority)
+        constrain_authority_to_ceiling(
+            self.lifecycle_constraints
+                .as_ref()
+                .map(RootExecutionConstraints::authority),
+            authority,
+        )
     }
 }
 
