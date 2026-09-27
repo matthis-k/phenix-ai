@@ -699,6 +699,25 @@ mod tests {
             .map_err(|error| error.to_string())
     }
 
+    fn inspect_projection(
+        kernel: &mut Kernel,
+        command: &ExecutionInspectionCommand,
+    ) -> Result<ExecutionInspectionResponse, String> {
+        let input = phenix_core::PhenixValue::from(command);
+        let output = kernel
+            .invoke(
+                &execution_inspection_service(),
+                &serde_json::to_vec(&input).unwrap(),
+                &caller_authority(),
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+        let output: phenix_core::PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+        ExecutionInspectionResponse::try_from(phenix_core::Project(&output))
+            .map_err(|error| error.to_string())
+    }
+
     fn temp_db(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -795,6 +814,65 @@ mod tests {
             )
             .unwrap(),
             ExecutionResponse::ExecutionLookup { execution: Some(_) }
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn inspection_projects_executions_and_tasks_without_mutating_state() {
+        let path = temp_db("execution-inspection");
+        let mut kernel = kernel_with(&path);
+        let root = create(&mut kernel, "root", authority(&["fs.read"]));
+        invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "task-a".into(),
+                parent_execution: root.id.clone(),
+                description: "inspect me".into(),
+                depends_on: BTreeSet::new(),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            inspect_projection(
+                &mut kernel,
+                &ExecutionInspectionCommand::GetExecution {
+                    id: root.id.clone(),
+                },
+            )
+            .unwrap(),
+            ExecutionInspectionResponse::ExecutionLookup {
+                execution: Some(root.clone()),
+            }
+        );
+
+        let ExecutionInspectionResponse::Executions { executions } =
+            inspect_projection(&mut kernel, &ExecutionInspectionCommand::ListExecutions).unwrap()
+        else {
+            panic!("execution inspection must return execution records");
+        };
+        assert_eq!(executions, vec![root.clone()]);
+
+        let ExecutionInspectionResponse::Tasks { tasks } =
+            inspect_projection(&mut kernel, &ExecutionInspectionCommand::ListTasks).unwrap()
+        else {
+            panic!("task inspection must return worker task records");
+        };
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "task-a");
+        assert_eq!(tasks[0].parent_execution, root.id);
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                &ExecutionCommand::GetExecution { id: "root".into() },
+            )
+            .unwrap(),
+            ExecutionResponse::ExecutionLookup {
+                execution: Some(_)
+            }
         ));
         let _ = fs::remove_file(path);
     }
