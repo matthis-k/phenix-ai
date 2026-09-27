@@ -270,66 +270,61 @@ impl LocalEnvironment {
         }
     }
 
-    fn confined_parent_dir(&self, relative: &Path, create: bool) -> Result<OwnedFd, String> {
-        let mut current = rfs::openat2(
-            self.root_fd()?.as_fd(),
-            ".",
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
-        )
-        .map_err(|error| format!("open confined root directory: {error}"))?;
-
+    fn ensure_confined_parents(&self, relative: &Path, create: bool) -> Result<(), String> {
         let Some(parent) = relative.parent() else {
-            return Ok(current);
+            return Ok(());
         };
+        let mut accumulated = PathBuf::new();
         for component in parent.components() {
-            let Component::Normal(name) = component else {
-                if matches!(component, Component::CurDir) {
-                    continue;
+            match component {
+                Component::Normal(name) => accumulated.push(name),
+                Component::CurDir => continue,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "environment filesystem policy denies parent path escape: {}",
+                        relative.display()
+                    ));
                 }
-                return Err(format!(
-                    "environment filesystem policy denies parent path escape: {}",
-                    relative.display()
-                ));
-            };
-            let next = match rfs::openat2(
-                current.as_fd(),
-                Path::new(name),
+            }
+
+            match rfs::openat2(
+                self.root_fd()?.as_fd(),
+                &accumulated,
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
                 Mode::empty(),
                 ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
             ) {
-                Ok(fd) => fd,
+                Ok(_) => {}
                 Err(Errno::NOENT) if create => {
-                    rfs::mkdirat(current.as_fd(), Path::new(name), Mode::from_raw_mode(0o755))
-                        .map_err(|error| {
-                            format!("create confined parent {}: {error}", name.to_string_lossy())
-                        })?;
-                    rfs::openat2(
-                        current.as_fd(),
-                        Path::new(name),
+                    let parent_path = accumulated.parent().unwrap_or_else(|| Path::new("."));
+                    let parent_fd = rfs::openat2(
+                        self.root_fd()?.as_fd(),
+                        parent_path,
                         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
                         Mode::empty(),
                         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
                     )
                     .map_err(|error| {
-                        format!(
-                            "open created confined parent {}: {error}",
-                            name.to_string_lossy()
-                        )
-                    })?
+                        format!("open confined parent {}: {error}", parent_path.display())
+                    })?;
+                    rfs::mkdirat(
+                        parent_fd.as_fd(),
+                        Path::new(name),
+                        Mode::from_raw_mode(0o755),
+                    )
+                    .map_err(|error| {
+                        format!("create confined parent {}: {error}", accumulated.display())
+                    })?;
                 }
                 Err(error) => {
                     return Err(format!(
                         "open confined parent {}: {error}",
-                        name.to_string_lossy()
+                        accumulated.display()
                     ))
                 }
-            };
-            current = next;
+            }
         }
-        Ok(current)
+        Ok(())
     }
 
     fn confined_write(
@@ -339,13 +334,13 @@ impl LocalEnvironment {
         create_parents: bool,
     ) -> Result<(), String> {
         let relative = self.restricted_relative(resolved)?;
-        let parent = self.confined_parent_dir(&relative, create_parents)?;
-        let name = relative
-            .file_name()
-            .ok_or_else(|| format!("write path has no file name: {}", resolved.display()))?;
+        if relative == Path::new(".") {
+            return Err(format!("write path is a directory: {}", resolved.display()));
+        }
+        self.ensure_confined_parents(&relative, create_parents)?;
         let fd = rfs::openat2(
-            parent.as_fd(),
-            Path::new(name),
+            self.root_fd()?.as_fd(),
+            &relative,
             OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o666),
             ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
