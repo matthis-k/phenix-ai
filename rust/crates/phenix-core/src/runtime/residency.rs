@@ -1282,7 +1282,7 @@ mod tests {
 
         assert_eq!(
             kernel.promote_generation(&second_generation),
-            Err(KernelError::Events(EventError::UnknownDependency {
+            Err(KernelError::EventTopology(EventError::UnknownDependency {
                 subscription: SubscriptionId::parse("fixture.residency.invalid").unwrap(),
                 dependency: missing,
             }))
