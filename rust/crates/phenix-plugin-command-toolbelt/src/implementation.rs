@@ -363,6 +363,10 @@ mod tests {
     use phenix_core::{
         Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
     };
+    use phenix_plugin_environment_local::{
+        local_environment_component_manifest, local_environment_factory_for,
+        local_environment_manifest,
+    };
     use phenix_plugin_workspace::{
         workspace_component_manifest, workspace_factory_for, workspace_manifest,
     };
@@ -386,11 +390,14 @@ mod tests {
         let root = temp_workspace();
         let workspace = workspace_manifest();
         let workspace_id = workspace.id.clone();
+        let environment = local_environment_manifest();
+        let environment_id = environment.id.clone();
         let cli = cli_manifest(authority.clone());
         let cli_id = cli.id.clone();
         let resolved = ResolvedHarness::resolve(
-            [workspace.clone(), cli.clone()],
+            [environment.clone(), workspace.clone(), cli.clone()],
             [
+                local_environment_component_manifest(),
                 workspace_component_manifest(),
                 crate::cli_component_manifest(authority.clone()),
             ],
@@ -398,8 +405,14 @@ mod tests {
             &authority,
         )
         .unwrap();
-        let mut kernel = Kernel::new(KernelConfig::new([workspace, cli]).unwrap());
+        let mut kernel = Kernel::new(KernelConfig::new([environment, workspace, cli]).unwrap());
         kernel.activate_resolved_harness(&resolved).unwrap();
+        let environment_root = root.clone();
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                local_environment_factory_for(environment_root.clone())
+            })
+            .unwrap();
         kernel
             .register_embedded_factory(workspace_id, move || workspace_factory_for(root.clone()))
             .unwrap();

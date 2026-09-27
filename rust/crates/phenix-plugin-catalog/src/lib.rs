@@ -78,6 +78,11 @@ pub use phenix_plugin_efficiency_evaluation::{
     EFFICIENCY_EVALUATION_PLUGIN, EFFICIENCY_EVALUATION_SERVICE,
     EFFICIENCY_OUTCOME_EVIDENCE_SERVICE,
 };
+pub use phenix_plugin_environment_local::{
+    local_environment_component_id, local_environment_component_manifest,
+    local_environment_factory, local_environment_factory_for, local_environment_manifest,
+    LOCAL_ENVIRONMENT_PLUGIN,
+};
 pub use phenix_plugin_execution::{
     execution_component_id, execution_component_manifest, execution_configuration_service,
     execution_factory, execution_manifest, execution_resource_service, execution_review_service,

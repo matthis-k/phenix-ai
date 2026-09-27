@@ -87,6 +87,7 @@ let
     context = "phenix.context";
     debug = "phenix.debug";
     execution = "phenix.execution";
+    environment-local = "phenix.environment.local";
     frontend = "phenix.frontend-services";
     hooks = "phenix.hooks";
     jobs = "phenix.jobs";
