@@ -2941,7 +2941,7 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
     let generation = context
         .call
         .graph_generation
-        .map(ToString::to_string)
+        .map(|generation| generation.as_str().to_owned())
         .unwrap_or_else(|| "unresolved".to_owned());
     PhenixValue::Map(BTreeMap::from([
         ("generation".to_owned(), PhenixValue::String(generation)),
