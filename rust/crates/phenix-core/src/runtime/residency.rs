@@ -747,6 +747,126 @@ mod tests {
         );
     }
 
+    struct GenerationTaskPlugin {
+        started: std::sync::mpsc::Sender<GraphGenerationId>,
+        cancelled: std::sync::mpsc::Sender<GraphGenerationId>,
+    }
+
+    impl PluginInstance for GenerationTaskPlugin {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            _service: &ServiceId,
+            _input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            let scope = host
+                .task_scope()
+                .ok_or_else(|| "resolved invocation requires a task scope".to_owned())?;
+            let started = self.started.clone();
+            let cancelled = self.cancelled.clone();
+            let _task = scope.spawn(&Authority::default(), move |token| {
+                started
+                    .send(token.graph_generation().clone())
+                    .expect("task start observer remains connected");
+                while !token.is_cancelled() {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                cancelled
+                    .send(token.graph_generation().clone())
+                    .expect("task cancellation observer remains connected");
+            });
+            Ok(b"spawned".to_vec())
+        }
+    }
+
+    #[test]
+    fn retiring_one_generation_cancels_only_its_tasks() {
+        let plugin_id = plugin("fixture.residency.tasks");
+        let first_manifest = manifest(plugin_id.as_str());
+        let mut second_manifest = first_manifest.clone();
+        second_manifest.version += 1;
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest], [], [], &Authority::default()).unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(plugin_id.clone(), move || {
+            Box::new(GenerationTaskPlugin {
+                started: started_tx.clone(),
+                cancelled: cancelled_tx.clone(),
+            })
+        });
+        kernel.activate_all().unwrap();
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+
+        assert_eq!(
+            kernel
+                .invoke(&service(), &[], &Authority::default(), None)
+                .unwrap(),
+            b"spawned"
+        );
+        assert_eq!(
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            first_generation
+        );
+
+        kernel.make_generation_resident(&second).unwrap();
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &second_generation,
+                    &service(),
+                    &[],
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"spawned"
+        );
+        assert_eq!(
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            second_generation
+        );
+
+        kernel.promote_generation(&second_generation).unwrap();
+        kernel.retire_generation(&first_generation).unwrap();
+        assert_eq!(
+            cancelled_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            first_generation
+        );
+        assert_eq!(
+            cancelled_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        );
+
+        kernel.stop(&plugin_id).unwrap();
+        assert_eq!(
+            cancelled_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            second_generation
+        );
+    }
+
     #[test]
     fn explicit_roots_can_compare_promote_and_rollback_generations() {
         let first_manifest = manifest("fixture.residency.first");
