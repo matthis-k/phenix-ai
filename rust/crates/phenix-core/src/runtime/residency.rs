@@ -42,6 +42,7 @@ impl Kernel {
             .graph_generation()
             .cloned()
             .ok_or(KernelError::ResolvedGenerationMissing)?;
+        self.validate_generation_authority(candidate)?;
         if candidate.durable_schemas() != self.generation_state.durable_schemas.as_slice() {
             return Err(KernelError::ResidentGenerationDurableMismatch {
                 active: active_generation,
