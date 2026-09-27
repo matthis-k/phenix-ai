@@ -154,3 +154,9 @@ Inspection reports the active Graph Generation and its executable topology. It i
 ## Validation
 
 Regression coverage proves Plugin addition and removal, service and Listener replacement, failed candidate rollback, retained Plugin instances, retired handlers, resource-only Plugins, Listener DAG rejection, and Graph Generation attribution. Static SDK coverage proves generated Listener declarations and handlers use the same resolved activation path.
+
+## Selectable-generation extension
+
+The implemented baseline activates one live Graph Generation and retires replaced executable state. `spec/selectable-harness-generations.md` defines the proposed extension for keeping multiple compatible generations resident under one long-lived kernel.
+
+That extension does not weaken this document's topology rule. Each root still observes exactly one complete Graph Generation. Selection happens at root entry; dispatch never assembles a mixed topology from several generations.
