@@ -143,6 +143,8 @@ let
                     wrapProgram "$out/bin/$program" \
                       --set PHENIX_LAYER_POLICY ${pkgs.lib.escapeShellArg layerPolicyJson}
                   ''}
+                  wrapProgram "$out/bin/$program" \
+                    --prefix PATH : ${pkgs.lib.escapeShellArg (pkgs.lib.makeBinPath [ pkgs.bubblewrap ])}
                   ${pkgs.lib.optionalString (resources != [ ]) ''
                     wrapProgram "$out/bin/$program" \
                       --set PHENIX_SKILL_PATH "$out/share/phenix/skills"
@@ -185,6 +187,7 @@ in
         "context"
         "debug"
         "execution"
+        "environment-local"
         "frontend"
         "hooks"
         "jobs"
@@ -289,7 +292,16 @@ in
             test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
             export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
             "${defaultComposition}/bin/phenix" --list-services > "$TMPDIR/default-services.json"
-            jq -e '(.plugins | length == 17) and (.plugins | index("phenix.adapter.acp") == null) and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0) and (.services | index("phenix.sessions@1") != null)' "$TMPDIR/default-services.json" >/dev/null
+            jq -e '(.plugins | length == 18) and (.plugins | index("phenix.adapter.acp") == null) and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0) and (.services | index("phenix.sessions@1") != null)' "$TMPDIR/default-services.json" >/dev/null
+
+            for policy in working-dir workdir-write; do
+              export PHENIX_STATE_DB="$TMPDIR/environment-$policy.sqlite"
+              PHENIX_LOCAL_FILESYSTEM_POLICY="$policy" \
+                "${defaultComposition}/bin/phenix" --list-services \
+                > "$TMPDIR/environment-$policy.json"
+              jq -e '(.plugins | index("phenix.environment.local")) != null' \
+                "$TMPDIR/environment-$policy.json" >/dev/null
+            done
 
             export PHENIX_STATE_DB="$TMPDIR/settings.sqlite"
             printf '%s\n' '{"id":1,"service":"phenix.api.sessions@1","input":{"type":"variant","value":{"tag":"Open","value":{"type":"table","value":{"id":{"type":"string","value":"settings-nix-disabled"},"agent":{"type":"option","value":null}}}}}}' \

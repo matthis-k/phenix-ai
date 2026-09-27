@@ -381,6 +381,7 @@
                     };
                     runtimeInputs = pkgs: [
                       pkgs.bash
+                      pkgs.findutils
                       pkgs.git
                     ];
                     exec = ''
