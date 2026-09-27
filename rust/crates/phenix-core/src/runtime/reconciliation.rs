@@ -27,9 +27,9 @@ impl StopView<'_> {
         let prepared_mutations = PreparedMutationScope::new(generation);
         let host = PluginHost {
             runtime: RuntimeServices {
-                states: self.generation_state.states,
-                instances: self.generation_state.instances,
-                invocations: self.generation_state.invocations,
+                states: self.states,
+                instances: self.instances,
+                invocations: self.invocations,
                 events: self.events,
                 tasks: self.tasks,
                 persistence: self.persistence,
@@ -63,14 +63,18 @@ impl Kernel {
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
         let has_active = self
+            .generation_state
             .states
             .values()
             .any(|state| *state == PluginState::Active);
         let all_active = self
+            .generation_state
             .states
             .values()
             .all(|state| *state == PluginState::Active);
-        if (self.generation_state.active && !all_active) || (!self.generation_state.active && has_active) {
+        if (self.generation_state.active && !all_active)
+            || (!self.generation_state.active && has_active)
+        {
             return Err(KernelError::PartiallyActiveRuntime);
         }
 
