@@ -541,6 +541,28 @@ mod tests {
     }
 
     #[test]
+    fn resident_candidate_cannot_expand_initial_authority_ceiling() {
+        let read = CapabilityId::parse("fixture.read").unwrap();
+        let write = CapabilityId::parse("fixture.write").unwrap();
+        let initial_authority = Authority::new([read.clone()]);
+        let broader_authority = Authority::new([read, write]);
+        let first =
+            ResolvedHarness::resolve([], [], [], &initial_authority).expect("initial resolves");
+        let second =
+            ResolvedHarness::resolve([], [], [], &broader_authority).expect("candidate resolves");
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_all().unwrap();
+
+        assert_eq!(
+            kernel.make_generation_resident(&second),
+            Err(KernelError::GenerationAuthorityExpansion(second_generation))
+        );
+    }
+
+    #[test]
     fn resident_candidate_cannot_change_durable_schema() {
         let namespace =
             ResourceNamespace::parse("fixture.residency.state").expect("valid namespace");
