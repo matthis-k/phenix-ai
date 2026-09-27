@@ -74,6 +74,12 @@ impl Kernel {
         constraints: &RootExecutionConstraints,
     ) -> Result<GraphGenerationId, KernelError> {
         let candidate_generation = candidate.generation().clone();
+        self.validate_generation_authority(candidate)?;
+        Self::validate_component_graph_root_execution_constraints(
+            candidate.component_graph(),
+            &candidate_generation,
+            constraints,
+        )?;
         if self.graph_generation() == Some(&candidate_generation)
             || self
                 .resident_generations
@@ -86,12 +92,6 @@ impl Kernel {
             .graph_generation()
             .cloned()
             .ok_or(KernelError::ResolvedGenerationMissing)?;
-        self.validate_generation_authority(candidate)?;
-        Self::validate_component_graph_root_execution_constraints(
-            candidate.component_graph(),
-            &candidate_generation,
-            constraints,
-        )?;
         if candidate.durable_schemas() != self.generation_state.durable_schemas.as_slice() {
             return Err(KernelError::ResidentGenerationDurableMismatch {
                 active: active_generation,
@@ -193,6 +193,22 @@ impl Kernel {
 
     /// Make a resident generation the default for future unqualified roots and
     /// ambient event delivery. The previous default remains resident.
+    pub(crate) fn promote_generation_under_constraints(
+        &mut self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), KernelError> {
+        let state = if self.graph_generation() == Some(generation) {
+            &self.generation_state
+        } else {
+            self.resident_generations
+                .get(generation)
+                .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
+        };
+        Self::validate_root_execution_constraints(state, generation, constraints)?;
+        self.promote_generation(generation)
+    }
+
     pub(crate) fn promote_generation(
         &mut self,
         generation: &GraphGenerationId,
@@ -237,9 +253,25 @@ impl Kernel {
     ///
     /// Explicit retirement cancels that generation's plugin calls and tasks
     /// through the existing generation-aware stop path.
+    pub(crate) fn retire_generation_under_constraints(
+        &mut self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), KernelError> {
+        self.retire_generation_with_authority(generation, Some(constraints.authority()))
+    }
+
     pub(crate) fn retire_generation(
         &mut self,
         generation: &GraphGenerationId,
+    ) -> Result<(), KernelError> {
+        self.retire_generation_with_authority(generation, None)
+    }
+
+    fn retire_generation_with_authority(
+        &mut self,
+        generation: &GraphGenerationId,
+        operation_authority: Option<&Authority>,
     ) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Err(KernelError::DefaultGenerationCannotRetire(
@@ -257,9 +289,18 @@ impl Kernel {
         // cancel before starting another listener level.
         self.events.remove_generation_subscriptions(generation);
 
+        let lifecycle_authority_ceiling = match (
+            state.lifecycle_authority_ceiling.as_ref(),
+            operation_authority,
+        ) {
+            (Some(stored), Some(operation)) => Some(stored.attenuate(operation)),
+            (Some(stored), None) => Some(stored.clone()),
+            (None, Some(operation)) => Some(operation.clone()),
+            (None, None) => None,
+        };
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
-            lifecycle_authority_ceiling: state.lifecycle_authority_ceiling.as_ref(),
+            lifecycle_authority_ceiling: lifecycle_authority_ceiling.as_ref(),
             states: &state.states,
             instances: &state.instances,
             invocations: &state.invocations,
