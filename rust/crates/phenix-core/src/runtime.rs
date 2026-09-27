@@ -276,11 +276,7 @@ impl RootExecutionConstraints {
         }
     }
 
-    fn with_authority_and_additional_pins(
-        &self,
-        authority: Authority,
-        additional: &Self,
-    ) -> Self {
+    fn with_authority_and_additional_pins(&self, authority: Authority, additional: &Self) -> Self {
         let mut pinned_bindings = self.pinned_bindings.clone();
         for (key, handle) in &additional.pinned_bindings {
             pinned_bindings
