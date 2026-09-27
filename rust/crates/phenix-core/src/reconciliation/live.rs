@@ -62,6 +62,7 @@ impl GraphReconciler {
         &mut self,
         kernel: &mut Kernel,
         generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
         if generation == self.active.generation() {
@@ -79,7 +80,7 @@ impl GraphReconciler {
             ))
         })?;
         let preview = self.preview_candidate(&candidate);
-        if let Err(error) = kernel.promote_generation(generation) {
+        if let Err(error) = kernel.promote_generation_under_constraints(generation, constraints) {
             self.resident.insert(generation.clone(), candidate);
             return Err(LiveReconciliationError::Runtime(error));
         }
@@ -101,6 +102,7 @@ impl GraphReconciler {
         &mut self,
         kernel: &mut Kernel,
         generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
     ) -> Result<(), LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
         if !self.resident.contains_key(generation) {
@@ -109,7 +111,7 @@ impl GraphReconciler {
             ));
         }
         kernel
-            .retire_generation(generation)
+            .retire_generation_under_constraints(generation, constraints)
             .map_err(LiveReconciliationError::Runtime)?;
         self.resident.remove(generation);
         Ok(())
