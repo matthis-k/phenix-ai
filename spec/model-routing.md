@@ -196,7 +196,7 @@ A routing profile is policy. Model metadata is fact. Learned estimates are evide
 
 Routing consumes normalized provider model catalogs. It does not own provider model discovery.
 
-A provider catalog entry identifies an available provider/model target. The provider SDK defines how those entries are discovered or declared. Routing may materialize a one-target profile for each selectable catalog entry. That materialization is derived state, not provider configuration.
+A provider catalog entry identifies an available provider/model target. The provider SDK defines how those entries are discovered or declared. The application materializes a one-target profile for each selectable catalog entry. Routing stores those profiles as provider-catalog-owned derived state, separate from packaged and user-defined routing policy.
 
 Model version churn must therefore stay below routing. If a provider adds or removes models through a discovery standard Phenix already supports, the next catalog refresh changes the derived fixed selections without editing routing configuration.
 
@@ -381,8 +381,8 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 ## Implementation order
 
 1. Add the provider-owned normalized model catalog service with standards-based discovery and provider-declared fallback models.
-2. Materialize fixed one-target routing profiles from normalized provider catalog entries.
-3. Refresh derived fixed selections when provider catalogs change without rewriting explicit multi-target profiles.
+2. Materialize fixed one-target routing profiles from normalized provider catalog entries through provider-scoped ownership.
+3. Retire missing derived fixed selections when provider catalogs change without rewriting explicit multi-target profiles or deleting records used by durable sessions.
 4. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
 5. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
 6. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
