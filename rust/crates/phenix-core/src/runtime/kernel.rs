@@ -163,6 +163,7 @@ impl Kernel {
     pub fn activate_all(&mut self) -> Result<(), KernelError> {
         if self.generation_state.active
             && self
+                .generation_state
                 .states
                 .values()
                 .all(|state| *state == PluginState::Active)
@@ -546,6 +547,7 @@ impl Kernel {
         self.generation_state.instances.remove(plugin);
         self.generation_state.invocations.remove(plugin);
         let state = self
+            .generation_state
             .states
             .get_mut(plugin)
             .expect("plugin manifest and lifecycle state stay aligned");
