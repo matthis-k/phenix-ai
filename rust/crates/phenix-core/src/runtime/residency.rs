@@ -1222,41 +1222,24 @@ mod tests {
             )
             .unwrap();
 
-        kernel.make_generation_resident(&changed_provider).unwrap();
         assert_eq!(
-            kernel.invoke_in_generation(
-                &changed_provider_generation,
-                &service(),
-                &[],
-                &constraints,
-                None,
-            ),
+            kernel.make_generation_resident_under_constraints(&changed_provider, &constraints),
             Err(KernelError::PinnedBindingChanged {
                 generation: changed_provider_generation,
                 component: consumer_component.clone(),
                 interface: interface.clone(),
             })
         );
-
-        kernel.make_generation_resident(&schema_changed).unwrap();
         assert_eq!(
-            kernel.invoke_in_generation(
-                &schema_changed_generation,
-                &service(),
-                &[],
-                &constraints,
-                None,
-            ),
+            kernel.make_generation_resident_under_constraints(&schema_changed, &constraints),
             Err(KernelError::PinnedBindingChanged {
                 generation: schema_changed_generation,
                 component: consumer_component.clone(),
                 interface: interface.clone(),
             })
         );
-
-        kernel.make_generation_resident(&second).unwrap();
         assert_eq!(
-            kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
+            kernel.make_generation_resident_under_constraints(&second, &constraints),
             Err(KernelError::PinnedBindingChanged {
                 generation: second_generation,
                 component: consumer_component,
