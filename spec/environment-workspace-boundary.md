@@ -398,3 +398,11 @@ The architecture is considered preserved only if tests prove:
 The boundary rule is:
 
 > Environment owns the world. Workspace owns where the project is in that world. Tools own what parts of that world the model can invoke.
+
+## Harness-generation selection
+
+`spec/selectable-harness-generations.md` proposes explicit selection between resident Harness generations.
+
+Harness selection must not become an Environment-switch mechanism. A root execution may pin the canonical resolved Environment binding as a host constraint. Every selectable Harness for that root must preserve the pinned binding semantics. A different Environment requires a separately authorized root constraint set.
+
+Core should enforce this through generic resolved-binding constraints rather than an Environment-specific runtime registry.
