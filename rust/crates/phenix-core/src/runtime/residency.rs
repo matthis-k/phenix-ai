@@ -595,8 +595,9 @@ impl Kernel {
 mod tests {
     use super::*;
     use crate::{
-        ComponentManifest, DurableSchema, DurableSchemaRegistration, PluginManifest,
-        ResolvedHarnessActivation, ResourceNamespace, ServiceContribution,
+        ComponentManifest, DurableSchema, DurableSchemaRegistration, EventFailurePolicy,
+        PluginManifest, ResolvedHarnessActivation, ResourceNamespace, ServiceContribution,
+        SubscriptionId, SubscriptionSpec,
     };
 
     fn plugin(value: &str) -> PluginId {
