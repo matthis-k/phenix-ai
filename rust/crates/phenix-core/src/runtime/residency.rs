@@ -437,7 +437,7 @@ impl Kernel {
             trace_sink: &self.trace_sink,
             provenance: &self.provenance,
         })
-        .map_err(|error| {
+        .inspect_err(|_| {
             reconciliation::cleanup_staged(
                 &staged,
                 reconciliation::StopView {
@@ -452,7 +452,6 @@ impl Kernel {
                     provenance: &self.provenance,
                 },
             );
-            error
         })?;
 
         Ok(GenerationRuntimeState {
