@@ -5,6 +5,7 @@ coverage:
   - rust/crates/phenix-core/src/runtime/residency.rs
   - rust/crates/phenix-core/src/events.rs
   - rust/crates/phenix-core/src/runtime/reconciliation.rs
+  - rust/crates/phenix-core/src/reconciliation/live.rs
 depends_on:
   - spec/runtime-topology-generation.md
   - spec/configuration-frontends.md

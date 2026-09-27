@@ -396,6 +396,72 @@ mod tests {
     }
 
     #[test]
+    fn resident_lifecycle_keeps_reconciler_and_kernel_in_sync() {
+        let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
+        let initial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let trial = ResolvedHarness::resolve_with_resources(
+            [plugin],
+            [],
+            [resource("sha256:trial")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let initial_generation = initial.generation().clone();
+        let trial_generation = trial.generation().clone();
+
+        let mut kernel = Kernel::new(initial.kernel_config().clone());
+        kernel.activate_resolved_harness(&initial).unwrap();
+        let mut reconciler = GraphReconciler::new(initial);
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+
+        reconciler
+            .make_candidate_resident_on_kernel(&mut kernel, trial, &constraints)
+            .unwrap();
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert!(reconciler.resident(&trial_generation).is_some());
+        assert!(kernel.resident_generation_ids().contains(&trial_generation));
+
+        let promoted = reconciler
+            .promote_resident_on_kernel(&mut kernel, &trial_generation, &constraints)
+            .unwrap();
+        assert_eq!(promoted.previous_generation, initial_generation);
+        assert_eq!(promoted.active_generation, trial_generation);
+        assert_eq!(kernel.graph_generation(), Some(&trial_generation));
+        assert_eq!(reconciler.active().generation(), &trial_generation);
+        assert_eq!(kernel.active_resources()[0].content_identity, "sha256:trial");
+        assert!(reconciler.resident(&initial_generation).is_some());
+        assert!(kernel.resident_generation_ids().contains(&initial_generation));
+
+        let rolled_back = reconciler
+            .promote_resident_on_kernel(&mut kernel, &initial_generation, &constraints)
+            .unwrap();
+        assert_eq!(rolled_back.previous_generation, trial_generation);
+        assert_eq!(rolled_back.active_generation, initial_generation);
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert_eq!(kernel.active_resources()[0].content_identity, "sha256:one");
+        assert!(reconciler.resident(&trial_generation).is_some());
+
+        reconciler
+            .retire_resident_on_kernel(&mut kernel, &trial_generation, &constraints)
+            .unwrap();
+        assert!(reconciler.resident(&trial_generation).is_none());
+        assert!(!kernel.resident_generation_ids().contains(&trial_generation));
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+    }
+
+    #[test]
     fn valid_development_candidate_replaces_the_live_generation_atomically() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
         let initial = ResolvedHarness::resolve_with_resources(
