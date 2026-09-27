@@ -185,9 +185,19 @@ impl ProviderPlugin {
                 methods: self.spec.auth_kinds(),
             }),
             ProviderAuthCommand::InteractiveMethods => {
-                Ok(ProviderAuthResponse::InteractiveMethods {
-                    methods: Vec::new(),
-                })
+                let mut methods = Vec::new();
+                if self.spec.auth.api_token.is_some() {
+                    methods.push(crate::ProviderAuthMethod {
+                        id: "api-token".to_owned(),
+                        kind: AuthKind::ApiToken,
+                        name: "API key".to_owned(),
+                        description: Some(
+                            "Enter an API key. Phenix stores it in its provider credential store."
+                                .to_owned(),
+                        ),
+                    });
+                }
+                Ok(ProviderAuthResponse::InteractiveMethods { methods })
             }
             ProviderAuthCommand::Authenticate { method } => Err(ProviderError::Authentication {
                 message: format!(
