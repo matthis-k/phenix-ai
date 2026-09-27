@@ -293,6 +293,34 @@ let
     fallback = target "openai-codex" "gpt-5.6-sol" "medium";
   };
 
+  xaiTargets = {
+    coordinator = target "xai" "grok-4.6" "medium";
+    scout = target "xai" "grok-4.6" "low";
+    planner = target "xai" "grok-4.6" "medium";
+    architect = target "xai" "grok-4.6" "high";
+    implementer = target "xai" "grok-4.6" "medium";
+    tester = target "xai" "grok-4.6" "low";
+    verifier = target "xai" "grok-4.6" "high";
+    critic = target "xai" "grok-4.6" "xhigh";
+    finalizer = target "xai" "grok-4.6" "medium";
+    qa_synthesizer = target "xai" "grok-4.6" "high";
+    fallback = target "xai" "grok-4.6" "medium";
+  };
+
+  openRouterTargets = {
+    coordinator = target "open-router" "openrouter/auto" "medium";
+    scout = target "open-router" "openrouter/auto" "low";
+    planner = target "open-router" "openrouter/auto" "medium";
+    architect = target "open-router" "openrouter/auto" "high";
+    implementer = target "open-router" "openrouter/auto" "medium";
+    tester = target "open-router" "openrouter/auto" "low";
+    verifier = target "open-router" "openrouter/auto" "high";
+    critic = target "open-router" "openrouter/auto" "high";
+    finalizer = target "open-router" "openrouter/auto" "medium";
+    qa_synthesizer = target "open-router" "openrouter/auto" "high";
+    fallback = target "open-router" "openrouter/auto" "medium";
+  };
+
   freeTarget = target "opencode-zen" "mimo-v2.5-free" "medium";
   freeTargets = builtins.listToAttrs (
     map (name: {
@@ -310,6 +338,8 @@ in
     (routingProfile "router.openai-api" openaiApiTargets)
     (routingProfile "router.opencode-go" opencodeGoTargets)
     (routingProfile "router.chatgpt-plus" chatgptPlusTargets)
+    (routingProfile "router.xai" xaiTargets)
+    (routingProfile "router.open-router" openRouterTargets)
     (routingProfile "router.free" freeTargets)
   ];
 }
