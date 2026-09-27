@@ -253,6 +253,7 @@ pub struct EventBus {
     next_root_causality: Arc<AtomicU64>,
     next_delivery: Arc<AtomicU64>,
     subscription_revision: Arc<AtomicU64>,
+    ambient_transition: Arc<Mutex<()>>,
     in_flight: Arc<AtomicUsize>,
     delivery_capacity: NonZeroUsize,
 }
@@ -273,6 +274,12 @@ impl fmt::Debug for EventBus {
 }
 
 impl EventBus {
+    pub(crate) fn lock_ambient_transition(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.ambient_transition
+            .lock()
+            .expect("ambient event transition lock poisoned")
+    }
+
     #[must_use]
     pub fn with_capacity(delivery_capacity: NonZeroUsize) -> Self {
         Self {
@@ -284,6 +291,7 @@ impl EventBus {
             next_root_causality: Arc::new(AtomicU64::new(0)),
             next_delivery: Arc::new(AtomicU64::new(0)),
             subscription_revision: Arc::new(AtomicU64::new(0)),
+            ambient_transition: Arc::new(Mutex::new(())),
             in_flight: Arc::new(AtomicUsize::new(0)),
             delivery_capacity,
         }
@@ -472,6 +480,9 @@ impl EventBus {
         emitter_authority: &Authority,
         graph_generation: Option<&GraphGenerationId>,
     ) -> Result<EventAdmissionReceipt, EventError> {
+        let _ambient_transition = graph_generation
+            .is_none()
+            .then(|| self.lock_ambient_transition());
         let event = if event.causality_id == 0 {
             EventEnvelope {
                 causality_id: self.next_root_causality_id(),
@@ -1102,6 +1113,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(report.delivered, vec![subscription("first")]);
+    }
+
+    #[test]
+    fn ambient_admission_waits_for_topology_transition() {
+        let bus = Arc::new(EventBus::default());
+        bus.replace_subscriptions([subscription_with("ambient", &[])])
+            .unwrap();
+        let transition = bus.lock_ambient_transition();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let dispatch_bus = Arc::clone(&bus);
+        thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = dispatch_bus.admit(&envelope(34), &Authority::default());
+            completed_tx.send(result.is_ok()).unwrap();
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("ambient admission thread must start");
+        assert_eq!(
+            completed_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+
+        drop(transition);
+        assert!(
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("ambient admission must resume after topology transition")
+        );
     }
 
     #[test]

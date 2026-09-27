@@ -227,6 +227,12 @@ impl Kernel {
             .subscriptions
             .clone();
 
+        // Ambient admission and the default-generation swap form one topology
+        // transition. External EventBus clones cannot snapshot candidate ambient
+        // subscriptions until the kernel default points at that same generation.
+        let events = Arc::clone(&self.events);
+        let _ambient_transition = events.lock_ambient_transition();
+
         // Preserve the current default under its generation before changing
         // ambient delivery. Keep the candidate resident until both subscription
         // updates succeed so a failed promotion cannot silently discard it.
