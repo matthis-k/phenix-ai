@@ -31,6 +31,7 @@ A provider definition owns:
 - a parsed endpoint;
 - one protocol adapter;
 - one composite authentication definition;
+- optional provider-declared models;
 - the derived plugin and component contracts.
 
 Credentials are runtime data. They are not part of the provider definition.
@@ -98,6 +99,27 @@ let auth = auth::Definition {
 
 The definition uses one optional slot per auth kind, so duplicate or contradictory declarations cannot be represented. An empty definition means the provider is unauthenticated.
 
+## Model catalog
+
+Providers publish one normalized model catalog through `phenix.providers.models@1`. Consumers do not inspect provider-specific discovery responses.
+
+A catalog may have two sources:
+
+- **discovered**: the protocol adapter implements a model-enumeration standard that Phenix supports;
+- **declared**: the provider plugin supplies model IDs because its protocol has no usable discovery standard.
+
+Both sources may be active. Phenix merges them by model ID and records whether an entry was discovered, declared, or both.
+
+Standard discovery belongs to the protocol adapter. An OpenAI-compatible provider using the normal model-list endpoint therefore gains discovery without adding provider-specific model names. The same rule applies to another protocol once its adapter implements that protocol's model-list contract.
+
+Provider declarations belong to the provider plugin, not the kernel, router, application client, or Neovim plugin. A nonstandard provider can update its declared list without changing those layers.
+
+Catalog production and routing are separate. The catalog says which provider/model targets exist. Routing may materialize one-target selections from those targets and may use them as candidates for multi-target policies.
+
+Discovery may require provider authentication. A client can discover provider authentication methods before model discovery, authenticate through the provider service, then refresh the catalog.
+
+The provider SDK currently exposes the source contract and normalized catalog service. Application-level materialization of discovered targets into fixed routing selections is the next integration step. Until that lands, existing packaged fixed routes remain compatibility inputs rather than the long-term catalog source.
+
 ## Credentials
 
 Credentials use one wire enum:
@@ -124,6 +146,8 @@ The provider authentication service supports:
 ```text
 Add(Credential)
 Methods
+InteractiveMethods
+Authenticate(method)
 List
 Remove(AuthKind)
 ```
@@ -182,6 +206,11 @@ The provider description is the source of truth for this wiring. Callers still n
 
 ## Invariants
 
+- Provider model existence comes from provider catalog production, not frontend-maintained model lists.
+- A protocol adapter owns standards-based model discovery for that protocol.
+- A provider plugin owns declared models when discovery is unavailable or incomplete.
+- Discovered and declared entries merge by model ID before consumers see them.
+- Clients consume normalized provider/model data and never parse provider-specific catalog responses.
 - Provider selection remains model-router policy, not endpoint-registry policy.
 - A provider cannot exist without a parsed endpoint and protocol adapter.
 - Provider auth is one composite typed definition rather than independent flags.
@@ -190,3 +219,4 @@ The provider description is the source of truth for this wiring. Callers still n
 - Protocol adapters own wire translation. The generic provider runtime owns HTTP execution, auth application, common error normalization, and rate-limit conventions.
 - A new endpoint using an existing protocol does not require a new runtime implementation.
 - Provider-specific behavior must not leak into the kernel.
+- Model version churn must not require kernel, routing, application-client, or Neovim releases when provider discovery remains compatible.
