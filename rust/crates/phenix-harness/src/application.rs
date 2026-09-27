@@ -1,4 +1,8 @@
-use crate::{default_suite_authority, PhenixHarness};
+use crate::{
+    default_suite_authority,
+    runtime_config::{direct_routing_profile, publish_routing_profile_runtime_state},
+    PhenixHarness,
+};
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
@@ -45,16 +49,17 @@ use phenix_plugin_catalog::{
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
-    auth, provider_auth_service, Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse,
-    ProviderAuthenticationResult,
+    auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
+    ProviderAuthResponse, ProviderAuthenticationResult, ProviderModelsCommand,
+    ProviderModelsResponse,
 };
 use phenix_sdk::{
     execution_resource_service, execution_service, model_routing_service, options_service,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
-    OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
-    RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
+    ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger,
+    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -458,6 +463,7 @@ impl ApplicationWorker {
         &self,
         selected: RoutingProfileId,
     ) -> Result<Selections, ApplicationError> {
+        self.refresh_provider_model_catalogs();
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -1290,6 +1296,7 @@ impl ApplicationWorker {
                 });
             }
             self.set_provider_authenticated(&provider)?;
+            let _ = self.refresh_provider_model_catalog(&provider);
             return Ok(AuthenticationResult::Authenticated);
         }
 
@@ -1313,12 +1320,122 @@ impl ApplicationWorker {
         match authentication {
             ProviderAuthenticationResult::Authenticated => {
                 self.set_provider_authenticated(&provider)?;
+                let _ = self.refresh_provider_model_catalog(&provider);
                 Ok(AuthenticationResult::Authenticated)
             }
             ProviderAuthenticationResult::External { uri, instructions } => {
                 Ok(AuthenticationResult::External { uri, instructions })
             }
         }
+    }
+
+    fn provider_model_plugins(&self) -> Vec<PluginId> {
+        let service = provider_models_service();
+        let harness = self.harness.lock();
+        let mut providers = harness
+            .kernel()
+            .config()
+            .manifests()
+            .filter(|manifest| {
+                manifest
+                    .services
+                    .iter()
+                    .any(|contribution| contribution.service == service)
+            })
+            .map(|manifest| manifest.id.clone())
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        providers
+    }
+
+    fn invoke_provider_models(
+        &self,
+        provider: &PluginId,
+        command: ProviderModelsCommand,
+    ) -> Result<ProviderModelsResponse, ApplicationError> {
+        let input =
+            serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_string(),
+            })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(
+                &provider_models_service(),
+                &input,
+                &self.authority,
+                Some(provider),
+            )
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn refresh_provider_model_catalogs(&self) {
+        for provider in self.provider_model_plugins() {
+            if self.provider_authenticated(&provider).unwrap_or(false) {
+                let _ = self.refresh_provider_model_catalog(&provider);
+            }
+        }
+    }
+
+    fn refresh_provider_model_catalog(
+        &self,
+        provider: &PluginId,
+    ) -> Result<(), ApplicationError> {
+        let response = self.invoke_provider_models(provider, ProviderModelsCommand::List)?;
+        let ProviderModelsResponse::Models { models } = response;
+        let profiles = models
+            .into_iter()
+            .map(|model| {
+                direct_routing_profile(ModelTarget {
+                    provider_plugin: provider.clone(),
+                    model: model.id,
+                    options: BTreeMap::new(),
+                })
+                .map_err(|error| ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned a model that cannot form a direct route: {error}"
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let prepared = self.invoke_model_command(ModelCommand::PrepareProviderCatalogProfiles {
+            provider_plugin: provider.clone(),
+            profiles: profiles.clone(),
+        })?;
+        let ModelResponse::PreparedProfiles { mutation, .. } = prepared else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected provider catalog preparation response: {prepared:?}"
+                ),
+            });
+        };
+        self.harness
+            .lock()
+            .kernel_mut()
+            .transact_prepared(&[mutation])
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+
+        let mut harness = self.harness.lock();
+        for profile in profiles {
+            publish_routing_profile_runtime_state(&mut harness, &profile).map_err(|error| {
+                ApplicationError::Failed {
+                    message: format!(
+                        "cannot publish runtime state for provider catalog route {}: {error}",
+                        profile.id
+                    ),
+                }
+            })?;
+        }
+        Ok(())
     }
 
     fn provider_auth_plugins(&self) -> Vec<PluginId> {
