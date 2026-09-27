@@ -352,12 +352,16 @@ impl Kernel {
         self.events.replace_subscriptions(subscriptions.clone())?;
         if let Some(generation) = candidate_runtime.generation().cloned() {
             self.events
-                .replace_generation_subscriptions(generation, subscriptions)?;
+                .replace_generation_subscriptions(generation, subscriptions.clone())?;
         }
+        self.generation_state.subscriptions = subscriptions;
         self.generation_state.states = next_states;
         self.generation_state.instances = next_instances;
         self.generation_state.invocations = next_invocations;
-        self.install_runtime_generation(candidate_runtime.clone());
+        self.install_runtime_generation(
+            candidate_runtime.clone(),
+            candidate.durable_schemas().to_vec(),
+        );
         self.generation_state.active = active_runtime;
 
         let retired_view = StopView {
