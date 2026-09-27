@@ -288,7 +288,7 @@ fn apply_configuration(
     }
     Ok(())
 }
-fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
+pub(crate) fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
     let encoded = serde_json::to_vec(&target)?;
     let digest = Sha256::digest(encoded);
     let suffix = digest[..8]
@@ -363,7 +363,7 @@ fn cache_capabilities_for_target(target: &ModelTarget) -> CacheCapabilities {
     }
 }
 
-fn publish_routing_profile_runtime_state(
+pub(crate) fn publish_routing_profile_runtime_state(
     harness: &mut PhenixHarness,
     profile: &RoutingProfile,
 ) -> Result<(), Box<dyn Error>> {
