@@ -383,16 +383,16 @@ the deterministic ranker/planner; it does not change hard eligibility rules.
 1. Add the provider-owned normalized model catalog service with standards-based discovery and provider-declared fallback models.
 2. Materialize fixed one-target routing profiles from normalized provider catalog entries.
 3. Refresh derived fixed selections when provider catalogs change without rewriting explicit multi-target profiles.
-13. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
-11. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
-12. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
-4. Add owned profile contribution registration, replacement, removal, and lifetime cleanup.
-5. Route product configuration through the same contribution path.
-6. Route protocol-client contributions through the same path.
-7. Add Neovim/Lua profile publication as a frontend follow-up using the generic client bridge.
-8. Keep the current deterministic routing behavior as the first estimator/ranker implementation and consume `StepPlan` routing intent without owning the rest of the plan.
-9. Add model metadata and evidence sources as independent routing inputs.
-10. Let optional learned estimates feed both routing ranking and the separate `UsagePolicy` without changing either consumer contract.
+4. Use `RoutingProfileId` as the sole model-selection identity across domain, application, client, and execution APIs.
+5. Make profile identity derive from `phenix.routing.profiles.<profile>` and remove duplicated profile-id state from the profile value.
+6. Expose the strict routing profile schema through the generic Phenix value/SDK boundary.
+7. Add owned profile contribution registration, replacement, removal, and lifetime cleanup.
+8. Route product configuration through the same contribution path.
+9. Route protocol-client contributions through the same path.
+10. Add Neovim/Lua profile publication as a frontend follow-up using the generic client bridge.
+11. Keep the current deterministic routing behavior as the first estimator/ranker implementation and consume `StepPlan` routing intent without owning the rest of the plan.
+12. Add model metadata and evidence sources as independent routing inputs.
+13. Let optional learned estimates feed both routing ranking and the separate `UsagePolicy` without changing either consumer contract.
 
 ## Non-goals
 
