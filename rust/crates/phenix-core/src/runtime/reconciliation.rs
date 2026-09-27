@@ -339,7 +339,8 @@ impl Kernel {
                     || restart_plugins.contains(*plugin)
             })
             .filter_map(|(plugin, _)| {
-                self.generation_state.instances
+                self.generation_state
+                    .instances
                     .get(plugin)
                     .map(|instance| (plugin.clone(), Arc::clone(instance)))
             })

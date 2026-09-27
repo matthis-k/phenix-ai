@@ -993,10 +993,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(first.delivered, vec![subscription("first-generation")]);
-        assert_eq!(
-            second.delivered,
-            vec![subscription("second-generation")]
-        );
+        assert_eq!(second.delivered, vec![subscription("second-generation")]);
         assert_eq!(&*seen.lock().unwrap(), &["first", "second"]);
     }
 

@@ -1,8 +1,7 @@
 use crate::{
     ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, GraphGenerationId,
-    InterfaceId,
-    PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph, ResolvedProviderPlan,
-    ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
+    InterfaceId, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
+    ResolvedProviderPlan, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},

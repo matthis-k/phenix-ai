@@ -454,8 +454,10 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope =
-            CallScope::external(Arc::new(self.generation_state.runtime.clone()), caller_authority);
+        let scope = CallScope::external(
+            Arc::new(self.generation_state.runtime.clone()),
+            caller_authority,
+        );
         invoke_component_service_with(
             runtime,
             ComponentInvocationPlan {
@@ -492,8 +494,10 @@ impl Kernel {
             trace_sink: self.trace_sink.as_ref(),
             provenance: &self.provenance,
         };
-        let scope =
-            CallScope::external(Arc::new(self.generation_state.runtime.clone()), caller_authority);
+        let scope = CallScope::external(
+            Arc::new(self.generation_state.runtime.clone()),
+            caller_authority,
+        );
         invoke_service_with(runtime, service, input, binding, scope)
     }
 

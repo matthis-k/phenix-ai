@@ -133,10 +133,7 @@ impl Kernel {
     ///
     /// Explicit retirement cancels that generation's plugin calls and tasks
     /// through the existing generation-aware stop path.
-    pub fn retire_generation(
-        &mut self,
-        generation: &GraphGenerationId,
-    ) -> Result<(), KernelError> {
+    pub fn retire_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Err(KernelError::DefaultGenerationCannotRetire(
                 generation.clone(),
@@ -210,14 +207,11 @@ impl Kernel {
                         let provider_manifest = config
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
-                        let provider = instances
-                            .get(&binding.provider)
-                            .cloned()
-                            .ok_or_else(|| {
+                        let provider =
+                            instances.get(&binding.provider).cloned().ok_or_else(|| {
                                 KernelError::PluginNotActive(binding.provider.clone())
                             })?;
-                        let live_call =
-                            self.tasks.begin_call(&binding.provider, Some(&generation));
+                        let live_call = self.tasks.begin_call(&binding.provider, Some(&generation));
                         let cancellation = live_call.cancellation_token().clone();
                         let prepared_mutations = PreparedMutationScope::new(Some(&generation));
                         let host = PluginHost {
@@ -241,8 +235,7 @@ impl Kernel {
                             ),
                             continuation: None,
                         };
-                        let mut provider =
-                            provider.lock().expect("plugin instance mutex poisoned");
+                        let mut provider = provider.lock().expect("plugin instance mutex poisoned");
                         let contract = provider.runtime_provider().ok_or_else(|| {
                             KernelError::RuntimeProviderContractUnavailable {
                                 runtime: runtime_id.clone(),
@@ -371,35 +364,34 @@ impl Kernel {
             staged.push(plugin.clone());
         }
 
-        let subscriptions =
-            stage_listener_subscriptions(listener::ListenerRuntimeSources {
-                runtime: &runtime,
-                states: &states,
-                instances: &instances,
-                invocations: &invocations,
-                events: &self.events,
-                tasks: &self.tasks,
-                persistence: &self.persistence,
-                trace_sink: &self.trace_sink,
-                provenance: &self.provenance,
-            })
-            .map_err(|error| {
-                reconciliation::cleanup_staged(
-                    &staged,
-                    reconciliation::StopView {
-                        runtime: &runtime,
-                        states: &states,
-                        instances: &instances,
-                        invocations: &invocations,
-                        events: &self.events,
-                        tasks: &self.tasks,
-                        persistence: &self.persistence,
-                        trace_sink: self.trace_sink.as_ref(),
-                        provenance: &self.provenance,
-                    },
-                );
-                error
-            })?;
+        let subscriptions = stage_listener_subscriptions(listener::ListenerRuntimeSources {
+            runtime: &runtime,
+            states: &states,
+            instances: &instances,
+            invocations: &invocations,
+            events: &self.events,
+            tasks: &self.tasks,
+            persistence: &self.persistence,
+            trace_sink: &self.trace_sink,
+            provenance: &self.provenance,
+        })
+        .map_err(|error| {
+            reconciliation::cleanup_staged(
+                &staged,
+                reconciliation::StopView {
+                    runtime: &runtime,
+                    states: &states,
+                    instances: &instances,
+                    invocations: &invocations,
+                    events: &self.events,
+                    tasks: &self.tasks,
+                    persistence: &self.persistence,
+                    trace_sink: self.trace_sink.as_ref(),
+                    provenance: &self.provenance,
+                },
+            );
+            error
+        })?;
 
         Ok(GenerationRuntimeState {
             runtime,
@@ -467,20 +459,12 @@ mod tests {
     fn explicit_roots_can_compare_promote_and_rollback_generations() {
         let first_manifest = manifest("fixture.residency.first");
         let second_manifest = manifest("fixture.residency.second");
-        let first = ResolvedHarness::resolve(
-            [first_manifest.clone()],
-            [],
-            [],
-            &Authority::default(),
-        )
-        .unwrap();
-        let second = ResolvedHarness::resolve(
-            [second_manifest.clone()],
-            [],
-            [],
-            &Authority::default(),
-        )
-        .unwrap();
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
@@ -488,12 +472,8 @@ mod tests {
         kernel
             .activate_resolved_harness(&first)
             .expect("first generation activates");
-        kernel.preload_embedded_factory(first_manifest.id.clone(), || {
-            Box::new(Echo(b"first"))
-        });
-        kernel.preload_embedded_factory(second_manifest.id.clone(), || {
-            Box::new(Echo(b"second"))
-        });
+        kernel.preload_embedded_factory(first_manifest.id.clone(), || Box::new(Echo(b"first")));
+        kernel.preload_embedded_factory(second_manifest.id.clone(), || Box::new(Echo(b"second")));
         kernel.activate_all().unwrap();
 
         kernel.make_generation_resident(&second).unwrap();
