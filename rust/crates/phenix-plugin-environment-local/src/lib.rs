@@ -496,6 +496,8 @@ impl PluginInstance for LocalEnvironment {
             })?;
             let status = Command::new("bwrap")
                 .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status()
                 .map_err(|error| {
                     format!("restricted local environment requires bubblewrap: {error}")
