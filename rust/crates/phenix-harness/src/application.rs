@@ -2650,10 +2650,6 @@ fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
     ]
 }
 
-fn is_runtime_model_tool(callable_id: &CallableId) -> bool {
-    matches!(callable_id.as_str(), "bash" | "phenix.inspect")
-}
-
 fn execute_runtime_model_tool_call(
     workspace: &SdkClient<'_, '_, WorkspaceInterface>,
     call: &ModelToolCall,
