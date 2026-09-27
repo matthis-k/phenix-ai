@@ -118,7 +118,9 @@ Catalog production and routing are separate. The catalog says which provider/mod
 
 Discovery may require provider authentication. A client can discover provider authentication methods before model discovery, authenticate through the provider service, then refresh the catalog.
 
-The provider SDK currently exposes the source contract and normalized catalog service. Application-level materialization of discovered targets into fixed routing selections is the next integration step. Until that lands, existing packaged fixed routes remain compatibility inputs rather than the long-term catalog source.
+The application refreshes authenticated provider catalogs and materializes each catalog entry as a derived one-target routing profile. Catalog-owned profiles use provider-scoped desired-state ownership. A later refresh retires models that disappeared from that provider's catalog, while keeping their durable profile records available to sessions that already reference them.
+
+Existing packaged routes remain independent routing policy. If a packaged router explicitly names a model, that route stays available even when provider discovery no longer advertises it. Provider discovery controls derived direct-model selections; explicit routing configuration controls routers.
 
 ## Credentials
 
