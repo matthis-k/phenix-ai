@@ -27,14 +27,14 @@ use phenix_core::{
     CallableRef, CapabilityError, CapabilityGenerationId,
     CapabilityInvokeInput as CoreCapabilityInvokeInput, CapabilityOwnerId, ClientConnectionId,
     ContractId, ObservableStore, PhenixValue, ResolvedSdkContributions, RuntimeId,
-    SharedCapabilityRegistry, Type, ValueCodec,
+    SharedCapabilityRegistry, Type, ValueAddress, ValueCodec, ValueId, ValuePath,
 };
 use phenix_domain::{
     CallableDescriptor, CallableKind, CallablePolicy, CapabilitySet, ClientToolAdmissionId,
     ClientToolAdmissions, ClientToolDefinition, SessionId,
 };
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::{collections::BTreeMap, sync::{Arc, Mutex}};
 use tokio::sync::{mpsc, oneshot};
 
 pub struct ApplicationInvocation {
@@ -167,6 +167,7 @@ impl ApplicationTransport for ChannelTransport {
 #[derive(Clone)]
 pub struct SdkApplicationService {
     sdk: ApplicationSdkValue,
+    store: ObservableStore,
     capabilities: SharedCapabilityRegistry,
     client_callbacks: ClientCapabilityCallbacks,
     client_owner: ClientConnectionId,
@@ -190,6 +191,7 @@ impl SdkApplicationService {
                 schema: sdk.schema,
                 value: sdk.value,
             },
+            store: store.clone(),
             capabilities,
             client_callbacks,
             client_owner: client.owner,
@@ -201,6 +203,77 @@ impl SdkApplicationService {
     #[must_use]
     pub fn capabilities(&self) -> &SharedCapabilityRegistry {
         &self.capabilities
+    }
+
+    /// Snapshot all observable values currently owned by this application runtime.
+    ///
+    /// This reads the canonical ObservableStore. It does not keep a debug mirror.
+    pub fn inspect_values(&self) -> Result<PhenixValue, ApplicationError> {
+        let metadata = self.store.metadata_all().map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+        let mut values = Vec::with_capacity(metadata.len());
+        for item in metadata {
+            let (version, value) = self
+                .store
+                .get(&ValueAddress {
+                    value: item.id.clone(),
+                    path: ValuePath::root(),
+                })
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            values.push(PhenixValue::Map(BTreeMap::from([
+                ("id".to_owned(), PhenixValue::String(item.id.to_string())),
+                (
+                    "owner".to_owned(),
+                    PhenixValue::String(item.owner.to_string()),
+                ),
+                ("version".to_owned(), PhenixValue::U64(version.get())),
+                (
+                    "schema".to_owned(),
+                    PhenixValue::String(format!("{:?}", item.schema)),
+                ),
+                (
+                    "snapshot_policy".to_owned(),
+                    PhenixValue::String(format!("{:?}", item.snapshot_policy).to_lowercase()),
+                ),
+                ("value".to_owned(), value),
+            ])));
+        }
+        Ok(PhenixValue::List(values))
+    }
+
+    /// Read one observable root value by its stable ValueId.
+    pub fn inspect_value(&self, id: &str) -> Result<PhenixValue, ApplicationError> {
+        let id = ValueId::parse(id).map_err(|error| ApplicationError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        let metadata = self.store.metadata(&id).map_err(|error| ApplicationError::NotFound {
+            resource: error.to_string(),
+        })?;
+        let (version, value) = self
+            .store
+            .get(&ValueAddress {
+                value: id.clone(),
+                path: ValuePath::root(),
+            })
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        Ok(PhenixValue::Map(BTreeMap::from([
+            ("id".to_owned(), PhenixValue::String(id.to_string())),
+            (
+                "owner".to_owned(),
+                PhenixValue::String(metadata.owner.to_string()),
+            ),
+            ("version".to_owned(), PhenixValue::U64(version.get())),
+            (
+                "schema".to_owned(),
+                PhenixValue::String(format!("{:?}", metadata.schema)),
+            ),
+            ("value".to_owned(), value),
+        ])))
     }
 
     #[must_use]
