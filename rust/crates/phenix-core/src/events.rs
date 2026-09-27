@@ -597,20 +597,21 @@ impl EventBus {
         Option<GraphGenerationId>,
     ) {
         if let Some(generation) = graph_generation {
-            let subscriptions = self
+            let current = self
                 .generation_subscriptions
                 .lock()
-                .expect("generation event subscription lock poisoned");
-            if let Some(current) = subscriptions.get(generation) {
-                let revision = self
-                    .generation_subscription_revisions
-                    .lock()
-                    .expect("generation event subscription revision lock poisoned")
-                    .get(generation)
-                    .copied()
-                    .unwrap_or_default();
-                return (current.clone(), revision, Some(generation.clone()));
-            }
+                .expect("generation event subscription lock poisoned")
+                .get(generation)
+                .cloned()
+                .unwrap_or_default();
+            let revision = self
+                .generation_subscription_revisions
+                .lock()
+                .expect("generation event subscription revision lock poisoned")
+                .get(generation)
+                .copied()
+                .unwrap_or_default();
+            return (current, revision, Some(generation.clone()));
         }
 
         let current = self
@@ -931,6 +932,37 @@ mod tests {
             .dispatch_in_generation(&envelope(1), &Authority::default(), Some(&generation))
             .unwrap();
         assert_eq!(report.graph_generation.as_ref(), Some(&generation));
+    }
+
+    #[test]
+    fn unknown_generation_never_falls_back_to_ambient_subscriptions() {
+        let generation = ResolvedHarness::resolve(
+            [],
+            [],
+            [],
+            &Authority::new([capability("generation.unregistered")]),
+        )
+        .unwrap()
+        .generation()
+        .clone();
+        let bus = EventBus::default();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let seen_by_handler = Arc::clone(&seen);
+        bus.replace_subscriptions([EventSubscription {
+            spec: spec("ambient", &[]),
+            handler: Arc::new(move |_: &EventEnvelope, _: &Authority| {
+                seen_by_handler.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+        }])
+        .unwrap();
+
+        let report = bus
+            .dispatch_in_generation(&envelope(30), &Authority::default(), Some(&generation))
+            .unwrap();
+
+        assert!(report.delivered.is_empty());
+        assert_eq!(seen.load(Ordering::Relaxed), 0);
     }
 
     #[test]
