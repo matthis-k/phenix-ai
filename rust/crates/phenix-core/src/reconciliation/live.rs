@@ -25,6 +25,7 @@ pub enum LiveReconciliationError {
         kernel_layers: Vec<LayerPolicy>,
         resolved_layers: Vec<LayerPolicy>,
     },
+    ResidentGenerationsPresent(Vec<GraphGenerationId>),
     MetadataPolicy(MetadataReconciliationError),
     Runtime(crate::KernelError),
 }
@@ -125,6 +126,7 @@ impl GraphReconciler {
         candidate: ResolvedHarness,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
+        self.require_stable_replacement_mode()?;
         let preview = self.preview_candidate(&candidate);
         let restart_plugins =
             restart_plugins_for_plan(self.active(), &candidate, &preview.transition_plan);
@@ -147,6 +149,7 @@ impl GraphReconciler {
         candidate_metadata: &ResolvedCompositionMetadata,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
+        self.require_stable_replacement_mode()?;
         let preview = self
             .preview_candidate_with_metadata(active_metadata, &candidate, candidate_metadata)
             .map_err(LiveReconciliationError::MetadataPolicy)?;
@@ -158,6 +161,15 @@ impl GraphReconciler {
         let mut result = self.activate_candidate(candidate);
         result.transition_plan = preview.graph.transition_plan;
         Ok(result)
+    }
+
+    fn require_stable_replacement_mode(&self) -> Result<(), LiveReconciliationError> {
+        let resident = self.resident_generations().cloned().collect::<Vec<_>>();
+        if resident.is_empty() {
+            Ok(())
+        } else {
+            Err(LiveReconciliationError::ResidentGenerationsPresent(resident))
+        }
     }
 }
 
@@ -324,6 +336,57 @@ mod tests {
             resources: Vec::new(),
             configuration: Vec::new(),
         }
+    }
+
+    #[test]
+    fn one_shot_replacement_is_blocked_while_trial_generations_are_resident() {
+        let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
+        let initial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:one")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let trial = ResolvedHarness::resolve_with_resources(
+            [plugin.clone()],
+            [],
+            [resource("sha256:trial")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let replacement = ResolvedHarness::resolve_with_resources(
+            [plugin],
+            [],
+            [resource("sha256:replacement")],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let initial_generation = initial.generation().clone();
+        let trial_generation = trial.generation().clone();
+
+        let mut kernel = Kernel::new(initial.kernel_config().clone());
+        kernel.activate_resolved_harness(&initial).unwrap();
+        let mut reconciler = GraphReconciler::new(initial);
+
+        reconciler
+            .make_candidate_resident_on_kernel(&mut kernel, trial)
+            .unwrap();
+
+        assert_eq!(
+            reconciler
+                .activate_candidate_on_kernel(&mut kernel, replacement)
+                .unwrap_err(),
+            LiveReconciliationError::ResidentGenerationsPresent(vec![
+                trial_generation.clone()
+            ])
+        );
+        assert_eq!(kernel.graph_generation(), Some(&initial_generation));
+        assert_eq!(reconciler.active().generation(), &initial_generation);
+        assert!(reconciler.resident(&trial_generation).is_some());
     }
 
     #[test]
