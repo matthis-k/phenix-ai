@@ -16,7 +16,7 @@ pub(super) struct StopView<'a> {
 }
 
 impl StopView<'_> {
-    fn stop(&self, plugin: &PluginId, instance: &Arc<Mutex<Box<dyn PluginInstance>>>) {
+    pub(super) fn stop(&self, plugin: &PluginId, instance: &Arc<Mutex<Box<dyn PluginInstance>>>) {
         let generation = self.runtime.generation();
         let Some(manifest) = self.runtime.config().manifest(plugin) else {
             return;
