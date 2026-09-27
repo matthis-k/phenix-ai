@@ -12,16 +12,18 @@ use phenix_application_interface::{
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
         PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
-        ReviewRecord, SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections,
-        SessionChange, SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput,
+        ReviewRecord, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation,
+        SelectionSelectInput, Selections, SessionChange, SessionCreateInput, SessionInfo,
+        SessionInput as ApplicationSessionInput,
         SessionList, SessionProjection, SessionProjectionState, SessionRenameInput,
         SessionResumeInput, SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
         StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
-    ListSelections, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession,
-    ResumeSession, SelectSelection, SetInteractionHandlers,
+    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, RemoveClientTool,
+    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection,
+    SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
@@ -45,7 +47,8 @@ use phenix_plugin_catalog::{
     SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
-    provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
+    auth, provider_auth_service, Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse,
+    ProviderAuthenticationResult,
 };
 use phenix_sdk::{
     execution_resource_service, execution_service, model_routing_service, options_service,
@@ -376,6 +379,12 @@ impl ApplicationWorker {
             Authenticate::ID => self
                 .authenticate(decode(input)?)
                 .map(|value| value.to_value()),
+            ListDefaultSelections::ID => self
+                .list_default_selections(decode(input)?)
+                .map(|value| value.to_value()),
+            SelectDefaultSelection::ID => self
+                .select_default_selection(decode(input)?)
+                .map(|value| value.to_value()),
             ListSelections::ID => self
                 .list_selections(decode(input)?)
                 .map(|value| value.to_value()),
@@ -433,12 +442,27 @@ impl ApplicationWorker {
         Ok(Acknowledged {})
     }
 
+    fn list_default_selections(
+        &mut self,
+        _request: Empty,
+    ) -> Result<Selections, ApplicationError> {
+        let selected = self.default_routing_profile()?;
+        self.selection_catalog(selected)
+    }
+
     fn list_selections(
         &mut self,
         request: ApplicationSessionInput,
     ) -> Result<Selections, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
         let selected = self.selected_routing_profile(&request.session_id)?;
+        self.selection_catalog(selected)
+    }
+
+    fn selection_catalog(
+        &self,
+        selected: RoutingProfileId,
+    ) -> Result<Selections, ApplicationError> {
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -466,23 +490,25 @@ impl ApplicationWorker {
                     })
                 }
             };
-            available.push(selection_info(&profile)?);
+            let authenticated = self.routing_profile_authenticated(&profile)?;
+            available.push(selection_info(&profile, authenticated)?);
         }
-        // Retired packaged routes stay available to sessions already selecting them.
-        // ACP requires the current selection to remain in this session's option list.
         if !available.iter().any(|item| item.id == selected) {
             if let ModelResponse::Profile {
                 profile: Some(profile),
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
             })? {
-                available.push(selection_info(&profile)?);
+                let authenticated = self.routing_profile_authenticated(&profile)?;
+                available.push(selection_info(&profile, authenticated)?);
             }
         }
         available.sort_by(|left, right| {
             selection_presentation_rank(&left.presentation)
                 .cmp(&selection_presentation_rank(&right.presentation))
+                .then_with(|| left.provider.cmp(&right.provider))
                 .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.thinking.cmp(&right.thinking))
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(Selections {
@@ -491,28 +517,82 @@ impl ApplicationWorker {
         })
     }
 
+    fn routing_profile_authenticated(
+        &self,
+        profile: &RoutingProfile,
+    ) -> Result<bool, ApplicationError> {
+        let mut providers = BTreeSet::new();
+        for target in std::iter::once(&profile.default_target)
+            .chain(profile.fallback_targets.iter())
+            .chain(profile.callable_targets.values())
+        {
+            providers.insert(target.provider_plugin.clone());
+        }
+        for provider in providers {
+            if !self.provider_authenticated(&provider)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
+        if !self.provider_auth_plugins().contains(provider) {
+            return Ok(true);
+        }
+        match self.invoke_provider_auth(provider, ProviderAuthCommand::List)? {
+            ProviderAuthResponse::Credentials { credentials } => Ok(!credentials.is_empty()),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "provider {provider} returned an unexpected credential-list response: {response:?}"
+                ),
+            }),
+        }
+    }
+
+    fn select_default_selection(
+        &mut self,
+        request: SelectionDefaultSelectInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_routing_profile(&request.selection_id)?;
+        let response = self.invoke_option_command(OptionCommand::Set {
+            key: model_default_option(),
+            scope: OptionScope::Global,
+            value: OptionValue::String(request.selection_id.to_string()),
+        })?;
+        if !matches!(response, OptionResponse::Updated { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("options service rejected default routing selection: {response:?}"),
+            });
+        }
+        self.list_default_selections(Empty {})
+    }
+
+    fn require_routing_profile(
+        &self,
+        selection_id: &RoutingProfileId,
+    ) -> Result<(), ApplicationError> {
+        match self.invoke_model_command(ModelCommand::GetProfile {
+            id: selection_id.clone(),
+        })? {
+            ModelResponse::Profile { profile: Some(_) } => Ok(()),
+            ModelResponse::Profile { profile: None } => Err(ApplicationError::InvalidInput {
+                message: format!("unknown routing selection {selection_id}"),
+            }),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected profile response: {response:?}"
+                ),
+            }),
+        }
+    }
+
     fn select_selection(
         &mut self,
         request: SelectionSelectInput,
     ) -> Result<Selections, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
-        match self.invoke_model_command(ModelCommand::GetProfile {
-            id: request.selection_id.clone(),
-        })? {
-            ModelResponse::Profile { profile: Some(_) } => {}
-            ModelResponse::Profile { profile: None } => {
-                return Err(ApplicationError::InvalidInput {
-                    message: format!("unknown routing selection {}", request.selection_id),
-                })
-            }
-            response => {
-                return Err(ApplicationError::InvalidResponse {
-                    message: format!(
-                        "model routing returned an unexpected profile response: {response:?}"
-                    ),
-                })
-            }
-        }
+        self.require_routing_profile(&request.selection_id)?;
 
         let subject = OptionSubjectId::parse(request.session_id.as_str()).map_err(|error| {
             ApplicationError::InvalidInput {
@@ -534,6 +614,13 @@ impl ApplicationWorker {
         })
     }
 
+    fn default_routing_profile(&self) -> Result<RoutingProfileId, ApplicationError> {
+        self.resolve_routing_profile(OptionContext {
+            session: None,
+            agent: None,
+        })
+    }
+
     fn selected_routing_profile(
         &self,
         session_id: &SessionId,
@@ -543,12 +630,19 @@ impl ApplicationWorker {
                 message: error.to_owned(),
             }
         })?;
+        self.resolve_routing_profile(OptionContext {
+            session: Some(subject),
+            agent: None,
+        })
+    }
+
+    fn resolve_routing_profile(
+        &self,
+        context: OptionContext,
+    ) -> Result<RoutingProfileId, ApplicationError> {
         match self.invoke_option_command(OptionCommand::Resolve {
             key: model_default_option(),
-            context: OptionContext {
-                session: Some(subject),
-                agent: None,
-            },
+            context,
         })? {
             OptionResponse::Value { option } => match option.value {
                 OptionValue::String(value) => RoutingProfileId::parse(value).map_err(|error| {
