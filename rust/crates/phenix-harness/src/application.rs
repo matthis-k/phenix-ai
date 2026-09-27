@@ -2838,7 +2838,10 @@ fn inspect_execution_dag(
             message: format!("unexpected execution-list response: {executions:?}"),
         });
     };
-    let Some(root) = executions.iter().find(|execution| execution.id == execution_id) else {
+    let Some(root) = executions
+        .iter()
+        .find(|execution| execution.id == execution_id)
+    else {
         return Err(ApplicationError::NotFound {
             resource: execution_id.to_owned(),
         });
