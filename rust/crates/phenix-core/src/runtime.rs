@@ -729,10 +729,22 @@ impl GenerationRuntimeState {
     }
 
     fn constrain_root_authority(&self, authority: &Authority) -> Authority {
-        self.authority_ceiling
-            .as_ref()
-            .map_or_else(|| authority.clone(), |ceiling| authority.attenuate(ceiling))
+        constrain_authority_to_ceiling(self.authority_ceiling.as_ref(), authority)
     }
+
+    fn constrain_plugin_authority(&self, authority: &Authority) -> Authority {
+        constrain_authority_to_ceiling(self.authority_ceiling.as_ref(), authority)
+    }
+}
+
+fn constrain_authority_to_ceiling(
+    authority_ceiling: Option<&Authority>,
+    authority: &Authority,
+) -> Authority {
+    authority_ceiling.map_or_else(
+        || authority.clone(),
+        |ceiling| authority.attenuate(ceiling),
+    )
 }
 
 pub struct Kernel {
