@@ -54,7 +54,7 @@ Those policies must be enforced by the Environment for the full process tree. Co
 
 `Exec` and `Patch` resolve through the same workspace provider and therefore the same workspace identity.
 
-A remote provider owns both file mutation and process execution. It must not expose remote files while spawning workspace-sensitive commands on the conductor host.
+A remote provider owns both file mutation and process execution. It must not expose remote files while spawning workspace-sensitive commands on the runtime host.
 
 Workspace paths exposed through the contract remain relative. Provider-specific roots, mount paths, remote directories, container paths, and transport identifiers are implementation details.
 
@@ -66,7 +66,7 @@ The command toolbelt answers availability questions such as:
 - which version of `cargo` is available;
 - whether `gh` is authenticated.
 
-It does not provide separate execution wrappers for those commands. Probes execute through `WorkspaceInterface::Exec` so their result describes the selected workspace rather than the conductor host.
+It does not provide separate execution wrappers for those commands. Probes execute through `WorkspaceInterface::Exec` so their result describes the selected workspace rather than the runtime host.
 
 ## Transitional operations
 
