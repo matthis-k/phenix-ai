@@ -241,6 +241,9 @@ fn map_activation_validation_error(
         ResolvedHarnessActivationError::DurableSchemaPreparation(_) => {
             unreachable!("configuration validation does not prepare durable schemas")
         }
+        ResolvedHarnessActivationError::AuthorityCeiling(_) => {
+            unreachable!("configuration validation does not enforce activation authority")
+        }
     }
 }
 
