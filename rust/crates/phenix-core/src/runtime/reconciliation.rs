@@ -388,21 +388,28 @@ impl Kernel {
         let old_states = self.generation_state.states.clone();
         let old_instances = self.generation_state.instances.clone();
         let old_invocations = self.generation_state.invocations.clone();
-        self.events.replace_subscriptions(subscriptions.clone())?;
-        if let Some(generation) = candidate_runtime.generation().cloned() {
-            self.events
-                .replace_generation_subscriptions(generation, subscriptions.clone())?;
+        {
+            // Keep ambient admission outside the interval where the active
+            // subscriptions and canonical default generation are being replaced.
+            let events = Arc::clone(&self.events);
+            let _ambient_transition = events.lock_ambient_transition();
+
+            self.events.replace_subscriptions(subscriptions.clone())?;
+            if let Some(generation) = candidate_runtime.generation().cloned() {
+                self.events
+                    .replace_generation_subscriptions(generation, subscriptions.clone())?;
+            }
+            self.generation_state.subscriptions = subscriptions;
+            self.generation_state.states = next_states;
+            self.generation_state.instances = next_instances;
+            self.generation_state.invocations = next_invocations;
+            self.install_runtime_generation(
+                candidate_runtime.clone(),
+                candidate.durable_schemas().to_vec(),
+                candidate.authority_ceiling().clone(),
+            );
+            self.generation_state.active = active_runtime;
         }
-        self.generation_state.subscriptions = subscriptions;
-        self.generation_state.states = next_states;
-        self.generation_state.instances = next_instances;
-        self.generation_state.invocations = next_invocations;
-        self.install_runtime_generation(
-            candidate_runtime.clone(),
-            candidate.durable_schemas().to_vec(),
-            candidate.authority_ceiling().clone(),
-        );
-        self.generation_state.active = active_runtime;
 
         let retired_view = StopView {
             runtime: &old_runtime,
