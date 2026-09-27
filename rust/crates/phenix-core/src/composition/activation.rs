@@ -125,7 +125,10 @@ impl ResolvedHarnessActivation for Kernel {
 
         self.prepare_durable_schemas(resolved.durable_schemas())
             .map_err(ResolvedHarnessActivationError::DurableSchemaPreparation)?;
-        self.install_runtime_generation(resolved.runtime_generation().clone());
+        self.install_runtime_generation(
+            resolved.runtime_generation().clone(),
+            resolved.durable_schemas().to_vec(),
+        );
         Ok(())
     }
 }
