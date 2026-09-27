@@ -354,6 +354,22 @@ fn selection_config(
                 "phenix.provider".into(),
                 serde_json::Value::String(selection.provider.to_string()),
             );
+            if let Some(model) = &selection.model {
+                meta.insert(
+                    "phenix.model".into(),
+                    serde_json::Value::String(model.clone()),
+                );
+            }
+            if let Some(thinking) = &selection.thinking {
+                meta.insert(
+                    "phenix.thinking".into(),
+                    serde_json::Value::String(thinking.clone()),
+                );
+            }
+            meta.insert(
+                "phenix.authenticated".into(),
+                serde_json::Value::Bool(selection.authenticated),
+            );
             let prefix = match selection.presentation {
                 SelectionPresentation::Router => "router",
                 SelectionPresentation::Model => "model",
