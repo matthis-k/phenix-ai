@@ -126,6 +126,7 @@ pub struct ResolvedImportHandle {
     interface: InterfaceId,
     exporter: ComponentId,
     owning_plugin: PluginId,
+    owning_plugin_version: u32,
     execution: PluginExecution,
     effective_authority: Authority,
 }
@@ -145,6 +146,10 @@ impl ResolvedImportHandle {
 
     pub fn owning_plugin(&self) -> &PluginId {
         &self.owning_plugin
+    }
+
+    pub fn owning_plugin_version(&self) -> u32 {
+        self.owning_plugin_version
     }
 
     pub fn execution(&self) -> &PluginExecution {
@@ -415,6 +420,7 @@ impl ResolvedComponentGraph {
                             interface: import.interface.clone(),
                             exporter: candidate.component.id.clone(),
                             owning_plugin: candidate.component.owner.clone(),
+                            owning_plugin_version: exporter_owner.version,
                             execution: exporter_owner.execution.clone(),
                             effective_authority: candidate.effective_authority,
                         }

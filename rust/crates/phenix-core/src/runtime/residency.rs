@@ -741,7 +741,19 @@ mod tests {
         };
 
         let first = ResolvedHarness::resolve(
-            [consumer_manifest.clone(), first_provider_manifest],
+            [consumer_manifest.clone(), first_provider_manifest.clone()],
+            [
+                consumer_node.clone(),
+                provider_node(first_component.clone(), first_provider.clone()),
+            ],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let mut changed_provider_manifest = first_provider_manifest;
+        changed_provider_manifest.version += 1;
+        let changed_provider = ResolvedHarness::resolve(
+            [consumer_manifest.clone(), changed_provider_manifest],
             [
                 consumer_node.clone(),
                 provider_node(first_component, first_provider.clone()),
@@ -750,6 +762,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
+        let changed_provider_generation = changed_provider.generation().clone();
         let second = ResolvedHarness::resolve(
             [consumer_manifest, second_provider_manifest],
             [
@@ -775,8 +788,23 @@ mod tests {
             )
             .unwrap();
 
-        kernel.make_generation_resident(&second).unwrap();
+        kernel.make_generation_resident(&changed_provider).unwrap();
+        assert_eq!(
+            kernel.invoke_in_generation(
+                &changed_provider_generation,
+                &service(),
+                &[],
+                &constraints,
+                None,
+            ),
+            Err(KernelError::PinnedBindingChanged {
+                generation: changed_provider_generation,
+                component: consumer_component.clone(),
+                interface: interface.clone(),
+            })
+        );
 
+        kernel.make_generation_resident(&second).unwrap();
         assert_eq!(
             kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
             Err(KernelError::PinnedBindingChanged {
