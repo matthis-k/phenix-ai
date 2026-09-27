@@ -463,24 +463,27 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
     let events = kernel.events();
     let (seen_diagnostics, diagnostics) = mpsc::channel::<EventEnvelope>();
     events
-        .install_generation_subscriptions(generation, [EventSubscription {
-            spec: SubscriptionSpec {
-                id: SubscriptionId::parse("fixture.attribute-gate/diagnostics").unwrap(),
-                owner: PluginId::parse("fixture.attribute-gate.diagnostic-probe").unwrap(),
-                event_type: EventTypeId::parse("kernel.structural_value_mismatch").unwrap(),
-                event_version: 1,
-                dependencies: Vec::new(),
-                failure_policy: EventFailurePolicy::FailDelivery,
-                required_authority: Authority::default(),
-                maximum_authority: Authority::default(),
-                kernel_policy_revision: 0,
-            },
-            handler: Arc::new(move |event: &EventEnvelope, _: &Authority| {
-                seen_diagnostics
-                    .send(event.clone())
-                    .map_err(|error| error.to_string())
-            }),
-        }])
+        .install_generation_subscriptions(
+            generation,
+            [EventSubscription {
+                spec: SubscriptionSpec {
+                    id: SubscriptionId::parse("fixture.attribute-gate/diagnostics").unwrap(),
+                    owner: PluginId::parse("fixture.attribute-gate.diagnostic-probe").unwrap(),
+                    event_type: EventTypeId::parse("kernel.structural_value_mismatch").unwrap(),
+                    event_version: 1,
+                    dependencies: Vec::new(),
+                    failure_policy: EventFailurePolicy::FailDelivery,
+                    required_authority: Authority::default(),
+                    maximum_authority: Authority::default(),
+                    kernel_policy_revision: 0,
+                },
+                handler: Arc::new(move |event: &EventEnvelope, _: &Authority| {
+                    seen_diagnostics
+                        .send(event.clone())
+                        .map_err(|error| error.to_string())
+                }),
+            }],
+        )
         .unwrap();
 
     let request = Request {
