@@ -1058,19 +1058,36 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let mut changed_provider_manifest = first_provider_manifest;
+        let mut changed_provider_manifest = first_provider_manifest.clone();
         changed_provider_manifest.version += 1;
         let changed_provider = ResolvedHarness::resolve(
             [consumer_manifest.clone(), changed_provider_manifest],
             [
                 consumer_node.clone(),
-                provider_node(first_component, first_provider.clone()),
+                provider_node(first_component.clone(), first_provider.clone()),
             ],
             [],
             &Authority::default(),
         )
         .unwrap();
         let changed_provider_generation = changed_provider.generation().clone();
+
+        let changed_schema =
+            crate::InterfaceSchema::new(crate::PhenixSchema::Never, crate::PhenixSchema::Never);
+        let mut schema_consumer_node = consumer_node.clone();
+        schema_consumer_node.imports[0].schema = changed_schema.clone();
+        let mut schema_provider_node =
+            provider_node(first_component.clone(), first_provider.clone());
+        schema_provider_node.exports[0].schema = changed_schema;
+        let schema_changed = ResolvedHarness::resolve(
+            [consumer_manifest.clone(), first_provider_manifest],
+            [schema_consumer_node, schema_provider_node],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let schema_changed_generation = schema_changed.generation().clone();
+
         let second = ResolvedHarness::resolve(
             [consumer_manifest, second_provider_manifest],
             [
@@ -1107,6 +1124,22 @@ mod tests {
             ),
             Err(KernelError::PinnedBindingChanged {
                 generation: changed_provider_generation,
+                component: consumer_component.clone(),
+                interface: interface.clone(),
+            })
+        );
+
+        kernel.make_generation_resident(&schema_changed).unwrap();
+        assert_eq!(
+            kernel.invoke_in_generation(
+                &schema_changed_generation,
+                &service(),
+                &[],
+                &constraints,
+                None,
+            ),
+            Err(KernelError::PinnedBindingChanged {
+                generation: schema_changed_generation,
                 component: consumer_component.clone(),
                 interface: interface.clone(),
             })
@@ -1407,6 +1440,20 @@ mod tests {
         assert_eq!(
             kernel
                 .invoke_in_generation(&first_generation, &service(), b"read", &constraints, None,)
+                .unwrap(),
+            b"from-b"
+        );
+
+        kernel.promote_generation(&first_generation).unwrap();
+        assert_eq!(
+            kernel
+                .invoke(&service(), b"read", &authority, None)
+                .unwrap(),
+            b"from-b"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&second_generation, &service(), b"read", &constraints, None,)
                 .unwrap(),
             b"from-b"
         );
