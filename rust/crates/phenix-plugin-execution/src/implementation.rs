@@ -148,10 +148,22 @@ fn execute(
                 execution: state.executions.get(&id).cloned(),
             })
         }
+        ExecutionCommand::ListExecutions => {
+            let (_, state) = read_state(context)?;
+            Ok(ExecutionResponse::Executions {
+                executions: state.executions.into_values().collect(),
+            })
+        }
         ExecutionCommand::GetTask { id } => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionResponse::TaskLookup {
                 task: state.tasks.get(&id).cloned(),
+            })
+        }
+        ExecutionCommand::ListTasks => {
+            let (_, state) = read_state(context)?;
+            Ok(ExecutionResponse::Tasks {
+                tasks: state.tasks.into_values().collect(),
             })
         }
         ExecutionCommand::InvokeCallable {
