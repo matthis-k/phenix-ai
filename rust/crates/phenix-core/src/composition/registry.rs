@@ -130,6 +130,7 @@ pub enum KernelError {
         active: GraphGenerationId,
         candidate: GraphGenerationId,
     },
+    GenerationAuthorityExpansion(GraphGenerationId),
     PluginStop {
         plugin: PluginId,
         message: String,
@@ -282,6 +283,11 @@ impl Display for KernelError {
                 "graph generation {} cannot reside beside {}: durable schemas differ",
                 candidate.as_str(),
                 active.as_str()
+            ),
+            Self::GenerationAuthorityExpansion(generation) => write!(
+                f,
+                "graph generation {} exceeds the kernel's initial authority ceiling",
+                generation.as_str()
             ),
             Self::PluginStop { plugin, message } => {
                 write!(f, "plugin {plugin} failed to stop: {message}")
