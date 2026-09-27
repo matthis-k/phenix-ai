@@ -27,10 +27,7 @@ pub(super) fn ownership(
     context: &ModelContext<'_, '_, '_>,
 ) -> Result<(BTreeSet<RoutingProfileId>, BTreeSet<RoutingProfileId>), String> {
     let (_, manifest) = manifest(context)?;
-    Ok((
-        manifest.owned.keys().cloned().collect(),
-        manifest.active,
-    ))
+    Ok((manifest.owned.keys().cloned().collect(), manifest.active))
 }
 
 fn normalize(mut profile: RoutingProfile) -> RoutingProfile {

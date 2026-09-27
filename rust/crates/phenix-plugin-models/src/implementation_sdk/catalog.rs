@@ -74,7 +74,9 @@ pub(super) fn prepare(
         if serde_json::from_slice::<RoutingProfile>(&raw).map_err(|error| error.to_string())?
             != *profile
         {
-            return Err(format!("routing profile changed during catalog refresh: {id}"));
+            return Err(format!(
+                "routing profile changed during catalog refresh: {id}"
+            ));
         }
         previous.insert(id.clone(), raw);
     }
@@ -83,7 +85,9 @@ pub(super) fn prepare(
     for profile in profiles {
         validate_profile(&provider, &profile)?;
         if desired.insert(profile.id.clone(), profile).is_some() {
-            return Err(format!("duplicate provider catalog routing profile for {provider}"));
+            return Err(format!(
+                "duplicate provider catalog routing profile for {provider}"
+            ));
         }
     }
 
@@ -97,9 +101,7 @@ pub(super) fn prepare(
             }
         }
         for (id, profile) in &desired {
-            if current
-                .get(id)
-                .is_some_and(|existing| existing != profile)
+            if current.get(id).is_some_and(|existing| existing != profile)
                 && !ownership.owned.contains_key(id)
             {
                 return Err(format!("routing profile identity is immutable: {id}"));

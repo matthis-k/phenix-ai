@@ -1383,10 +1383,7 @@ impl ApplicationWorker {
         }
     }
 
-    fn refresh_provider_model_catalog(
-        &self,
-        provider: &PluginId,
-    ) -> Result<(), ApplicationError> {
+    fn refresh_provider_model_catalog(&self, provider: &PluginId) -> Result<(), ApplicationError> {
         let response = self.invoke_provider_models(provider, ProviderModelsCommand::List)?;
         let ProviderModelsResponse::Models { models } = response;
         let profiles = models

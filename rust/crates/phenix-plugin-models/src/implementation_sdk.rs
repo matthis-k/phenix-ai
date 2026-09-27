@@ -197,10 +197,7 @@ fn handle_routing(
             let (catalog_owned, catalog_active) = catalog::ownership(context)?;
             owned.extend(catalog_owned);
             active.extend(catalog_active);
-            let retired = owned
-                .difference(&active)
-                .cloned()
-                .collect::<BTreeSet<_>>();
+            let retired = owned.difference(&active).cloned().collect::<BTreeSet<_>>();
             Ok(ModelResponse::Profiles {
                 profiles: load_profiles(context)?
                     .into_iter()

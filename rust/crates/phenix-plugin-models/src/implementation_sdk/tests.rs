@@ -292,12 +292,8 @@ mod profile_store {
 
         {
             let mut kernel = kernel_with(&path);
-            apply_provider_catalog(
-                &mut kernel,
-                provider,
-                vec![first.clone(), second.clone()],
-            )
-            .unwrap();
+            apply_provider_catalog(&mut kernel, provider, vec![first.clone(), second.clone()])
+                .unwrap();
 
             let ModelResponse::Profiles { profiles } =
                 invoke_routing(&mut kernel, ModelCommand::ListProfiles).unwrap()
