@@ -5,6 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
+    pub(super) authority_ceiling: Option<&'a Authority>,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -25,6 +26,8 @@ impl StopView<'_> {
         self.tasks.cancel_plugin_generation(plugin, generation);
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
+        let plugin_authority =
+            constrain_authority_to_ceiling(self.authority_ceiling, &manifest.maximum_authority);
         let host = PluginHost {
             runtime: RuntimeServices {
                 states: self.states,
@@ -41,7 +44,7 @@ impl StopView<'_> {
             scope: CallScope::root(
                 Arc::new((*self.runtime).clone()),
                 plugin,
-                &manifest.maximum_authority,
+                &plugin_authority,
                 Some(live_call.cancellation_token().clone()),
             ),
             continuation: None,
@@ -140,6 +143,14 @@ impl Kernel {
                             let provider_manifest = candidate_config
                                 .manifest(&binding.provider)
                                 .expect("resolved runtime provider is configured");
+                            let provider_authority = constrain_authority_to_ceiling(
+                                Some(candidate.authority_ceiling()),
+                                &provider_manifest.maximum_authority,
+                            );
+                            let guest_authority = constrain_authority_to_ceiling(
+                                Some(candidate.authority_ceiling()),
+                                &manifest.maximum_authority,
+                            );
                             let provider =
                                 next_instances.get(&binding.provider).cloned().ok_or_else(
                                     || KernelError::PluginNotActive(binding.provider.clone()),
@@ -166,7 +177,7 @@ impl Kernel {
                                 scope: CallScope::root(
                                     Arc::new((*candidate_runtime).clone()),
                                     &binding.provider,
-                                    &provider_manifest.maximum_authority,
+                                    &provider_authority,
                                     Some(cancellation.clone()),
                                 ),
                                 continuation: None,
@@ -184,7 +195,7 @@ impl Kernel {
                                     RuntimePluginCandidate {
                                         manifest,
                                         artifact,
-                                        guest_authority: &manifest.maximum_authority,
+                                        guest_authority: &guest_authority,
                                     },
                                     &host,
                                 )
@@ -220,6 +231,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
+                                authority_ceiling: Some(candidate.authority_ceiling()),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -240,6 +252,10 @@ impl Kernel {
                     let cancellation = live_call.cancellation_token().clone();
                     let prepared_mutations =
                         PreparedMutationScope::new(candidate_runtime.generation());
+                    let plugin_authority = constrain_authority_to_ceiling(
+                        Some(candidate.authority_ceiling()),
+                        &manifest.maximum_authority,
+                    );
                     let host = PluginHost {
                         runtime: RuntimeServices {
                             states: &next_states,
@@ -256,7 +272,7 @@ impl Kernel {
                         scope: CallScope::root(
                             Arc::new((*candidate_runtime).clone()),
                             plugin,
-                            &manifest.maximum_authority,
+                            &plugin_authority,
                             Some(cancellation.clone()),
                         ),
                         continuation: None,
@@ -277,6 +293,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
+                                authority_ceiling: Some(candidate.authority_ceiling()),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -319,6 +336,7 @@ impl Kernel {
                     &staged,
                     StopView {
                         runtime: candidate_runtime,
+                        authority_ceiling: Some(candidate.authority_ceiling()),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -348,6 +366,7 @@ impl Kernel {
             .collect();
 
         let old_runtime = self.generation_state.runtime.clone();
+        let old_authority_ceiling = self.generation_state.authority_ceiling.clone();
         let old_states = self.generation_state.states.clone();
         let old_instances = self.generation_state.instances.clone();
         let old_invocations = self.generation_state.invocations.clone();
@@ -369,6 +388,7 @@ impl Kernel {
 
         let retired_view = StopView {
             runtime: &old_runtime,
+            authority_ceiling: old_authority_ceiling.as_ref(),
             states: &old_states,
             instances: &old_instances,
             invocations: &old_invocations,
