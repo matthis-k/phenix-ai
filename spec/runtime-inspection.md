@@ -1,6 +1,6 @@
 # Runtime inspection
 
-status: implemented baseline
+status: partial
 
 ## Goal
 
