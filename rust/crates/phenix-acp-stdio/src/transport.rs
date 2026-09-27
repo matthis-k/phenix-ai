@@ -34,7 +34,10 @@ use phenix_domain::{
     ClientToolAdmissions, ClientToolDefinition, SessionId,
 };
 use serde_json::json;
-use std::{collections::BTreeMap, sync::{Arc, Mutex}};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::{mpsc, oneshot};
 
 pub struct ApplicationInvocation {
