@@ -2695,7 +2695,6 @@ fn execute_runtime_model_tool_call(
     }
 }
 
-
 fn execute_runtime_inspect_tool_call(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
