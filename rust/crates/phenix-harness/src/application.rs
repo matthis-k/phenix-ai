@@ -14,16 +14,14 @@ use phenix_application_interface::{
         PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
         ReviewRecord, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation,
         SelectionSelectInput, Selections, SessionChange, SessionCreateInput, SessionInfo,
-        SessionInput as ApplicationSessionInput,
-        SessionList, SessionProjection, SessionProjectionState, SessionRenameInput,
-        SessionResumeInput, SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
-        StopReason,
+        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
     ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection,
-    SetInteractionHandlers,
+    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
@@ -442,10 +440,7 @@ impl ApplicationWorker {
         Ok(Acknowledged {})
     }
 
-    fn list_default_selections(
-        &mut self,
-        _request: Empty,
-    ) -> Result<Selections, ApplicationError> {
+    fn list_default_selections(&mut self, _request: Empty) -> Result<Selections, ApplicationError> {
         let selected = self.default_routing_profile()?;
         self.selection_catalog(selected)
     }
@@ -562,7 +557,9 @@ impl ApplicationWorker {
         })?;
         if !matches!(response, OptionResponse::Updated { .. }) {
             return Err(ApplicationError::InvalidResponse {
-                message: format!("options service rejected default routing selection: {response:?}"),
+                message: format!(
+                    "options service rejected default routing selection: {response:?}"
+                ),
             });
         }
         self.list_default_selections(Empty {})
@@ -1267,11 +1264,13 @@ impl ApplicationWorker {
             })?;
 
         if descriptor.kind == AuthKind::ApiToken {
-            let secret = request.secret.ok_or_else(|| ApplicationError::InvalidInput {
-                message: format!(
+            let secret = request
+                .secret
+                .ok_or_else(|| ApplicationError::InvalidInput {
+                    message: format!(
                     "authentication method {method:?} for provider {provider} requires an API key"
                 ),
-            })?;
+                })?;
             let source = auth::ApiToken::literal(secret).map_err(|error| {
                 ApplicationError::InvalidInput {
                     message: format!("invalid API key for provider {provider}: {error}"),
