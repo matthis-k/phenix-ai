@@ -431,7 +431,10 @@ impl LocalEnvironment {
             EnvironmentFilesystemPolicy::Unrestricted => unreachable!(),
             EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite => {
                 command.arg("--ro-bind").arg("/").arg("/");
-                "/.phenix-tmp"
+                // / is read-only in this view. Mount private scratch below the
+                // private /dev mount so Bubblewrap can create the mountpoint
+                // without hiding the host's read-only /tmp.
+                "/dev/phenix-tmp"
             }
             EnvironmentFilesystemPolicy::WorkingDirectoryOnly => {
                 Self::add_parent_dirs(&mut command, &self.root);
