@@ -544,6 +544,165 @@ mod tests {
         }
     }
 
+    fn listener_event() -> EventTypeId {
+        EventTypeId::parse("fixture.residency.observed").unwrap()
+    }
+
+    struct GenerationEventListener {
+        seen: Arc<Mutex<Vec<GraphGenerationId>>>,
+    }
+
+    impl PluginListener for GenerationEventListener {
+        fn handle(&self, _event: &EventEnvelope, host: &PluginHost<'_>) -> Result<(), String> {
+            self.seen
+                .lock()
+                .expect("listener observation mutex poisoned")
+                .push(
+                    host.graph_generation()
+                        .expect("resolved listener has a graph generation")
+                        .clone(),
+                );
+            Ok(())
+        }
+    }
+
+    struct GenerationEventPlugin {
+        seen: Arc<Mutex<Vec<GraphGenerationId>>>,
+    }
+
+    impl PluginInstance for GenerationEventPlugin {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn bind_plugin_listener(
+            &mut self,
+            _listener: &ResolvedListener,
+            _generation: &GraphGenerationId,
+        ) -> Option<Result<Arc<dyn PluginListener>, String>> {
+            Some(Ok(Arc::new(GenerationEventListener {
+                seen: Arc::clone(&self.seen),
+            })))
+        }
+
+        fn invoke(
+            &mut self,
+            _service: &ServiceId,
+            _input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            let receipt = host
+                .dispatch_event(listener_event(), 1, 7, 0, Vec::new())
+                .map_err(|error| error.to_string())?;
+            match receipt.wait() {
+                crate::EventDeliveryStatus::Succeeded(report) if report.failures.is_empty() => {
+                    Ok(b"delivered".to_vec())
+                }
+                status => Err(format!("event delivery failed: {status:?}")),
+            }
+        }
+    }
+
+    #[test]
+    fn ambient_and_causal_listener_delivery_use_only_the_selected_generation() {
+        let plugin_id = plugin("fixture.residency.events");
+        let component_id = ComponentId::parse("fixture.residency.events").unwrap();
+        let mut first_manifest = manifest(plugin_id.as_str());
+        let mut second_manifest = first_manifest.clone();
+        second_manifest.version += 1;
+        let component = ComponentManifest {
+            id: component_id,
+            owner: plugin_id.clone(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+            listeners: vec![crate::ComponentListener {
+                id: crate::SubscriptionId::parse("fixture.residency.events/observed").unwrap(),
+                event: listener_event(),
+                event_version: 1,
+                method: "observed".into(),
+                payload_schema: crate::PhenixSchema::Any,
+                projection: crate::ListenerProjection::Exact,
+                dependencies: Vec::new(),
+                failure_policy: crate::EventFailurePolicy::FailDelivery,
+                required_authority: Authority::default(),
+            }],
+            maximum_authority: Authority::default(),
+        };
+        let first = ResolvedHarness::resolve(
+            [first_manifest.clone()],
+            [component.clone()],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let second = ResolvedHarness::resolve(
+            [second_manifest],
+            [component],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        let seen_for_factory = Arc::clone(&seen);
+        kernel.preload_embedded_factory(plugin_id.clone(), move || {
+            Box::new(GenerationEventPlugin {
+                seen: Arc::clone(&seen_for_factory),
+            })
+        });
+        kernel.activate_all().unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        let ambient = EventEnvelope {
+            event_type: listener_event(),
+            version: 1,
+            emitter: plugin_id,
+            causality_id: 6,
+            kernel_policy_revision: 0,
+            payload: Vec::new(),
+        };
+        let report = kernel
+            .events()
+            .dispatch(&ambient, &Authority::default())
+            .unwrap();
+        assert!(report.failures.is_empty());
+        assert_eq!(
+            seen.lock()
+                .expect("listener observation mutex poisoned")
+                .as_slice(),
+            [first_generation.as_ref()]
+        );
+        seen.lock()
+            .expect("listener observation mutex poisoned")
+            .clear();
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &second_generation,
+                    &service(),
+                    &[],
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"delivered"
+        );
+        assert_eq!(
+            seen.lock()
+                .expect("listener observation mutex poisoned")
+                .as_slice(),
+            [second_generation.as_ref()]
+        );
+    }
+
     #[test]
     fn selected_generation_ceiling_attenuates_explicit_and_default_roots() {
         let read = CapabilityId::parse("fixture.read").unwrap();
