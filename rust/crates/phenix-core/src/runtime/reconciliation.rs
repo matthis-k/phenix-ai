@@ -62,6 +62,7 @@ impl Kernel {
         candidate: &ResolvedHarness,
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
+        self.validate_generation_authority(candidate)?;
         let has_active = self
             .generation_state
             .states
@@ -362,6 +363,7 @@ impl Kernel {
         self.install_runtime_generation(
             candidate_runtime.clone(),
             candidate.durable_schemas().to_vec(),
+            candidate.authority_ceiling().clone(),
         );
         self.generation_state.active = active_runtime;
 
