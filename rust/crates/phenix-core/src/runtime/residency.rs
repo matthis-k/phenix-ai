@@ -220,28 +220,27 @@ impl Kernel {
             .graph_generation()
             .cloned()
             .ok_or(KernelError::ResolvedGenerationMissing)?;
-        let candidate = self
+        let candidate_subscriptions = self
             .resident_generations
-            .remove(generation)
-            .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
+            .get(generation)
+            .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
+            .subscriptions
+            .clone();
 
         // Preserve the current default under its generation before changing
-        // ambient delivery. Activation normally installs this snapshot already;
-        // promotion enforces the invariant at the lifecycle boundary.
+        // ambient delivery. Keep the candidate resident until both subscription
+        // updates succeed so a failed promotion cannot silently discard it.
         self.events.replace_generation_subscriptions(
             current_generation.clone(),
             self.generation_state.subscriptions.clone(),
         )?;
+        self.events
+            .replace_subscriptions(candidate_subscriptions)?;
 
-        if let Err(error) = self
-            .events
-            .replace_subscriptions(candidate.subscriptions.clone())
-        {
-            self.resident_generations
-                .insert(generation.clone(), candidate);
-            return Err(error.into());
-        }
-
+        let candidate = self
+            .resident_generations
+            .remove(generation)
+            .expect("validated resident generation remains present during promotion");
         let previous = std::mem::replace(&mut self.generation_state, candidate);
         self.resident_generations
             .insert(current_generation, previous);
@@ -1243,6 +1242,55 @@ mod tests {
             kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
             Err(KernelError::UnknownGeneration(second_generation))
         );
+    }
+
+    #[test]
+    fn failed_promotion_keeps_candidate_resident_and_default_unchanged() {
+        let first_manifest = manifest("fixture.residency.first");
+        let second_manifest = manifest("fixture.residency.second");
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(first_manifest.id.clone(), || Box::new(Echo(b"first")));
+        kernel.preload_embedded_factory(second_manifest.id.clone(), || Box::new(Echo(b"second")));
+        kernel.activate_all().unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        let missing = SubscriptionId::parse("fixture.residency.missing").unwrap();
+        kernel.generation_state.subscriptions = vec![EventSubscription {
+            spec: SubscriptionSpec {
+                id: SubscriptionId::parse("fixture.residency.invalid").unwrap(),
+                owner: first_manifest.id,
+                event_type: listener_event(),
+                event_version: 1,
+                dependencies: vec![missing.clone()],
+                failure_policy: EventFailurePolicy::FailDelivery,
+                required_authority: Authority::default(),
+                maximum_authority: Authority::default(),
+                kernel_policy_revision: 0,
+            },
+            handler: Arc::new(|_: &EventEnvelope, _: &Authority| Ok(())),
+        }];
+
+        assert_eq!(
+            kernel.promote_generation(&second_generation),
+            Err(KernelError::Events(EventError::UnknownDependency {
+                subscription: SubscriptionId::parse("fixture.residency.invalid").unwrap(),
+                dependency: missing,
+            }))
+        );
+        assert_eq!(kernel.graph_generation(), Some(&first_generation));
+        assert!(kernel
+            .resident_generation_ids()
+            .contains(&second_generation));
     }
 
     #[test]
