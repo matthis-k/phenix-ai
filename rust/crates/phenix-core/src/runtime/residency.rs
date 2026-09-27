@@ -279,6 +279,14 @@ impl Kernel {
             ));
         }
 
+        if let Some(constraints) = operation_constraints {
+            let state = self
+                .resident_generations
+                .get(generation)
+                .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
+            Self::validate_root_execution_constraints(state, generation, constraints)?;
+        }
+
         let state = self
             .resident_generations
             .remove(generation)
@@ -1413,11 +1421,22 @@ mod tests {
         assert_eq!(
             kernel.promote_generation_under_constraints(&second_generation, &constraints),
             Err(KernelError::PinnedBindingChanged {
-                generation: second_generation,
+                generation: second_generation.clone(),
+                component: consumer_component.clone(),
+                interface: interface.clone(),
+            })
+        );
+        assert_eq!(
+            kernel.retire_generation_under_constraints(&second_generation, &constraints),
+            Err(KernelError::PinnedBindingChanged {
+                generation: second_generation.clone(),
                 component: consumer_component,
                 interface,
             })
         );
+        assert!(kernel
+            .resident_generation_ids()
+            .contains(&second_generation));
         assert_eq!(kernel.graph_generation(), Some(&first_generation));
     }
 
