@@ -37,6 +37,85 @@ impl GraphReconciler {
         validate_live_reconciliation(self, kernel)
     }
 
+    /// Stage a resolved candidate beside the active generation without changing
+    /// the default generation.
+    pub fn make_candidate_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        candidate: ResolvedHarness,
+    ) -> Result<GraphGenerationId, LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        let generation = kernel
+            .make_generation_resident(&candidate)
+            .map_err(LiveReconciliationError::Runtime)?;
+        if generation != *self.active.generation() {
+            self.resident.insert(generation.clone(), candidate);
+        }
+        Ok(generation)
+    }
+
+    /// Promote one resident generation and retain the previous active Harness as
+    /// a resident rollback target.
+    pub fn promote_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        generation: &GraphGenerationId,
+    ) -> Result<ReconciliationResult, LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        if generation == self.active.generation() {
+            return Ok(ReconciliationResult {
+                previous_generation: generation.clone(),
+                active_generation: generation.clone(),
+                diff: crate::GraphDiff::default(),
+                transition_plan: Vec::new(),
+            });
+        }
+
+        let candidate = self
+            .resident
+            .remove(generation)
+            .ok_or_else(|| {
+                LiveReconciliationError::Runtime(crate::KernelError::UnknownGeneration(
+                    generation.clone(),
+                ))
+            })?;
+        let preview = self.preview_candidate(&candidate);
+        if let Err(error) = kernel.promote_generation(generation) {
+            self.resident.insert(generation.clone(), candidate);
+            return Err(LiveReconciliationError::Runtime(error));
+        }
+
+        let previous = std::mem::replace(&mut self.active, candidate);
+        self.resident
+            .insert(previous.generation().clone(), previous);
+        Ok(ReconciliationResult {
+            previous_generation: preview.active_generation,
+            active_generation: preview.candidate_generation,
+            diff: preview.diff,
+            transition_plan: preview.transition_plan,
+        })
+    }
+
+    /// Retire one non-active resident Harness and its generation-local runtime
+    /// state.
+    pub fn retire_resident_on_kernel(
+        &mut self,
+        kernel: &mut Kernel,
+        generation: &GraphGenerationId,
+    ) -> Result<(), LiveReconciliationError> {
+        self.preflight_live_reconciliation(kernel)?;
+        if !self.resident.contains_key(generation) {
+            return Err(LiveReconciliationError::Runtime(
+                crate::KernelError::UnknownGeneration(generation.clone()),
+            ));
+        }
+        kernel
+            .retire_generation(generation)
+            .map_err(LiveReconciliationError::Runtime)?;
+        self.resident.remove(generation);
+        Ok(())
+    }
+
     /// Apply one fully resolved development candidate to a live kernel.
     ///
     /// Candidate resolution happens before this operation. The method verifies that
