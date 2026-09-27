@@ -11,8 +11,8 @@ use phenix_core::{
     ComponentManifest, InterfaceId, PluginId,
 };
 use phenix_sdk::{
-    DefaultInvocationInterface, ExecutionInterface, ExecutionResourceInterface,
-    StepAttemptInterface, StepTransactionInterface, WorkspaceInterface,
+    DefaultInvocationInterface, ExecutionInspectionInterface, ExecutionInterface,
+    ExecutionResourceInterface, StepAttemptInterface, StepTransactionInterface, WorkspaceInterface,
 };
 
 const EXECUTION_COMPONENT: &str = "phenix.execution";
@@ -112,6 +112,12 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
                 schema: ExecutionInterface::schema(),
                 priority: 100,
                 required_authority: persistence_authority(),
+            },
+            ComponentExport {
+                interface: ExecutionInspectionInterface::interface_id(),
+                schema: ExecutionInspectionInterface::schema(),
+                priority: 100,
+                required_authority: attempt_read_authority(),
             },
             ComponentExport {
                 interface: ExecutionResourceInterface::interface_id(),
@@ -227,21 +233,25 @@ mod tests {
 
         assert_eq!(component.owner, plugin.id);
         assert!(component.maximum_authority.permits(&capability));
-        assert_eq!(component.exports.len(), 6);
+        assert_eq!(component.exports.len(), 7);
         assert_eq!(
             component.exports[0].interface,
             ExecutionInterface::interface_id()
         );
         assert_eq!(
             component.exports[1].interface,
-            ExecutionResourceInterface::interface_id()
+            ExecutionInspectionInterface::interface_id()
         );
         assert_eq!(
             component.exports[2].interface,
-            StepAttemptInterface::interface_id()
+            ExecutionResourceInterface::interface_id()
         );
         assert_eq!(
             component.exports[3].interface,
+            StepAttemptInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[4].interface,
             StepTransactionInterface::interface_id()
         );
         assert_eq!(
@@ -250,30 +260,34 @@ mod tests {
         );
         assert_eq!(
             component.exports[1].required_authority,
-            persistence_authority()
-        );
-        assert_eq!(
-            component.exports[2].required_authority,
             attempt_read_authority()
         );
         assert_eq!(
-            component.exports[3].required_authority,
+            component.exports[2].required_authority,
             persistence_authority()
         );
         assert_eq!(
-            component.exports[4].interface,
-            ExecutionConfigurationInterface::interface_id()
+            component.exports[3].required_authority,
+            attempt_read_authority()
         );
         assert_eq!(
             component.exports[4].required_authority,
-            Authority::default()
+            persistence_authority()
         );
         assert_eq!(
             component.exports[5].interface,
-            ExecutionReviewInterface::interface_id()
+            ExecutionConfigurationInterface::interface_id()
         );
         assert_eq!(
             component.exports[5].required_authority,
+            Authority::default()
+        );
+        assert_eq!(
+            component.exports[6].interface,
+            ExecutionReviewInterface::interface_id()
+        );
+        assert_eq!(
+            component.exports[6].required_authority,
             persistence_authority()
         );
         assert_eq!(component.imports.len(), 2);
