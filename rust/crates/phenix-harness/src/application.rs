@@ -2743,9 +2743,7 @@ fn require_runtime_inspection_read(authority: &Authority) -> Result<(), Applicat
         Ok(())
     } else {
         Err(ApplicationError::PermissionDenied {
-            message: format!(
-                "phenix.inspect query requires {RUNTIME_INSPECTION_READ_CAPABILITY}"
-            ),
+            message: format!("phenix.inspect query requires {RUNTIME_INSPECTION_READ_CAPABILITY}"),
         })
     }
 }
