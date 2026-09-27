@@ -995,6 +995,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn retirement_is_bounded_by_operation_authority() {
+        let read = CapabilityId::parse("fixture.read").unwrap();
+        let write = CapabilityId::parse("fixture.write").unwrap();
+        let broad = Authority::new([read.clone(), write.clone()]);
+        let narrow = Authority::new([read]);
+
+        let mut first_manifest = manifest("fixture.residency.retire-authority");
+        first_manifest.maximum_authority = broad.clone();
+        let mut second_manifest = first_manifest.clone();
+        second_manifest.version += 1;
+
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let lifecycle = Arc::new(Mutex::new(Vec::new()));
+        let lifecycle_for_factory = Arc::clone(&lifecycle);
+        let write_for_factory = write.clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(first_manifest.id, move || {
+            Box::new(AuthorityEcho {
+                capability: write_for_factory.clone(),
+                lifecycle: Arc::clone(&lifecycle_for_factory),
+            })
+        });
+        kernel.activate_all().unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&narrow, [])
+            .unwrap();
+        kernel
+            .retire_generation_under_constraints(&second_generation, &constraints)
+            .unwrap();
+
+        assert_eq!(
+            lifecycle
+                .lock()
+                .expect("authority lifecycle observation mutex poisoned")
+                .as_slice(),
+            &[
+                ("start", first_generation, true),
+                ("start", second_generation.clone(), true),
+                ("stop", second_generation, false),
+            ]
+        );
+    }
+
     struct GenerationTaskPlugin {
         started: std::sync::mpsc::Sender<GraphGenerationId>,
         cancelled: std::sync::mpsc::Sender<GraphGenerationId>,
@@ -1275,6 +1329,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
+        let first_generation = first.generation().clone();
         let mut changed_provider_manifest = first_provider_manifest.clone();
         changed_provider_manifest.version += 1;
         let changed_provider = ResolvedHarness::resolve(
@@ -1349,11 +1404,22 @@ mod tests {
         assert_eq!(
             kernel.make_generation_resident_under_constraints(&second, &constraints),
             Err(KernelError::PinnedBindingChanged {
+                generation: second_generation.clone(),
+                component: consumer_component.clone(),
+                interface: interface.clone(),
+            })
+        );
+
+        kernel.make_generation_resident(&second).unwrap();
+        assert_eq!(
+            kernel.promote_generation_under_constraints(&second_generation, &constraints),
+            Err(KernelError::PinnedBindingChanged {
                 generation: second_generation,
                 component: consumer_component,
                 interface,
             })
         );
+        assert_eq!(kernel.graph_generation(), Some(&first_generation));
     }
 
     #[test]
