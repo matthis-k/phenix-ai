@@ -3249,6 +3249,56 @@ mod tests {
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
 
+        for (call_id, query) in [("inspect-graph", "graph"), ("inspect-values", "values")] {
+            let request = AgentToolExecutionRequest {
+                execution_id: execution_id.clone(),
+                session_id: Some(session_id.clone()),
+                call: ModelToolCall {
+                    call_id: call_id.into(),
+                    callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                    input: PhenixValue::Table(BTreeMap::from([(
+                        Key::parse("query").unwrap(),
+                        PhenixValue::String(query.into()),
+                    )])),
+                },
+            };
+            let output = worker
+                .harness
+                .lock()
+                .invoke(
+                    &agent_tool_execution_service(),
+                    &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                    &worker.authority,
+                    None,
+                )
+                .unwrap();
+            let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+            let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+            let AgentToolExecutionResponse::Completed { result: inspected } = response else {
+                panic!("runtime inspection must complete through the application adapter");
+            };
+            assert!(!inspected.is_error, "{query} inspection failed");
+            match (query, inspected.output) {
+                ("graph", PhenixValue::Map(graph)) => {
+                    assert!(matches!(graph.get("generation"), Some(PhenixValue::String(_))));
+                    assert!(matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty()));
+                }
+                ("values", PhenixValue::List(values)) => {
+                    assert!(values.iter().any(|value| {
+                        matches!(
+                            value,
+                            PhenixValue::Map(fields)
+                                if matches!(
+                                    fields.get("id"),
+                                    Some(PhenixValue::String(id)) if id == SESSION_PROJECTION_VALUE
+                                )
+                        )
+                    }));
+                }
+                (query, value) => panic!("unexpected {query} inspection value: {value:?}"),
+            }
+        }
+
         let rejected = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
             session_id: Some(session_id),
