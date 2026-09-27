@@ -56,7 +56,7 @@ fn validate_profile(provider: &PluginId, profile: &RoutingProfile) -> Result<(),
     Ok(())
 }
 
-pub(super) fn prepare(
+pub(super) fn publish(
     context: &ModelContext<'_, '_, '_>,
     provider: PluginId,
     profiles: Vec<RoutingProfile>,
@@ -146,12 +146,11 @@ pub(super) fn prepare(
         value: serde_json::to_vec(&manifest).map_err(|error| error.to_string())?,
     });
 
-    let mutation = context
+    context
         .kernel
-        .prepare_durable_transaction(&model_namespace(), &operations)
+        .transact_durable(&model_namespace(), &operations)
         .map_err(|error| error.to_string())?;
-    Ok(ModelResponse::PreparedProfiles {
-        mutation,
-        profiles: current.into_values().collect(),
+    Ok(ModelResponse::Profiles {
+        profiles: current.values().map(descriptor).collect(),
     })
 }
