@@ -1189,6 +1189,40 @@ mod tests {
         let _ = fs::remove_dir_all(outside);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn restricted_direct_write_allows_symlink_that_stays_beneath_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        fs::create_dir_all(root.join("target")).unwrap();
+        symlink("target", root.join("inside-link")).unwrap();
+
+        let mut kernel = restricted_kernel(
+            &root,
+            EnvironmentFilesystemPolicy::HostReadWorkingDirectoryWrite,
+        );
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                EnvironmentCommand::WriteFile {
+                    path: root
+                        .join("inside-link/value.txt")
+                        .to_string_lossy()
+                        .into_owned(),
+                    content: b"inside".to_vec(),
+                    create_parents: false,
+                },
+            ),
+            EnvironmentResponse::Written
+        ));
+        assert_eq!(fs::read(root.join("target/value.txt")).unwrap(), b"inside");
+
+        let _ = fs::remove_file(root.join("inside-link"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn restricted_persistent_process_keeps_descendants_confined() {
         let root = temp_root();
