@@ -182,7 +182,8 @@ impl ComponentInterface for ExecutionInspectionInterface {
     }
 
     fn schema() -> phenix_core::InterfaceSchema {
-        phenix_core::InterfaceSchema::of::<ExecutionInspectionCommand, ExecutionInspectionResponse>()
+        phenix_core::InterfaceSchema::of::<ExecutionInspectionCommand, ExecutionInspectionResponse>(
+        )
     }
 }
 
