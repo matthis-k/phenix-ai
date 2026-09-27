@@ -439,9 +439,14 @@ mod tests {
         assert_eq!(promoted.active_generation, trial_generation);
         assert_eq!(kernel.graph_generation(), Some(&trial_generation));
         assert_eq!(reconciler.active().generation(), &trial_generation);
-        assert_eq!(kernel.active_resources()[0].content_identity, "sha256:trial");
+        assert_eq!(
+            kernel.active_resources()[0].content_identity,
+            "sha256:trial"
+        );
         assert!(reconciler.resident(&initial_generation).is_some());
-        assert!(kernel.resident_generation_ids().contains(&initial_generation));
+        assert!(kernel
+            .resident_generation_ids()
+            .contains(&initial_generation));
 
         let rolled_back = reconciler
             .promote_resident_on_kernel(&mut kernel, &initial_generation, &constraints)
