@@ -13,13 +13,14 @@ pub use types::*;
 use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
     ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelInferenceInterface,
-    ModelInferenceResponse, PhenixValue, PluginExecution, PluginId, PluginInstance, PluginManifest,
-    ServiceContribution, ServiceId, ServiceRole,
+    ModelId, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId, PluginInstance,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub const PROVIDER_AUTH_SERVICE: &str = "phenix.providers.auth@1";
+pub const PROVIDER_MODELS_SERVICE: &str = "phenix.providers.models@1";
 pub const NETWORK_HTTP_CAPABILITY: &str = "network.http";
 pub const SECRETS_MANAGE_CAPABILITY: &str = "secrets.manage";
 pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
@@ -151,11 +152,53 @@ pub fn provider_auth_service() -> ServiceId {
     ServiceId::parse(PROVIDER_AUTH_SERVICE).expect("static provider auth service is valid")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderModelOrigin {
+    Discovered,
+    Declared,
+    DiscoveredAndDeclared,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderModel {
+    pub id: ModelId,
+    pub origin: ProviderModelOrigin,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderModelsCommand {
+    List,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderModelsResponse {
+    Models { models: Vec<ProviderModel> },
+}
+
+pub struct ProviderModelsInterface;
+
+impl ComponentInterface for ProviderModelsInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(PROVIDER_MODELS_SERVICE)
+            .expect("static provider models interface is valid")
+    }
+}
+
+#[must_use]
+pub fn provider_models_service() -> ServiceId {
+    ServiceId::parse(PROVIDER_MODELS_SERVICE).expect("static provider models service is valid")
+}
+
 pub(crate) struct ProviderSpec {
     id: PluginId,
     endpoint: Endpoint,
     auth: auth::Definition,
     default_auth: Option<Auth>,
+    declared_models: Vec<ModelId>,
     protocol: Arc<dyn ProtocolAdapter>,
 }
 
@@ -166,6 +209,10 @@ impl ProviderSpec {
 
     fn supports_auth(&self) -> bool {
         !self.auth.is_empty()
+    }
+
+    fn supports_model_catalog(&self) -> bool {
+        self.protocol.supports_model_catalog() || !self.declared_models.is_empty()
     }
 }
 
@@ -187,6 +234,7 @@ impl ProviderDefinition {
                 endpoint,
                 auth: auth.into(),
                 default_auth: None,
+                declared_models: Vec::new(),
                 protocol: Arc::new(protocol),
             }),
         }
@@ -204,6 +252,27 @@ impl ProviderDefinition {
                 endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
                 default_auth: Some(default_auth),
+                declared_models: self.spec.declared_models.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn with_declared_models(
+        self,
+        models: impl IntoIterator<Item = ModelId>,
+    ) -> Self {
+        let mut declared_models = models.into_iter().collect::<Vec<_>>();
+        declared_models.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        declared_models.dedup();
+        Self {
+            spec: Arc::new(ProviderSpec {
+                id: self.spec.id.clone(),
+                endpoint: self.spec.endpoint.clone(),
+                auth: self.spec.auth.clone(),
+                default_auth: self.spec.default_auth.clone(),
+                declared_models,
                 protocol: Arc::clone(&self.spec.protocol),
             }),
         }
@@ -255,6 +324,18 @@ impl ProviderDefinition {
                     .chain(secrets.capabilities().cloned()),
             );
         }
+        if self.spec.supports_model_catalog() {
+            services.push(ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: provider_models_service(),
+                priority: 100,
+                required_authority: if self.spec.protocol.supports_model_catalog() {
+                    network_authority()
+                } else {
+                    Authority::default()
+                },
+            });
+        }
         PluginManifest {
             id: self.spec.id.clone(),
             version: 1,
@@ -280,6 +361,18 @@ impl ProviderDefinition {
                 schema: ProviderAuthInterface::schema(),
                 priority: 100,
                 required_authority: secrets_authority(),
+            });
+        }
+        if self.spec.supports_model_catalog() {
+            exports.push(ComponentExport {
+                interface: ProviderModelsInterface::interface_id(),
+                schema: ProviderModelsInterface::schema(),
+                priority: 100,
+                required_authority: if self.spec.protocol.supports_model_catalog() {
+                    network_authority()
+                } else {
+                    Authority::default()
+                },
             });
         }
         ComponentManifest {
