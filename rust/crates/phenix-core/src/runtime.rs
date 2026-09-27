@@ -693,6 +693,7 @@ impl GenerationRuntimeState {
 pub struct Kernel {
     generation_state: GenerationRuntimeState,
     resident_generations: BTreeMap<GraphGenerationId, GenerationRuntimeState>,
+    authority_ceiling: Option<Authority>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
