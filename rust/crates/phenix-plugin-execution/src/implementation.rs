@@ -4,8 +4,10 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    execution_service, CallableRecord, ExecutionAuthority, ExecutionCommand, ExecutionInterface,
-    ExecutionRecord, ExecutionResponse, ExecutionState, WorkerTaskRecord, WorkerTaskState,
+    execution_inspection_service, execution_service, CallableRecord, ExecutionAuthority,
+    ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionInterface, ExecutionRecord, ExecutionResponse,
+    ExecutionState, WorkerTaskRecord, WorkerTaskState,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -76,12 +78,20 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: phenix_core::ServiceRole::Terminal,
-            service: execution_service(),
-            priority: 100,
-            required_authority: Authority::default(),
-        }],
+        services: vec![
+            ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service: execution_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service: execution_inspection_service(),
+                priority: 100,
+                required_authority: Authority::new([capability(PERSISTENCE_READ)]),
+            },
+        ],
         resource_namespaces: vec![execution_namespace()],
         maximum_authority,
     }
@@ -116,20 +126,32 @@ impl PluginInstance for ExecutionPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &execution_service() {
-            return Err(format!("unsupported execution service: {service}"));
-        }
         let context = context(host);
-        let interface = ExecutionInterface::interface_id();
-        let command = context
-            .kernel
-            .decode_projected::<ExecutionCommand>(&interface, input)
-            .map_err(|error| error.to_string())?;
-        let response = execute(&context, command)?;
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
+        if service == &execution_service() {
+            let interface = ExecutionInterface::interface_id();
+            let command = context
+                .kernel
+                .decode_projected::<ExecutionCommand>(&interface, input)
+                .map_err(|error| error.to_string())?;
+            let response = execute(&context, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service == &execution_inspection_service() {
+            let interface = ExecutionInspectionInterface::interface_id();
+            let command = context
+                .kernel
+                .decode_projected::<ExecutionInspectionCommand>(&interface, input)
+                .map_err(|error| error.to_string())?;
+            let response = inspect(&context, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        Err(format!("unsupported execution service: {service}"))
     }
 }
 
@@ -148,22 +170,10 @@ fn execute(
                 execution: state.executions.get(&id).cloned(),
             })
         }
-        ExecutionCommand::ListExecutions => {
-            let (_, state) = read_state(context)?;
-            Ok(ExecutionResponse::Executions {
-                executions: state.executions.into_values().collect(),
-            })
-        }
         ExecutionCommand::GetTask { id } => {
             let (_, state) = read_state(context)?;
             Ok(ExecutionResponse::TaskLookup {
                 task: state.tasks.get(&id).cloned(),
-            })
-        }
-        ExecutionCommand::ListTasks => {
-            let (_, state) = read_state(context)?;
-            Ok(ExecutionResponse::Tasks {
-                tasks: state.tasks.into_values().collect(),
             })
         }
         ExecutionCommand::InvokeCallable {
@@ -173,6 +183,26 @@ fn execute(
         } => invoke_callable(context, &execution_id, &callable_id, &input),
         other => mutate_state(context, |state| mutate(context, other, state)),
     }
+}
+
+fn inspect(
+    context: &ExecutionContext<'_, '_>,
+    command: ExecutionInspectionCommand,
+) -> Result<ExecutionInspectionResponse, String> {
+    let (_, state) = read_state(context)?;
+    Ok(match command {
+        ExecutionInspectionCommand::GetExecution { id } => {
+            ExecutionInspectionResponse::ExecutionLookup {
+                execution: state.executions.get(&id).cloned(),
+            }
+        }
+        ExecutionInspectionCommand::ListExecutions => ExecutionInspectionResponse::Executions {
+            executions: state.executions.into_values().collect(),
+        },
+        ExecutionInspectionCommand::ListTasks => ExecutionInspectionResponse::Tasks {
+            tasks: state.tasks.into_values().collect(),
+        },
+    })
 }
 
 fn mutate(
@@ -390,9 +420,7 @@ fn mutate(
         }
         ExecutionCommand::AllocateExecution { .. }
         | ExecutionCommand::GetExecution { .. }
-        | ExecutionCommand::ListExecutions
         | ExecutionCommand::GetTask { .. }
-        | ExecutionCommand::ListTasks
         | ExecutionCommand::InvokeCallable { .. } => {
             Err("non-mutation execution command reached mutation path".into())
         }
