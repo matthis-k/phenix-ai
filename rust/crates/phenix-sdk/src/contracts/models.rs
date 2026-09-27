@@ -364,7 +364,7 @@ pub enum ModelCommand {
     PreparePackagedProfiles {
         profiles: Vec<RoutingProfile>,
     },
-    PrepareProviderCatalogProfiles {
+    PublishProviderCatalogProfiles {
         provider_plugin: PluginId,
         profiles: Vec<RoutingProfile>,
     },
