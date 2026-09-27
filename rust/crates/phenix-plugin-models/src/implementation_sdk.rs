@@ -173,10 +173,10 @@ fn handle_routing(
 
     match command {
         ModelCommand::PreparePackagedProfiles { profiles } => packaged::prepare(context, profiles),
-        ModelCommand::PrepareProviderCatalogProfiles {
+        ModelCommand::PublishProviderCatalogProfiles {
             provider_plugin,
             profiles,
-        } => catalog::prepare(context, provider_plugin, profiles),
+        } => catalog::publish(context, provider_plugin, profiles),
         ModelCommand::RegisterProfile { profile } => {
             insert_profile(context, &profile)?;
             Ok(ModelResponse::Profile {
