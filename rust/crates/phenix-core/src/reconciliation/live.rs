@@ -1,7 +1,7 @@
 use crate::{
     GraphGenerationId, GraphReconciler, Kernel, LayerPolicy, MetadataReconciliationError, PluginId,
     PluginManifest, ReconciliationResult, ResolvedCompositionMetadata, ResolvedHarness,
-    ResolvedHarnessActivationError, ServiceId,
+    ResolvedHarnessActivationError, RootExecutionConstraints, ServiceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,10 +44,11 @@ impl GraphReconciler {
         &mut self,
         kernel: &mut Kernel,
         candidate: ResolvedHarness,
+        constraints: &RootExecutionConstraints,
     ) -> Result<GraphGenerationId, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
         let generation = kernel
-            .make_generation_resident(&candidate)
+            .make_generation_resident_under_constraints(&candidate, constraints)
             .map_err(LiveReconciliationError::Runtime)?;
         if generation != *self.active.generation() {
             self.resident.insert(generation.clone(), candidate);
@@ -374,8 +375,11 @@ mod tests {
         kernel.activate_resolved_harness(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
         reconciler
-            .make_candidate_resident_on_kernel(&mut kernel, trial)
+            .make_candidate_resident_on_kernel(&mut kernel, trial, &constraints)
             .unwrap();
 
         assert_eq!(
