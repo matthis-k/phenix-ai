@@ -5,7 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
     pub(super) runtime: &'a RuntimeGeneration,
-    pub(super) authority_ceiling: Option<&'a Authority>,
+    pub(super) lifecycle_authority_ceiling: Option<&'a Authority>,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -27,7 +27,7 @@ impl StopView<'_> {
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
         let plugin_authority =
-            constrain_authority_to_ceiling(self.authority_ceiling, &manifest.maximum_authority);
+            constrain_authority_to_ceiling(self.lifecycle_authority_ceiling, &manifest.maximum_authority);
         let host = PluginHost {
             runtime: RuntimeServices {
                 states: self.states,
@@ -231,7 +231,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
-                                authority_ceiling: Some(candidate.authority_ceiling()),
+                                lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -293,7 +293,7 @@ impl Kernel {
                             &staged,
                             StopView {
                                 runtime: candidate_runtime,
-                                authority_ceiling: Some(candidate.authority_ceiling()),
+                                lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
                                 states: &next_states,
                                 instances: &next_instances,
                                 invocations: &next_invocations,
@@ -336,7 +336,7 @@ impl Kernel {
                     &staged,
                     StopView {
                         runtime: candidate_runtime,
-                        authority_ceiling: Some(candidate.authority_ceiling()),
+                        lifecycle_authority_ceiling: Some(candidate.authority_ceiling()),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
@@ -366,7 +366,8 @@ impl Kernel {
             .collect();
 
         let old_runtime = self.generation_state.runtime.clone();
-        let old_authority_ceiling = self.generation_state.authority_ceiling.clone();
+        let old_lifecycle_authority_ceiling =
+            self.generation_state.lifecycle_authority_ceiling.clone();
         let old_states = self.generation_state.states.clone();
         let old_instances = self.generation_state.instances.clone();
         let old_invocations = self.generation_state.invocations.clone();
@@ -388,7 +389,7 @@ impl Kernel {
 
         let retired_view = StopView {
             runtime: &old_runtime,
-            authority_ceiling: old_authority_ceiling.as_ref(),
+            lifecycle_authority_ceiling: old_lifecycle_authority_ceiling.as_ref(),
             states: &old_states,
             instances: &old_instances,
             invocations: &old_invocations,
