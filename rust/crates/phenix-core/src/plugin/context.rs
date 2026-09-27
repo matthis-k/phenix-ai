@@ -73,6 +73,11 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         self.host.cancellation_token()
     }
 
+    /// Read the resolved component graph pinned to the current call generation.
+    pub fn component_graph(&self) -> &crate::ResolvedComponentGraph {
+        self.host.component_graph()
+    }
+
     #[doc(hidden)]
     pub fn record_runtime_trace(&self, event: crate::RuntimeTraceEvent) {
         self.host.record_runtime_trace(event);
