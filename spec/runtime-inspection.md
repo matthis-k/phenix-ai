@@ -59,6 +59,8 @@ A resident trial generation therefore sees its own resolved graph. Inspection mu
 
 Execution records carry their graph generation. A DAG query starts at the current execution and includes only same-generation descendants reachable through `parent_execution`. Cross-generation parent links are excluded even if malformed or stale durable state contains one.
 
+The DAG result includes the root generation explicitly so callers can compare it with graph inspection without inferring generation from child records.
+
 ## Values
 
 Observable inspection reads `ObservableStore` directly.
