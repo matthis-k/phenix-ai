@@ -402,10 +402,11 @@ fn search_path(
                 if entry.kind == EnvironmentFileKind::Other {
                     continue;
                 }
+                let child = workspace_directory_child(workspace_root, path, &entry.path)?;
                 search_path(
                     context,
                     workspace_root,
-                    Path::new(&entry.path),
+                    &child,
                     needle,
                     case_sensitive,
                     matches,
@@ -456,6 +457,42 @@ fn search_path(
         }
         Some(EnvironmentFileKind::Other) | None => Ok(()),
     }
+}
+
+fn workspace_directory_child(
+    workspace_root: &Path,
+    parent: &Path,
+    environment_path: &str,
+) -> Result<PathBuf, String> {
+    let environment_path = Path::new(environment_path);
+    let relative = environment_path.strip_prefix(parent).map_err(|_| {
+        format!(
+            "environment returned directory entry outside requested directory: {}",
+            environment_path.display()
+        )
+    })?;
+    let mut components = relative.components();
+    let Some(Component::Normal(name)) = components.next() else {
+        return Err(format!(
+            "environment returned invalid directory entry: {}",
+            environment_path.display()
+        ));
+    };
+    if components.next().is_some() {
+        return Err(format!(
+            "environment returned non-child directory entry: {}",
+            environment_path.display()
+        ));
+    }
+
+    let child = parent.join(name);
+    child.strip_prefix(workspace_root).map_err(|_| {
+        format!(
+            "environment returned directory entry outside workspace root: {}",
+            environment_path.display()
+        )
+    })?;
+    Ok(child)
 }
 
 fn process(
@@ -608,6 +645,80 @@ mod tests {
                     truncated: false,
                 },
                 other => return Err(format!("unexpected fixture environment command: {other:?}")),
+            };
+
+            context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    struct EscapingDirectoryEnvironment {
+        commands: Arc<Mutex<Vec<EnvironmentCommand>>>,
+        root: String,
+        outside: String,
+    }
+
+    impl PluginInstance for EscapingDirectoryEnvironment {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &environment_service() {
+                return Err(format!(
+                    "unsupported escaping fixture environment service: {service}"
+                ));
+            }
+
+            let context = PluginContext::new(host, (), (), ());
+            let command = context
+                .kernel
+                .decode_projected::<EnvironmentCommand>(
+                    &EnvironmentInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            self.commands
+                .lock()
+                .map_err(|_| "escaping fixture command log poisoned".to_owned())?
+                .push(command.clone());
+
+            let response = match command {
+                EnvironmentCommand::Stat { path } if path == self.root => {
+                    EnvironmentResponse::Metadata {
+                        kind: Some(EnvironmentFileKind::Directory),
+                    }
+                }
+                EnvironmentCommand::ReadDir { path } if path == self.root => {
+                    EnvironmentResponse::Directory {
+                        entries: vec![phenix_sdk::EnvironmentDirEntry {
+                            path: self.outside.clone(),
+                            kind: EnvironmentFileKind::File,
+                        }],
+                    }
+                }
+                EnvironmentCommand::Stat { path } if path == self.outside => {
+                    EnvironmentResponse::Metadata {
+                        kind: Some(EnvironmentFileKind::File),
+                    }
+                }
+                EnvironmentCommand::ReadFile { path } if path == self.outside => {
+                    EnvironmentResponse::File {
+                        content: Some(b"needle outside".to_vec()),
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "unexpected escaping fixture environment command: {other:?}"
+                    ))
+                }
             };
 
             context
@@ -826,6 +937,67 @@ mod tests {
                 ..
             } if program == "git"
                 && working_directory == "/phenix-fixture-environment-only/project"
+        )));
+    }
+
+    #[test]
+    fn search_rejects_environment_directory_entries_outside_workspace_root() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        let root = "/virtual/project".to_owned();
+        let outside = "/virtual/outside/secret.txt".to_owned();
+        let workspace_root = root.clone();
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(workspace_root.clone())
+            })
+            .unwrap();
+
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(EscapingDirectoryEnvironment {
+                    commands: Arc::clone(&recorded),
+                    root: root.clone(),
+                    outside: outside.clone(),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let error = invoke(
+            &mut kernel,
+            WorkspaceCommand::Search {
+                needle: "needle".into(),
+                path: None,
+                case_sensitive: true,
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap_err();
+        assert!(error.contains("outside requested directory"));
+
+        let commands = commands.lock().unwrap();
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Stat { path } | EnvironmentCommand::ReadFile { path }
+                if path == "/virtual/outside/secret.txt"
         )));
     }
 

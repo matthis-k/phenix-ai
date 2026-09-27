@@ -64,6 +64,7 @@ The default product currently selects `phenix.environment.local`. That provider 
 Workspace may:
 
 - resolve a relative project path against its bound root;
+- validate Environment directory entries before following them during project traversal;
 - reject `..` or absolute paths at a project-relative API;
 - compute and compare exact content versions;
 - reject stale Patch/write operations;
@@ -364,6 +365,7 @@ The architecture is considered preserved only if tests prove:
 - persistent process handles are provider-owned opaque strings.
 - one-shot and persistent process cleanup terminates ordinary descendant processes, including on explicit close and provider stop.
 - replacing the Environment provider does not require changing Workspace or tool contracts.
+- Workspace rejects provider-returned directory entries that escape the requested project directory before reading them.
 - restricted local tests prove direct filesystem operations and shell-originated writes enforce the same policy.
 - restricted local tests prove arbitrary child processes cannot escape the filesystem view.
 - every restricted process path, including persistent processes, reaches the same enforcing launcher.
