@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const EXECUTION_SERVICE: &str = "phenix.execution@1";
+pub const EXECUTION_INSPECTION_SERVICE: &str = "phenix.execution.inspect@1";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct ExecutionAuthority {
@@ -103,7 +104,6 @@ pub enum ExecutionCommand {
     GetExecution {
         id: String,
     },
-    ListExecutions,
     FinishExecution {
         id: String,
         success: bool,
@@ -143,7 +143,6 @@ pub enum ExecutionCommand {
     GetTask {
         id: String,
     },
-    ListTasks,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -151,13 +150,46 @@ pub enum ExecutionCommand {
 pub enum ExecutionResponse {
     Execution { execution: ExecutionRecord },
     ExecutionLookup { execution: Option<ExecutionRecord> },
-    Executions { executions: Vec<ExecutionRecord> },
     Callable { callable: CallableRecord },
     Invocation { output: Vec<u8> },
     Task { task: WorkerTaskRecord },
     TaskLookup { task: Option<WorkerTaskRecord> },
-    Tasks { tasks: Vec<WorkerTaskRecord> },
     RunnableTasks { task_ids: Vec<String> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum ExecutionInspectionCommand {
+    GetExecution { id: String },
+    ListExecutions,
+    ListTasks,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "response", rename_all = "snake_case")]
+pub enum ExecutionInspectionResponse {
+    ExecutionLookup { execution: Option<ExecutionRecord> },
+    Executions { executions: Vec<ExecutionRecord> },
+    Tasks { tasks: Vec<WorkerTaskRecord> },
+}
+
+pub struct ExecutionInspectionInterface;
+
+impl ComponentInterface for ExecutionInspectionInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(EXECUTION_INSPECTION_SERVICE)
+            .expect("static execution inspection interface id is valid")
+    }
+
+    fn schema() -> phenix_core::InterfaceSchema {
+        phenix_core::InterfaceSchema::of::<ExecutionInspectionCommand, ExecutionInspectionResponse>()
+    }
+}
+
+#[must_use]
+pub fn execution_inspection_service() -> ServiceId {
+    ServiceId::parse(EXECUTION_INSPECTION_SERVICE)
+        .expect("static execution inspection service id is valid")
 }
 
 pub struct ExecutionInterface;
