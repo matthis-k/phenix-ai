@@ -308,9 +308,7 @@ fn unbound_service_selects_next_live_precomputed_terminal() {
         .unwrap();
     kernel.activate_all().unwrap();
 
-    kernel
-        .states
-        .insert(plugin("preferred"), PluginState::Stopped);
+    kernel.stop(&plugin("preferred")).unwrap();
 
     assert_eq!(
         kernel
