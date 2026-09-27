@@ -3751,7 +3751,7 @@ mod tests {
             fallback_targets: vec![fixed],
             callable_targets: BTreeMap::new(),
         };
-        let fixed_info = selection_info(&fixed_profile).unwrap();
+        let fixed_info = selection_info(&fixed_profile, true).unwrap();
         assert_eq!(fixed_info.presentation, SelectionPresentation::Model);
         assert_eq!(fixed_info.name, "model-a");
 
@@ -3761,7 +3761,7 @@ mod tests {
             fallback_targets: vec![selection_target("provider-b", "model-b")],
             callable_targets: BTreeMap::new(),
         };
-        let routed_info = selection_info(&routed_profile).unwrap();
+        let routed_info = selection_info(&routed_profile, true).unwrap();
         assert_eq!(routed_info.presentation, SelectionPresentation::Router);
         assert_eq!(routed_info.name, "router");
     }
@@ -3782,7 +3782,7 @@ mod tests {
             fallback_targets: Vec::new(),
             callable_targets: BTreeMap::new(),
         };
-        let info = selection_info(&profile).unwrap();
+        let info = selection_info(&profile, true).unwrap();
         assert_eq!(
             info.description.as_deref(),
             Some("openai-codex · effort high")
