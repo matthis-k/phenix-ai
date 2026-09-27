@@ -1,7 +1,7 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use phenix_core::{
-    CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelId,
     ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
     ValueCodec,
@@ -13,6 +13,26 @@ use std::collections::BTreeMap;
 
 pub trait ProtocolAdapter: Send + Sync {
     fn name(&self) -> &'static str;
+
+    fn supports_model_catalog(&self) -> bool {
+        false
+    }
+
+    fn model_catalog_request(
+        &self,
+        _endpoint: &Endpoint,
+    ) -> Result<Option<ProviderRequest>, ProviderError> {
+        Ok(None)
+    }
+
+    fn decode_model_catalog(
+        &self,
+        _response: &ProviderResponse,
+    ) -> Result<Vec<ModelId>, ProviderError> {
+        Err(ProviderError::Protocol {
+            message: format!("protocol {} does not define model discovery", self.name()),
+        })
+    }
 
     fn encode(
         &self,
@@ -44,6 +64,44 @@ impl ProtocolAdapter for Protocol {
         }
     }
 
+    fn supports_model_catalog(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenAiResponses | Self::OpenAiChatCompletions | Self::AnthropicMessages
+        )
+    }
+
+    fn model_catalog_request(
+        &self,
+        endpoint: &Endpoint,
+    ) -> Result<Option<ProviderRequest>, ProviderError> {
+        if !self.supports_model_catalog() {
+            return Ok(None);
+        }
+        let mut headers = BTreeMap::new();
+        if matches!(self, Self::AnthropicMessages) {
+            headers.insert("anthropic-version".to_owned(), "2023-06-01".to_owned());
+        }
+        Ok(Some(ProviderRequest {
+            method: crate::HttpMethod::Get,
+            url: endpoint.join("models")?,
+            headers,
+            body: Vec::new(),
+        }))
+    }
+
+    fn decode_model_catalog(
+        &self,
+        response: &ProviderResponse,
+    ) -> Result<Vec<ModelId>, ProviderError> {
+        if !self.supports_model_catalog() {
+            return Err(ProviderError::Protocol {
+                message: format!("protocol {} does not define model discovery", self.name()),
+            });
+        }
+        decode_standard_model_catalog(response)
+    }
+
     fn encode(
         &self,
         endpoint: &Endpoint,
@@ -66,6 +124,33 @@ impl ProtocolAdapter for Protocol {
             Self::OpenCodeGo | Self::OpenCodeZen => opencode_response(response),
         }
     }
+}
+
+fn decode_standard_model_catalog(
+    response: &ProviderResponse,
+) -> Result<Vec<ModelId>, ProviderError> {
+    let value = parse_json(response)?;
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ProviderError::Protocol {
+            message: "provider model catalog response is missing data[]".to_owned(),
+        })?;
+    let mut models = Vec::with_capacity(data.len());
+    for item in data {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ProviderError::Protocol {
+                message: "provider model catalog entry is missing a string id".to_owned(),
+            })?;
+        models.push(ModelId::parse(id).map_err(|error| ProviderError::Protocol {
+            message: format!("provider returned invalid model id {id:?}: {error}"),
+        })?);
+    }
+    models.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    models.dedup();
+    Ok(models)
 }
 
 // OpenCode gateways multiplex several provider wire protocols behind one
