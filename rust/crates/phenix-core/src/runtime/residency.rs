@@ -586,6 +586,38 @@ mod tests {
     }
 
     #[test]
+    fn failed_resident_staging_keeps_default_generation_usable() {
+        let first_manifest = manifest("fixture.residency.first");
+        let failing_manifest = manifest("fixture.residency.failing");
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let failing =
+            ResolvedHarness::resolve([failing_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let first_generation = first.generation().clone();
+        let failing_generation = failing.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(first_manifest.id, || Box::new(Echo(b"first")));
+        kernel.activate_all().unwrap();
+
+        assert_eq!(
+            kernel.make_generation_resident(&failing),
+            Err(KernelError::EmbeddedFactoryMissing(failing_manifest.id))
+        );
+        assert_eq!(kernel.graph_generation(), Some(&first_generation));
+        assert!(!kernel.resident_generation_ids().contains(&failing_generation));
+        assert_eq!(
+            kernel
+                .invoke(&service(), &[], &Authority::default(), None)
+                .unwrap(),
+            b"first"
+        );
+    }
+
+    #[test]
     fn selected_generation_cannot_change_a_pinned_binding() {
         let consumer = plugin("fixture.residency.consumer");
         let first_provider = plugin("fixture.residency.provider-a");
