@@ -5,15 +5,17 @@ use phenix_application_interface::{
         ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, PageInput, PermissionRequest, PermissionResponse, PromptInput,
         PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
-        SelectionSelectInput, Selections, SessionCreateInput, SessionInfo, SessionInput,
+        SelectionDefaultSelectInput, SelectionSelectInput, Selections, SessionCreateInput,
+        SessionInfo, SessionInput,
         SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
         SetInteractionHandlersInput,
     },
     Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
     CreateSession as AppCreateSession, DecideReview as AppDecideReview,
     DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
-    ListSelections as AppListSelections, ListSessions as AppListSessions, Prompt as AppPrompt,
-    RenameSession as AppRenameSession, ResumeSession as AppResumeSession,
+    ListDefaultSelections as AppListDefaultSelections, ListSelections as AppListSelections,
+    ListSessions as AppListSessions, Prompt as AppPrompt, RenameSession as AppRenameSession,
+    ResumeSession as AppResumeSession, SelectDefaultSelection as AppSelectDefaultSelection,
     SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
 };
 use phenix_core::{CapabilityOwnerId, ReferenceId, RoutingProfileId, SessionId, ValueCodec};
@@ -124,6 +126,7 @@ enum RequestProjection {
     Prompt {
         session_id: String,
     },
+    DefaultSelections,
     Selections {
         session_id: String,
     },
@@ -254,12 +257,35 @@ impl UserData for FacadeClient {
             )?;
             lua.create_userdata(request)
         });
-        methods.add_method("authenticate", |lua, this, method_id: String| {
+        methods.add_method(
+            "authenticate",
+            |lua, this, (method_id, secret): (String, Option<String>)| {
+                require_ready(&this.core)?;
+                let request = application_request::<AppAuthenticate>(
+                    &this.core,
+                    AuthenticateInput { method_id, secret },
+                    RequestProjection::Authentication,
+                )?;
+                lua.create_userdata(request)
+            },
+        );
+        methods.add_method("selections", |lua, this, ()| {
             require_ready(&this.core)?;
-            let request = application_request::<AppAuthenticate>(
+            let request = application_request::<AppListDefaultSelections>(
                 &this.core,
-                AuthenticateInput { method_id },
-                RequestProjection::Authentication,
+                Empty {},
+                RequestProjection::DefaultSelections,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method("select", |lua, this, selection_id: String| {
+            require_ready(&this.core)?;
+            let selection_id = RoutingProfileId::parse(selection_id)
+                .map_err(|error| lua_error(BindingError::conversion(error)))?;
+            let request = application_request::<AppSelectDefaultSelection>(
+                &this.core,
+                SelectionDefaultSelectInput { selection_id },
+                RequestProjection::DefaultSelections,
             )?;
             lua.create_userdata(request)
         });
@@ -751,6 +777,9 @@ fn decode_outcome(
                 .insert(session_id.clone(), result.execution_id.clone());
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::Prompt(result))
+        }
+        RequestProjection::DefaultSelections => {
+            Ok(FacadeOutcome::Selections(decode::<Selections>(&value)?))
         }
         RequestProjection::Selections { session_id } => {
             let selections = decode::<Selections>(&value)?;
