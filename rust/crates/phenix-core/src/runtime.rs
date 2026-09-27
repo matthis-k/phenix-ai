@@ -743,10 +743,7 @@ fn constrain_authority_to_ceiling(
     authority_ceiling: Option<&Authority>,
     authority: &Authority,
 ) -> Authority {
-    authority_ceiling.map_or_else(
-        || authority.clone(),
-        |ceiling| authority.attenuate(ceiling),
-    )
+    authority_ceiling.map_or_else(|| authority.clone(), |ceiling| authority.attenuate(ceiling))
 }
 
 pub struct Kernel {

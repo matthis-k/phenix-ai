@@ -1,8 +1,8 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentListener, ComponentManifest, EventBus,
     EventEnvelope, EventError, EventHandler, EventSubscription, InterfaceCompatibility,
-    InterfaceId, InterfaceSchema, InterfaceSchemaMismatch, PluginExecution, PluginId, PluginManifest,
-    ProviderCompositionPolicy, ProviderSelectionReason, SubscriptionSpec,
+    InterfaceId, InterfaceSchema, InterfaceSchemaMismatch, PluginExecution, PluginId,
+    PluginManifest, ProviderCompositionPolicy, ProviderSelectionReason, SubscriptionSpec,
 };
 use std::sync::Arc;
 use std::{

@@ -26,8 +26,10 @@ impl StopView<'_> {
         self.tasks.cancel_plugin_generation(plugin, generation);
         let live_call = self.tasks.begin_call(plugin, generation);
         let prepared_mutations = PreparedMutationScope::new(generation);
-        let plugin_authority =
-            constrain_authority_to_ceiling(self.lifecycle_authority_ceiling, &manifest.maximum_authority);
+        let plugin_authority = constrain_authority_to_ceiling(
+            self.lifecycle_authority_ceiling,
+            &manifest.maximum_authority,
+        );
         let host = PluginHost {
             runtime: RuntimeServices {
                 states: self.states,

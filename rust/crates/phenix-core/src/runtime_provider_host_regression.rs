@@ -178,8 +178,7 @@ fn resolved_harness_ceiling_attenuates_runtime_provider_and_guest_lifecycle() {
         maximum_authority: Authority::new([guest_capability.clone()]),
     };
     let ceiling = Authority::new([guest_capability.clone()]);
-    let resolved =
-        ResolvedHarness::resolve([bridge.clone(), guest], [], [], &ceiling).unwrap();
+    let resolved = ResolvedHarness::resolve([bridge.clone(), guest], [], [], &ceiling).unwrap();
 
     let provider_authority = Arc::new(Mutex::new(None));
     let guest_authority = Arc::new(Mutex::new(None));

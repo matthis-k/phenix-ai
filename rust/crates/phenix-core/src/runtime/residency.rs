@@ -102,8 +102,7 @@ impl Kernel {
         let lifecycle_authority_ceiling = candidate
             .authority_ceiling()
             .attenuate(constraints.authority());
-        let state =
-            self.stage_resident_generation(candidate, &lifecycle_authority_ceiling)?;
+        let state = self.stage_resident_generation(candidate, &lifecycle_authority_ceiling)?;
         self.events.replace_generation_subscriptions(
             candidate_generation.clone(),
             state.subscriptions.clone(),
@@ -940,10 +939,8 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
 
-        let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
-        let second =
-            ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first = ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second = ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
@@ -1007,10 +1004,8 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
 
-        let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
-        let second =
-            ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first = ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second = ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
