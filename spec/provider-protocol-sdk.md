@@ -211,6 +211,7 @@ The provider description is the source of truth for this wiring. Callers still n
 - A provider plugin owns declared models when discovery is unavailable or incomplete.
 - Discovered and declared entries merge by model ID before consumers see them.
 - Clients consume normalized provider/model data and never parse provider-specific catalog responses.
+Neovim is one such client. It renders catalog data and sends selections back through the application API.
 - Provider selection remains model-router policy, not endpoint-registry policy.
 - A provider cannot exist without a parsed endpoint and protocol adapter.
 - Provider auth is one composite typed definition rather than independent flags.
