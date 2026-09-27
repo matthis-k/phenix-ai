@@ -132,7 +132,7 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         ("session-rename", vec!["sessions"]),
         ("lineage", vec!["sessions"]),
         ("prompt", vec!["sessions"]),
-        ("routing", vec!["discovery"]),
+        ("routing", vec!["sessions"]),
         ("skills", vec!["sessions"]),
         ("callables", vec!["sessions"]),
         ("inspection", vec!["sessions"]),
