@@ -84,7 +84,7 @@ execution authority = candidate Harness ceiling
 lifecycle authority = candidate Harness ceiling ∩ admitting root authority
 ```
 
-The lifecycle ceiling is fixed for that resident generation. Promotion and retirement do not widen it. A trusted kernel-internal host path may stage without root pins, but agent-facing tooling must not use that path.
+The lifecycle ceiling is fixed for that resident generation. Promotion revalidates the caller's pinned bindings before changing the default. Retirement attenuates `stop` again by the authority of the caller that requested retirement. A trusted kernel-internal host path may stage without root pins, but agent-facing tooling must not use that path.
 
 The one-shot replacement API is stable-mode only. It requires no alternate resident generations. Once trial residency starts, staging, promotion, rollback, and retirement stay on the resident-generation path until the alternates are retired. This prevents two lifecycle paths from owning the same generation at once.
 
@@ -345,7 +345,8 @@ This keeps host constraints outside agent-controlled Harness composition while l
 - Exactly one generation is the default for new unqualified roots and ambient delivery.
 - Generation selection cannot widen initial authority.
 - Candidate lifecycle is bounded by the authority of the root that admitted the resident generation.
-- Pinned bindings are validated before resident candidate lifecycle runs.
+- Pinned bindings are validated before resident candidate lifecycle runs and again before promotion.
+- Retirement cannot run Plugin `stop` with more authority than the caller requesting retirement.
 - Generation selection cannot change a pinned Environment or other host binding.
 - Harness generations never mix providers dynamically across generation boundaries.
 - Plugin instances, listeners, tasks, and runtime handles are generation-local.
