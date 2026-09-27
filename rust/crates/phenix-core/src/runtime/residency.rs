@@ -179,6 +179,14 @@ impl Kernel {
             .remove(generation)
             .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
 
+        // The current default has only ambient subscriptions until it becomes
+        // resident. Preserve them under its generation before changing the
+        // ambient default so explicit old-generation roots keep their topology.
+        self.events.replace_generation_subscriptions(
+            current_generation.clone(),
+            self.generation_state.subscriptions.clone(),
+        )?;
+
         if let Err(error) = self
             .events
             .replace_subscriptions(candidate.subscriptions.clone())
@@ -670,7 +678,7 @@ mod tests {
             seen.lock()
                 .expect("listener observation mutex poisoned")
                 .as_slice(),
-            &[first_generation.clone()]
+            std::slice::from_ref(&first_generation)
         );
         seen.lock()
             .expect("listener observation mutex poisoned")
@@ -689,7 +697,40 @@ mod tests {
             seen.lock()
                 .expect("listener observation mutex poisoned")
                 .as_slice(),
-            &[second_generation.clone()]
+            std::slice::from_ref(&second_generation)
+        );
+
+        kernel.promote_generation(&second_generation).unwrap();
+        seen.lock()
+            .expect("listener observation mutex poisoned")
+            .clear();
+
+        let report = kernel
+            .events()
+            .dispatch(&ambient, &Authority::default())
+            .unwrap();
+        assert!(report.failures.is_empty());
+        assert_eq!(
+            seen.lock()
+                .expect("listener observation mutex poisoned")
+                .as_slice(),
+            std::slice::from_ref(&second_generation)
+        );
+        seen.lock()
+            .expect("listener observation mutex poisoned")
+            .clear();
+
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&first_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"delivered"
+        );
+        assert_eq!(
+            seen.lock()
+                .expect("listener observation mutex poisoned")
+                .as_slice(),
+            std::slice::from_ref(&first_generation)
         );
     }
 
@@ -830,6 +871,10 @@ mod tests {
         );
 
         kernel.promote_generation(&second_generation).unwrap();
+        assert_eq!(
+            cancelled_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        );
         kernel.retire_generation(&first_generation).unwrap();
         assert_eq!(
             cancelled_rx
@@ -1145,4 +1190,253 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn nested_dispatch_stays_inside_the_root_generation() {
+        fn nested_service() -> ServiceId {
+            ServiceId::parse("fixture.residency.nested@1").unwrap()
+        }
+
+        struct NestedCaller;
+
+        impl PluginInstance for NestedCaller {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke(
+                &mut self,
+                _service: &ServiceId,
+                _input: &[u8],
+                host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                host.invoke_service_abi(
+                    &nested_service(),
+                    &[],
+                    host.authority(),
+                    None,
+                )
+                .map_err(|error| error.to_string())
+            }
+        }
+
+        let caller_id = plugin("fixture.residency.nested-caller");
+        let first_provider_id = plugin("fixture.residency.nested-a");
+        let second_provider_id = plugin("fixture.residency.nested-b");
+
+        let caller_manifest = manifest(caller_id.as_str());
+        let mut first_provider_manifest = manifest(first_provider_id.as_str());
+        first_provider_manifest.services[0].service = nested_service();
+        let mut second_provider_manifest = manifest(second_provider_id.as_str());
+        second_provider_manifest.services[0].service = nested_service();
+
+        let first = ResolvedHarness::resolve(
+            [caller_manifest.clone(), first_provider_manifest],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let second = ResolvedHarness::resolve(
+            [caller_manifest, second_provider_manifest],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(caller_id, || Box::new(NestedCaller));
+        kernel.preload_embedded_factory(first_provider_id, || Box::new(Echo(b"A")));
+        kernel.preload_embedded_factory(second_provider_id, || Box::new(Echo(b"B")));
+        kernel.activate_all().unwrap();
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&first_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"A"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&second_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"B"
+        );
+
+        kernel.promote_generation(&second_generation).unwrap();
+
+        assert_eq!(
+            kernel
+                .invoke(&service(), &[], &Authority::default(), None)
+                .unwrap(),
+            b"B"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&first_generation, &service(), &[], &constraints, None)
+                .unwrap(),
+            b"A"
+        );
+    }
+
+    #[test]
+    fn resident_generations_share_kernel_owned_persistence() {
+        struct DurableValue {
+            namespace: ResourceNamespace,
+        }
+
+        impl PluginInstance for DurableValue {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke(
+                &mut self,
+                _service: &ServiceId,
+                input: &[u8],
+                host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                if input == b"read" {
+                    return host
+                        .read_durable(&self.namespace, "value")
+                        .map(|value| value.unwrap_or_default())
+                        .map_err(|error| error.to_string());
+                }
+
+                host.transact_durable(
+                    &self.namespace,
+                    &[crate::TransactionOp::Put {
+                        key: "value".into(),
+                        value: input.to_vec(),
+                    }],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(input.to_vec())
+            }
+        }
+
+        let owner = plugin("fixture.residency.persistence");
+        let namespace =
+            ResourceNamespace::parse("fixture.residency.persistence.state").unwrap();
+        let read = CapabilityId::parse("kernel.persistence.read").unwrap();
+        let write = CapabilityId::parse("kernel.persistence.write").unwrap();
+        let authority = Authority::new([read, write]);
+
+        let mut first_manifest = manifest(owner.as_str());
+        first_manifest.resource_namespaces.push(namespace.clone());
+        first_manifest.maximum_authority = authority.clone();
+        let mut second_manifest = first_manifest.clone();
+        second_manifest.version += 1;
+
+        let schema = DurableSchemaRegistration::new(
+            owner.clone(),
+            DurableSchema::new(namespace.clone(), 1),
+        );
+        let first = ResolvedHarness::resolve_with_durable_schemas(
+            [first_manifest],
+            [],
+            [schema.clone()],
+            [],
+            &authority,
+        )
+        .unwrap();
+        let second = ResolvedHarness::resolve_with_durable_schemas(
+            [second_manifest],
+            [],
+            [schema],
+            [],
+            &authority,
+        )
+        .unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        let namespace_for_factory = namespace.clone();
+        kernel.preload_embedded_factory(owner, move || {
+            Box::new(DurableValue {
+                namespace: namespace_for_factory.clone(),
+            })
+        });
+        kernel.activate_all().unwrap();
+
+        let constraints = kernel
+            .capture_root_execution_constraints(&authority, [])
+            .unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        assert_eq!(
+            kernel
+                .invoke(&service(), b"from-a", &authority, None)
+                .unwrap(),
+            b"from-a"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &second_generation,
+                    &service(),
+                    b"read",
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"from-a"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &second_generation,
+                    &service(),
+                    b"from-b",
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"from-b"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &first_generation,
+                    &service(),
+                    b"read",
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"from-b"
+        );
+
+        kernel.promote_generation(&second_generation).unwrap();
+        assert_eq!(
+            kernel
+                .invoke(&service(), b"read", &authority, None)
+                .unwrap(),
+            b"from-b"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(
+                    &first_generation,
+                    &service(),
+                    b"read",
+                    &constraints,
+                    None,
+                )
+                .unwrap(),
+            b"from-b"
+        );
+    }
+
+
 }
