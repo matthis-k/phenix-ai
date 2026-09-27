@@ -228,6 +228,7 @@ impl Kernel {
 
         let stop_view = reconciliation::StopView {
             runtime: &state.runtime,
+            authority_ceiling: state.authority_ceiling.as_ref(),
             states: &state.states,
             instances: &state.instances,
             invocations: &state.invocations,
@@ -288,6 +289,14 @@ impl Kernel {
                         let provider_manifest = config
                             .manifest(&binding.provider)
                             .expect("resolved runtime provider is configured");
+                        let provider_authority = constrain_authority_to_ceiling(
+                            Some(candidate.authority_ceiling()),
+                            &provider_manifest.maximum_authority,
+                        );
+                        let guest_authority = constrain_authority_to_ceiling(
+                            Some(candidate.authority_ceiling()),
+                            &manifest.maximum_authority,
+                        );
                         let provider =
                             instances.get(&binding.provider).cloned().ok_or_else(|| {
                                 KernelError::PluginNotActive(binding.provider.clone())
@@ -311,7 +320,7 @@ impl Kernel {
                             scope: CallScope::root(
                                 Arc::new(runtime.clone()),
                                 &binding.provider,
-                                &provider_manifest.maximum_authority,
+                                &provider_authority,
                                 Some(cancellation.clone()),
                             ),
                             continuation: None,
@@ -328,7 +337,7 @@ impl Kernel {
                                 RuntimePluginCandidate {
                                     manifest,
                                     artifact,
-                                    guest_authority: &manifest.maximum_authority,
+                                    guest_authority: &guest_authority,
                                 },
                                 &host,
                             )
@@ -364,6 +373,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
+                            authority_ceiling: Some(candidate.authority_ceiling()),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -382,6 +392,10 @@ impl Kernel {
                 let live_call = self.tasks.begin_call(plugin, Some(&generation));
                 let cancellation = live_call.cancellation_token().clone();
                 let prepared_mutations = PreparedMutationScope::new(Some(&generation));
+                let plugin_authority = constrain_authority_to_ceiling(
+                    Some(candidate.authority_ceiling()),
+                    &manifest.maximum_authority,
+                );
                 let host = PluginHost {
                     runtime: RuntimeServices {
                         states: &states,
@@ -398,7 +412,7 @@ impl Kernel {
                     scope: CallScope::root(
                         Arc::new(runtime.clone()),
                         plugin,
-                        &manifest.maximum_authority,
+                        &plugin_authority,
                         Some(cancellation.clone()),
                     ),
                     continuation: None,
@@ -420,6 +434,7 @@ impl Kernel {
                         &staged,
                         reconciliation::StopView {
                             runtime: &runtime,
+                            authority_ceiling: Some(candidate.authority_ceiling()),
                             states: &states,
                             instances: &instances,
                             invocations: &invocations,
@@ -461,6 +476,7 @@ impl Kernel {
                 &staged,
                 reconciliation::StopView {
                     runtime: &runtime,
+                    authority_ceiling: Some(candidate.authority_ceiling()),
                     states: &states,
                     instances: &instances,
                     invocations: &invocations,
