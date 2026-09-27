@@ -235,6 +235,7 @@ struct PendingDelivery {
     event: EventEnvelope,
     emitter_authority: Authority,
     graph_generation: Option<GraphGenerationId>,
+    subscription_generation: Option<GraphGenerationId>,
     subscriptions: BTreeMap<SubscriptionId, EventSubscription>,
     levels: Vec<Vec<SubscriptionId>>,
     ancestry: BTreeSet<SubscriptionId>,
@@ -245,6 +246,9 @@ struct PendingDelivery {
 pub struct EventBus {
     kernel_subscribers: Arc<Mutex<Vec<Sender<KernelEvent>>>>,
     subscriptions: Arc<Mutex<BTreeMap<SubscriptionId, EventSubscription>>>,
+    generation_subscriptions:
+        Arc<Mutex<BTreeMap<GraphGenerationId, BTreeMap<SubscriptionId, EventSubscription>>>>,
+    generation_subscription_revisions: Arc<Mutex<BTreeMap<GraphGenerationId, u64>>>,
     active_causality: Arc<Mutex<BTreeMap<u64, BTreeSet<SubscriptionId>>>>,
     next_root_causality: Arc<AtomicU64>,
     next_delivery: Arc<AtomicU64>,
@@ -274,6 +278,8 @@ impl EventBus {
         Self {
             kernel_subscribers: Arc::new(Mutex::new(Vec::new())),
             subscriptions: Arc::new(Mutex::new(BTreeMap::new())),
+            generation_subscriptions: Arc::new(Mutex::new(BTreeMap::new())),
+            generation_subscription_revisions: Arc::new(Mutex::new(BTreeMap::new())),
             active_causality: Arc::new(Mutex::new(BTreeMap::new())),
             next_root_causality: Arc::new(AtomicU64::new(0)),
             next_delivery: Arc::new(AtomicU64::new(0)),
@@ -319,6 +325,39 @@ impl EventBus {
         *current = indexed;
         self.subscription_revision.fetch_add(1, Ordering::AcqRel);
         Ok(())
+    }
+
+    pub fn replace_generation_subscriptions(
+        &self,
+        generation: GraphGenerationId,
+        subscriptions: impl IntoIterator<Item = EventSubscription>,
+    ) -> Result<(), EventError> {
+        let indexed = index_subscriptions(subscriptions)?;
+        validate_dependencies(&indexed)?;
+        self.generation_subscriptions
+            .lock()
+            .expect("generation event subscription lock poisoned")
+            .insert(generation.clone(), indexed);
+        let mut revisions = self
+            .generation_subscription_revisions
+            .lock()
+            .expect("generation event subscription revision lock poisoned");
+        let revision = revisions.entry(generation).or_default();
+        *revision = revision.wrapping_add(1);
+        Ok(())
+    }
+
+    pub fn remove_generation_subscriptions(&self, generation: &GraphGenerationId) {
+        self.generation_subscriptions
+            .lock()
+            .expect("generation event subscription lock poisoned")
+            .remove(generation);
+        let mut revisions = self
+            .generation_subscription_revisions
+            .lock()
+            .expect("generation event subscription revision lock poisoned");
+        let revision = revisions.entry(generation.clone()).or_default();
+        *revision = revision.wrapping_add(1);
     }
 
     pub fn install_subscriptions(
@@ -409,16 +448,8 @@ impl EventBus {
         } else {
             event.clone()
         };
-        let (subscriptions, revision) = {
-            let current = self
-                .subscriptions
-                .lock()
-                .expect("event subscription lock poisoned");
-            (
-                current.clone(),
-                self.subscription_revision.load(Ordering::Acquire),
-            )
-        };
+        let (subscriptions, revision, subscription_generation) =
+            self.subscription_snapshot(graph_generation);
         let levels = dependency_levels(&subscriptions, &event.event_type, event.version)?;
         for level in &levels {
             for id in level {
@@ -451,6 +482,7 @@ impl EventBus {
             event,
             emitter_authority: authority,
             graph_generation: graph_generation.cloned(),
+            subscription_generation,
             subscriptions,
             levels,
             ancestry,
@@ -476,6 +508,7 @@ impl EventBus {
             event,
             emitter_authority,
             graph_generation,
+            subscription_generation,
             subscriptions,
             levels,
             ancestry,
@@ -486,7 +519,7 @@ impl EventBus {
             ..EventDispatchReport::default()
         };
         for level in levels {
-            if self.subscription_revision.load(Ordering::Acquire) != revision {
+            if self.subscription_revision_for(subscription_generation.as_ref()) != revision {
                 return EventDeliveryStatus::Cancelled(
                     EventDeliveryCancellation::SubscriptionSetChanged,
                 );
@@ -526,7 +559,7 @@ impl EventBus {
                     .collect::<Vec<_>>()
             });
             self.leave_causality(event.causality_id, &level);
-            if self.subscription_revision.load(Ordering::Acquire) != revision {
+            if self.subscription_revision_for(subscription_generation.as_ref()) != revision {
                 return EventDeliveryStatus::Cancelled(
                     EventDeliveryCancellation::SubscriptionSetChanged,
                 );
@@ -553,6 +586,55 @@ impl EventBus {
             }
         }
         EventDeliveryStatus::Succeeded(report)
+    }
+
+    fn subscription_snapshot(
+        &self,
+        graph_generation: Option<&GraphGenerationId>,
+    ) -> (
+        BTreeMap<SubscriptionId, EventSubscription>,
+        u64,
+        Option<GraphGenerationId>,
+    ) {
+        if let Some(generation) = graph_generation {
+            let subscriptions = self
+                .generation_subscriptions
+                .lock()
+                .expect("generation event subscription lock poisoned");
+            if let Some(current) = subscriptions.get(generation) {
+                let revision = self
+                    .generation_subscription_revisions
+                    .lock()
+                    .expect("generation event subscription revision lock poisoned")
+                    .get(generation)
+                    .copied()
+                    .unwrap_or_default();
+                return (current.clone(), revision, Some(generation.clone()));
+            }
+        }
+
+        let current = self
+            .subscriptions
+            .lock()
+            .expect("event subscription lock poisoned");
+        (
+            current.clone(),
+            self.subscription_revision.load(Ordering::Acquire),
+            None,
+        )
+    }
+
+    fn subscription_revision_for(&self, generation: Option<&GraphGenerationId>) -> u64 {
+        match generation {
+            Some(generation) => self
+                .generation_subscription_revisions
+                .lock()
+                .expect("generation event subscription revision lock poisoned")
+                .get(generation)
+                .copied()
+                .unwrap_or_default(),
+            None => self.subscription_revision.load(Ordering::Acquire),
+        }
     }
 
     fn reserve_delivery(&self) -> Result<(), EventError> {
@@ -849,6 +931,116 @@ mod tests {
             .dispatch_in_generation(&envelope(1), &Authority::default(), Some(&generation))
             .unwrap();
         assert_eq!(report.graph_generation.as_ref(), Some(&generation));
+    }
+
+    #[test]
+    fn generation_scoped_subscriptions_select_the_matching_generation() {
+        let first_generation = ResolvedHarness::resolve([], [], [], &Authority::default())
+            .unwrap()
+            .generation()
+            .clone();
+        let second_generation = ResolvedHarness::resolve(
+            [],
+            [],
+            [],
+            &Authority::new([capability("generation.second")]),
+        )
+        .unwrap()
+        .generation()
+        .clone();
+        assert_ne!(first_generation, second_generation);
+
+        let bus = EventBus::default();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let first_seen = Arc::clone(&seen);
+        let second_seen = Arc::clone(&seen);
+        bus.replace_generation_subscriptions(
+            first_generation.clone(),
+            [EventSubscription {
+                spec: spec("first-generation", &[]),
+                handler: Arc::new(move |_: &EventEnvelope, _: &Authority| {
+                    first_seen.lock().unwrap().push("first");
+                    Ok(())
+                }),
+            }],
+        )
+        .unwrap();
+        bus.replace_generation_subscriptions(
+            second_generation.clone(),
+            [EventSubscription {
+                spec: spec("second-generation", &[]),
+                handler: Arc::new(move |_: &EventEnvelope, _: &Authority| {
+                    second_seen.lock().unwrap().push("second");
+                    Ok(())
+                }),
+            }],
+        )
+        .unwrap();
+
+        let first = bus
+            .dispatch_in_generation(
+                &envelope(31),
+                &Authority::default(),
+                Some(&first_generation),
+            )
+            .unwrap();
+        let second = bus
+            .dispatch_in_generation(
+                &envelope(32),
+                &Authority::default(),
+                Some(&second_generation),
+            )
+            .unwrap();
+
+        assert_eq!(first.delivered, vec![subscription("first-generation")]);
+        assert_eq!(
+            second.delivered,
+            vec![subscription("second-generation")]
+        );
+        assert_eq!(&*seen.lock().unwrap(), &["first", "second"]);
+    }
+
+    #[test]
+    fn replacing_another_generation_does_not_invalidate_selected_subscriptions() {
+        let first_generation = ResolvedHarness::resolve([], [], [], &Authority::default())
+            .unwrap()
+            .generation()
+            .clone();
+        let second_generation = ResolvedHarness::resolve(
+            [],
+            [],
+            [],
+            &Authority::new([capability("generation.second")]),
+        )
+        .unwrap()
+        .generation()
+        .clone();
+        let bus = EventBus::default();
+        bus.replace_generation_subscriptions(
+            first_generation.clone(),
+            [subscription_with("first", &[])],
+        )
+        .unwrap();
+        bus.replace_generation_subscriptions(
+            second_generation.clone(),
+            [subscription_with("second", &[])],
+        )
+        .unwrap();
+
+        bus.replace_generation_subscriptions(
+            second_generation,
+            [subscription_with("replacement", &[])],
+        )
+        .unwrap();
+
+        let report = bus
+            .dispatch_in_generation(
+                &envelope(33),
+                &Authority::default(),
+                Some(&first_generation),
+            )
+            .unwrap();
+        assert_eq!(report.delivered, vec![subscription("first")]);
     }
 
     #[test]
