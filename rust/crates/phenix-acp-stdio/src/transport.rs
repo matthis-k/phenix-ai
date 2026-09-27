@@ -1159,6 +1159,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(2);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1233,6 +1234,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1274,6 +1276,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1374,6 +1377,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1462,6 +1466,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1510,6 +1515,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1548,6 +1554,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let service = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1598,6 +1605,7 @@ mod tests {
         let capabilities = SharedCapabilityRegistry::default();
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let first = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
@@ -1631,6 +1639,7 @@ mod tests {
 
         let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
         let reconnected = SdkApplicationService {
+            store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
                 schema: Type::Table(Default::default()),
                 value: PhenixValue::Table(Default::default()),
