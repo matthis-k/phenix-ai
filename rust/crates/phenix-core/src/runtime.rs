@@ -1,7 +1,7 @@
 use crate::{
     plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
     ArtifactRevision, Authority, CallCancellationToken, CapabilityId, ComponentGraphError,
-    ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
+    ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema, DurableSchemaRegistration,
     EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
     EventTypeId, GraphGenerationId, InterfaceId, KernelConfig, KernelError, KernelEvent,
     KernelPolicyIdentity, LocalPersistence, PersistenceBackend, PluginArtifact, PluginExecution,
@@ -27,6 +27,7 @@ mod listener;
 mod owned_transactions;
 mod persistence_bootstrap;
 mod reconciliation;
+mod residency;
 #[cfg(test)]
 mod tests;
 mod trace;
@@ -662,6 +663,8 @@ struct RuntimeServices<'a> {
 
 struct GenerationRuntimeState {
     runtime: RuntimeGeneration,
+    durable_schemas: Vec<DurableSchemaRegistration>,
+    subscriptions: Vec<EventSubscription>,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -676,6 +679,8 @@ impl GenerationRuntimeState {
             .collect();
         Self {
             runtime: RuntimeGeneration::bootstrap(config),
+            durable_schemas: Vec::new(),
+            subscriptions: Vec::new(),
             states,
             instances: BTreeMap::new(),
             invocations: BTreeMap::new(),
@@ -686,6 +691,7 @@ impl GenerationRuntimeState {
 
 pub struct Kernel {
     generation_state: GenerationRuntimeState,
+    resident_generations: BTreeMap<GraphGenerationId, GenerationRuntimeState>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,
     events: Arc<EventBus>,
