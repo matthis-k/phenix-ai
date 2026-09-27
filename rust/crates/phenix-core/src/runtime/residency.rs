@@ -553,10 +553,8 @@ mod tests {
         let mut plugin_manifest = manifest("fixture.residency.authority");
         plugin_manifest.maximum_authority = broad.clone();
 
-        let first =
-            ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
-        let second =
-            ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
+        let first = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
+        let second = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
