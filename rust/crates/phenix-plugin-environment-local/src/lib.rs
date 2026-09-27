@@ -903,7 +903,6 @@ fn spawn_reader(
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1201,8 +1200,7 @@ mod tests {
     #[test]
     fn one_shot_exec_terminates_background_descendants() {
         let root = temp_root();
-        let mut kernel =
-            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+        let mut kernel = restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
 
         let process = invoke(
             &mut kernel,
@@ -1237,8 +1235,7 @@ mod tests {
     #[test]
     fn closing_persistent_process_terminates_descendants() {
         let root = temp_root();
-        let mut kernel =
-            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+        let mut kernel = restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
         let (handle, pid) = open_background_child(&mut kernel);
 
         assert!(matches!(
@@ -1255,8 +1252,7 @@ mod tests {
     fn provider_stop_terminates_persistent_descendants() {
         let root = temp_root();
         let plugin = local_environment_manifest().id;
-        let mut kernel =
-            restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
+        let mut kernel = restricted_kernel(&root, EnvironmentFilesystemPolicy::Unrestricted);
         let (_handle, pid) = open_background_child(&mut kernel);
 
         kernel.stop(&plugin).unwrap();
