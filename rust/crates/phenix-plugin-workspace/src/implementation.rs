@@ -656,8 +656,8 @@ mod tests {
 
     struct EscapingDirectoryEnvironment {
         commands: Arc<Mutex<Vec<EnvironmentCommand>>>,
-        root: String,
-        outside: String,
+        root: PathBuf,
+        outside: PathBuf,
     }
 
     impl PluginInstance for EscapingDirectoryEnvironment {
@@ -691,25 +691,31 @@ mod tests {
                 .push(command.clone());
 
             let response = match command {
-                EnvironmentCommand::Stat { path } if path == self.root => {
+                EnvironmentCommand::Stat { path } if Path::new(&path) == self.root.as_path() => {
                     EnvironmentResponse::Metadata {
                         kind: Some(EnvironmentFileKind::Directory),
                     }
                 }
-                EnvironmentCommand::ReadDir { path } if path == self.root => {
+                EnvironmentCommand::ReadDir { path }
+                    if Path::new(&path) == self.root.as_path() =>
+                {
                     EnvironmentResponse::Directory {
                         entries: vec![phenix_sdk::EnvironmentDirEntry {
-                            path: self.outside.clone(),
+                            path: self.outside.to_string_lossy().into_owned(),
                             kind: EnvironmentFileKind::File,
                         }],
                     }
                 }
-                EnvironmentCommand::Stat { path } if path == self.outside => {
+                EnvironmentCommand::Stat { path }
+                    if Path::new(&path) == self.outside.as_path() =>
+                {
                     EnvironmentResponse::Metadata {
                         kind: Some(EnvironmentFileKind::File),
                     }
                 }
-                EnvironmentCommand::ReadFile { path } if path == self.outside => {
+                EnvironmentCommand::ReadFile { path }
+                    if Path::new(&path) == self.outside.as_path() =>
+                {
                     EnvironmentResponse::File {
                         content: Some(b"needle outside".to_vec()),
                     }
@@ -959,8 +965,8 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
         kernel.activate_resolved_harness(&resolved).unwrap();
 
-        let root = "/virtual/project".to_owned();
-        let outside = "/virtual/outside/secret.txt".to_owned();
+        let root = PathBuf::from("/virtual/project");
+        let outside = PathBuf::from("/virtual/outside/secret.txt");
         let workspace_root = root.clone();
         kernel
             .register_embedded_factory(workspace_id, move || {
@@ -991,7 +997,10 @@ mod tests {
             &authority(&[WORKSPACE_READ]),
         )
         .unwrap_err();
-        assert!(error.contains("outside requested directory"));
+        assert!(
+            error.contains("outside requested directory"),
+            "unexpected search error: {error}"
+        );
 
         let commands = commands.lock().unwrap();
         assert!(!commands.iter().any(|command| matches!(
