@@ -212,9 +212,12 @@ impl SdkApplicationService {
     ///
     /// This reads the canonical ObservableStore. It does not keep a debug mirror.
     pub fn inspect_values(&self) -> Result<PhenixValue, ApplicationError> {
-        let metadata = self.store.metadata_all().map_err(|error| ApplicationError::Failed {
-            message: error.to_string(),
-        })?;
+        let metadata = self
+            .store
+            .metadata_all()
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
         let mut values = Vec::with_capacity(metadata.len());
         for item in metadata {
             let (version, value) = self
@@ -252,9 +255,12 @@ impl SdkApplicationService {
         let id = ValueId::parse(id).map_err(|error| ApplicationError::InvalidInput {
             message: error.to_string(),
         })?;
-        let metadata = self.store.metadata(&id).map_err(|error| ApplicationError::NotFound {
-            resource: error.to_string(),
-        })?;
+        let metadata = self
+            .store
+            .metadata(&id)
+            .map_err(|error| ApplicationError::NotFound {
+                resource: error.to_string(),
+            })?;
         let (version, value) = self
             .store
             .get(&ValueAddress {
