@@ -444,7 +444,10 @@ impl Kernel {
                     &staged,
                     reconciliation::StopView {
                         runtime: &self.generation_state.runtime,
-                        lifecycle_constraints: self.generation_state.lifecycle_constraints.as_ref(),
+                        lifecycle_constraints: self
+                            .generation_state
+                            .lifecycle_constraints
+                            .as_ref(),
                         states: &next_states,
                         instances: &next_instances,
                         invocations: &next_invocations,
