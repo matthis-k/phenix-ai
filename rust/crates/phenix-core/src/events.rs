@@ -347,6 +347,38 @@ impl EventBus {
         Ok(())
     }
 
+    pub fn install_generation_subscriptions(
+        &self,
+        generation: GraphGenerationId,
+        subscriptions: impl IntoIterator<Item = EventSubscription>,
+    ) -> Result<Vec<SubscriptionId>, EventError> {
+        let mut generations = self
+            .generation_subscriptions
+            .lock()
+            .expect("generation event subscription lock poisoned");
+        let current = generations.entry(generation.clone()).or_default();
+        let mut candidate = current.clone();
+        let mut installed = Vec::new();
+        for subscription in subscriptions {
+            let id = subscription.spec.id.clone();
+            if candidate.insert(id.clone(), subscription).is_some() {
+                return Err(EventError::DuplicateSubscription(id));
+            }
+            installed.push(id);
+        }
+        validate_dependencies(&candidate)?;
+        *current = candidate;
+        drop(generations);
+
+        let mut revisions = self
+            .generation_subscription_revisions
+            .lock()
+            .expect("generation event subscription revision lock poisoned");
+        let revision = revisions.entry(generation).or_default();
+        *revision = revision.wrapping_add(1);
+        Ok(installed)
+    }
+
     pub fn remove_generation_subscriptions(&self, generation: &GraphGenerationId) {
         self.generation_subscriptions
             .lock()

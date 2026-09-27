@@ -456,10 +456,14 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
     kernel.activate_resolved_harness(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
+    let generation = kernel
+        .graph_generation()
+        .expect("resolved runtime has a generation")
+        .clone();
     let events = kernel.events();
     let (seen_diagnostics, diagnostics) = mpsc::channel::<EventEnvelope>();
     events
-        .install_subscriptions([EventSubscription {
+        .install_generation_subscriptions(generation, [EventSubscription {
             spec: SubscriptionSpec {
                 id: SubscriptionId::parse("fixture.attribute-gate/diagnostics").unwrap(),
                 owner: PluginId::parse("fixture.attribute-gate.diagnostic-probe").unwrap(),
