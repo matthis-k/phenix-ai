@@ -11,6 +11,10 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.generation()
     }
 
+    pub fn component_graph(&self) -> &ResolvedComponentGraph {
+        self.scope.generation.component_graph()
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }

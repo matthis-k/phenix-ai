@@ -24,14 +24,14 @@ use phenix_application_interface::{
     ResumeSession, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityGenerationId, ClientConnectionId, ComponentExport,
-    ComponentId, ComponentImport, ComponentInterface, ComponentManifest, ContractId,
-    HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry, SnapshotPolicy, ValueCodec,
-    ValueId, ValuePath,
+    Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
+    ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
+    ContractId, HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor,
+    ModelToolResult, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
+    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
+    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
@@ -49,13 +49,14 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     execution_resource_service, execution_service, model_routing_service, options_service,
-    ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
     RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     sync::{
@@ -73,6 +74,7 @@ pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
+const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
 
 #[must_use]
 pub fn session_projection_value_id() -> ValueId {
@@ -1618,6 +1620,7 @@ enum ExecutionWorkerEvent {
 struct ApplicationAgentToolRun {
     service: SdkApplicationService,
     session_id: SessionId,
+    execution_id: String,
     permission_handler: Option<PermissionHandlerRef>,
     tools: Vec<ModelToolDescriptor>,
     cancellation: Arc<AtomicBool>,
@@ -1705,12 +1708,21 @@ pub(crate) fn application_agent_tool_component_manifest(
         id: application_agent_tool_component_id(),
         owner: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
-        imports: vec![ComponentImport {
-            interface: WorkspaceInterface::interface_id(),
-            schema: WorkspaceInterface::schema(),
-            required: false,
-            authority: maximum_authority.clone(),
-        }],
+        imports: vec![
+            ComponentImport {
+                interface: WorkspaceInterface::interface_id(),
+                schema: WorkspaceInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
+            ComponentImport {
+                interface: ExecutionInspectionInterface::interface_id(),
+                schema: ExecutionInspectionInterface::schema(),
+                required: false,
+                authority: Authority::new([CapabilityId::parse("kernel.persistence.read")
+                    .expect("static persistence read capability is valid")]),
+            },
+        ],
         exports: vec![
             ComponentExport {
                 interface: AgentLoopControlInterface::interface_id(),
@@ -1744,6 +1756,7 @@ pub(crate) fn application_agent_tool_factory(
 
 struct ApplicationAgentToolSdk<'host, 'runtime> {
     workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
+    execution: SdkClient<'host, 'runtime, ExecutionInspectionInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -1756,6 +1769,7 @@ fn application_agent_tool_context<'host, 'runtime>(
         host,
         ApplicationAgentToolSdk {
             workspace: SdkClient::new(host, application_agent_tool_component_id()),
+            execution: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -1868,8 +1882,10 @@ fn execute_application_agent_tool(
             });
         }
     };
-    let change = if is_runtime_model_tool(&dispatch_call.callable_id) {
+    let change = if dispatch_call.callable_id.as_str() == "bash" {
         execute_runtime_model_tool_call(&context.sdk.workspace, &dispatch_call)
+    } else if dispatch_call.callable_id.as_str() == "phenix.inspect" {
+        execute_runtime_inspect_tool_call(context, &run, &dispatch_call)
     } else {
         execute_admitted_client_tool_call(
             &run.service,
@@ -2422,6 +2438,7 @@ fn run_agent_execution(
         ApplicationAgentToolRun {
             service,
             session_id: session_id.clone(),
+            execution_id: execution_id.clone(),
             permission_handler,
             tools: tools.clone(),
             cancellation: Arc::clone(&cancellation),
@@ -2612,19 +2629,27 @@ fn application_model_tool_surface(
 }
 
 fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
-    vec![ModelToolDescriptor {
-        id: CallableId::parse("bash").expect("static bash callable id is valid"),
-        description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
-        input_schema: PhenixSchema::Table(BTreeMap::from([(
-            Key::parse("command").expect("static bash field is valid"),
-            PhenixSchema::String,
-        )])),
-        output_schema: <WorkspaceResponse as ValueCodec>::phenix_type(),
-    }]
-}
-
-fn is_runtime_model_tool(callable_id: &CallableId) -> bool {
-    callable_id.as_str() == "bash"
+    vec![
+        ModelToolDescriptor {
+            id: CallableId::parse("bash").expect("static bash callable id is valid"),
+            description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
+            input_schema: PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("command").expect("static bash field is valid"),
+                PhenixSchema::String,
+            )])),
+            output_schema: <WorkspaceResponse as ValueCodec>::phenix_type(),
+        },
+        ModelToolDescriptor {
+            id: CallableId::parse("phenix.inspect")
+                .expect("static inspection callable id is valid"),
+            description: "Read canonical Phenix runtime state for debugging. Queries: graph, execution, dag, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
+            input_schema: PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("query").expect("static inspection field is valid"),
+                PhenixSchema::String,
+            )])),
+            output_schema: PhenixSchema::Any,
+        },
+    ]
 }
 
 fn execute_runtime_model_tool_call(
@@ -2670,6 +2695,291 @@ fn execute_runtime_model_tool_call(
             error,
         },
     }
+}
+
+fn execute_runtime_inspect_tool_call(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    call: &ModelToolCall,
+) -> ExecutionChange {
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        let PhenixValue::Table(fields) = &call.input else {
+            return Err(ApplicationError::InvalidInput {
+                message: "phenix.inspect input must be an object with a query field".to_owned(),
+            });
+        };
+        let query = match fields.get("query") {
+            Some(PhenixValue::String(query)) if !query.trim().is_empty() => query.trim(),
+            Some(_) => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "phenix.inspect query must be a non-empty string".to_owned(),
+                })
+            }
+            None => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "phenix.inspect input is missing query".to_owned(),
+                })
+            }
+        };
+        inspect_runtime(context, run, query)
+    })();
+
+    match result {
+        Ok(output) => ExecutionChange::ToolResult {
+            call_id: call.call_id.clone(),
+            output,
+        },
+        Err(error) => ExecutionChange::ToolFailed {
+            call_id: call.call_id.clone(),
+            error,
+        },
+    }
+}
+
+fn require_runtime_inspection_read(authority: &Authority) -> Result<(), ApplicationError> {
+    let capability = CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
+        .expect("static runtime inspection read capability is valid");
+    if authority.permits(&capability) {
+        Ok(())
+    } else {
+        Err(ApplicationError::PermissionDenied {
+            message: format!("phenix.inspect query requires {RUNTIME_INSPECTION_READ_CAPABILITY}"),
+        })
+    }
+}
+
+fn inspect_runtime(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    query: &str,
+) -> Result<PhenixValue, ApplicationError> {
+    match query {
+        "values" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            run.service.inspect_values()
+        }
+        "execution" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            inspect_execution(context, &run.execution_id)
+        }
+        "dag" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            inspect_execution_dag(context, &run.execution_id)
+        }
+        "graph" => Ok(inspect_component_graph(context)),
+        "help" => Ok(PhenixValue::List(
+            ["graph", "execution", "dag", "values", "value <value-id>"]
+                .into_iter()
+                .map(|query| PhenixValue::String(query.to_owned()))
+                .collect(),
+        )),
+        _ => {
+            if let Some(id) = query.strip_prefix("value ").map(str::trim) {
+                if id.is_empty() {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "value query requires a ValueId".to_owned(),
+                    });
+                }
+                require_runtime_inspection_read(context.call.authority)?;
+                return run.service.inspect_value(id);
+            }
+            Err(ApplicationError::InvalidInput {
+                message: format!("unknown phenix.inspect query: {query}"),
+            })
+        }
+    }
+}
+
+fn inspect_execution(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    execution_id: &str,
+) -> Result<PhenixValue, ApplicationError> {
+    let response = context
+        .sdk
+        .execution
+        .invoke_projected::<ExecutionInspectionCommand, ExecutionInspectionResponse>(
+            &ExecutionInspectionCommand::GetExecution {
+                id: execution_id.to_owned(),
+            },
+        )
+        .map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+    match response {
+        ExecutionInspectionResponse::ExecutionLookup {
+            execution: Some(execution),
+        } => Ok(execution.to_value()),
+        ExecutionInspectionResponse::ExecutionLookup { execution: None } => {
+            Err(ApplicationError::NotFound {
+                resource: execution_id.to_owned(),
+            })
+        }
+        other => Err(ApplicationError::InvalidResponse {
+            message: format!("unexpected execution inspection response: {other:?}"),
+        }),
+    }
+}
+
+fn inspect_execution_dag(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    execution_id: &str,
+) -> Result<PhenixValue, ApplicationError> {
+    let executions = context
+        .sdk
+        .execution
+        .invoke_projected::<ExecutionInspectionCommand, ExecutionInspectionResponse>(
+            &ExecutionInspectionCommand::ListExecutions,
+        )
+        .map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+    let ExecutionInspectionResponse::Executions { executions } = executions else {
+        return Err(ApplicationError::InvalidResponse {
+            message: format!("unexpected execution-list response: {executions:?}"),
+        });
+    };
+    let Some(root) = executions
+        .iter()
+        .find(|execution| execution.id == execution_id)
+    else {
+        return Err(ApplicationError::NotFound {
+            resource: execution_id.to_owned(),
+        });
+    };
+    let root_generation = root.graph_generation.clone();
+
+    let mut included = BTreeSet::from([execution_id.to_owned()]);
+    loop {
+        let before = included.len();
+        for execution in &executions {
+            if execution.graph_generation == root_generation
+                && execution
+                    .parent_execution
+                    .as_ref()
+                    .is_some_and(|parent| included.contains(parent))
+            {
+                included.insert(execution.id.clone());
+            }
+        }
+        if included.len() == before {
+            break;
+        }
+    }
+
+    let tasks = context
+        .sdk
+        .execution
+        .invoke_projected::<ExecutionInspectionCommand, ExecutionInspectionResponse>(
+            &ExecutionInspectionCommand::ListTasks,
+        )
+        .map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+    let ExecutionInspectionResponse::Tasks { tasks } = tasks else {
+        return Err(ApplicationError::InvalidResponse {
+            message: format!("unexpected task-list response: {tasks:?}"),
+        });
+    };
+
+    let executions = executions
+        .into_iter()
+        .filter(|execution| {
+            execution.graph_generation == root_generation && included.contains(&execution.id)
+        })
+        .map(|execution| execution.to_value())
+        .collect();
+    let tasks = tasks
+        .into_iter()
+        .filter(|task| {
+            task.graph_generation == root_generation && included.contains(&task.parent_execution)
+        })
+        .map(|task| task.to_value())
+        .collect();
+
+    Ok(PhenixValue::Map(BTreeMap::from([
+        (
+            "root_execution".to_owned(),
+            PhenixValue::String(execution_id.to_owned()),
+        ),
+        (
+            "generation".to_owned(),
+            PhenixValue::String(root_generation),
+        ),
+        ("executions".to_owned(), PhenixValue::List(executions)),
+        ("tasks".to_owned(), PhenixValue::List(tasks)),
+    ])))
+}
+
+fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> PhenixValue {
+    let graph = context.kernel.component_graph();
+    let components = graph
+        .components()
+        .map(|component| {
+            let imports = component
+                .imports
+                .iter()
+                .map(|import| {
+                    let mut value = BTreeMap::from([
+                        (
+                            "interface".to_owned(),
+                            PhenixValue::String(import.interface.to_string()),
+                        ),
+                        ("required".to_owned(), PhenixValue::Bool(import.required)),
+                    ]);
+                    if let Some(binding) = &import.binding {
+                        value.insert(
+                            "provider_component".to_owned(),
+                            PhenixValue::String(binding.exporter().to_string()),
+                        );
+                        value.insert(
+                            "provider_plugin".to_owned(),
+                            PhenixValue::String(binding.owning_plugin().to_string()),
+                        );
+                        value.insert(
+                            "provider_execution".to_owned(),
+                            PhenixValue::String(format!("{:?}", binding.execution())),
+                        );
+                        value.insert(
+                            "effective_authority".to_owned(),
+                            PhenixValue::List(
+                                binding
+                                    .effective_authority()
+                                    .capabilities()
+                                    .map(|capability| PhenixValue::String(capability.to_string()))
+                                    .collect(),
+                            ),
+                        );
+                    }
+                    PhenixValue::Map(value)
+                })
+                .collect();
+            PhenixValue::Map(BTreeMap::from([
+                (
+                    "component".to_owned(),
+                    PhenixValue::String(component.id.to_string()),
+                ),
+                (
+                    "plugin".to_owned(),
+                    PhenixValue::String(component.owning_plugin.to_string()),
+                ),
+                (
+                    "execution".to_owned(),
+                    PhenixValue::String(format!("{:?}", component.execution)),
+                ),
+                ("imports".to_owned(), PhenixValue::List(imports)),
+            ]))
+        })
+        .collect();
+
+    let generation = context
+        .call
+        .graph_generation
+        .map(|generation| generation.as_str().to_owned())
+        .unwrap_or_else(|| "unresolved".to_owned());
+    PhenixValue::Map(BTreeMap::from([
+        ("generation".to_owned(), PhenixValue::String(generation)),
+        ("components".to_owned(), PhenixValue::List(components)),
+    ]))
 }
 
 fn invoke_permission_handler(
@@ -2779,6 +3089,19 @@ mod tests {
         ApplicationWorker::new(harness).unwrap()
     }
 
+    #[test]
+    fn runtime_inspection_state_requires_persistence_read_authority() {
+        let denied = Authority::default();
+        assert!(matches!(
+            require_runtime_inspection_read(&denied),
+            Err(ApplicationError::PermissionDenied { .. })
+        ));
+
+        let allowed = Authority::new([CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
+            .expect("static runtime inspection capability is valid")]);
+        assert_eq!(require_runtime_inspection_read(&allowed), Ok(()));
+    }
+
     fn persistent_application_worker(path: &PathBuf) -> ApplicationWorker {
         let persistence = LocalPersistence::open(path).unwrap();
         let mut harness = PhenixHarness::default_suite_with_persistence(persistence).unwrap();
@@ -2856,8 +3179,9 @@ mod tests {
         .unwrap();
         let session_id = SessionId::parse("session-1").unwrap();
         let tools = application_model_tool_surface(&service, &session_id).unwrap();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].id.as_str(), "bash");
+        assert_eq!(tools[1].id.as_str(), "phenix.inspect");
         assert_eq!(
             tools[0].input_schema,
             PhenixSchema::Table(BTreeMap::from([(
@@ -2876,8 +3200,9 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 1);
+        assert_eq!(report.tools.len(), 2);
         assert_eq!(report.tools[0].id, "bash");
+        assert_eq!(report.tools[1].id, "phenix.inspect");
         assert_eq!(report.request, "show available capabilities");
 
         let execution_id = "execution-1".to_owned();
@@ -2894,6 +3219,7 @@ mod tests {
                 ApplicationAgentToolRun {
                     service,
                     session_id: session_id.clone(),
+                    execution_id: execution_id.clone(),
                     permission_handler: None,
                     tools: tools.clone(),
                     cancellation: Arc::clone(&cancellation),
@@ -2977,6 +3303,61 @@ mod tests {
         assert_eq!(result.call_id, "call-1");
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
+
+        for (call_id, query) in [("inspect-graph", "graph"), ("inspect-values", "values")] {
+            let request = AgentToolExecutionRequest {
+                execution_id: execution_id.clone(),
+                session_id: Some(session_id.clone()),
+                call: ModelToolCall {
+                    call_id: call_id.into(),
+                    callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                    input: PhenixValue::Table(BTreeMap::from([(
+                        Key::parse("query").unwrap(),
+                        PhenixValue::String(query.into()),
+                    )])),
+                },
+            };
+            let output = worker
+                .harness
+                .lock()
+                .invoke(
+                    &agent_tool_execution_service(),
+                    &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                    &worker.authority,
+                    None,
+                )
+                .unwrap();
+            let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+            let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+            let AgentToolExecutionResponse::Completed { result: inspected } = response else {
+                panic!("runtime inspection must complete through the application adapter");
+            };
+            assert!(!inspected.is_error, "{query} inspection failed");
+            match (query, inspected.output) {
+                ("graph", PhenixValue::Map(graph)) => {
+                    assert!(matches!(
+                        graph.get("generation"),
+                        Some(PhenixValue::String(_))
+                    ));
+                    assert!(
+                        matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty())
+                    );
+                }
+                ("values", PhenixValue::List(values)) => {
+                    assert!(values.iter().any(|value| {
+                        matches!(
+                            value,
+                            PhenixValue::Map(fields)
+                                if matches!(
+                                    fields.get("id"),
+                                    Some(PhenixValue::String(id)) if id == SESSION_PROJECTION_VALUE
+                                )
+                        )
+                    }));
+                }
+                (query, value) => panic!("unexpected {query} inspection value: {value:?}"),
+            }
+        }
 
         let rejected = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),

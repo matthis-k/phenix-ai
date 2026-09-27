@@ -4,8 +4,10 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    execution_service, CallableRecord, ExecutionAuthority, ExecutionCommand, ExecutionInterface,
-    ExecutionRecord, ExecutionResponse, ExecutionState, WorkerTaskRecord, WorkerTaskState,
+    execution_inspection_service, execution_service, CallableRecord, ExecutionAuthority,
+    ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionInterface, ExecutionRecord, ExecutionResponse,
+    ExecutionState, WorkerTaskRecord, WorkerTaskState,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -76,12 +78,20 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
-        services: vec![ServiceContribution {
-            role: phenix_core::ServiceRole::Terminal,
-            service: execution_service(),
-            priority: 100,
-            required_authority: Authority::default(),
-        }],
+        services: vec![
+            ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service: execution_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ServiceContribution {
+                role: phenix_core::ServiceRole::Terminal,
+                service: execution_inspection_service(),
+                priority: 100,
+                required_authority: Authority::new([capability(PERSISTENCE_READ)]),
+            },
+        ],
         resource_namespaces: vec![execution_namespace()],
         maximum_authority,
     }
@@ -116,20 +126,32 @@ impl PluginInstance for ExecutionPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &execution_service() {
-            return Err(format!("unsupported execution service: {service}"));
-        }
         let context = context(host);
-        let interface = ExecutionInterface::interface_id();
-        let command = context
-            .kernel
-            .decode_projected::<ExecutionCommand>(&interface, input)
-            .map_err(|error| error.to_string())?;
-        let response = execute(&context, command)?;
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
+        if service == &execution_service() {
+            let interface = ExecutionInterface::interface_id();
+            let command = context
+                .kernel
+                .decode_projected::<ExecutionCommand>(&interface, input)
+                .map_err(|error| error.to_string())?;
+            let response = execute(&context, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service == &execution_inspection_service() {
+            let interface = ExecutionInspectionInterface::interface_id();
+            let command = context
+                .kernel
+                .decode_projected::<ExecutionInspectionCommand>(&interface, input)
+                .map_err(|error| error.to_string())?;
+            let response = inspect(&context, command)?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        Err(format!("unsupported execution service: {service}"))
     }
 }
 
@@ -161,6 +183,26 @@ fn execute(
         } => invoke_callable(context, &execution_id, &callable_id, &input),
         other => mutate_state(context, |state| mutate(context, other, state)),
     }
+}
+
+fn inspect(
+    context: &ExecutionContext<'_, '_>,
+    command: ExecutionInspectionCommand,
+) -> Result<ExecutionInspectionResponse, String> {
+    let (_, state) = read_state(context)?;
+    Ok(match command {
+        ExecutionInspectionCommand::GetExecution { id } => {
+            ExecutionInspectionResponse::ExecutionLookup {
+                execution: state.executions.get(&id).cloned(),
+            }
+        }
+        ExecutionInspectionCommand::ListExecutions => ExecutionInspectionResponse::Executions {
+            executions: state.executions.into_values().collect(),
+        },
+        ExecutionInspectionCommand::ListTasks => ExecutionInspectionResponse::Tasks {
+            tasks: state.tasks.into_values().collect(),
+        },
+    })
 }
 
 fn mutate(
@@ -657,6 +699,25 @@ mod tests {
             .map_err(|error| error.to_string())
     }
 
+    fn inspect_projection(
+        kernel: &mut Kernel,
+        command: &ExecutionInspectionCommand,
+    ) -> Result<ExecutionInspectionResponse, String> {
+        let input = phenix_core::PhenixValue::from(command);
+        let output = kernel
+            .invoke(
+                &execution_inspection_service(),
+                &serde_json::to_vec(&input).unwrap(),
+                &caller_authority(),
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+        let output: phenix_core::PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+        ExecutionInspectionResponse::try_from(phenix_core::Project(&output))
+            .map_err(|error| error.to_string())
+    }
+
     fn temp_db(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -750,6 +811,63 @@ mod tests {
             invoke(
                 &mut restored,
                 &ExecutionCommand::GetExecution { id: "child".into() },
+            )
+            .unwrap(),
+            ExecutionResponse::ExecutionLookup { execution: Some(_) }
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn inspection_projects_executions_and_tasks_without_mutating_state() {
+        let path = temp_db("execution-inspection");
+        let mut kernel = kernel_with(&path);
+        let root = create(&mut kernel, "root", authority(&["fs.read"]));
+        invoke(
+            &mut kernel,
+            &ExecutionCommand::CreateTask {
+                id: "task-a".into(),
+                parent_execution: root.id.clone(),
+                description: "inspect me".into(),
+                depends_on: BTreeSet::new(),
+                requested_authority: authority(&["fs.read"]),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            inspect_projection(
+                &mut kernel,
+                &ExecutionInspectionCommand::GetExecution {
+                    id: root.id.clone(),
+                },
+            )
+            .unwrap(),
+            ExecutionInspectionResponse::ExecutionLookup {
+                execution: Some(root.clone()),
+            }
+        );
+
+        let ExecutionInspectionResponse::Executions { executions } =
+            inspect_projection(&mut kernel, &ExecutionInspectionCommand::ListExecutions).unwrap()
+        else {
+            panic!("execution inspection must return execution records");
+        };
+        assert_eq!(executions, vec![root.clone()]);
+
+        let ExecutionInspectionResponse::Tasks { tasks } =
+            inspect_projection(&mut kernel, &ExecutionInspectionCommand::ListTasks).unwrap()
+        else {
+            panic!("task inspection must return worker task records");
+        };
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "task-a");
+        assert_eq!(tasks[0].parent_execution, root.id);
+
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                &ExecutionCommand::GetExecution { id: "root".into() },
             )
             .unwrap(),
             ExecutionResponse::ExecutionLookup { execution: Some(_) }

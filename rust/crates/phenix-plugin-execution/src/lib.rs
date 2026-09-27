@@ -24,11 +24,13 @@ pub use configuration::{
     OrchestrationNode, EXECUTION_CONFIGURATION_SERVICE,
 };
 pub use phenix_sdk::{
-    execution_resource_service, step_attempt_service, step_transaction_service,
-    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
-    StepAttemptCommand, StepAttemptInterface, StepAttemptPhase, StepAttemptRecord,
-    StepAttemptResponse, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
-    EXECUTION_RESOURCE_SERVICE, STEP_ATTEMPT_SERVICE, STEP_TRANSACTION_SERVICE,
+    execution_inspection_service, execution_resource_service, step_attempt_service,
+    step_transaction_service, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceInterface,
+    ExecutionResourceResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
+    StepAttemptRecord, StepAttemptResponse, StepTransactionCommand, StepTransactionInterface,
+    StepTransactionResponse, EXECUTION_INSPECTION_SERVICE, EXECUTION_RESOURCE_SERVICE,
+    STEP_ATTEMPT_SERVICE, STEP_TRANSACTION_SERVICE,
 };
 pub use review::{
     execution_review_service, ExecutionReviewCommand, ExecutionReviewInterface,
