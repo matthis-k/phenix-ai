@@ -15,48 +15,48 @@ use std::{
 
 /// Generic configured Phenix server runtime.
 ///
-/// Product plugin selection belongs to the Harness. A conductor created with no
+/// Product plugin selection belongs to the Harness. A runtime created with no
 /// manifests therefore exposes no first-party services.
-pub struct Conductor {
+pub struct Runtime {
     kernel: Kernel,
     resolved: ResolvedHarness,
 }
 
 #[derive(Debug)]
-pub enum ConductorBuildError {
+pub enum RuntimeBuildError {
     Resolution(ResolvedHarnessError),
     Activation(ResolvedHarnessActivationError),
 }
 
-impl fmt::Display for ConductorBuildError {
+impl fmt::Display for RuntimeBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Resolution(error) => fmt::Display::fmt(error, formatter),
             Self::Activation(error) => {
-                write!(formatter, "resolved conductor activation failed: {error:?}")
+                write!(formatter, "resolved runtime activation failed: {error:?}")
             }
         }
     }
 }
 
-impl std::error::Error for ConductorBuildError {}
+impl std::error::Error for RuntimeBuildError {}
 
-impl From<ResolvedHarnessError> for ConductorBuildError {
+impl From<ResolvedHarnessError> for RuntimeBuildError {
     fn from(error: ResolvedHarnessError) -> Self {
         Self::Resolution(error)
     }
 }
 
-impl From<ResolvedHarnessActivationError> for ConductorBuildError {
+impl From<ResolvedHarnessActivationError> for RuntimeBuildError {
     fn from(error: ResolvedHarnessActivationError) -> Self {
         Self::Activation(error)
     }
 }
 
-impl Conductor {
+impl Runtime {
     pub fn new(
         manifests: impl IntoIterator<Item = PluginManifest>,
-    ) -> Result<Self, ConductorBuildError> {
+    ) -> Result<Self, RuntimeBuildError> {
         let resolved = ResolvedHarness::resolve(manifests, [], [], &Authority::default())?;
         let mut kernel = Kernel::new(resolved.kernel_config().clone());
         kernel.activate_resolved_harness(&resolved)?;
@@ -96,14 +96,14 @@ impl Conductor {
     }
 }
 
-impl Default for Conductor {
+impl Default for Runtime {
     fn default() -> Self {
         let resolved = ResolvedHarness::resolve([], [], [], &Authority::default())
-            .expect("empty conductor composition is valid");
+            .expect("empty runtime composition is valid");
         let mut kernel = Kernel::new(resolved.kernel_config().clone());
         kernel
             .activate_resolved_harness(&resolved)
-            .expect("empty resolved conductor composition activates");
+            .expect("empty resolved runtime composition activates");
         Self { kernel, resolved }
     }
 }
@@ -227,21 +227,21 @@ mod tests {
         }
     }
 
-    fn configured_fixture(plugin: &str, output: &'static [u8]) -> Conductor {
+    fn configured_fixture(plugin: &str, output: &'static [u8]) -> Runtime {
         let manifest = fixture_manifest(plugin);
         let plugin = manifest.id.clone();
-        let mut conductor = Conductor::new([manifest]).unwrap();
-        conductor
+        let mut runtime = Runtime::new([manifest]).unwrap();
+        runtime
             .kernel_mut()
             .register_embedded_factory(plugin, move || Box::new(Echo(output)))
             .unwrap();
-        conductor.activate_all().unwrap();
-        conductor
+        runtime.activate_all().unwrap();
+        runtime
     }
 
-    fn invoke_fixture(conductor: &mut Conductor) -> ServiceResponse {
+    fn invoke_fixture(runtime: &mut Runtime) -> ServiceResponse {
         handle_service_request(
-            conductor.kernel_mut(),
+            runtime.kernel_mut(),
             &Authority::default(),
             r#"{"id":2,"service":"fixture.echo@1","input":{}}"#,
         )
@@ -249,22 +249,22 @@ mod tests {
 
     #[test]
     fn zero_plugin_conductor_has_no_first_party_fallback() {
-        let mut conductor = Conductor::default();
-        conductor.activate_all().unwrap();
-        assert_eq!(conductor.kernel().config().manifests().count(), 0);
+        let mut runtime = Runtime::default();
+        runtime.activate_all().unwrap();
+        assert_eq!(runtime.kernel().config().manifests().count(), 0);
         assert_eq!(
-            conductor.kernel().graph_generation(),
-            Some(conductor.generation())
+            runtime.kernel().graph_generation(),
+            Some(runtime.generation())
         );
     }
 
     #[test]
     fn zero_plugin_transport_reports_missing_service() {
-        let mut conductor = Conductor::default();
-        conductor.activate_all().unwrap();
+        let mut runtime = Runtime::default();
+        runtime.activate_all().unwrap();
         let input = b"{\"id\":1,\"service\":\"phenix.sessions@1\",\"input\":{}}\n";
         let mut output = Vec::new();
-        conductor
+        runtime
             .serve_jsonl(&Authority::default(), &input[..], &mut output)
             .unwrap();
         let response: ServiceResponse = serde_json::from_slice(&output).unwrap();
@@ -276,14 +276,14 @@ mod tests {
 
     #[test]
     fn conductor_runs_exactly_one_configured_plugin() {
-        let mut conductor = configured_fixture("fixture.primary", br#"{"provider":"primary"}"#);
-        assert_eq!(conductor.kernel().config().manifests().count(), 1);
+        let mut runtime = configured_fixture("fixture.primary", br#"{"provider":"primary"}"#);
+        assert_eq!(runtime.kernel().config().manifests().count(), 1);
         assert_eq!(
-            conductor.kernel().graph_generation(),
-            Some(conductor.generation())
+            runtime.kernel().graph_generation(),
+            Some(runtime.generation())
         );
         assert!(matches!(
-            invoke_fixture(&mut conductor),
+            invoke_fixture(&mut runtime),
             ServiceResponse::Ok {
                 output: ServiceOutput::Json { output },
                 ..

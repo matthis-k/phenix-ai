@@ -45,7 +45,7 @@ phenix-adapter-acp
 Phenix runtime
 ```
 
-The CLI should use the same Client SDK as other first-party Applications and Bindings where practical. It must not import conductor internals or use the internal `phenix-client` wire as its public application API.
+The CLI should use the same Client SDK as other first-party Applications and Bindings where practical. It must not import runtime internals or use the internal `phenix-client` wire as its public application API.
 
 Transport stays below the protocol. Stdio may be used when the CLI owns/spawns an adapter process. A persistent deployment may reuse `phenix-transport-socket` from #436. CLI behavior must not change with transport.
 

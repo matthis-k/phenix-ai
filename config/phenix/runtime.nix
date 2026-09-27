@@ -1,5 +1,5 @@
 let
-  # Transitional callable contract: the current conductor invokes agents and
+  # Transitional callable contract: the current runtime invokes agents and
   # sequential orchestrations with one non-empty textual objective and emits textual
   # assistant content. Do not model these as generic structured objects until
   # OrchestrationDefinition has real typed value/binding dataflow.

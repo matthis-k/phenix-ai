@@ -1,6 +1,5 @@
 mod runtime_config;
 
-use phenix_conductor::serve_jsonl;
 use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
@@ -14,6 +13,7 @@ use phenix_plugin_catalog::{
     repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
     workspace_manifest, OptionStartupPrecedence,
 };
+use phenix_runtime::serve_jsonl;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},

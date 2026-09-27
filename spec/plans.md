@@ -4,7 +4,7 @@ status: implemented
 
 ## Ownership
 
-Plans are durable workspace-owned strategy records. The conductor owns plan identity, revisions, lifecycle, step state, objective links, and execution links.
+Plans are durable workspace-owned strategy records. The runtime owns plan identity, revisions, lifecycle, step state, objective links, and execution links.
 
 A plan describes intended work. Orchestrations and executions own scheduling and runtime mechanics.
 
@@ -80,7 +80,7 @@ Execution links do not copy model, callable, authority, retry, timeout, or orche
 
 Step dependencies form a DAG. A step may become active only after its required dependencies complete.
 
-The conductor rejects unknown dependencies, self-dependencies, and cycles. Dependency order is semantic plan data, not a scheduler. An orchestration may choose how to execute ready work.
+The runtime rejects unknown dependencies, self-dependencies, and cycles. Dependency order is semantic plan data, not a scheduler. An orchestration may choose how to execute ready work.
 
 ## Backtracking
 
@@ -104,7 +104,7 @@ A successor plan may preserve the same objective references while changing strat
 
 ## Concurrency
 
-Draft plan updates use revision-based optimistic concurrency. An update supplies the expected draft revision. If another frontend or agent already changed that draft, the conductor rejects the stale update with a typed conflict instead of overwriting it.
+Draft plan updates use revision-based optimistic concurrency. An update supplies the expected draft revision. If another frontend or agent already changed that draft, the runtime rejects the stale update with a typed conflict instead of overwriting it.
 
 Enacted plan revisions are immutable, so they do not participate in draft conflict resolution.
 
@@ -126,4 +126,4 @@ The later context slices include only the active relevant plan state as mandator
 
 This slice owns plan identity, draft revision, first-enactment freezing, lifecycle transitions, step dependencies, objective links, execution-step links, optimistic draft conflicts, successor plans, relational persistence, replay, and focused regressions.
 
-General durable references, decision records, context projection, and history retrieval belong to later slices. Plan editing remains a conductor semantic API in this slice; model-visible discovery and loading are introduced by the context-catalog slice.
+General durable references, decision records, context projection, and history retrieval belong to later slices. Plan editing remains a runtime semantic API in this slice; model-visible discovery and loading are introduced by the context-catalog slice.

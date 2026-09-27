@@ -47,7 +47,7 @@ phenix-contract
       └──────── phenix-core
                     ↑
                     ├──────── phenix-sdk authoring/runtime helpers
-                    ├──────── conductor/harness
+                    ├──────── runtime/harness
                     └──────── runtime plugins/adapters that need kernel access
 ```
 

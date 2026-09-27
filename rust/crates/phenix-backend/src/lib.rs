@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
-/// Concrete representation used to materialize conductor-owned callables for a
+/// Concrete representation used to materialize runtime-owned callables for a
 /// backend session. This is intentionally distinct from callable semantics:
 /// the same `ToolProvision` may be represented natively, through MCP, or by an
 /// ACP extension without changing the callable contract itself.
@@ -28,8 +28,8 @@ const TOOL_PRESENTATION_PREFERENCE: [ToolPresentation; 3] = [
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackendCapabilities {
-    /// Every representation this backend can use for conductor-owned callables.
-    /// The conductor selects one deterministic presentation per session.
+    /// Every representation this backend can use for runtime-owned callables.
+    /// The runtime selects one deterministic presentation per session.
     pub tool_presentations: BTreeSet<ToolPresentation>,
     pub images: bool,
     pub persistent_sessions: bool,
@@ -44,7 +44,7 @@ impl BackendCapabilities {
     }
 }
 
-/// Semantic conductor-owned callable provision before backend presentation is
+/// Semantic runtime-owned callable provision before backend presentation is
 /// selected.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ToolProvision {
@@ -53,7 +53,7 @@ pub struct ToolProvision {
 
 /// A `ToolProvision` after backend capability negotiation. Construction is
 /// private so an empty surface cannot claim a presentation and a populated
-/// surface cannot bypass conductor-owned negotiation.
+/// surface cannot bypass runtime-owned negotiation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PreparedToolSurface {
     Empty,
@@ -95,7 +95,7 @@ impl ToolProvision {
             return Ok(PreparedToolSurface::Empty);
         }
         let presentation = capabilities.preferred_tool_presentation().ok_or_else(|| {
-            BackendError::Unsupported("backend cannot host conductor-provisioned tools".to_owned())
+            BackendError::Unsupported("backend cannot host runtime-provisioned tools".to_owned())
         })?;
         Ok(PreparedToolSurface::Hosted {
             presentation,
@@ -139,7 +139,7 @@ pub trait BackendHost {
     fn invoke_tool(&mut self, invocation: ToolInvocation) -> Result<ToolResult, BackendError>;
 }
 
-/// A materialized backend session may be executing on the conductor execution
+/// A materialized backend session may be executing on the runtime execution
 /// worker while a frontend request concurrently asks it to cancel. Implementors
 /// therefore expose thread-safe shared methods rather than requiring exclusive
 /// ownership for the lifetime of a model turn.
@@ -188,7 +188,7 @@ pub trait Backend: Send {
     ) -> Result<Arc<dyn BackendSession>, BackendError>;
 
     /// Open or reuse the native conversation associated with one stable Phenix
-    /// session. The conductor calls this only for a fixed target when the
+    /// session. The runtime calls this only for a fixed target when the
     /// backend advertises `persistent_sessions`.
     ///
     /// A backend must not advertise that capability without implementing this
@@ -207,7 +207,7 @@ pub trait Backend: Send {
 
     /// Dispose any persistent native conversation associated with one stable
     /// Phenix session. This operation is deliberately idempotent so the
-    /// conductor can fan a terminal session close out to every registered
+    /// runtime can fan a terminal session close out to every registered
     /// backend without tracking which fixed targets the session previously
     /// touched.
     fn close_persistent_session(&mut self, _session_id: &SessionId) -> Result<(), BackendError> {

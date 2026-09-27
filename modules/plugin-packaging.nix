@@ -49,7 +49,7 @@ let
   mkPhenix =
     {
       pkgs,
-      conductorOnly ? false,
+      runtimeOnly ? false,
       plugins ? [ ],
       resources ? [ ],
       enabledPlugins ? null,
@@ -61,8 +61,8 @@ let
     }:
     let
       base =
-        if conductorOnly then
-          self.packages.${pkgs.system}.phenix-conductor
+        if runtimeOnly then
+          self.packages.${pkgs.system}.phenix-runtime
         else
           self.packages.${pkgs.system}.phenix-harness-runtime;
       isEmbedded = plugin: (plugin.phenixPluginExecution or null) == "embedded";
@@ -96,11 +96,11 @@ let
       base
     else
       pkgs.symlinkJoin {
-        name = if conductorOnly then "phenix-conductor-composed" else "phenix-composed";
+        name = if runtimeOnly then "phenix-runtime-composed" else "phenix-composed";
         paths = [ base ] ++ plugins ++ resources;
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild =
-          if conductorOnly then
+          if runtimeOnly then
             ""
           else
             let
@@ -249,9 +249,9 @@ in
         plugins = defaultPlugins ++ [ resourcePlugin ];
         resources = [ harnessResources ];
       };
-      conductorComposition = mkPhenix {
+      runtimeComposition = mkPhenix {
         inherit pkgs;
-        conductorOnly = true;
+        runtimeOnly = true;
       };
       sessionOnlyComposition = mkPhenix {
         inherit pkgs;
@@ -276,7 +276,7 @@ in
         phenix-harness.program = "${defaultComposition}/bin/phenix-harness";
         phenix.program = "${defaultComposition}/bin/phenix";
         default.program = "${defaultComposition}/bin/phenix";
-        phenix-conductor.program = "${self.packages.${pkgs.system}.phenix-conductor}/bin/phenix-conductor";
+        phenix-runtime.program = "${self.packages.${pkgs.system}.phenix-runtime}/bin/phenix-runtime";
       };
       checks.phenix-plugin-packaging =
         pkgs.runCommand "phenix-plugin-packaging-check" { nativeBuildInputs = [ pkgs.jq ]; }
@@ -322,11 +322,11 @@ in
             "${resourceComposition}/bin/phenix" --list-services > "$TMPDIR/resource-services.json"
             jq -e '(.plugins | index("fixture.resources")) != null' "$TMPDIR/resource-services.json" >/dev/null
 
-            test -x "${conductorComposition}/bin/phenix-conductor"
-            test ! -e "${conductorComposition}/bin/phenix"
-            test ! -e "${conductorComposition}/bin/phenix-harness"
-            "${conductorComposition}/bin/phenix-conductor" --list-services > "$TMPDIR/conductor-services.json"
-            jq -e '(.plugins == []) and (.services == [])' "$TMPDIR/conductor-services.json" >/dev/null
+            test -x "${runtimeComposition}/bin/phenix-runtime"
+            test ! -e "${runtimeComposition}/bin/phenix"
+            test ! -e "${runtimeComposition}/bin/phenix-harness"
+            "${runtimeComposition}/bin/phenix-runtime" --list-services > "$TMPDIR/runtime-services.json"
+            jq -e '(.plugins == []) and (.services == [])' "$TMPDIR/runtime-services.json" >/dev/null
             touch "$out"
           '';
     };

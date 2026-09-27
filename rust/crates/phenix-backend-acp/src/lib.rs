@@ -116,7 +116,7 @@ impl AcpBackend {
             && request.tools.presentation() != Some(ToolPresentation::AcpExtension)
         {
             return Err(BackendError::Unsupported(
-                "ACP conductor tools require the negotiated ACP extension presentation".to_owned(),
+                "ACP runtime tools require the negotiated ACP extension presentation".to_owned(),
             ));
         }
         Ok(())
