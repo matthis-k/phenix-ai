@@ -1451,6 +1451,24 @@ mod tests {
     }
 
     #[test]
+    fn codex_provider_owns_its_declared_model_catalog() {
+        let manifest = openai_codex_manifest();
+        assert!(manifest
+            .services
+            .iter()
+            .any(|service| service.service == provider_models_service()));
+        let component = openai_codex_component_manifest();
+        assert!(component
+            .exports
+            .iter()
+            .any(|export| export.interface == ProviderModelsInterface::interface_id()));
+        assert_eq!(
+            DECLARED_MODELS,
+            &["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"]
+        );
+    }
+
+    #[test]
     fn provider_exposes_chatgpt_oauth_as_interactive_auth() {
         let mut plugin = OpenAiCodexPlugin::default();
         let response = plugin
