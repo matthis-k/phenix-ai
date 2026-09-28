@@ -489,7 +489,8 @@ impl ApplicationWorker {
                     })
                 }
             };
-            let authenticated = self.routing_profile_authenticated(&profile, &provider_authentication);
+            let authenticated =
+                self.routing_profile_authenticated(&profile, &provider_authentication);
             available.push(selection_info(&profile, authenticated)?);
         }
         if !available.iter().any(|item| item.id == selected) {
@@ -498,7 +499,8 @@ impl ApplicationWorker {
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
             })? {
-                let authenticated = self.routing_profile_authenticated(&profile, &provider_authentication);
+                let authenticated =
+                    self.routing_profile_authenticated(&profile, &provider_authentication);
                 available.push(selection_info(&profile, authenticated)?);
             }
         }
@@ -532,9 +534,7 @@ impl ApplicationWorker {
             })
     }
 
-    fn provider_authentication_states(
-        &self,
-    ) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
+    fn provider_authentication_states(&self) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
         let mut states = BTreeMap::new();
         for provider in self.provider_auth_plugins() {
             states.insert(provider.clone(), self.provider_has_credentials(&provider)?);
