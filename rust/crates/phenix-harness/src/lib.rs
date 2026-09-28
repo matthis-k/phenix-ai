@@ -1203,7 +1203,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod exact_selected_suite_tests {
     use super::*;
