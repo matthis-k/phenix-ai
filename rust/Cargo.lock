@@ -1613,6 +1613,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-agent-configurations"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+]
+
+[[package]]
 name = "phenix-application-interface"
 version = "0.1.0"
 dependencies = [
@@ -1638,6 +1645,7 @@ dependencies = [
  "agent-client-protocol",
  "phenix-backend",
  "phenix-domain",
+ "rmcp",
  "serde_json",
 ]
 
@@ -1841,6 +1849,7 @@ name = "phenix-plugin-catalog"
 version = "0.1.0"
 dependencies = [
  "phenix-adapter-acp",
+ "phenix-agent-configurations",
  "phenix-core",
  "phenix-plugin-api",
  "phenix-plugin-artifacts",
@@ -1978,20 +1987,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-plugin-invocation-defaults"
-version = "0.1.0"
-dependencies = [
- "phenix-core",
- "phenix-sdk",
-]
-
-[[package]]
 name = "phenix-plugin-jobs"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
  "phenix-sdk",
  "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-invocation-defaults"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
 ]
 
 [[package]]
@@ -2494,6 +2503,24 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rmcp"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3"
+dependencies = [
+ "chrono",
+ "futures",
+ "indexmap 2.14.0",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
