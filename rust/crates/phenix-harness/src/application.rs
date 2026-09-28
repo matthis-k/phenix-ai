@@ -1182,6 +1182,7 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
+            let authenticated = self.provider_authenticated(&provider)?;
             let response =
                 self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
@@ -1203,6 +1204,7 @@ impl ApplicationWorker {
                     id: authentication_method_id(&provider, &method.id)?,
                     provider: provider.clone(),
                     provider_name: method.provider_name,
+                    authenticated,
                     kind: kind.to_owned(),
                     name: method.name,
                     description: method.description,
