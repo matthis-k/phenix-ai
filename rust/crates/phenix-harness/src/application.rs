@@ -537,17 +537,17 @@ impl ApplicationWorker {
     fn provider_authentication_states(&self) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
         let mut states = BTreeMap::new();
         for provider in self.provider_auth_plugins() {
-            states.insert(provider.clone(), self.provider_has_credentials(&provider)?);
+            states.insert(provider.clone(), self.provider_authenticated(&provider)?);
         }
         Ok(states)
     }
 
-    fn provider_has_credentials(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
-        match self.invoke_provider_auth(provider, ProviderAuthCommand::List)? {
-            ProviderAuthResponse::Credentials { credentials } => Ok(!credentials.is_empty()),
+    fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
+        match self.invoke_provider_auth(provider, ProviderAuthCommand::Status)? {
+            ProviderAuthResponse::Status { authenticated } => Ok(authenticated),
             response => Err(ApplicationError::InvalidResponse {
                 message: format!(
-                    "provider {provider} returned an unexpected credential-list response: {response:?}"
+                    "provider {provider} returned an unexpected authentication-status response: {response:?}"
                 ),
             }),
         }
@@ -1189,7 +1189,7 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
-            let authenticated = self.provider_has_credentials(&provider)?;
+            let authenticated = self.provider_authenticated(&provider)?;
             let response =
                 self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
