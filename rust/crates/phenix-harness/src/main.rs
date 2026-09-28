@@ -3,15 +3,18 @@ mod runtime_config;
 use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
-use phenix_harness::{default_suite_authority, HarnessBuilder, PhenixHarness};
+use phenix_harness::{
+    default_suite_authority, invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
+};
 use phenix_plugin_catalog::{
-    adapter_acp_manifest, agent_loop_manifest, artifact_manifest, basic_context_manifest,
+    adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
+    artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
     cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
     execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
     local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
     planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, workspace_manifest, OptionStartupPrecedence,
+    session_tree_manifest, step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -182,6 +185,8 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     let authority = default_suite_authority();
     vec![
+        (advanced_agent_configuration_manifest(), false),
+        (basic_agent_configuration_manifest(), false),
         (adapter_acp_manifest(), false),
         (repository_worker_manifest(), true),
         (session_manifest(), true),
@@ -199,11 +204,13 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (local_environment_manifest(), true),
         (workspace_manifest(), true),
         (model_routing_manifest(authority.clone()), true),
+        (step_runner_manifest(authority.clone()), true),
         (job_manifest(), true),
         (frontend_manifest(authority.clone()), true),
         (hook_manifest(authority.clone()), true),
         (debug_manifest(authority.clone()), true),
         (options_manifest(), true),
+        (invocation_defaults_manifest(authority.clone()), true),
         (sdk_manifest(authority), true),
         (basic_model_manifest(), false),
         (basic_tools_manifest(), false),
