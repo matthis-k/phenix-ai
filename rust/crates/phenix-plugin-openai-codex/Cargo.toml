@@ -12,6 +12,7 @@ base64.workspace = true
 getrandom.workspace = true
 parking_lot.workspace = true
 phenix-core = { path = "../phenix-core" }
+phenix-plugin-provider-runtime = { path = "../phenix-plugin-provider-runtime" }
 phenix-provider-sdk = { path = "../phenix-provider-sdk" }
 reqwest.workspace = true
 serde.workspace = true
