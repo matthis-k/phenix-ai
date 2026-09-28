@@ -896,6 +896,22 @@ fn persistence_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_db(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "phenix-{name}-{}-{nonce}.sqlite",
+            std::process::id()
+        ))
+    }
 
     fn subject(value: &str) -> OptionSubjectId {
         OptionSubjectId::parse(value).unwrap()
@@ -922,6 +938,35 @@ mod tests {
         assert_eq!(manifest.services.len(), 1);
         assert_eq!(manifest.services[0].service, options_service());
         assert_eq!(manifest.services[0].role, ServiceRole::Terminal);
+    }
+
+    #[test]
+    fn options_service_dispatches_through_the_service_registry() {
+        let path = temp_db("options-service");
+        let manifest = options_manifest();
+        let plugin = manifest.id.clone();
+        let persistence = LocalPersistence::open(&path).unwrap();
+        let mut kernel =
+            Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
+        kernel.register_embedded_factory(plugin, options_factory).unwrap();
+        kernel.activate_all().unwrap();
+
+        let command = OptionCommand::Resolve {
+            key: key("model.default"),
+            context: OptionContext::default(),
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+        let output = kernel
+            .invoke(&options_service(), &input, &Authority::default(), None)
+            .unwrap();
+        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+        assert!(matches!(
+            OptionResponse::try_from(Project(&output)).unwrap(),
+            OptionResponse::Value { option }
+                if option.value == OptionValue::String("default".into())
+        ));
+        drop(kernel);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
