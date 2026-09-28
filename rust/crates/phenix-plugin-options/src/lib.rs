@@ -2,8 +2,8 @@
 
 use phenix_core::{
     Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
-    PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceId,
-    TransactionOp,
+    PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
+    ServiceId, ServiceRole, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -481,7 +481,14 @@ pub fn options_component_id() -> ComponentId {
 
 #[must_use]
 pub fn options_manifest() -> PluginManifest {
-    Plugin::manifest()
+    let mut manifest = Plugin::manifest();
+    manifest.services.push(ServiceContribution {
+        role: ServiceRole::Terminal,
+        service: options_service(),
+        priority: 100,
+        required_authority: Authority::default(),
+    });
+    manifest
 }
 
 #[must_use]
@@ -912,6 +919,9 @@ mod tests {
         );
         assert_eq!(manifest.resource_namespaces, vec![options_namespace()]);
         assert_eq!(manifest.maximum_authority, persistence_authority());
+        assert_eq!(manifest.services.len(), 1);
+        assert_eq!(manifest.services[0].service, options_service());
+        assert_eq!(manifest.services[0].role, ServiceRole::Terminal);
     }
 
     #[test]
