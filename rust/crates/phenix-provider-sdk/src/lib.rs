@@ -11,7 +11,7 @@ use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
     ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelId,
     ModelInferenceInterface, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId,
-    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -181,9 +181,9 @@ pub struct ProviderDefinition {
 
 impl ProviderDefinition {
     pub fn new(
-        pub id: PluginId,
-        pub endpoint: Endpoint,
-        pub protocol: impl ProtocolAdapter + 'static,
+        id: PluginId,
+        endpoint: Endpoint,
+        protocol: impl ProtocolAdapter + 'static,
         auth: impl Into<auth::Definition>,
     ) -> Self {
         let display_name = id.to_string();
@@ -193,10 +193,10 @@ impl ProviderDefinition {
                 display_name,
                 endpoint,
                 auth: auth.into(),
-                pub default_auth: None,
-                pub declared_models: Vec::new(),
-                pub model_thinking: BTreeMap::new(),
-                pub protocol: Arc::new(protocol),
+                default_auth: None,
+                declared_models: Vec::new(),
+                model_thinking: BTreeMap::new(),
+                protocol: Arc::new(protocol),
             }),
         }
     }
@@ -210,14 +210,14 @@ impl ProviderDefinition {
         );
         Self {
             spec: Arc::new(ProviderRuntimeSpec {
-                pub id: self.spec.id.clone(),
+                id: self.spec.id.clone(),
                 display_name,
-                pub endpoint: self.spec.endpoint.clone(),
+                endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
-                pub default_auth: self.spec.default_auth.clone(),
-                pub declared_models: self.spec.declared_models.clone(),
-                pub model_thinking: self.spec.model_thinking.clone(),
-                pub protocol: Arc::clone(&self.spec.protocol),
+                default_auth: self.spec.default_auth.clone(),
+                declared_models: self.spec.declared_models.clone(),
+                model_thinking: self.spec.model_thinking.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -230,14 +230,14 @@ impl ProviderDefinition {
         );
         Self {
             spec: Arc::new(ProviderRuntimeSpec {
-                pub id: self.spec.id.clone(),
-                pub display_name: self.spec.display_name.clone(),
-                pub endpoint: self.spec.endpoint.clone(),
+                id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
+                endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
-                pub default_auth: Some(default_auth),
-                pub declared_models: self.spec.declared_models.clone(),
-                pub model_thinking: self.spec.model_thinking.clone(),
-                pub protocol: Arc::clone(&self.spec.protocol),
+                default_auth: Some(default_auth),
+                declared_models: self.spec.declared_models.clone(),
+                model_thinking: self.spec.model_thinking.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -249,14 +249,14 @@ impl ProviderDefinition {
         declared_models.dedup();
         Self {
             spec: Arc::new(ProviderRuntimeSpec {
-                pub id: self.spec.id.clone(),
-                pub display_name: self.spec.display_name.clone(),
-                pub endpoint: self.spec.endpoint.clone(),
+                id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
+                endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
-                pub default_auth: self.spec.default_auth.clone(),
+                default_auth: self.spec.default_auth.clone(),
                 declared_models,
-                pub model_thinking: self.spec.model_thinking.clone(),
-                pub protocol: Arc::clone(&self.spec.protocol),
+                model_thinking: self.spec.model_thinking.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -282,14 +282,14 @@ impl ProviderDefinition {
         }
         Self {
             spec: Arc::new(ProviderRuntimeSpec {
-                pub id: self.spec.id.clone(),
-                pub display_name: self.spec.display_name.clone(),
-                pub endpoint: self.spec.endpoint.clone(),
+                id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
+                endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
-                pub default_auth: self.spec.default_auth.clone(),
-                pub declared_models: self.spec.declared_models.clone(),
+                default_auth: self.spec.default_auth.clone(),
+                declared_models: self.spec.declared_models.clone(),
                 model_thinking,
-                pub protocol: Arc::clone(&self.spec.protocol),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -353,7 +353,7 @@ impl ProviderDefinition {
             });
         }
         PluginManifest {
-            pub id: self.spec.id.clone(),
+            id: self.spec.id.clone(),
             version: 1,
             execution: PluginExecution::Embedded,
             dependencies: Vec::new(),
@@ -393,7 +393,7 @@ impl ProviderDefinition {
         }
         ComponentManifest {
             listeners: Vec::new(),
-            pub id: provider_component_id(&self.spec.id),
+            id: provider_component_id(&self.spec.id),
             owner: self.spec.id.clone(),
             imports: Vec::new(),
             exports,
@@ -426,7 +426,6 @@ fn capability(value: &str) -> CapabilityId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, ModelInferenceRequest, ModelInferenceResponse};
     use std::collections::BTreeMap;
 
     #[test]
@@ -558,12 +557,12 @@ mod tests {
             ProviderModelsResponse::Models {
                 models: vec![
                     ProviderModel {
-                        pub id: ModelId::parse("model-declared").unwrap(),
+                        id: ModelId::parse("model-declared").unwrap(),
                         origin: ProviderModelOrigin::DiscoveredAndDeclared,
                         thinking: Vec::new(),
                     },
                     ProviderModel {
-                        pub id: ModelId::parse("model-live").unwrap(),
+                        id: ModelId::parse("model-live").unwrap(),
                         origin: ProviderModelOrigin::Discovered,
                         thinking: vec!["high".to_owned(), "low".to_owned()],
                     },
@@ -619,7 +618,7 @@ mod tests {
             response,
             ProviderModelsResponse::Models {
                 models: vec![ProviderModel {
-                    pub id: ModelId::parse("model-declared").unwrap(),
+                    id: ModelId::parse("model-declared").unwrap(),
                     origin: ProviderModelOrigin::Declared,
                     thinking: Vec::new(),
                 }],
