@@ -249,25 +249,11 @@ fn apply_configuration(
     harness: &mut PhenixHarness,
     configuration: RuntimeConfiguration,
 ) -> Result<(), Box<dyn Error>> {
-    let mut profiles = configuration
+    let profiles = configuration
         .routing_profiles
         .into_iter()
         .map(RuntimeRoutingProfile::into_routing_profile)
         .collect::<Vec<_>>();
-    let mut direct_targets = BTreeMap::new();
-    for profile in &profiles {
-        for target in std::iter::once(&profile.default_target)
-            .chain(profile.fallback_targets.iter())
-            .chain(profile.callable_targets.values())
-        {
-            direct_targets
-                .entry(serde_json::to_string(target)?)
-                .or_insert_with(|| target.clone());
-        }
-    }
-    for target in direct_targets.into_values() {
-        profiles.push(direct_routing_profile(target)?);
-    }
     let response: ExecutionConfigurationResponse = invoke_projected(
         harness,
         &execution_configuration_service(),
