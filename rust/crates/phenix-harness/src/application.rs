@@ -460,7 +460,8 @@ impl ApplicationWorker {
         &self,
         selected: RoutingProfileId,
     ) -> Result<Selections, ApplicationError> {
-        let provider_names = self.refresh_provider_model_catalogs();
+        let provider_authentication = self.provider_authentication_states()?;
+        let provider_names = self.refresh_provider_model_catalogs(&provider_authentication);
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -488,7 +489,8 @@ impl ApplicationWorker {
                     })
                 }
             };
-            let authenticated = self.routing_profile_authenticated(&profile)?;
+            let authenticated =
+                self.routing_profile_authenticated(&profile, &provider_authentication);
             available.push(selection_info(&profile, authenticated, &provider_names)?);
         }
         if !available.iter().any(|item| item.id == selected) {
@@ -497,7 +499,8 @@ impl ApplicationWorker {
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
             })? {
-                let authenticated = self.routing_profile_authenticated(&profile)?;
+                let authenticated =
+                    self.routing_profile_authenticated(&profile, &provider_authentication);
                 available.push(selection_info(&profile, authenticated, &provider_names)?);
             }
         }
@@ -518,26 +521,28 @@ impl ApplicationWorker {
     fn routing_profile_authenticated(
         &self,
         profile: &RoutingProfile,
-    ) -> Result<bool, ApplicationError> {
-        let mut providers = BTreeSet::new();
-        for target in std::iter::once(&profile.default_target)
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) -> bool {
+        std::iter::once(&profile.default_target)
             .chain(profile.fallback_targets.iter())
             .chain(profile.callable_targets.values())
-        {
-            providers.insert(target.provider_plugin.clone());
-        }
-        for provider in providers {
-            if !self.provider_authenticated(&provider)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+            .all(|target| {
+                provider_authentication
+                    .get(&target.provider_plugin)
+                    .copied()
+                    .unwrap_or(true)
+            })
     }
 
-    fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
-        if !self.provider_auth_plugins().contains(provider) {
-            return Ok(true);
+    fn provider_authentication_states(&self) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
+        let mut states = BTreeMap::new();
+        for provider in self.provider_auth_plugins() {
+            states.insert(provider.clone(), self.provider_has_credentials(&provider)?);
         }
+        Ok(states)
+    }
+
+    fn provider_has_credentials(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
         match self.invoke_provider_auth(provider, ProviderAuthCommand::List)? {
             ProviderAuthResponse::Credentials { credentials } => Ok(!credentials.is_empty()),
             response => Err(ApplicationError::InvalidResponse {
@@ -1182,6 +1187,7 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
+            let authenticated = self.provider_has_credentials(&provider)?;
             let response =
                 self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
@@ -1203,6 +1209,7 @@ impl ApplicationWorker {
                     id: authentication_method_id(&provider, &method.id)?,
                     provider: provider.clone(),
                     provider_name: method.provider_name,
+                    authenticated,
                     kind: kind.to_owned(),
                     name: method.name,
                     description: method.description,
@@ -1265,7 +1272,6 @@ impl ApplicationWorker {
                     ),
                 });
             }
-            self.set_provider_authenticated(&provider)?;
             let _ = self.refresh_provider_model_catalog(&provider);
             return Ok(AuthenticationResult::Authenticated);
         }
@@ -1289,7 +1295,6 @@ impl ApplicationWorker {
         };
         match authentication {
             ProviderAuthenticationResult::Authenticated => {
-                self.set_provider_authenticated(&provider)?;
                 let _ = self.refresh_provider_model_catalog(&provider);
                 Ok(AuthenticationResult::Authenticated)
             }
@@ -1345,10 +1350,17 @@ impl ApplicationWorker {
         })
     }
 
-    fn refresh_provider_model_catalogs(&self) -> BTreeMap<PluginId, String> {
+    fn refresh_provider_model_catalogs(
+        &self,
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) -> BTreeMap<PluginId, String> {
         let mut provider_names = BTreeMap::new();
         for provider in self.provider_model_plugins() {
-            if self.provider_authenticated(&provider).unwrap_or(false) {
+            if provider_authentication
+                .get(&provider)
+                .copied()
+                .unwrap_or(true)
+            {
                 if let Ok(provider_name) = self.refresh_provider_model_catalog(&provider) {
                     provider_names.insert(provider, provider_name);
                 }
@@ -1458,44 +1470,6 @@ impl ApplicationWorker {
         serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
             message: error.to_string(),
         })
-    }
-
-    fn set_provider_authenticated(&self, provider: &PluginId) -> Result<(), ApplicationError> {
-        let command = ModelCommand::SetProviderAuthenticated {
-            provider_plugin: provider.clone(),
-            authenticated: true,
-        };
-        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = self
-            .harness
-            .lock()
-            .invoke(&model_routing_service(), &input, &self.authority, None)
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
-            })?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        match ModelResponse::try_from(Project(&output)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })? {
-            ModelResponse::Authentication {
-                provider_plugin,
-                authenticated: true,
-            } if &provider_plugin == provider => Ok(()),
-            response => Err(ApplicationError::InvalidResponse {
-                message: format!(
-                    "model routing returned an unexpected authentication response: {response:?}"
-                ),
-            }),
-        }
     }
 
     fn invoke_session(
@@ -3819,6 +3793,7 @@ mod tests {
             parse_authentication_method_id(&method.id).expect("application auth id round-trips");
         assert_eq!(provider.as_str(), "openai-codex");
         assert_eq!(method.provider_name, "OpenAI ChatGPT");
+        assert!(!method.authenticated);
         assert_eq!(local_method, "oauth");
     }
 

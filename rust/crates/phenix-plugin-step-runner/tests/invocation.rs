@@ -361,14 +361,6 @@ fn setup(kernel: &mut Kernel) {
             },
         },
     );
-    let _: ModelResponse = invoke(
-        kernel,
-        phenix_sdk::model_routing_service(),
-        &ModelCommand::SetProviderAuthenticated {
-            provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-            authenticated: true,
-        },
-    );
 }
 
 fn load_optional_overflow_context(kernel: &mut Kernel) {
