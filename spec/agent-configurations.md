@@ -65,10 +65,6 @@ advanced
 
 The resolved harness contains both assembly manifests. This keeps the configuration ancestry inspectable.
 
-The normal default harness is composed from `phenix.agent.advanced` and then layers model-provider packages on top. It must not maintain a second hard-coded copy of the advanced agent plugin list.
-
-CLI plugin overrides use the same advanced configuration as their default seed. The resolver rejects disabling a dependency while its owning configuration remains enabled.
-
 ## Regression requirements
 
 - basic builds without `phenix.options`
@@ -76,6 +72,5 @@ CLI plugin overrides use the same advanced configuration as their default seed. 
 - advanced directly depends on basic
 - advanced does not repeat basic direct dependencies
 - advanced resolves basic dependencies transitively
-- the default harness resolves through advanced and therefore preserves the basic ancestry
 - advanced adds options, memory, compaction, planning, workers, language support, hooks, diagnostics, and other optional first-party services
 - CLI and environment plugin selection accept both configuration ids
