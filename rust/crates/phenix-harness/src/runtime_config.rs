@@ -10,7 +10,6 @@ use phenix_plugin_catalog::{
     OptionStartupPrecedence, OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
     COMMON_PROVIDERS,
 };
-use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
 use phenix_sdk::{
     CacheCapabilities, CapabilitySupport, CapacityKnowledge, ContextControl,
     EffectiveModelCapabilities,
@@ -353,7 +352,6 @@ pub(crate) fn publish_routing_profile_runtime_state(
     targets.extend(profile.callable_targets.values().cloned());
 
     for target in targets {
-        publish_provider_authentication(harness, &target.provider_plugin)?;
         let cache = cache_capabilities_for_target(&target);
         let capabilities = EffectiveModelCapabilities {
             target,
@@ -374,39 +372,6 @@ pub(crate) fn publish_routing_profile_runtime_state(
         }
     }
     Ok(())
-}
-
-fn publish_provider_authentication(
-    harness: &mut PhenixHarness,
-    provider: &PluginId,
-) -> Result<(), Box<dyn Error>> {
-    let input = serde_json::to_vec(&ProviderAuthCommand::List)?;
-    let authenticated = match harness.invoke(
-        &provider_auth_service(),
-        &input,
-        &default_suite_authority(),
-        Some(provider),
-    ) {
-        Ok(output) => match serde_json::from_slice::<ProviderAuthResponse>(&output)? {
-            ProviderAuthResponse::Credentials { credentials } => !credentials.is_empty(),
-            _ => false,
-        },
-        Err(_) => false,
-    };
-    let response: ModelResponse = invoke_projected(
-        harness,
-        &model_routing_service(),
-        &ModelCommand::SetProviderAuthenticated {
-            provider_plugin: provider.clone(),
-            authenticated,
-        },
-        &default_suite_authority(),
-    )?;
-    if matches!(response, ModelResponse::Authentication { .. }) {
-        Ok(())
-    } else {
-        Err("model routing service rejected provider authentication state".into())
-    }
 }
 
 #[cfg(test)]

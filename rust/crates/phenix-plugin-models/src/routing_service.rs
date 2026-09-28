@@ -107,8 +107,7 @@ impl RoutingServiceState {
             | ModelCommand::PublishProviderCatalogProfiles { .. }
             | ModelCommand::ReplaceProfile { .. }
             | ModelCommand::GetProfile { .. }
-            | ModelCommand::ListProfiles
-            | ModelCommand::SetProviderAuthenticated { .. } => return None,
+            | ModelCommand::ListProfiles => return None,
         };
         Some(response)
     }
