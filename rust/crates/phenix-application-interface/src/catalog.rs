@@ -37,6 +37,8 @@ operations! {
     GetLineage: "session-lineage", "lineage", SessionInput => SessionLineage;
     Prompt: "prompt", "prompt", PromptInput => PromptResult;
     Cancel: "cancel", "prompt", SessionInput => Acknowledged;
+    ListDefaultSelections: "selection-default-list", "routing", Empty => Selections;
+    SelectDefaultSelection: "selection-default-select", "routing", SelectionDefaultSelectInput => Selections;
     ListSelections: "selection-list", "routing", SessionInput => Selections;
     SelectSelection: "selection-select", "routing", SelectionSelectInput => Selections;
     ListSkills: "skill-list", "skills", SessionInput => Skills;
