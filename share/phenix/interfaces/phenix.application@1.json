@@ -4297,6 +4297,9 @@
         "provider": {
           "type": "string"
         },
+        "provider_name": {
+          "type": "string"
+        },
         "thinking": {
           "type": "option",
           "value": {
@@ -4368,6 +4371,9 @@
                 }
               },
               "provider": {
+                "type": "string"
+              },
+              "provider_name": {
                 "type": "string"
               },
               "thinking": {
