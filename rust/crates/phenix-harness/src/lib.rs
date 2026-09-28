@@ -31,7 +31,6 @@ use phenix_plugin_catalog::{
     session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
     workspace_component_manifest, workspace_factory, workspace_manifest, AGENT_LOOP_PLUGIN,
-    LOCAL_ENVIRONMENT_PLUGIN,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
