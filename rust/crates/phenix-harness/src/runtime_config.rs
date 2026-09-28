@@ -4,11 +4,11 @@ use phenix_core::{
     RoutingProfileId, ServiceId, ValueError,
 };
 use phenix_plugin_catalog::{
-    execution_configuration_service, model_routing_service, options_component_manifest,
-    options_service, AgentDefinition, ExecutionConfigurationCommand,
-    ExecutionConfigurationResponse, ModelCommand, ModelResponse, ModelTarget, OptionAssignment,
-    OptionCommand, OptionKey, OptionResponse, OptionScope, OptionStartupPrecedence,
-    OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile, COMMON_PROVIDERS,
+    execution_configuration_service, model_routing_service, options_service, AgentDefinition,
+    ExecutionConfigurationCommand, ExecutionConfigurationResponse, ModelCommand, ModelResponse,
+    ModelTarget, OptionAssignment, OptionCommand, OptionKey, OptionResponse, OptionScope,
+    OptionStartupPrecedence, OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
+    COMMON_PROVIDERS,
 };
 use phenix_provider_sdk::{provider_auth_service, ProviderAuthCommand, ProviderAuthResponse};
 use phenix_sdk::{
@@ -149,29 +149,22 @@ pub(super) fn apply_startup_settings(
     let file_values = settings_assignments(file_settings);
     let nix_values = settings_assignments(nix_settings);
 
-    let component = options_component_manifest();
-    if harness.component_graph().component(&component.id).is_none() {
-        if file_values.is_empty() && nix_values.is_empty() {
-            return Ok(());
-        }
-        return Err("startup settings require the phenix.options plugin".into());
+    if file_values.is_empty() && nix_values.is_empty() {
+        return Ok(());
     }
 
-    let command = OptionCommand::Configure {
-        file_values,
-        nix_values,
-        precedence,
-    };
-    let input = PhenixValue::from(&command);
-    let output = harness.kernel_mut().invoke_component(
-        &component.id,
+    // Resolve the Options provider through its interface; product code does not pin a component.
+    let response: OptionResponse = invoke_projected(
+        harness,
         &options_service(),
-        &serde_json::to_vec(&input)?,
+        &OptionCommand::Configure {
+            file_values,
+            nix_values,
+            precedence,
+        },
         &default_suite_authority(),
-        &component.owner,
     )?;
-    let output: PhenixValue = serde_json::from_slice(&output)?;
-    match OptionResponse::try_from(Project(&output))? {
+    match response {
         OptionResponse::Configured { .. } => Ok(()),
         _ => Err("options service rejected startup settings".into()),
     }
@@ -572,24 +565,18 @@ mod tests {
         )
         .unwrap();
 
-        let component = options_component_manifest();
-        let command = OptionCommand::Resolve {
-            key: OptionKey::parse("session.auto_create").unwrap(),
-            context: OptionContext::default(),
-        };
-        let output = harness
-            .kernel_mut()
-            .invoke_component(
-                &component.id,
-                &options_service(),
-                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-                &default_suite_authority(),
-                &component.owner,
-            )
-            .unwrap();
-        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response: OptionResponse = invoke_projected(
+            &mut harness,
+            &options_service(),
+            &OptionCommand::Resolve {
+                key: OptionKey::parse("session.auto_create").unwrap(),
+                context: OptionContext::default(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
         assert!(matches!(
-            OptionResponse::try_from(Project(&output)).unwrap(),
+            response,
             OptionResponse::Value { option }
                 if option.value == OptionValue::Bool(false)
                     && option.source == OptionValueSource::Global
