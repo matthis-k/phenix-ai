@@ -356,7 +356,7 @@ fn secure_file(_path: &Path) -> Result<(), CredentialStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TokenParseError;
+    use phenix_provider_sdk::TokenParseError;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_store(name: &str) -> CredentialStore {
@@ -459,7 +459,7 @@ mod tests {
                 "provider.test",
                 Auth::ApiToken {
                     source: ApiTokenSource::Environment {
-                        variable: crate::EnvironmentVariable::parse("PHENIX_TEST_API_KEY").unwrap(),
+                        variable: phenix_provider_sdk::EnvironmentVariable::parse("PHENIX_TEST_API_KEY").unwrap(),
                     },
                 },
             )
