@@ -242,7 +242,7 @@ fn handle_dispatch(
                     continuation_turns: continuation.len(),
                 },
             );
-            let capabilities = match validate_dispatch(context, routing, &decision) {
+            let capabilities = match validate_dispatch(routing, &decision) {
                 Ok(capabilities) => capabilities,
                 Err(failure) => {
                     emit_diagnostic(
@@ -368,7 +368,6 @@ fn emit_diagnostic(context: &ModelContext<'_, '_>, diagnostic: ModelDiagnosticEv
 }
 
 fn validate_dispatch<'a>(
-    context: &ModelContext<'_, '_>,
     routing: &'a RoutingServiceState,
     decision: &phenix_sdk::RouteDecision,
 ) -> Result<&'a EffectiveModelCapabilities, ModelInferenceFailure> {
