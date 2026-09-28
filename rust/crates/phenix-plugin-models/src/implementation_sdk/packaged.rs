@@ -12,7 +12,7 @@ struct Manifest {
     active: BTreeSet<RoutingProfileId>,
 }
 
-fn manifest(context: &ModelContext<'_, '_, '_>) -> Result<(Option<Vec<u8>>, Manifest), String> {
+fn manifest(context: &ModelContext<'_, '_>) -> Result<(Option<Vec<u8>>, Manifest), String> {
     let bytes = read_raw(context, MANIFEST)?;
     let value = bytes
         .as_deref()
@@ -24,7 +24,7 @@ fn manifest(context: &ModelContext<'_, '_, '_>) -> Result<(Option<Vec<u8>>, Mani
 }
 
 pub(super) fn ownership(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
 ) -> Result<(BTreeSet<RoutingProfileId>, BTreeSet<RoutingProfileId>), String> {
     let (_, manifest) = manifest(context)?;
     Ok((manifest.owned.keys().cloned().collect(), manifest.active))
@@ -85,7 +85,7 @@ fn generated(profile: &RoutingProfile) -> Result<bool, String> {
 }
 
 pub(super) fn prepare(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     profiles: Vec<RoutingProfile>,
 ) -> Result<ModelResponse, String> {
     let (old_manifest, mut ownership) = manifest(context)?;

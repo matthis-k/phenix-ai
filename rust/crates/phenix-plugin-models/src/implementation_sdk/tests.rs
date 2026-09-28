@@ -515,17 +515,6 @@ mod runtime_persistence {
 mod resolved_dispatch {
     use super::*;
 
-    fn authenticate(kernel: &mut Kernel, authenticated: bool) {
-        invoke_routing(
-            kernel,
-            ModelCommand::SetProviderAuthenticated {
-                provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                authenticated,
-            },
-        )
-        .unwrap();
-    }
-
     fn decision(target: ModelTarget, generation: &str) -> RouteDecision {
         RouteDecision {
             target,
@@ -596,7 +585,6 @@ mod resolved_dispatch {
     fn cache_hint_does_not_change_provider_visible_context() {
         let path = temp_db("resolved-dispatch-cache-input");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         let mut published = capabilities(target.clone(), "generation-1", 8_000);
         published.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
@@ -645,7 +633,6 @@ mod resolved_dispatch {
     fn unsupported_cache_control_preserves_context_semantics() {
         let path = temp_db("resolved-dispatch-no-cache");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -711,7 +698,6 @@ mod resolved_dispatch {
     fn exact_selected_target_reaches_provider_unchanged() {
         let path = temp_db("resolved-dispatch-exact");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected-fallback");
         invoke_routing(
             &mut kernel,
@@ -748,7 +734,6 @@ mod resolved_dispatch {
     fn stale_generation_is_rejected_during_preparation() {
         let path = temp_db("resolved-dispatch-stale");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -786,42 +771,9 @@ mod resolved_dispatch {
     }
 
     #[test]
-    fn missing_authentication_is_rejected_during_preparation() {
-        let path = temp_db("resolved-dispatch-auth");
-        let mut kernel = kernel_with_provider(&path);
-        let target = target("fixture.provider", "selected");
-        invoke_routing(
-            &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
-            },
-        )
-        .unwrap();
-        let failure = dispatch_failure(
-            &mut kernel,
-            ModelDispatchCommand::PrepareResolved {
-                session_id: None,
-                decision: decision(target, "generation-1"),
-                input: b"must-not-run".to_vec().into(),
-                cache: Default::default(),
-                tools: Vec::new(),
-                continuation: Vec::new(),
-            },
-        )
-        .unwrap();
-        assert!(matches!(
-            failure.failure,
-            ModelInferenceFailure::Authentication { ref message }
-                if message.contains("authentication required")
-        ));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn prepared_dispatch_is_not_rejected_when_mutable_state_changes() {
+    fn prepared_dispatch_is_not_rejected_when_capabilities_advance() {
         let path = temp_db("resolved-dispatch-prepared-snapshot");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -832,8 +784,6 @@ mod resolved_dispatch {
         .unwrap();
         let original = decision(target.clone(), "generation-1");
         let prepared = prepare(&mut kernel, original.clone(), b"cross-boundary").unwrap();
-
-        authenticate(&mut kernel, false);
         invoke_routing(
             &mut kernel,
             ModelCommand::PublishCapabilities {
