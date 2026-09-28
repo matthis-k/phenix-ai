@@ -1,0 +1,16 @@
+[package]
+name = "phenix-plugin-provider-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.phenix]
+role = "runtime-plugin"
+
+[dependencies]
+phenix-core = { path = "../phenix-core" }
+phenix-provider-sdk = { path = "../phenix-provider-sdk" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
