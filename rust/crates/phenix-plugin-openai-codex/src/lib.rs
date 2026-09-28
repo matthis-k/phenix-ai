@@ -663,8 +663,12 @@ impl PluginInstance for OpenAiCodexPlugin {
                             phenix_core::ModelId::parse(*model)
                                 .map(|id| ProviderModel {
                                     thinking: match *model {
-                                        "gpt-5.6-terra" => vec!["medium".to_owned(), "high".to_owned()],
-                                        "gpt-5.6-luna" => vec!["low".to_owned(), "medium".to_owned()],
+                                        "gpt-5.6-terra" => {
+                                            vec!["medium".to_owned(), "high".to_owned()]
+                                        }
+                                        "gpt-5.6-luna" => {
+                                            vec!["low".to_owned(), "medium".to_owned()]
+                                        }
                                         "gpt-5.6-sol" => vec!["medium".to_owned()],
                                         _ => Vec::new(),
                                     },

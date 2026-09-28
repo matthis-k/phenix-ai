@@ -125,15 +125,14 @@ impl ProviderPreset {
             auth,
         )
         .with_display_name(self.name);
-        let definition = if self.declared_models.is_empty() {
-            definition
-        } else {
-            definition.with_declared_models(
-                self.declared_models.iter().map(|model| {
+        let definition =
+            if self.declared_models.is_empty() {
+                definition
+            } else {
+                definition.with_declared_models(self.declared_models.iter().map(|model| {
                     ModelId::parse(*model).expect("common provider model id is valid")
-                }),
-            )
-        };
+                }))
+            };
         self.model_thinking
             .iter()
             .fold(definition, |definition, (model, levels)| {
