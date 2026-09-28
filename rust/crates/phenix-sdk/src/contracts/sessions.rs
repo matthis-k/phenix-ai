@@ -256,6 +256,10 @@ pub enum SessionCommand {
     Create {
         session: SessionRecord,
     },
+    Allocate {
+        working_directory: Option<String>,
+        title: Option<String>,
+    },
     Get {
         id: SessionId,
     },
