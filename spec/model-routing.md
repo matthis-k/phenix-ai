@@ -202,7 +202,7 @@ Model version churn must therefore stay below routing. If a provider adds or rem
 
 Providers without model enumeration publish declared models through their provider plugin. Routing sees the same normalized catalog entries and does not branch on their origin.
 
-Multi-target routing profiles remain explicit policy. Dynamic catalog discovery does not synthesize quality, cost, fallback, or task-routing policy.
+Multi-target routing profiles remain explicit policy. Dynamic catalog discovery does not synthesize quality, cost, fallback, or task-routing policy. Targets referenced inside a router do not implicitly become direct-model selections. A direct selection comes from a provider catalog or an explicitly declared one-target profile.
 
 ## Model indexing
 
