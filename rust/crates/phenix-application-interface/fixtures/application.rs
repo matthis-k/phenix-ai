@@ -38,10 +38,10 @@ impl phenix_core::PhenixContract for PhenixApplicationTypeAcknowledged1Type { fn
 pub struct PhenixApplicationTypeAuthenticateInput1Type { pub r#method_id: String,pub r#secret: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticateInput1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authenticate-input@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeAuthenticationMethod1Type { pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
+pub struct PhenixApplicationTypeAuthenticationMethod1Type { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticationMethod1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authentication-method@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct Structural14 { pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
+pub struct Structural14 { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub struct PhenixApplicationTypeAuthenticationMethods1Type { pub r#methods: Vec<Structural14>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticationMethods1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authentication-methods@1").expect("generated contract id is valid") } }
