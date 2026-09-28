@@ -460,8 +460,8 @@ impl ApplicationWorker {
         &self,
         selected: RoutingProfileId,
     ) -> Result<Selections, ApplicationError> {
-        self.refresh_provider_model_catalogs();
         let provider_authentication = self.provider_authentication_states()?;
+        self.refresh_provider_model_catalogs(&provider_authentication);
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -540,13 +540,6 @@ impl ApplicationWorker {
             states.insert(provider.clone(), self.provider_has_credentials(&provider)?);
         }
         Ok(states)
-    }
-
-    fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
-        if !self.provider_auth_plugins().contains(provider) {
-            return Ok(true);
-        }
-        self.provider_has_credentials(provider)
     }
 
     fn provider_has_credentials(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
@@ -1194,7 +1187,7 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
-            let authenticated = self.provider_authenticated(&provider)?;
+            let authenticated = self.provider_has_credentials(&provider)?;
             let response =
                 self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
@@ -1357,9 +1350,12 @@ impl ApplicationWorker {
         })
     }
 
-    fn refresh_provider_model_catalogs(&self) {
+    fn refresh_provider_model_catalogs(
+        &self,
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) {
         for provider in self.provider_model_plugins() {
-            if self.provider_authenticated(&provider).unwrap_or(false) {
+            if provider_authentication.get(&provider).copied().unwrap_or(true) {
                 let _ = self.refresh_provider_model_catalog(&provider);
             }
         }
