@@ -805,7 +805,6 @@ mod tests {
             );
         }
         advanced.build().unwrap();
-
     }
 
     #[test]
