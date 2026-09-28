@@ -488,6 +488,9 @@
     "phenix.application.type.authentication-method@1": {
       "type": "table",
       "value": {
+        "authenticated": {
+          "type": "bool"
+        },
         "description": {
           "type": "option",
           "value": {
@@ -508,9 +511,6 @@
         },
         "provider_name": {
           "type": "string"
-        },
-        "authenticated": {
-          "type": "bool"
         }
       }
     },
@@ -522,6 +522,9 @@
           "value": {
             "type": "table",
             "value": {
+              "authenticated": {
+                "type": "bool"
+              },
               "description": {
                 "type": "option",
                 "value": {
@@ -542,9 +545,6 @@
               },
               "provider_name": {
                 "type": "string"
-              },
-              "authenticated": {
-                "type": "bool"
               }
             }
           }
