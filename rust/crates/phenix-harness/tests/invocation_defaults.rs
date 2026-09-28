@@ -3,9 +3,9 @@ use phenix_harness::{
     default_suite_authority, HarnessBuilder, PhenixHarness, INVOCATION_DEFAULTS_PLUGIN,
 };
 use phenix_sdk::{
-    invocation_defaults_service, InvocationDefaultsCommand, InvocationDefaultsResponse,
-    InvocationRequest, OptionCommand, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
-    OptionValue,
+    invocation_defaults_service, options_service, InvocationDefaultsCommand,
+    InvocationDefaultsResponse, InvocationRequest, OptionCommand, OptionKey, OptionResponse,
+    OptionScope, OptionSubjectId, OptionValue,
 };
 use std::collections::BTreeSet;
 
@@ -56,7 +56,6 @@ fn extracted_defaults_keep_session_route_precedence() {
     harness.activate().unwrap();
 
     let key = OptionKey::parse("model.default").unwrap();
-    let options_component = phenix_plugin_catalog::options_component_manifest();
     for (scope, value) in [
         (
             OptionScope::Agent(OptionSubjectId::parse("agent.coordinator").unwrap()),
@@ -73,13 +72,11 @@ fn extracted_defaults_keep_session_route_precedence() {
             value: OptionValue::String(value.into()),
         };
         let output = harness
-            .kernel_mut()
-            .invoke_component(
-                &options_component.id,
-                &phenix_plugin_catalog::options_service(),
+            .invoke(
+                &options_service(),
                 &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
                 &default_suite_authority(),
-                &options_component.owner,
+                None,
             )
             .unwrap();
         let output: PhenixValue = serde_json::from_slice(&output).unwrap();
