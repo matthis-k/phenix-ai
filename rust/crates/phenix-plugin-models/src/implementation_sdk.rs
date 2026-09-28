@@ -250,8 +250,6 @@ fn handle_dispatch(
                         ModelDiagnosticEvent::DispatchPreflightRejected {
                             provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
                             model: decision.target.model.as_str().to_owned(),
-                            authenticated,
-                            authenticated_providers: authenticated_providers(context),
                             reason: failure.message().to_owned(),
                         },
                     );
