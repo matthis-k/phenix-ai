@@ -262,6 +262,7 @@ impl HarnessBuilder {
             ));
         }
 
+        // Explicit selection is exact. Only declared manifest dependencies may expand it.
         let mut enabled = enabled.clone();
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
         while let Some(plugin) = pending.pop() {
