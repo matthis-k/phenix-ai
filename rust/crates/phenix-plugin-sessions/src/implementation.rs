@@ -146,6 +146,10 @@ fn handle_session(
 ) -> Result<SessionResponse, String> {
     match command {
         SessionCommand::Create { session } => create_session(context, session),
+        SessionCommand::Allocate {
+            working_directory,
+            title,
+        } => allocate_session(context, working_directory, title),
         SessionCommand::Get { id } => Ok(SessionResponse::Session {
             session: read_session(context, &id)?,
         }),
@@ -255,6 +259,37 @@ fn create_session(
         .transact_durable(&session_namespace(), &operations)
         .map_err(|error| error.to_string())?;
     Ok(SessionResponse::Created { session })
+}
+
+fn allocate_session(
+    context: &SessionContext<'_, '_>,
+    working_directory: Option<String>,
+    title: Option<String>,
+) -> Result<SessionResponse, String> {
+    let id = allocate_session_id(context)?;
+    create_session(
+        context,
+        SessionRecord {
+            id,
+            working_directory,
+            title,
+            lifecycle: SessionLifecycle::Open,
+        },
+    )
+}
+
+fn allocate_session_id(context: &SessionContext<'_, '_>) -> Result<SessionId, String> {
+    let mut ordinal = 1_u64;
+    loop {
+        let id = SessionId::parse(format!("session-{ordinal}"))
+            .map_err(|error| format!("generated invalid session id: {error}"))?;
+        if read_session(context, &id)?.is_none() {
+            return Ok(id);
+        }
+        ordinal = ordinal
+            .checked_add(1)
+            .ok_or_else(|| "session id space exhausted".to_owned())?;
+    }
 }
 
 fn rename_session(
