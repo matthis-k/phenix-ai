@@ -53,6 +53,15 @@ impl<'host, 'runtime> Provider<'host, 'runtime> {
         }
     }
 
+    pub fn authenticated(&self) -> Result<bool, ProviderSdkError> {
+        match self.invoke(&ProviderAuthCommand::Status)? {
+            ProviderAuthResponse::Status { authenticated } => Ok(authenticated),
+            _ => Err(ProviderSdkError::UnexpectedResponse(
+                "reading provider authentication status",
+            )),
+        }
+    }
+
     pub fn list_auth(&self) -> Result<Vec<AuthDescriptor>, ProviderSdkError> {
         match self.invoke(&ProviderAuthCommand::List)? {
             ProviderAuthResponse::Credentials { credentials } => Ok(credentials),
