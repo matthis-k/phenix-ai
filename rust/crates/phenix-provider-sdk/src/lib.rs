@@ -472,7 +472,10 @@ fn capability(value: &str) -> CapabilityId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, ModelInferenceRequest, ModelInferenceResponse};
+    use phenix_core::{
+        Kernel, KernelConfig, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
+        Project,
+    };
     use std::{
         collections::BTreeMap,
         io::{Read, Write},
@@ -712,6 +715,51 @@ mod tests {
             .services
             .iter()
             .any(|service| service.service == provider_models_service()));
+    }
+
+    #[test]
+    fn missing_credentials_surface_as_provider_authentication_failure() {
+        let definition = ProviderDefinition::new(
+            PluginId::parse("provider.auth-missing-fixture").unwrap(),
+            Endpoint::parse("https://example.invalid/v1").unwrap(),
+            Protocol::OpenAiResponses,
+            auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
+        );
+        let manifest = definition.manifest();
+        let plugin = manifest.id.clone();
+        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
+        kernel
+            .register_embedded_factory(plugin.clone(), definition.factory())
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let request = ModelInferenceRequest {
+            session_id: None,
+            model: ModelId::parse("model-a").unwrap(),
+            input: b"hello".to_vec().into(),
+            options: BTreeMap::new(),
+            cache: Default::default(),
+            tools: Vec::new(),
+            continuation: Vec::new(),
+        };
+        let output = kernel
+            .invoke(
+                &model_inference_service(),
+                &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                &network_authority(),
+                Some(&plugin),
+            )
+            .unwrap();
+        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let InvocationOutcome::DomainError(value) = InvocationOutcome::from_transport_value(output)
+        else {
+            panic!("missing provider credentials must be a typed domain failure");
+        };
+        assert!(matches!(
+            ModelInferenceFailure::try_from(Project(&value)).unwrap(),
+            ModelInferenceFailure::Authentication { ref message }
+                if message.contains("has no configured credentials")
+        ));
     }
 
     #[test]
