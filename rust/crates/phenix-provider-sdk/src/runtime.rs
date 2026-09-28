@@ -102,6 +102,16 @@ impl ProviderPlugin {
         })
     }
 
+    fn authenticated(&self) -> Result<bool, ProviderError> {
+        match self.resolve_auth() {
+            Ok(None) => Ok(true),
+            Ok(Some(Auth::ApiToken { source })) => Ok(resolve_api_token(&source).is_ok()),
+            Ok(Some(Auth::OAuth { .. })) => Ok(true),
+            Err(ProviderError::Authentication { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     fn available_auth_descriptors(&self) -> Result<Vec<crate::AuthDescriptor>, ProviderError> {
         let mut credentials = self.credentials()?.list(self.spec.id.as_str())?;
         if let Some(default_auth) = &self.spec.default_auth {
@@ -206,6 +216,9 @@ impl ProviderPlugin {
                     "provider {} does not expose interactive authentication method {method:?}",
                     self.spec.id
                 ),
+            }),
+            ProviderAuthCommand::Status => Ok(ProviderAuthResponse::Status {
+                authenticated: self.authenticated()?,
             }),
             ProviderAuthCommand::Add { auth } => {
                 self.ensure_auth_supported(auth.kind())?;
@@ -579,6 +592,44 @@ mod cache_identity_tests {
             options: &options,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn auth_status_rejects_expired_stored_oauth_even_when_it_is_configured() {
+        let path = std::env::temp_dir().join(format!(
+            "phenix-provider-auth-status-{}-{}.json",
+            std::process::id(),
+            ArtifactRevision::from_content(b"expired-oauth").to_string().replace(':', "-")
+        ));
+        let store = CredentialStore::at(&path);
+        let provider = "provider.status";
+        store
+            .add(
+                provider,
+                Auth::OAuth {
+                    access_token: Token::parse("expired").unwrap(),
+                    refresh_token: None,
+                    expires_at: Some(0),
+                },
+            )
+            .unwrap();
+
+        let definition = crate::ProviderDefinition::new(
+            phenix_core::PluginId::parse(provider).unwrap(),
+            crate::Endpoint::parse("https://example.invalid/v1").unwrap(),
+            crate::Protocol::OpenAiResponses,
+            crate::auth::Definition::oauth(crate::auth::OAuthMethod::bearer()),
+        );
+        let mut plugin = ProviderPlugin::new(Arc::clone(&definition.spec));
+        plugin.credentials = Some(store);
+
+        assert!(!plugin.authenticated().unwrap());
+        assert!(matches!(
+            plugin.auth_command(ProviderAuthCommand::List).unwrap(),
+            ProviderAuthResponse::Credentials { credentials } if credentials.len() == 1
+        ));
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
