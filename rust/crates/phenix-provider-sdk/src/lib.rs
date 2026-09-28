@@ -91,6 +91,7 @@ pub enum ProviderAuthCommand {
     Methods,
     InteractiveMethods,
     Authenticate { method: String },
+    Status,
     List,
     Remove { kind: AuthKind },
 }
@@ -131,6 +132,9 @@ pub enum ProviderAuthResponse {
     },
     Authentication {
         authentication: ProviderAuthenticationResult,
+    },
+    Status {
+        authenticated: bool,
     },
     Credentials {
         credentials: Vec<AuthDescriptor>,
