@@ -170,7 +170,7 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "OpenRouter",
         "https://openrouter.ai/api/v1",
         Protocol::OpenAiChatCompletions,
-        "OPEN_ROUTER_API_KEY",
+        "OPENROUTER_API_KEY",
     )
     .with_model_thinking(&[("openrouter/auto", &["low", "medium", "high"])]),
     ProviderPreset::bearer(
@@ -322,6 +322,15 @@ mod tests {
             .expect("runtime OpenAI API provider is part of the common catalog");
         assert_eq!(openai.environment(), "OPENAI_API_KEY");
         assert_eq!(openai.protocol(), Protocol::OpenAiResponses);
+    }
+
+    #[test]
+    fn openrouter_uses_conventional_environment_variable() {
+        let provider = COMMON_PROVIDERS
+            .into_iter()
+            .find(|provider| provider.id() == "open-router")
+            .expect("OpenRouter is part of the common catalog");
+        assert_eq!(provider.environment(), "OPENROUTER_API_KEY");
     }
 
     #[test]
