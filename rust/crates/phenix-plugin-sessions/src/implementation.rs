@@ -972,6 +972,49 @@ mod tests {
     }
 
     #[test]
+    fn allocated_session_ids_skip_existing_ids_and_survive_restart() {
+        let path = temp_db("session-allocation");
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(SessionId::parse("session-1").unwrap()),
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Allocate {
+                        working_directory: Some("/workspace".into()),
+                        title: Some("allocated".into()),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Created { ref session }
+                    if session.id.as_str() == "session-2"
+                        && session.working_directory.as_deref() == Some("/workspace")
+                        && session.title.as_deref() == Some("allocated")
+            ));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Allocate {
+                    working_directory: None,
+                    title: None,
+                },
+            )
+            .unwrap(),
+            SessionResponse::Created { ref session } if session.id.as_str() == "session-3"
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn journal_streams_and_transition_are_durable_across_restart() {
         let path = temp_db("session-journal");
         let root = SessionId::parse("root").unwrap();
