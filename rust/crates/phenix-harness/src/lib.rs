@@ -5,16 +5,17 @@ use phenix_core::{
     ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
-    basic_context_component_manifest, basic_context_factory, basic_context_manifest,
-    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
-    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
-    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
-    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
-    cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
-    context_component_manifest, context_factory, context_manifest, debug_component_manifest,
-    debug_factory, debug_manifest, debug_runtime_trace_sink,
+    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
+    artifact_component_manifest, artifact_factory, artifact_manifest,
+    basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
+    basic_context_manifest, basic_model_component_manifest, basic_model_factory,
+    basic_model_manifest, basic_skills_component_manifest, basic_skills_factory,
+    basic_skills_manifest, basic_tools_component_manifest, basic_tools_factory,
+    basic_tools_manifest, benchmark_outcome_component_manifest, benchmark_outcome_factory,
+    benchmark_outcome_manifest, cli_component_manifest, cli_factory, cli_manifest,
+    common_provider_definitions, context_component_manifest, context_factory, context_manifest,
+    debug_component_manifest, debug_factory, debug_manifest, debug_runtime_trace_sink,
     efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
     efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
     execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
@@ -43,6 +44,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 use phenix_plugin_invocation_defaults as invocation_defaults;
+pub use invocation_defaults::{invocation_defaults_manifest, INVOCATION_DEFAULTS_PLUGIN};
 pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
@@ -217,6 +219,8 @@ impl HarnessBuilder {
     pub fn with_selected_suite(enabled: &BTreeSet<String>) -> Result<Self, String> {
         let authority = default_suite_authority();
         let available = [
+            advanced_agent_configuration_manifest(),
+            basic_agent_configuration_manifest(),
             adapter_acp_manifest(),
             repository_worker_manifest(),
             session_manifest(),
@@ -286,6 +290,14 @@ impl HarnessBuilder {
 
         let mut builder = Self::new();
         builder.component_authority = authority.clone();
+        for manifest in [
+            basic_agent_configuration_manifest(),
+            advanced_agent_configuration_manifest(),
+        ] {
+            if enabled.contains(manifest.id.as_str()) {
+                builder.add_manifest(manifest);
+            }
+        }
         builder.add_selected(&enabled, adapter_acp_manifest(), adapter_acp_factory)?;
         builder.add_selected(
             &enabled,
@@ -602,7 +614,7 @@ mod tests {
         ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
         ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
         EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-        SessionCommand, SessionResponse,
+        SessionCommand, SessionResponse, ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -730,6 +742,69 @@ mod tests {
         ) -> Result<Vec<u8>, String> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
+        let basic = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            BASIC_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap();
+        let basic_ids = basic
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            BASIC_AGENT_CONFIGURATION,
+            "phenix.agent-loop",
+            "phenix.context",
+            "phenix.execution",
+            "phenix.harness.invocation-defaults",
+            "phenix.models",
+            "phenix.step-runner",
+        ] {
+            assert!(
+                basic_ids.contains(required),
+                "basic configuration missed {required}"
+            );
+        }
+        for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
+            assert!(
+                !basic_ids.contains(optional),
+                "basic configuration unexpectedly included {optional}"
+            );
+        }
+        basic.build().unwrap();
+
+        let advanced = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            ADVANCED_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap();
+        let advanced_ids = advanced
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            ADVANCED_AGENT_CONFIGURATION,
+            BASIC_AGENT_CONFIGURATION,
+            "phenix.agent-loop",
+            "phenix.options",
+            "phenix.memory",
+            "phenix.planning",
+            "phenix.repository-workers",
+            "phenix.session-tree",
+            "phenix.language",
+            "phenix.hooks",
+            "phenix.debug",
+        ] {
+            assert!(
+                advanced_ids.contains(required),
+                "advanced configuration missed {required}"
+            );
+        }
+        advanced.build().unwrap();
     }
 
     #[test]
