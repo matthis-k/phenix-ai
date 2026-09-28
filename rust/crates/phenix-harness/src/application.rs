@@ -460,7 +460,7 @@ impl ApplicationWorker {
         &self,
         selected: RoutingProfileId,
     ) -> Result<Selections, ApplicationError> {
-        self.refresh_provider_model_catalogs();
+        let provider_names = self.refresh_provider_model_catalogs();
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -489,7 +489,7 @@ impl ApplicationWorker {
                 }
             };
             let authenticated = self.routing_profile_authenticated(&profile)?;
-            available.push(selection_info(&profile, authenticated)?);
+            available.push(selection_info(&profile, authenticated, &provider_names)?);
         }
         if !available.iter().any(|item| item.id == selected) {
             if let ModelResponse::Profile {
@@ -498,7 +498,7 @@ impl ApplicationWorker {
                 id: selected.clone(),
             })? {
                 let authenticated = self.routing_profile_authenticated(&profile)?;
-                available.push(selection_info(&profile, authenticated)?);
+                available.push(selection_info(&profile, authenticated, &provider_names)?);
             }
         }
         available.sort_by(|left, right| {
@@ -1345,17 +1345,27 @@ impl ApplicationWorker {
         })
     }
 
-    fn refresh_provider_model_catalogs(&self) {
+    fn refresh_provider_model_catalogs(&self) -> BTreeMap<PluginId, String> {
+        let mut provider_names = BTreeMap::new();
         for provider in self.provider_model_plugins() {
             if self.provider_authenticated(&provider).unwrap_or(false) {
-                let _ = self.refresh_provider_model_catalog(&provider);
+                if let Ok(provider_name) = self.refresh_provider_model_catalog(&provider) {
+                    provider_names.insert(provider, provider_name);
+                }
             }
         }
+        provider_names
     }
 
-    fn refresh_provider_model_catalog(&self, provider: &PluginId) -> Result<(), ApplicationError> {
+    fn refresh_provider_model_catalog(
+        &self,
+        provider: &PluginId,
+    ) -> Result<String, ApplicationError> {
         let response = self.invoke_provider_models(provider, ProviderModelsCommand::List)?;
-        let ProviderModelsResponse::Models { models } = response;
+        let ProviderModelsResponse::Models {
+            provider_name,
+            models,
+        } = response;
         let mut profiles = Vec::new();
         for model in models {
             let base_target = ModelTarget {
@@ -1401,7 +1411,7 @@ impl ApplicationWorker {
                 }
             })?;
         }
-        Ok(())
+        Ok(provider_name)
     }
 
     fn provider_auth_plugins(&self) -> Vec<PluginId> {
@@ -1577,6 +1587,7 @@ fn model_default_option() -> OptionKey {
 fn selection_info(
     profile: &RoutingProfile,
     authenticated: bool,
+    provider_names: &BTreeMap<PluginId, String>,
 ) -> Result<SelectionInfo, ApplicationError> {
     let mut targets = BTreeMap::new();
     for target in std::iter::once(&profile.default_target)
@@ -1599,6 +1610,10 @@ fn selection_info(
         return Ok(SelectionInfo {
             id: profile.id.clone(),
             provider: target.provider_plugin.clone(),
+            provider_name: provider_names
+                .get(&target.provider_plugin)
+                .cloned()
+                .unwrap_or_else(|| target.provider_plugin.to_string()),
             model: Some(target.model.to_string()),
             thinking,
             authenticated,
@@ -1612,6 +1627,10 @@ fn selection_info(
     Ok(SelectionInfo {
         id: profile.id.clone(),
         provider: profile.default_target.provider_plugin.clone(),
+        provider_name: provider_names
+            .get(&profile.default_target.provider_plugin)
+            .cloned()
+            .unwrap_or_else(|| profile.default_target.provider_plugin.to_string()),
         model: None,
         thinking: None,
         authenticated,
