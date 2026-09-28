@@ -10,10 +10,12 @@ use phenix_core::{
 };
 use phenix_provider_sdk::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, AuthDescriptor, AuthKind, Endpoint, HttpMethod, Protocol,
-    ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
-    ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderRequest,
-    ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY, SECRETS_MANAGE_CAPABILITY,
+    provider_http_client_builder, provider_models_service, AuthDescriptor, AuthKind, Endpoint,
+    HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface,
+    ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult, ProviderError,
+    ProviderModel, ProviderModelOrigin, ProviderModelsCommand, ProviderModelsInterface,
+    ProviderModelsResponse, ProviderRequest, ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY,
+    SECRETS_MANAGE_CAPABILITY,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,7 @@ use url::Url;
 
 pub const OPENAI_CODEX_PROVIDER: &str = "openai-codex";
 const AUTH_METHOD: &str = "oauth";
+const DECLARED_MODELS: &[&str] = &["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"];
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER: &str = "https://auth.openai.com";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -70,6 +73,12 @@ pub fn openai_codex_manifest() -> PluginManifest {
                 priority: 100,
                 required_authority: secrets.clone(),
             },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: provider_models_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
         ],
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::new(
@@ -100,6 +109,12 @@ pub fn openai_codex_component_manifest() -> ComponentManifest {
                 schema: ProviderAuthInterface::schema(),
                 priority: 100,
                 required_authority: secrets_authority(),
+            },
+            ComponentExport {
+                interface: ProviderModelsInterface::interface_id(),
+                schema: ProviderModelsInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
             },
         ],
         listeners: Vec::new(),
@@ -475,6 +490,7 @@ impl OpenAiCodexPlugin {
                     methods: vec![ProviderAuthMethod {
                         id: AUTH_METHOD.to_owned(),
                         kind: AuthKind::OAuth,
+                        provider_name: "OpenAI ChatGPT".to_owned(),
                         name: "OpenAI Codex (ChatGPT OAuth)".to_owned(),
                         description: Some(
                             "Browser OAuth using your ChatGPT subscription".to_owned(),
@@ -636,6 +652,37 @@ impl PluginInstance for OpenAiCodexPlugin {
                 .map_err(|error| error.to_wire());
         }
 
+        if service == &provider_models_service() {
+            let command: ProviderModelsCommand =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let response = match command {
+                ProviderModelsCommand::List => ProviderModelsResponse::Models {
+                    models: DECLARED_MODELS
+                        .iter()
+                        .map(|model| {
+                            phenix_core::ModelId::parse(*model)
+                                .map(|id| ProviderModel {
+                                    thinking: match *model {
+                                        "gpt-5.6-terra" => {
+                                            vec!["medium".to_owned(), "high".to_owned()]
+                                        }
+                                        "gpt-5.6-luna" => {
+                                            vec!["low".to_owned(), "medium".to_owned()]
+                                        }
+                                        "gpt-5.6-sol" => vec!["medium".to_owned()],
+                                        _ => Vec::new(),
+                                    },
+                                    id,
+                                    origin: ProviderModelOrigin::Declared,
+                                })
+                                .map_err(|error| error.to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                },
+            };
+            return serde_json::to_vec(&response).map_err(|error| error.to_string());
+        }
+
         Err(format!("unsupported Codex provider service: {service}"))
     }
 }
@@ -716,6 +763,11 @@ impl CredentialStore {
     fn discover() -> Result<Self, String> {
         if let Some(path) = std::env::var_os(CREDENTIAL_FILE_ENV) {
             return Ok(Self { path: path.into() });
+        }
+        if let Some(directory) = std::env::var_os("PHENIX_STATE_DIR") {
+            return Ok(Self {
+                path: PathBuf::from(directory).join("credentials.json"),
+            });
         }
         let state = std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
@@ -1406,6 +1458,24 @@ mod tests {
                 "value".to_owned(),
                 PhenixValue::String("streamed".to_owned())
             )]))
+        );
+    }
+
+    #[test]
+    fn codex_provider_owns_its_declared_model_catalog() {
+        let manifest = openai_codex_manifest();
+        assert!(manifest
+            .services
+            .iter()
+            .any(|service| service.service == provider_models_service()));
+        let component = openai_codex_component_manifest();
+        assert!(component
+            .exports
+            .iter()
+            .any(|export| export.interface == ProviderModelsInterface::interface_id()));
+        assert_eq!(
+            DECLARED_MODELS,
+            &["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"]
         );
     }
 

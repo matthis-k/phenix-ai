@@ -101,6 +101,9 @@ fn selections(selected: &str) -> Selections {
             SelectionInfo {
                 id: RoutingProfileId::parse("balanced").expect("valid route id"),
                 provider: phenix_core::PluginId::parse("provider").unwrap(),
+                model: None,
+                thinking: None,
+                authenticated: true,
                 name: "Balanced".to_owned(),
                 description: Some("Adaptive route".to_owned()),
                 presentation: SelectionPresentation::Router,
@@ -109,6 +112,9 @@ fn selections(selected: &str) -> Selections {
                 provider: phenix_core::PluginId::parse("provider").unwrap(),
                 id: RoutingProfileId::parse("model.provider.model-a.deadbeef")
                     .expect("valid fixed route id"),
+                model: Some("model-a".to_owned()),
+                thinking: Some("high".to_owned()),
+                authenticated: true,
                 name: "Model A".to_owned(),
                 description: Some("provider".to_owned()),
                 presentation: SelectionPresentation::Model,
