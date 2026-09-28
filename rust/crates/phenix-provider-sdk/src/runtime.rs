@@ -599,7 +599,9 @@ mod cache_identity_tests {
         let path = std::env::temp_dir().join(format!(
             "phenix-provider-auth-status-{}-{}.json",
             std::process::id(),
-            ArtifactRevision::from_content(b"expired-oauth").to_string().replace(':', "-")
+            ArtifactRevision::from_content(b"expired-oauth")
+                .to_string()
+                .replace(':', "-")
         ));
         let store = CredentialStore::at(&path);
         let provider = "provider.status";
