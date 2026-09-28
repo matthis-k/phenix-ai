@@ -30,6 +30,7 @@ variants!(SelectionPresentation, "phenix.application.type.selection-presentation
 record!(SelectionInfo, "phenix.application.type.selection-info@1", {
     id: RoutingProfileId,
     provider: PluginId,
+    provider_name: String,
     model: Option<String>,
     thinking: Option<String>,
     authenticated: bool,
