@@ -111,21 +111,19 @@ impl ToolBridge {
         self.require_connection(&request.connection_id)?;
         let result = match request.method.as_str() {
             "server/discover" => discover_result()?,
-            "initialize" => {
-                self.initialize(&request.connection_id, request.params.as_ref())?
-            }
+            "initialize" => self.initialize(&request.connection_id, request.params.as_ref())?,
             "ping" => {
                 self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
                 json!({})
             }
             "tools/list" => {
-                let version = self
-                    .request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                let version =
+                    self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
                 self.list_tools(&version)?
             }
             "tools/call" => {
-                let version = self
-                    .request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                let version =
+                    self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
                 self.call_tool(request.params.as_ref(), &version)?
             }
             method => {
@@ -260,10 +258,7 @@ impl ToolBridge {
         Ok(version)
     }
 
-    fn list_tools(
-        &self,
-        version: &ProtocolVersion,
-    ) -> Result<Value, agent_client_protocol::Error> {
+    fn list_tools(&self, version: &ProtocolVersion) -> Result<Value, agent_client_protocol::Error> {
         let state = self.state.lock().map_err(|_| {
             agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
         })?;
@@ -283,9 +278,7 @@ impl ToolBridge {
             .collect::<Result<Vec<_>, agent_client_protocol::Error>>()?;
         let mut result = ListToolsResult::with_all_items(tools);
         if is_current_protocol(version) {
-            result = result
-                .with_ttl_ms(0)
-                .with_cache_scope(CacheScope::Private);
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
         } else {
             result.result_type = None;
         }
@@ -523,9 +516,7 @@ mod tests {
     fn list_tools_adapts_structural_schema_at_the_mcp_boundary() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
-        let listed = bridge
-            .list_tools(&ProtocolVersion::V_2026_07_28)
-            .unwrap();
+        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
         assert_eq!(listed["resultType"], "complete");
         assert_eq!(listed["ttlMs"], 0);
         assert_eq!(listed["cacheScope"], "private");
@@ -541,9 +532,7 @@ mod tests {
     fn legacy_tool_list_keeps_legacy_wire_shape() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
-        let listed = bridge
-            .list_tools(&ProtocolVersion::V_2025_06_18)
-            .unwrap();
+        let listed = bridge.list_tools(&ProtocolVersion::V_2025_06_18).unwrap();
         assert!(listed.get("resultType").is_none());
         assert!(listed.get("ttlMs").is_none());
         assert!(listed.get("cacheScope").is_none());
