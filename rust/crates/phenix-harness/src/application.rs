@@ -3764,6 +3764,7 @@ mod tests {
             parse_authentication_method_id(&method.id).expect("application auth id round-trips");
         assert_eq!(provider.as_str(), "openai-codex");
         assert_eq!(method.provider_name, "OpenAI ChatGPT");
+        assert!(!method.authenticated);
         assert_eq!(local_method, "oauth");
     }
 
