@@ -286,6 +286,8 @@ The filesystem behaviors are:
 
 The current default is unrestricted local execution through `phenix.environment.local`.
 
+Named product presets may choose an Environment provider. Explicit plugin selection is exact: selecting Workspace does not implicitly select Local Environment or any other implementation.
+
 The configured local root is only the default namespace base and process cwd. It does not restrict absolute paths, `..` used by child processes, or other host filesystem access.
 
 The two confined behaviors use the Linux local Environment backend. Restricted direct filesystem access is descriptor-rooted with `openat2`. Restricted process creation materializes the policy with Bubblewrap. Direct operations and descendants therefore share the same policy. Missing enforcement support fails closed rather than falling back to unrestricted local execution.
@@ -324,7 +326,7 @@ Implemented in this PR:
 - Workspace file operations routed through Environment;
 - Workspace shell/Git process execution routed through Environment;
 - default-suite selection of the local provider;
-- first-party selected-suite defaulting to the local provider.
+- exact first-party selected-suite composition without implicit Environment injection.
 
 The local provider currently:
 
