@@ -4,6 +4,10 @@ use phenix_core::{DurableSchemaRegistration, PluginId, PluginManifest};
 use phenix_sdk::StaticPluginResources;
 
 pub use phenix_adapter_acp::{adapter_acp_factory, adapter_acp_manifest, ACP_ADAPTER_PLUGIN};
+pub use phenix_agent_configurations::{
+    advanced_agent_configuration_manifest, basic_agent_configuration_manifest,
+    ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
+};
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_api::{
     sdk_component_id, sdk_component_manifest, sdk_config_service, sdk_contribution, sdk_factory,
