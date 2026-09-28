@@ -174,7 +174,7 @@ provider.remove_auth(AuthKind::ApiToken)?;
 
 `List` returns only credential descriptors. Secrets and tokens are never returned by the listing API or debug formatting.
 
-OAuth is preferred over an API token when both are configured and present. An expired OAuth access token is rejected rather than silently using it. Browser authorization, token exchange, and refresh are auth-flow policy; they are not inferred from the model wire protocol.
+OAuth is preferred over an API token when both are configured and present. An expired OAuth access token is rejected rather than silently using it. Provider auth status follows the same dispatch precedence and availability rules. Browser authorization, token exchange, and refresh are auth-flow policy; they are not inferred from the model wire protocol.
 
 Credentials are stored separately from provider definitions. The default file is `$XDG_STATE_HOME/phenix/provider-credentials.json`, with `PHENIX_PROVIDER_CREDENTIAL_FILE` as an override. On Unix, a newly created credential directory is restricted to `0700` and the credential file is written as `0600`; an override does not change permissions on an existing parent directory.
 
