@@ -1,4 +1,6 @@
-use crate::{default_suite_authority, PhenixHarness};
+use crate::{
+    default_suite_authority, runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
+};
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
@@ -12,16 +14,16 @@ use phenix_application_interface::{
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
         PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
-        ReviewRecord, SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections,
-        SessionChange, SessionCreateInput, SessionInfo, SessionInput as ApplicationSessionInput,
-        SessionList, SessionProjection, SessionProjectionState, SessionRenameInput,
-        SessionResumeInput, SessionSnapshot, SessionUpdate, SetInteractionHandlersInput,
-        StopReason,
+        ReviewRecord, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation,
+        SelectionSelectInput, Selections, SessionChange, SessionCreateInput, SessionInfo,
+        SessionInput as ApplicationSessionInput, SessionList, SessionProjection,
+        SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
+        SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
-    ListSelections, ListSessions, Operation, Prompt, RemoveClientTool, RenameSession,
-    ResumeSession, SelectSelection, SetInteractionHandlers,
+    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, RemoveClientTool,
+    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
@@ -45,16 +47,19 @@ use phenix_plugin_catalog::{
     SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
-    provider_auth_service, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
+    auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
+    ProviderAuthResponse, ProviderAuthenticationResult, ProviderModelsCommand,
+    ProviderModelsResponse,
 };
 use phenix_sdk::{
     execution_resource_service, execution_service, model_routing_service, options_service,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, ModelCommand, ModelResponse, OptionCommand, OptionContext, OptionKey,
-    OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger, RootBudgetLimits,
-    RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
+    ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger,
+    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -374,6 +379,12 @@ impl ApplicationWorker {
             Authenticate::ID => self
                 .authenticate(decode(input)?)
                 .map(|value| value.to_value()),
+            ListDefaultSelections::ID => self
+                .list_default_selections(decode(input)?)
+                .map(|value| value.to_value()),
+            SelectDefaultSelection::ID => self
+                .select_default_selection(decode(input)?)
+                .map(|value| value.to_value()),
             ListSelections::ID => self
                 .list_selections(decode(input)?)
                 .map(|value| value.to_value()),
@@ -431,12 +442,26 @@ impl ApplicationWorker {
         Ok(Acknowledged {})
     }
 
+    fn list_default_selections(&mut self, _request: Empty) -> Result<Selections, ApplicationError> {
+        let selected = self.default_routing_profile()?;
+        self.selection_catalog(selected)
+    }
+
     fn list_selections(
         &mut self,
         request: ApplicationSessionInput,
     ) -> Result<Selections, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
         let selected = self.selected_routing_profile(&request.session_id)?;
+        self.selection_catalog(selected)
+    }
+
+    fn selection_catalog(
+        &self,
+        selected: RoutingProfileId,
+    ) -> Result<Selections, ApplicationError> {
+        let provider_authentication = self.provider_authentication_states()?;
+        let provider_names = self.refresh_provider_model_catalogs(&provider_authentication);
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -464,23 +489,27 @@ impl ApplicationWorker {
                     })
                 }
             };
-            available.push(selection_info(&profile)?);
+            let authenticated =
+                self.routing_profile_authenticated(&profile, &provider_authentication);
+            available.push(selection_info(&profile, authenticated, &provider_names)?);
         }
-        // Retired packaged routes stay available to sessions already selecting them.
-        // ACP requires the current selection to remain in this session's option list.
         if !available.iter().any(|item| item.id == selected) {
             if let ModelResponse::Profile {
                 profile: Some(profile),
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
             })? {
-                available.push(selection_info(&profile)?);
+                let authenticated =
+                    self.routing_profile_authenticated(&profile, &provider_authentication);
+                available.push(selection_info(&profile, authenticated, &provider_names)?);
             }
         }
         available.sort_by(|left, right| {
             selection_presentation_rank(&left.presentation)
                 .cmp(&selection_presentation_rank(&right.presentation))
+                .then_with(|| left.provider.cmp(&right.provider))
                 .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.thinking.cmp(&right.thinking))
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(Selections {
@@ -489,28 +518,88 @@ impl ApplicationWorker {
         })
     }
 
+    fn routing_profile_authenticated(
+        &self,
+        profile: &RoutingProfile,
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) -> bool {
+        std::iter::once(&profile.default_target)
+            .chain(profile.fallback_targets.iter())
+            .chain(profile.callable_targets.values())
+            .all(|target| {
+                provider_authentication
+                    .get(&target.provider_plugin)
+                    .copied()
+                    .unwrap_or(true)
+            })
+    }
+
+    fn provider_authentication_states(&self) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
+        let mut states = BTreeMap::new();
+        for provider in self.provider_auth_plugins() {
+            states.insert(provider.clone(), self.provider_authenticated(&provider)?);
+        }
+        Ok(states)
+    }
+
+    fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
+        match self.invoke_provider_auth(provider, ProviderAuthCommand::Status)? {
+            ProviderAuthResponse::Status { authenticated } => Ok(authenticated),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "provider {provider} returned an unexpected authentication-status response: {response:?}"
+                ),
+            }),
+        }
+    }
+
+    fn select_default_selection(
+        &mut self,
+        request: SelectionDefaultSelectInput,
+    ) -> Result<Selections, ApplicationError> {
+        self.require_routing_profile(&request.selection_id)?;
+        let response = self.invoke_option_command(OptionCommand::Set {
+            key: model_default_option(),
+            scope: OptionScope::Global,
+            value: OptionValue::String(request.selection_id.to_string()),
+        })?;
+        if !matches!(response, OptionResponse::Updated { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "options service rejected default routing selection: {response:?}"
+                ),
+            });
+        }
+        self.list_default_selections(Empty {})
+    }
+
+    fn require_routing_profile(
+        &self,
+        selection_id: &RoutingProfileId,
+    ) -> Result<(), ApplicationError> {
+        match self.invoke_model_command(ModelCommand::ListProfiles)? {
+            ModelResponse::Profiles { profiles }
+                if profiles.iter().any(|profile| &profile.id == selection_id) =>
+            {
+                Ok(())
+            }
+            ModelResponse::Profiles { .. } => Err(ApplicationError::InvalidInput {
+                message: format!("routing selection {selection_id} is not available"),
+            }),
+            response => Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected profile-list response: {response:?}"
+                ),
+            }),
+        }
+    }
+
     fn select_selection(
         &mut self,
         request: SelectionSelectInput,
     ) -> Result<Selections, ApplicationError> {
         self.require_open_application_session(&request.session_id)?;
-        match self.invoke_model_command(ModelCommand::GetProfile {
-            id: request.selection_id.clone(),
-        })? {
-            ModelResponse::Profile { profile: Some(_) } => {}
-            ModelResponse::Profile { profile: None } => {
-                return Err(ApplicationError::InvalidInput {
-                    message: format!("unknown routing selection {}", request.selection_id),
-                })
-            }
-            response => {
-                return Err(ApplicationError::InvalidResponse {
-                    message: format!(
-                        "model routing returned an unexpected profile response: {response:?}"
-                    ),
-                })
-            }
-        }
+        self.require_routing_profile(&request.selection_id)?;
 
         let subject = OptionSubjectId::parse(request.session_id.as_str()).map_err(|error| {
             ApplicationError::InvalidInput {
@@ -532,6 +621,13 @@ impl ApplicationWorker {
         })
     }
 
+    fn default_routing_profile(&self) -> Result<RoutingProfileId, ApplicationError> {
+        self.resolve_routing_profile(OptionContext {
+            session: None,
+            agent: None,
+        })
+    }
+
     fn selected_routing_profile(
         &self,
         session_id: &SessionId,
@@ -541,12 +637,19 @@ impl ApplicationWorker {
                 message: error.to_owned(),
             }
         })?;
+        self.resolve_routing_profile(OptionContext {
+            session: Some(subject),
+            agent: None,
+        })
+    }
+
+    fn resolve_routing_profile(
+        &self,
+        context: OptionContext,
+    ) -> Result<RoutingProfileId, ApplicationError> {
         match self.invoke_option_command(OptionCommand::Resolve {
             key: model_default_option(),
-            context: OptionContext {
-                session: Some(subject),
-                agent: None,
-            },
+            context,
         })? {
             OptionResponse::Value { option } => match option.value {
                 OptionValue::String(value) => RoutingProfileId::parse(value).map_err(|error| {
@@ -1086,6 +1189,7 @@ impl ApplicationWorker {
         let providers = self.provider_auth_plugins();
         let mut methods = Vec::new();
         for provider in providers {
+            let authenticated = self.provider_authenticated(&provider)?;
             let response =
                 self.invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?;
             let ProviderAuthResponse::InteractiveMethods {
@@ -1099,8 +1203,16 @@ impl ApplicationWorker {
                 });
             };
             for method in provider_methods {
+                let kind = match method.kind {
+                    AuthKind::ApiToken => "api_token",
+                    AuthKind::OAuth => "oauth",
+                };
                 methods.push(AuthenticationMethod {
                     id: authentication_method_id(&provider, &method.id)?,
+                    provider: provider.clone(),
+                    provider_name: method.provider_name,
+                    authenticated,
+                    kind: kind.to_owned(),
                     name: method.name,
                     description: method.description,
                 });
@@ -1115,6 +1227,65 @@ impl ApplicationWorker {
         request: AuthenticateInput,
     ) -> Result<AuthenticationResult, ApplicationError> {
         let (provider, method) = parse_authentication_method_id(&request.method_id)?;
+        let available = match self
+            .invoke_provider_auth(&provider, ProviderAuthCommand::InteractiveMethods)?
+        {
+            ProviderAuthResponse::InteractiveMethods { methods } => methods,
+            response => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected interactive-auth response: {response:?}"
+                    ),
+                })
+            }
+        };
+        let descriptor = available
+            .into_iter()
+            .find(|candidate| candidate.id == method)
+            .ok_or_else(|| ApplicationError::InvalidInput {
+                message: format!(
+                    "provider {provider} does not expose authentication method {method:?}"
+                ),
+            })?;
+
+        if descriptor.kind == AuthKind::ApiToken {
+            let secret = request
+                .secret
+                .ok_or_else(|| ApplicationError::InvalidInput {
+                    message: format!(
+                    "authentication method {method:?} for provider {provider} requires an API key"
+                ),
+                })?;
+            let source = auth::ApiToken::literal(secret).map_err(|error| {
+                ApplicationError::InvalidInput {
+                    message: format!("invalid API key for provider {provider}: {error}"),
+                }
+            })?;
+            let response = self.invoke_provider_auth(
+                &provider,
+                ProviderAuthCommand::Add {
+                    auth: Auth::ApiToken { source },
+                },
+            )?;
+            if !matches!(response, ProviderAuthResponse::Added { .. }) {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "provider {provider} returned an unexpected credential-add response: {response:?}"
+                    ),
+                });
+            }
+            let _ = self.refresh_provider_model_catalog(&provider);
+            return Ok(AuthenticationResult::Authenticated);
+        }
+
+        if request.secret.is_some() {
+            return Err(ApplicationError::InvalidInput {
+                message: format!(
+                    "authentication method {method:?} for provider {provider} does not accept a secret"
+                ),
+            });
+        }
+
         let response =
             self.invoke_provider_auth(&provider, ProviderAuthCommand::Authenticate { method })?;
         let ProviderAuthResponse::Authentication { authentication } = response else {
@@ -1126,13 +1297,135 @@ impl ApplicationWorker {
         };
         match authentication {
             ProviderAuthenticationResult::Authenticated => {
-                self.set_provider_authenticated(&provider)?;
+                let _ = self.refresh_provider_model_catalog(&provider);
                 Ok(AuthenticationResult::Authenticated)
             }
             ProviderAuthenticationResult::External { uri, instructions } => {
                 Ok(AuthenticationResult::External { uri, instructions })
             }
         }
+    }
+
+    fn provider_model_plugins(&self) -> Vec<PluginId> {
+        let service = provider_models_service();
+        let harness = self.harness.lock();
+        let mut providers = harness
+            .kernel()
+            .config()
+            .manifests()
+            .filter(|manifest| {
+                manifest
+                    .services
+                    .iter()
+                    .any(|contribution| contribution.service == service)
+            })
+            .map(|manifest| manifest.id.clone())
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        providers
+    }
+
+    fn invoke_provider_models(
+        &self,
+        provider: &PluginId,
+        command: ProviderModelsCommand,
+    ) -> Result<ProviderModelsResponse, ApplicationError> {
+        let input =
+            serde_json::to_vec(&command).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_string(),
+            })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(
+                &provider_models_service(),
+                &input,
+                &self.authority,
+                Some(provider),
+            )
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn refresh_provider_model_catalogs(
+        &self,
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) -> BTreeMap<PluginId, String> {
+        let mut provider_names = BTreeMap::new();
+        for provider in self.provider_model_plugins() {
+            if provider_authentication
+                .get(&provider)
+                .copied()
+                .unwrap_or(true)
+            {
+                if let Ok(provider_name) = self.refresh_provider_model_catalog(&provider) {
+                    provider_names.insert(provider, provider_name);
+                }
+            }
+        }
+        provider_names
+    }
+
+    fn refresh_provider_model_catalog(
+        &self,
+        provider: &PluginId,
+    ) -> Result<String, ApplicationError> {
+        let response = self.invoke_provider_models(provider, ProviderModelsCommand::List)?;
+        let ProviderModelsResponse::Models {
+            provider_name,
+            models,
+        } = response;
+        let mut profiles = Vec::new();
+        for model in models {
+            let base_target = ModelTarget {
+                provider_plugin: provider.clone(),
+                model: model.id,
+                options: BTreeMap::new(),
+            };
+            profiles.push(direct_provider_model_profile(base_target.clone())?);
+            for effort in model.thinking {
+                let mut target = base_target.clone();
+                target.options.insert(
+                    "inference".to_owned(),
+                    PhenixValue::Map(BTreeMap::from([(
+                        "effort".to_owned(),
+                        PhenixValue::String(effort),
+                    )])),
+                );
+                profiles.push(direct_provider_model_profile(target)?);
+            }
+        }
+
+        let published =
+            self.invoke_model_command(ModelCommand::PublishProviderCatalogProfiles {
+                provider_plugin: provider.clone(),
+                profiles: profiles.clone(),
+            })?;
+        if !matches!(published, ModelResponse::Profiles { .. }) {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "model routing returned an unexpected provider catalog publication response: {published:?}"
+                ),
+            });
+        }
+
+        let mut harness = self.harness.lock();
+        for profile in profiles {
+            publish_routing_profile_runtime_state(&mut harness, &profile).map_err(|error| {
+                ApplicationError::Failed {
+                    message: format!(
+                        "cannot publish runtime state for provider catalog route {}: {error}",
+                        profile.id
+                    ),
+                }
+            })?;
+        }
+        Ok(provider_name)
     }
 
     fn provider_auth_plugins(&self) -> Vec<PluginId> {
@@ -1179,44 +1472,6 @@ impl ApplicationWorker {
         serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
             message: error.to_string(),
         })
-    }
-
-    fn set_provider_authenticated(&self, provider: &PluginId) -> Result<(), ApplicationError> {
-        let command = ModelCommand::SetProviderAuthenticated {
-            provider_plugin: provider.clone(),
-            authenticated: true,
-        };
-        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = self
-            .harness
-            .lock()
-            .invoke(&model_routing_service(), &input, &self.authority, None)
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
-            })?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        match ModelResponse::try_from(Project(&output)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })? {
-            ModelResponse::Authentication {
-                provider_plugin,
-                authenticated: true,
-            } if &provider_plugin == provider => Ok(()),
-            response => Err(ApplicationError::InvalidResponse {
-                message: format!(
-                    "model routing returned an unexpected authentication response: {response:?}"
-                ),
-            }),
-        }
     }
 
     fn invoke_session(
@@ -1276,11 +1531,40 @@ fn parse_authentication_method_id(value: &str) -> Result<(PluginId, String), App
     Ok((provider, method))
 }
 
+fn direct_provider_model_profile(target: ModelTarget) -> Result<RoutingProfile, ApplicationError> {
+    let encoded =
+        serde_json::to_vec(&target).map_err(|error| ApplicationError::InvalidResponse {
+            message: format!("cannot encode provider model target: {error}"),
+        })?;
+    let digest = Sha256::digest(encoded);
+    let suffix = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let id = RoutingProfileId::parse(format!(
+        "model.{}.{}.{}",
+        target.provider_plugin, target.model, suffix
+    ))
+    .map_err(|error| ApplicationError::InvalidResponse {
+        message: format!("provider model target cannot form a direct route: {error}"),
+    })?;
+    Ok(RoutingProfile {
+        id,
+        default_target: target,
+        fallback_targets: Vec::new(),
+        callable_targets: BTreeMap::new(),
+    })
+}
+
 fn model_default_option() -> OptionKey {
     OptionKey::parse("model.default").expect("static model.default option key is valid")
 }
 
-fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, ApplicationError> {
+fn selection_info(
+    profile: &RoutingProfile,
+    authenticated: bool,
+    provider_names: &BTreeMap<PluginId, String>,
+) -> Result<SelectionInfo, ApplicationError> {
     let mut targets = BTreeMap::new();
     for target in std::iter::once(&profile.default_target)
         .chain(profile.fallback_targets.iter())
@@ -1298,9 +1582,17 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
             .into_values()
             .next()
             .expect("one routing target was counted");
+        let thinking = model_selection_thinking(target);
         return Ok(SelectionInfo {
             id: profile.id.clone(),
-            provider: profile.default_target.provider_plugin.clone(),
+            provider: target.provider_plugin.clone(),
+            provider_name: provider_names
+                .get(&target.provider_plugin)
+                .cloned()
+                .unwrap_or_else(|| target.provider_plugin.to_string()),
+            model: Some(target.model.to_string()),
+            thinking,
+            authenticated,
             name: target.model.to_string(),
             description: Some(model_selection_description(target)),
             presentation: SelectionPresentation::Model,
@@ -1311,20 +1603,33 @@ fn selection_info(profile: &RoutingProfile) -> Result<SelectionInfo, Application
     Ok(SelectionInfo {
         id: profile.id.clone(),
         provider: profile.default_target.provider_plugin.clone(),
+        provider_name: provider_names
+            .get(&profile.default_target.provider_plugin)
+            .cloned()
+            .unwrap_or_else(|| profile.default_target.provider_plugin.to_string()),
+        model: None,
+        thinking: None,
+        authenticated,
         name: profile.id.to_string(),
         description: Some(providers),
         presentation: SelectionPresentation::Router,
     })
 }
 
+fn model_selection_thinking(target: &phenix_sdk::ModelTarget) -> Option<String> {
+    let Some(PhenixValue::Map(inference)) = target.options.get("inference") else {
+        return None;
+    };
+    let Some(PhenixValue::String(effort)) = inference.get("effort") else {
+        return None;
+    };
+    (!effort.is_empty()).then(|| effort.clone())
+}
+
 fn model_selection_description(target: &phenix_sdk::ModelTarget) -> String {
     let mut details = vec![target.provider_plugin.to_string()];
-    if let Some(PhenixValue::Map(inference)) = target.options.get("inference") {
-        if let Some(PhenixValue::String(effort)) = inference.get("effort") {
-            if !effort.is_empty() {
-                details.push(format!("effort {effort}"));
-            }
-        }
+    if let Some(effort) = model_selection_thinking(target) {
+        details.push(format!("effort {effort}"));
     }
     details.join(" · ")
 }
@@ -1444,6 +1749,9 @@ fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
     if let Some(path) = env::var_os("PHENIX_STATE_DB") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(directory) = env::var_os("PHENIX_STATE_DIR") {
+        return Ok(PathBuf::from(directory).join("acp.sqlite"));
+    }
     if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
         return Ok(PathBuf::from(state_home).join("phenix/acp.sqlite"));
     }
@@ -1451,8 +1759,9 @@ fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
         return Ok(PathBuf::from(home).join(".local/state/phenix/acp.sqlite"));
     }
     Err(ConfiguredApplicationError::Configuration {
-        message: "cannot determine durable state path; set PHENIX_STATE_DB or XDG_STATE_HOME"
-            .to_owned(),
+        message:
+            "cannot determine durable state path; set PHENIX_STATE_DB, PHENIX_STATE_DIR, or XDG_STATE_HOME"
+                .to_owned(),
     })
 }
 
@@ -3428,9 +3737,14 @@ mod tests {
             fallback_targets: vec![fixed],
             callable_targets: BTreeMap::new(),
         };
-        let fixed_info = selection_info(&fixed_profile).unwrap();
+        let provider_names = BTreeMap::from([(
+            PluginId::parse("provider-a").unwrap(),
+            "Provider A".to_owned(),
+        )]);
+        let fixed_info = selection_info(&fixed_profile, true, &provider_names).unwrap();
         assert_eq!(fixed_info.presentation, SelectionPresentation::Model);
         assert_eq!(fixed_info.name, "model-a");
+        assert_eq!(fixed_info.provider_name, "Provider A");
 
         let routed_profile = RoutingProfile {
             id: RoutingProfileId::parse("router").unwrap(),
@@ -3438,9 +3752,10 @@ mod tests {
             fallback_targets: vec![selection_target("provider-b", "model-b")],
             callable_targets: BTreeMap::new(),
         };
-        let routed_info = selection_info(&routed_profile).unwrap();
+        let routed_info = selection_info(&routed_profile, true, &provider_names).unwrap();
         assert_eq!(routed_info.presentation, SelectionPresentation::Router);
         assert_eq!(routed_info.name, "router");
+        assert_eq!(routed_info.provider_name, "Provider A");
     }
 
     #[test]
@@ -3459,7 +3774,8 @@ mod tests {
             fallback_targets: Vec::new(),
             callable_targets: BTreeMap::new(),
         };
-        let info = selection_info(&profile).unwrap();
+        let info = selection_info(&profile, true, &BTreeMap::new()).unwrap();
+        assert_eq!(info.provider_name, "openai-codex");
         assert_eq!(
             info.description.as_deref(),
             Some("openai-codex · effort high")
@@ -3478,6 +3794,8 @@ mod tests {
         let (provider, local_method) =
             parse_authentication_method_id(&method.id).expect("application auth id round-trips");
         assert_eq!(provider.as_str(), "openai-codex");
+        assert_eq!(method.provider_name, "OpenAI ChatGPT");
+        assert!(!method.authenticated);
         assert_eq!(local_method, "oauth");
     }
 
@@ -3659,7 +3977,7 @@ mod tests {
         let choices = invoke_operation::<ListSelections>(
             &mut worker,
             ApplicationSessionInput {
-                session_id: session.session_id,
+                session_id: session.session_id.clone(),
             },
         )
         .unwrap();
@@ -3672,6 +3990,33 @@ mod tests {
         assert!(
             matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty())
         );
+
+        let retired = RoutingProfileId::parse("default").unwrap();
+        let default_error = invoke_operation::<SelectDefaultSelection>(
+            &mut worker,
+            SelectionDefaultSelectInput {
+                selection_id: retired.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            default_error,
+            ApplicationError::InvalidInput { ref message }
+                if message.contains("not available")
+        ));
+        let session_error = invoke_operation::<SelectSelection>(
+            &mut worker,
+            SelectionSelectInput {
+                session_id: session.session_id,
+                selection_id: retired,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            session_error,
+            ApplicationError::InvalidInput { ref message }
+                if message.contains("not available")
+        ));
         drop(worker);
         std::fs::remove_file(config_path).unwrap();
         std::fs::remove_file(path).unwrap();

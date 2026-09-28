@@ -6,13 +6,20 @@ record!(CapabilityList, "phenix.application.type.capability-list@1", {
 });
 record!(AuthenticationMethod, "phenix.application.type.authentication-method@1", {
     id: String,
+    provider: PluginId,
+    provider_name: String,
+    authenticated: bool,
+    kind: String,
     name: String,
     description: Option<String>,
 });
 record!(AuthenticationMethods, "phenix.application.type.authentication-methods@1", {
     methods: Vec<AuthenticationMethod>,
 });
-record!(AuthenticateInput, "phenix.application.type.authenticate-input@1", { method_id: String });
+record!(AuthenticateInput, "phenix.application.type.authenticate-input@1", {
+    method_id: String,
+    secret: Option<String>,
+});
 variants!(AuthenticationResult, "phenix.application.type.authentication-result@1", {
     Authenticated,
     External { uri: String, instructions: Option<String> },
@@ -24,6 +31,10 @@ variants!(SelectionPresentation, "phenix.application.type.selection-presentation
 record!(SelectionInfo, "phenix.application.type.selection-info@1", {
     id: RoutingProfileId,
     provider: PluginId,
+    provider_name: String,
+    model: Option<String>,
+    thinking: Option<String>,
+    authenticated: bool,
     name: String,
     description: Option<String>,
     presentation: SelectionPresentation,
@@ -34,6 +45,9 @@ record!(Selections, "phenix.application.type.selections@1", {
 });
 record!(SelectionSelectInput, "phenix.application.type.selection-select-input@1", {
     session_id: SessionId,
+    selection_id: RoutingProfileId,
+});
+record!(SelectionDefaultSelectInput, "phenix.application.type.selection-default-select-input@1", {
     selection_id: RoutingProfileId,
 });
 record!(SkillInfo, "phenix.application.type.skill-info@1", {

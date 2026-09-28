@@ -35,13 +35,13 @@ impl phenix_core::PhenixContract for PhenixApplicationError1Type { fn contract_i
 pub struct PhenixApplicationTypeAcknowledged1Type {  }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAcknowledged1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.acknowledged@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeAuthenticateInput1Type { pub r#method_id: String, }
+pub struct PhenixApplicationTypeAuthenticateInput1Type { pub r#method_id: String,pub r#secret: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticateInput1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authenticate-input@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeAuthenticationMethod1Type { pub r#description: Option<String>,pub r#id: String,pub r#name: String, }
+pub struct PhenixApplicationTypeAuthenticationMethod1Type { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticationMethod1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authentication-method@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct Structural14 { pub r#description: Option<String>,pub r#id: String,pub r#name: String, }
+pub struct Structural14 { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#kind: String,pub r#name: String,pub r#provider: String,pub r#provider_name: String, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub struct PhenixApplicationTypeAuthenticationMethods1Type { pub r#methods: Vec<Structural14>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeAuthenticationMethods1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.authentication-methods@1").expect("generated contract id is valid") } }
@@ -900,9 +900,12 @@ impl phenix_core::PhenixContract for PhenixApplicationTypeReviewState1Type { fn 
 pub struct PhenixApplicationTypeSdkValue1Type { pub r#schema: phenix_core::PhenixValue,pub r#value: phenix_core::PhenixValue, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeSdkValue1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.sdk-value@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
+pub struct PhenixApplicationTypeSelectionDefaultSelectInput1Type { pub r#selection_id: String, }
+impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionDefaultSelectInput1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.selection-default-select-input@1").expect("generated contract id is valid") } }
+#[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum Structural340 { r#Model,r#Router, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeSelectionInfo1Type { pub r#description: Option<String>,pub r#id: String,pub r#name: String,pub r#presentation: Structural340,pub r#provider: String, }
+pub struct PhenixApplicationTypeSelectionInfo1Type { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural340,pub r#provider: String,pub r#provider_name: String,pub r#thinking: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionInfo1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.selection-info@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum PhenixApplicationTypeSelectionPresentation1Type { r#Model,r#Router, }
@@ -913,7 +916,7 @@ impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionSelectInput1T
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum Structural342 { r#Model,r#Router, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct Structural341 { pub r#description: Option<String>,pub r#id: String,pub r#name: String,pub r#presentation: Structural342,pub r#provider: String, }
+pub struct Structural341 { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural342,pub r#provider: String,pub r#provider_name: String,pub r#thinking: Option<String>, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub struct PhenixApplicationTypeSelections1Type { pub r#available: Vec<Structural341>,pub r#selected: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeSelections1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.selections@1").expect("generated contract id is valid") } }
@@ -1657,6 +1660,7 @@ pub fn type_schemas() -> std::collections::BTreeMap<phenix_core::ContractId, phe
 (<PhenixApplicationTypeReviewRecord1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeReviewRecord1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeReviewState1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeReviewState1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeSdkValue1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeSdkValue1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
+(<PhenixApplicationTypeSelectionDefaultSelectInput1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeSelectionDefaultSelectInput1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeSelectionInfo1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeSelectionInfo1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeSelectionPresentation1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeSelectionPresentation1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeSelectionSelectInput1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeSelectionSelectInput1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
@@ -1740,6 +1744,12 @@ impl PhenixApplicationReviewDecide1Operation { pub async fn invoke<T: phenix_app
 pub struct PhenixApplicationSdkGet1Operation;
 impl phenix_application_interface::Operation for PhenixApplicationSdkGet1Operation { const ID: &'static str = "phenix.application.sdk-get@1"; const CAPABILITY: &'static str = "phenix.application.capability.sdk@1"; type Input = PhenixApplicationTypeEmpty1Type; type Output = PhenixApplicationTypeSdkValue1Type; }
 impl PhenixApplicationSdkGet1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeEmpty1Type) -> Result<PhenixApplicationTypeSdkValue1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
+pub struct PhenixApplicationSelectionDefaultList1Operation;
+impl phenix_application_interface::Operation for PhenixApplicationSelectionDefaultList1Operation { const ID: &'static str = "phenix.application.selection-default-list@1"; const CAPABILITY: &'static str = "phenix.application.capability.routing@1"; type Input = PhenixApplicationTypeEmpty1Type; type Output = PhenixApplicationTypeSelections1Type; }
+impl PhenixApplicationSelectionDefaultList1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeEmpty1Type) -> Result<PhenixApplicationTypeSelections1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
+pub struct PhenixApplicationSelectionDefaultSelect1Operation;
+impl phenix_application_interface::Operation for PhenixApplicationSelectionDefaultSelect1Operation { const ID: &'static str = "phenix.application.selection-default-select@1"; const CAPABILITY: &'static str = "phenix.application.capability.routing@1"; type Input = PhenixApplicationTypeSelectionDefaultSelectInput1Type; type Output = PhenixApplicationTypeSelections1Type; }
+impl PhenixApplicationSelectionDefaultSelect1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeSelectionDefaultSelectInput1Type) -> Result<PhenixApplicationTypeSelections1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
 pub struct PhenixApplicationSelectionList1Operation;
 impl phenix_application_interface::Operation for PhenixApplicationSelectionList1Operation { const ID: &'static str = "phenix.application.selection-list@1"; const CAPABILITY: &'static str = "phenix.application.capability.routing@1"; type Input = PhenixApplicationTypeSessionInput1Type; type Output = PhenixApplicationTypeSelections1Type; }
 impl PhenixApplicationSelectionList1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeSessionInput1Type) -> Result<PhenixApplicationTypeSelections1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }

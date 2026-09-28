@@ -1233,8 +1233,35 @@ fn application_selection_info(
                 PluginId::parse(provider)
                     .map_err(|error| BindingError::conversion(error.to_string()))
             })?,
+        provider_name: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.provider_name"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                BindingError::conversion("Phenix routing option is missing provider name metadata")
+            })?
+            .to_owned(),
         id: RoutingProfileId::parse(option.value.to_string())
             .map_err(|error| BindingError::conversion(error.to_string()))?,
+        model: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.model"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        thinking: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.thinking"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        authenticated: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.authenticated"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
         name,
         description: option.description.clone(),
         presentation,
@@ -2479,10 +2506,13 @@ mod tests {
 
     #[test]
     fn standard_acp_model_config_projects_to_application_selections() {
-        let provider = serde_json::Map::from_iter([(
-            "phenix.provider".into(),
-            serde_json::json!("openai-codex"),
-        )]);
+        let provider = serde_json::Map::from_iter([
+            ("phenix.provider".into(), serde_json::json!("openai-codex")),
+            (
+                "phenix.provider_name".into(),
+                serde_json::json!("OpenAI ChatGPT"),
+            ),
+        ]);
         let options = vec![SessionConfigOption::select(
             MODEL_CONFIG_ID,
             "Model / routing",
@@ -2505,7 +2535,9 @@ mod tests {
         assert_eq!(selections.available.len(), 2);
         assert_eq!(selections.available[0].name, "Balanced");
         assert_eq!(selections.available[0].provider.as_str(), "openai-codex");
+        assert_eq!(selections.available[0].provider_name, "OpenAI ChatGPT");
         assert_eq!(selections.available[1].provider.as_str(), "openai-codex");
+        assert_eq!(selections.available[1].provider_name, "OpenAI ChatGPT");
         assert_eq!(
             selections.available[0].presentation,
             SelectionPresentation::Router

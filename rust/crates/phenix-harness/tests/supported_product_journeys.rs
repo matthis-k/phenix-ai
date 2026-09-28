@@ -497,14 +497,6 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             },
         },
     );
-    let _: ModelResponse = invoke_structural(
-        &mut harness,
-        "phenix.models.routing@1",
-        &ModelCommand::SetProviderAuthenticated {
-            provider_plugin: PluginId::parse(provider).unwrap(),
-            authenticated: true,
-        },
-    );
 
     let _: ExecutionResponse = invoke_structural(
         &mut harness,
@@ -676,14 +668,6 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                 cache: Default::default(),
                 optional: BTreeSet::new(),
             },
-        },
-    );
-    let _: ModelResponse = invoke_structural(
-        &mut harness,
-        "phenix.models.routing@1",
-        &ModelCommand::SetProviderAuthenticated {
-            provider_plugin: PluginId::parse(provider).unwrap(),
-            authenticated: true,
         },
     );
 

@@ -122,6 +122,11 @@ impl CredentialStore {
         if let Some(path) = std::env::var_os(CREDENTIAL_FILE_ENV) {
             return Ok(Self { path: path.into() });
         }
+        if let Some(directory) = std::env::var_os("PHENIX_STATE_DIR") {
+            return Ok(Self {
+                path: PathBuf::from(directory).join("provider-credentials.json"),
+            });
+        }
         let state = std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
             .or_else(|| {

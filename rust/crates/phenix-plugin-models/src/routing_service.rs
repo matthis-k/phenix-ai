@@ -104,10 +104,10 @@ impl RoutingServiceState {
                 .map_err(|error| format!("routing evidence recording failed: {error:?}")),
             ModelCommand::RegisterProfile { .. }
             | ModelCommand::PreparePackagedProfiles { .. }
+            | ModelCommand::PublishProviderCatalogProfiles { .. }
             | ModelCommand::ReplaceProfile { .. }
             | ModelCommand::GetProfile { .. }
-            | ModelCommand::ListProfiles
-            | ModelCommand::SetProviderAuthenticated { .. } => return None,
+            | ModelCommand::ListProfiles => return None,
         };
         Some(response)
     }

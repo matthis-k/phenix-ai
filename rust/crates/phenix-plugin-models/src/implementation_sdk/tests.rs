@@ -176,6 +176,24 @@ fn invoke_routing(kernel: &mut Kernel, command: ModelCommand) -> Result<ModelRes
     ModelResponse::try_from(Project(&output)).map_err(|error| error.to_string())
 }
 
+fn apply_provider_catalog(
+    kernel: &mut Kernel,
+    provider: &str,
+    profiles: Vec<RoutingProfile>,
+) -> Result<(), String> {
+    let response = invoke_routing(
+        kernel,
+        ModelCommand::PublishProviderCatalogProfiles {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            profiles,
+        },
+    )?;
+    if !matches!(response, ModelResponse::Profiles { .. }) {
+        return Err("expected published provider catalog profiles".into());
+    }
+    Ok(())
+}
+
 fn invoke_dispatch_outcome(
     kernel: &mut Kernel,
     command: ModelDispatchCommand,
@@ -253,6 +271,83 @@ mod profile_store {
         };
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].providers.len(), 3);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_catalog_refresh_retires_missing_models_without_deleting_durable_routes() {
+        let path = temp_db("routing-provider-catalog");
+        let provider = "provider.catalog";
+        let fixed = |id: &str, model: &str| RoutingProfile {
+            id: RoutingProfileId::parse(id).unwrap(),
+            default_target: target(provider, model),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        let first = fixed("catalog.model-a", "model-a");
+        let second = fixed("catalog.model-b", "model-b");
+
+        {
+            let mut kernel = kernel_with(&path);
+            apply_provider_catalog(&mut kernel, provider, vec![first.clone(), second.clone()])
+                .unwrap();
+
+            let ModelResponse::Profiles { profiles } =
+                invoke_routing(&mut kernel, ModelCommand::ListProfiles).unwrap()
+            else {
+                panic!("expected profiles response");
+            };
+            assert_eq!(
+                profiles
+                    .iter()
+                    .map(|profile| profile.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["catalog.model-a", "catalog.model-b"]
+            );
+
+            apply_provider_catalog(&mut kernel, provider, vec![second.clone()]).unwrap();
+            let ModelResponse::Profiles { profiles } =
+                invoke_routing(&mut kernel, ModelCommand::ListProfiles).unwrap()
+            else {
+                panic!("expected profiles response");
+            };
+            assert_eq!(profiles.len(), 1);
+            assert_eq!(profiles[0].id, second.id);
+
+            assert_eq!(
+                invoke_routing(
+                    &mut kernel,
+                    ModelCommand::GetProfile {
+                        id: first.id.clone()
+                    },
+                )
+                .unwrap(),
+                ModelResponse::Profile {
+                    profile: Some(first.clone())
+                }
+            );
+        }
+
+        let mut restored = kernel_with(&path);
+        let ModelResponse::Profiles { profiles } =
+            invoke_routing(&mut restored, ModelCommand::ListProfiles).unwrap()
+        else {
+            panic!("expected profiles response");
+        };
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, second.id);
+        assert_eq!(
+            invoke_routing(
+                &mut restored,
+                ModelCommand::GetProfile {
+                    id: first.id.clone()
+                },
+            )
+            .unwrap(),
+            ModelResponse::Profile {
+                profile: Some(first)
+            }
+        );
         let _ = fs::remove_file(path);
     }
 
@@ -420,17 +515,6 @@ mod runtime_persistence {
 mod resolved_dispatch {
     use super::*;
 
-    fn authenticate(kernel: &mut Kernel, authenticated: bool) {
-        invoke_routing(
-            kernel,
-            ModelCommand::SetProviderAuthenticated {
-                provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                authenticated,
-            },
-        )
-        .unwrap();
-    }
-
     fn decision(target: ModelTarget, generation: &str) -> RouteDecision {
         RouteDecision {
             target,
@@ -501,7 +585,6 @@ mod resolved_dispatch {
     fn cache_hint_does_not_change_provider_visible_context() {
         let path = temp_db("resolved-dispatch-cache-input");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         let mut published = capabilities(target.clone(), "generation-1", 8_000);
         published.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
@@ -550,7 +633,6 @@ mod resolved_dispatch {
     fn unsupported_cache_control_preserves_context_semantics() {
         let path = temp_db("resolved-dispatch-no-cache");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -616,7 +698,6 @@ mod resolved_dispatch {
     fn exact_selected_target_reaches_provider_unchanged() {
         let path = temp_db("resolved-dispatch-exact");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected-fallback");
         invoke_routing(
             &mut kernel,
@@ -653,7 +734,6 @@ mod resolved_dispatch {
     fn stale_generation_is_rejected_during_preparation() {
         let path = temp_db("resolved-dispatch-stale");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -691,42 +771,9 @@ mod resolved_dispatch {
     }
 
     #[test]
-    fn missing_authentication_is_rejected_during_preparation() {
-        let path = temp_db("resolved-dispatch-auth");
-        let mut kernel = kernel_with_provider(&path);
-        let target = target("fixture.provider", "selected");
-        invoke_routing(
-            &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
-            },
-        )
-        .unwrap();
-        let failure = dispatch_failure(
-            &mut kernel,
-            ModelDispatchCommand::PrepareResolved {
-                session_id: None,
-                decision: decision(target, "generation-1"),
-                input: b"must-not-run".to_vec().into(),
-                cache: Default::default(),
-                tools: Vec::new(),
-                continuation: Vec::new(),
-            },
-        )
-        .unwrap();
-        assert!(matches!(
-            failure.failure,
-            ModelInferenceFailure::Authentication { ref message }
-                if message.contains("authentication required")
-        ));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn prepared_dispatch_is_not_rejected_when_mutable_state_changes() {
+    fn prepared_dispatch_is_not_rejected_when_capabilities_advance() {
         let path = temp_db("resolved-dispatch-prepared-snapshot");
         let mut kernel = kernel_with_provider(&path);
-        authenticate(&mut kernel, true);
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
@@ -737,8 +784,6 @@ mod resolved_dispatch {
         .unwrap();
         let original = decision(target.clone(), "generation-1");
         let prepared = prepare(&mut kernel, original.clone(), b"cross-boundary").unwrap();
-
-        authenticate(&mut kernel, false);
         invoke_routing(
             &mut kernel,
             ModelCommand::PublishCapabilities {
