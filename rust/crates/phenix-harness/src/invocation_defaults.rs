@@ -1,8 +1,8 @@
 use phenix_core::{
     Authority, CallableId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, InterfaceSchema, ModelToolDescriptor, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, RoutingProfileId, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole,
+    ComponentInvocationError, ComponentManifest, InterfaceSchema, ModelToolDescriptor,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
+    RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_plugin_catalog::{
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
@@ -35,7 +35,7 @@ pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManif
         id: PluginId::parse(INVOCATION_DEFAULTS_PLUGIN).expect("static plugin id is valid"),
         version: 1,
         execution: PluginExecution::Embedded,
-        dependencies: vec![PluginId::parse("phenix.options").expect("static plugin id is valid")],
+        dependencies: Vec::new(),
         services: vec![
             ServiceContribution {
                 role: ServiceRole::Terminal,
@@ -75,7 +75,7 @@ pub fn invocation_defaults_component_manifest(maximum_authority: Authority) -> C
         imports: vec![ComponentImport {
             interface: OptionsInterface::interface_id(),
             schema: InterfaceSchema::fallible_of::<OptionCommand, OptionResponse, String>(),
-            required: true,
+            required: false,
             authority: maximum_authority.clone(),
         }],
         exports: vec![
@@ -254,12 +254,18 @@ fn resolve_defaults(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
 ) -> Result<InvocationParams, String> {
-    let option = resolve_routing_option(context, request)?;
-    let OptionValue::String(profile) = option.value else {
-        return Err(format!("{ROUTING_PROFILE_OPTION} must be a string"));
+    let profile_id = match resolve_routing_option(context, request)? {
+        Some(option) => {
+            let OptionValue::String(profile) = option.value else {
+                return Err(format!("{ROUTING_PROFILE_OPTION} must be a string"));
+            };
+            RoutingProfileId::parse(profile)
+                .map_err(|error| format!("invalid {ROUTING_PROFILE_OPTION}: {error}"))?
+        }
+        None => {
+            RoutingProfileId::parse("default").expect("static default routing profile is valid")
+        }
     };
-    let profile_id = RoutingProfileId::parse(profile)
-        .map_err(|error| format!("invalid {ROUTING_PROFILE_OPTION}: {error}"))?;
     Ok(invocation_params(
         profile_id,
         request.callable_id.as_ref(),
@@ -273,15 +279,16 @@ fn resolve_defaults(
 fn resolve_routing_option(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
-) -> Result<phenix_plugin_catalog::ResolvedOption, String> {
+) -> Result<Option<phenix_plugin_catalog::ResolvedOption>, String> {
     if let Some(session) = &request.session_id {
         let session_context = OptionContext {
             session: Some(OptionSubjectId::parse(session.as_str().to_owned())?),
             agent: None,
         };
-        let option = resolve_option(context, session_context)?;
-        if option.source == OptionValueSource::Session {
-            return Ok(option);
+        if let Some(option) = resolve_option(context, session_context)? {
+            if option.source == OptionValueSource::Session {
+                return Ok(Some(option));
+            }
         }
     }
     resolve_option(context, invocation_option_context(request)?)
@@ -290,21 +297,25 @@ fn resolve_routing_option(
 fn resolve_option(
     context: &InvocationDefaultsContext<'_, '_>,
     option_context: OptionContext,
-) -> Result<phenix_plugin_catalog::ResolvedOption, String> {
-    let response: OptionResponse = context
-        .sdk
-        .options
-        .invoke_projected(&OptionCommand::Resolve {
-            key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
-            context: option_context,
-        })
-        .map_err(|error| format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}"))?;
+) -> Result<Option<phenix_plugin_catalog::ResolvedOption>, String> {
+    let response: OptionResponse =
+        match context
+            .sdk
+            .options
+            .invoke_projected(&OptionCommand::Resolve {
+                key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
+                context: option_context,
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(None),
+            Err(error) => return Err(format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}")),
+        };
     let OptionResponse::Value { option } = response else {
         return Err(format!(
             "options service returned a non-value response for {ROUTING_PROFILE_OPTION}"
         ));
     };
-    Ok(option)
+    Ok(Some(option))
 }
 
 fn invocation_option_context(request: &InvocationRequest) -> Result<OptionContext, String> {
@@ -381,16 +392,17 @@ fn invocation_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{default_suite_authority, PhenixHarness};
+    use crate::{default_suite_authority, HarnessBuilder, PhenixHarness};
     use phenix_core::{Bytes, PhenixValue, Project};
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
+    use std::collections::BTreeSet;
 
     #[test]
     fn provider_exports_replaceable_defaults_clock_and_recovery_interfaces() {
         let authority = Authority::default();
         let manifest = invocation_defaults_manifest(authority.clone());
         assert_eq!(manifest.services.len(), 3);
-        assert_eq!(manifest.dependencies.len(), 1);
+        assert!(manifest.dependencies.is_empty());
 
         let component = invocation_defaults_component_manifest(authority);
         assert_eq!(component.imports.len(), 1);
@@ -398,6 +410,7 @@ mod tests {
             component.imports[0].interface,
             OptionsInterface::interface_id()
         );
+        assert!(!component.imports[0].required);
         assert_eq!(component.exports.len(), 3);
         assert!(component
             .exports
@@ -411,6 +424,44 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == ContextRecoveryInterface::interface_id()));
+    }
+
+    #[test]
+    fn defaults_work_without_options_plugin() {
+        let enabled = BTreeSet::from([INVOCATION_DEFAULTS_PLUGIN.to_owned()]);
+        let mut harness = HarnessBuilder::with_selected_suite(&enabled)
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+        assert!(!harness
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.options"));
+
+        let request = InvocationRequest {
+            execution_id: "execution-basic".into(),
+            session_id: None,
+            parent_attempt_id: None,
+            callable_id: Some(CallableId::parse("agent.basic").unwrap()),
+            input: Bytes::from(b"prompt".to_vec()),
+            tools: Vec::new(),
+            continuation: Vec::new(),
+        };
+        let command = InvocationDefaultsCommand::Resolve { request };
+        let output = harness
+            .invoke(
+                &invocation_defaults_service(),
+                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
+                &default_suite_authority(),
+                None,
+            )
+            .unwrap();
+        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let InvocationDefaultsResponse::Params { params } =
+            InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
+        assert_eq!(params.profile_id.as_str(), "default");
     }
 
     #[test]
