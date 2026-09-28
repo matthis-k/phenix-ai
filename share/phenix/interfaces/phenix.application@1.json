@@ -508,6 +508,9 @@
         },
         "provider_name": {
           "type": "string"
+        },
+        "authenticated": {
+          "type": "bool"
         }
       }
     },
@@ -539,6 +542,9 @@
               },
               "provider_name": {
                 "type": "string"
+              },
+              "authenticated": {
+                "type": "bool"
               }
             }
           }
