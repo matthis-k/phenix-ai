@@ -29,14 +29,10 @@ const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const PROFILE_INDEX: &str = "index/profiles";
 
-type ModelContext<'host, 'runtime, 'state> =
-    PluginContext<'host, 'runtime, (), (), &'state mut BTreeSet<PluginId>>;
+type ModelContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
-fn context<'host, 'runtime, 'state>(
-    host: &'host PluginHost<'runtime>,
-    authenticated: &'state mut BTreeSet<PluginId>,
-) -> ModelContext<'host, 'runtime, 'state> {
-    PluginContext::new(host, (), (), authenticated)
+fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> ModelContext<'host, 'runtime> {
+    PluginContext::new(host, (), (), ())
 }
 
 #[must_use]
@@ -86,14 +82,13 @@ fn capability(value: &str) -> CapabilityId {
 
 #[derive(Default)]
 struct ModelRoutingPlugin {
-    authenticated: BTreeSet<PluginId>,
     routing: RoutingServiceState,
 }
 
 impl PluginInstance for ModelRoutingPlugin {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
         let snapshot = {
-            let context = context(host, &mut self.authenticated);
+            let context = context(host);
             context
                 .kernel
                 .register_durable_schema(&DurableSchema::new(model_namespace(), 1))
@@ -114,7 +109,7 @@ impl PluginInstance for ModelRoutingPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        let mut context = context(host, &mut self.authenticated);
+        let mut context = context(host);
         if service == &model_routing_service() {
             let command = context
                 .kernel
@@ -146,7 +141,7 @@ impl PluginInstance for ModelRoutingPlugin {
 }
 
 fn handle_routing(
-    context: &mut ModelContext<'_, '_, '_>,
+    context: &mut ModelContext<'_, '_>,
     routing: &mut RoutingServiceState,
     command: ModelCommand,
 ) -> Result<ModelResponse, String> {
@@ -206,30 +201,6 @@ fn handle_routing(
                     .collect(),
             })
         }
-        ModelCommand::SetProviderAuthenticated {
-            provider_plugin,
-            authenticated,
-        } => {
-            let changed = if authenticated {
-                context.plugin.state.insert(provider_plugin.clone())
-            } else {
-                context.plugin.state.remove(&provider_plugin)
-            };
-            if changed {
-                emit_diagnostic(
-                    context,
-                    ModelDiagnosticEvent::AuthenticationChanged {
-                        provider_plugin: provider_plugin.as_str().to_owned(),
-                        authenticated,
-                        authenticated_providers: authenticated_providers(context),
-                    },
-                );
-            }
-            Ok(ModelResponse::Authentication {
-                provider_plugin,
-                authenticated,
-            })
-        }
         ModelCommand::PublishCapabilities { .. }
         | ModelCommand::ListCandidates { .. }
         | ModelCommand::ResolveWithRequirements { .. }
@@ -240,7 +211,7 @@ fn handle_routing(
 }
 
 fn handle_dispatch(
-    context: &mut ModelContext<'_, '_, '_>,
+    context: &mut ModelContext<'_, '_>,
     routing: &RoutingServiceState,
     command: ModelDispatchCommand,
 ) -> Result<ModelDispatchResponse, ModelDispatchFailure> {
@@ -258,17 +229,11 @@ fn handle_dispatch(
             cache.local_capability_generation =
                 Some(decision.capability_generation.as_str().to_owned());
             cache.local_authority_identity = Some(authority_identity(context.call.authority));
-            let authenticated = context
-                .plugin
-                .state
-                .contains(&decision.target.provider_plugin);
             emit_diagnostic(
                 context,
                 ModelDiagnosticEvent::DispatchPreflight {
                     provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
                     model: decision.target.model.as_str().to_owned(),
-                    authenticated,
-                    authenticated_providers: authenticated_providers(context),
                     candidate_ordinal: decision.candidate_ordinal,
                     policy_revision: decision.policy_revision.clone(),
                     capability_generation: decision.capability_generation.as_str().to_owned(),
@@ -277,7 +242,7 @@ fn handle_dispatch(
                     continuation_turns: continuation.len(),
                 },
             );
-            let capabilities = match validate_dispatch(context, routing, &decision) {
+            let capabilities = match validate_dispatch(routing, &decision) {
                 Ok(capabilities) => capabilities,
                 Err(failure) => {
                     emit_diagnostic(
@@ -285,8 +250,6 @@ fn handle_dispatch(
                         ModelDiagnosticEvent::DispatchPreflightRejected {
                             provider_plugin: decision.target.provider_plugin.as_str().to_owned(),
                             model: decision.target.model.as_str().to_owned(),
-                            authenticated,
-                            authenticated_providers: authenticated_providers(context),
                             reason: failure.message().to_owned(),
                         },
                     );
@@ -355,17 +318,8 @@ fn handle_dispatch(
     }
 }
 
-fn authenticated_providers(context: &ModelContext<'_, '_, '_>) -> Vec<String> {
-    context
-        .plugin
-        .state
-        .iter()
-        .map(|provider| provider.as_str().to_owned())
-        .collect()
-}
-
 fn emit_routing_diagnostic(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     command: &ModelCommand,
     response: &ModelResponse,
 ) {
@@ -400,7 +354,7 @@ fn emit_routing_diagnostic(
     );
 }
 
-fn emit_diagnostic(context: &ModelContext<'_, '_, '_>, diagnostic: ModelDiagnosticEvent) {
+fn emit_diagnostic(context: &ModelContext<'_, '_>, diagnostic: ModelDiagnosticEvent) {
     let Ok(payload) = serde_json::to_vec(&diagnostic) else {
         return;
     };
@@ -414,14 +368,12 @@ fn emit_diagnostic(context: &ModelContext<'_, '_, '_>, diagnostic: ModelDiagnost
 }
 
 fn validate_dispatch<'a>(
-    context: &ModelContext<'_, '_, '_>,
     routing: &'a RoutingServiceState,
     decision: &phenix_sdk::RouteDecision,
 ) -> Result<&'a EffectiveModelCapabilities, ModelInferenceFailure> {
     let capabilities = routing
         .validate_decision(decision)
         .map_err(|message| ModelInferenceFailure::InvalidRequest { message })?;
-    ensure_authenticated(context, &decision.target.provider_plugin)?;
     Ok(capabilities)
 }
 
@@ -495,21 +447,8 @@ fn effective_cache_control(
     Ok(cache)
 }
 
-fn ensure_authenticated(
-    context: &ModelContext<'_, '_, '_>,
-    provider_plugin: &PluginId,
-) -> Result<(), ModelInferenceFailure> {
-    if context.plugin.state.contains(provider_plugin) {
-        Ok(())
-    } else {
-        Err(ModelInferenceFailure::Authentication {
-            message: format!("provider authentication required: {provider_plugin}"),
-        })
-    }
-}
-
 fn encode_request(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     target: &ModelTarget,
     session_id: Option<phenix_core::SessionId>,
     input: phenix_core::Bytes,
@@ -536,7 +475,7 @@ fn encode_request(
 }
 
 fn invoke_encoded_target(
-    context: &mut ModelContext<'_, '_, '_>,
+    context: &mut ModelContext<'_, '_>,
     target: &ModelTarget,
     request: phenix_core::Bytes,
 ) -> Result<ModelInferenceResponse, ModelInferenceFailure> {
@@ -587,7 +526,7 @@ fn kernel_model_failure(error: KernelError) -> ModelInferenceFailure {
 }
 
 fn persist_runtime_state(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     routing: &mut RoutingServiceState,
     previous: Option<Vec<u8>>,
 ) -> Result<(), String> {
@@ -635,10 +574,7 @@ fn descriptor(profile: &RoutingProfile) -> RoutingProfileDescriptor {
     }
 }
 
-fn insert_profile(
-    context: &ModelContext<'_, '_, '_>,
-    profile: &RoutingProfile,
-) -> Result<(), String> {
+fn insert_profile(context: &ModelContext<'_, '_>, profile: &RoutingProfile) -> Result<(), String> {
     let key = profile_key(&profile.id);
     let old_index = read_raw(context, PROFILE_INDEX)?;
     let mut ids: Vec<RoutingProfileId> = old_index
@@ -681,7 +617,7 @@ fn insert_profile(
 }
 
 fn replace_profile(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     expected: &RoutingProfile,
     replacement: &RoutingProfile,
 ) -> Result<(), String> {
@@ -727,7 +663,7 @@ fn replace_profile(
 }
 
 fn read_profile(
-    context: &ModelContext<'_, '_, '_>,
+    context: &ModelContext<'_, '_>,
     id: &RoutingProfileId,
 ) -> Result<Option<RoutingProfile>, String> {
     read_raw(context, &profile_key(id))?
@@ -735,7 +671,7 @@ fn read_profile(
         .transpose()
 }
 
-fn load_profiles(context: &ModelContext<'_, '_, '_>) -> Result<Vec<RoutingProfile>, String> {
+fn load_profiles(context: &ModelContext<'_, '_>) -> Result<Vec<RoutingProfile>, String> {
     let ids: Vec<RoutingProfileId> = read_raw(context, PROFILE_INDEX)?
         .as_deref()
         .map(|value| serde_json::from_slice(value).map_err(|error| error.to_string()))
@@ -748,7 +684,7 @@ fn load_profiles(context: &ModelContext<'_, '_, '_>) -> Result<Vec<RoutingProfil
         .collect()
 }
 
-fn read_raw(context: &ModelContext<'_, '_, '_>, key: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_raw(context: &ModelContext<'_, '_>, key: &str) -> Result<Option<Vec<u8>>, String> {
     context
         .kernel
         .read_durable(&model_namespace(), key)

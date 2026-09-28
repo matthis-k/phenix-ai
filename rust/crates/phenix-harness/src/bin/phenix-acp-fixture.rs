@@ -219,16 +219,7 @@ fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> 
             other => return Err(format!("fixture capability publication failed: {other:?}").into()),
         }
     }
-    match invoke_model(
-        harness,
-        &ModelCommand::SetProviderAuthenticated {
-            provider_plugin: fixture_provider_id(),
-            authenticated: true,
-        },
-    )? {
-        ModelResponse::Authentication { .. } => Ok(()),
-        other => Err(format!("fixture authentication publication failed: {other:?}").into()),
-    }
+    Ok(())
 }
 
 fn state_path() -> Result<PathBuf, Box<dyn Error>> {
