@@ -1402,10 +1402,11 @@ impl ApplicationWorker {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let published = self.invoke_model_command(ModelCommand::PublishProviderCatalogProfiles {
-            provider_plugin: provider.clone(),
-            profiles: profiles.clone(),
-        })?;
+        let published =
+            self.invoke_model_command(ModelCommand::PublishProviderCatalogProfiles {
+                provider_plugin: provider.clone(),
+                profiles: profiles.clone(),
+            })?;
         if !matches!(published, ModelResponse::Profiles { .. }) {
             return Err(ApplicationError::InvalidResponse {
                 message: format!(
