@@ -121,6 +121,18 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.sdk@1"
     },
+    "phenix.application.selection-default-list@1": {
+      "input": "phenix.application.type.empty@1",
+      "output": "phenix.application.type.selections@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.routing@1"
+    },
+    "phenix.application.selection-default-select@1": {
+      "input": "phenix.application.type.selection-default-select-input@1",
+      "output": "phenix.application.type.selections@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.routing@1"
+    },
     "phenix.application.selection-list@1": {
       "input": "phenix.application.type.session-input@1",
       "output": "phenix.application.type.selections@1",
@@ -464,6 +476,12 @@
       "value": {
         "method_id": {
           "type": "string"
+        },
+        "secret": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
         }
       }
     },
@@ -479,7 +497,16 @@
         "id": {
           "type": "string"
         },
+        "kind": {
+          "type": "string"
+        },
         "name": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_name": {
           "type": "string"
         }
       }
@@ -501,7 +528,16 @@
               "id": {
                 "type": "string"
               },
+              "kind": {
+                "type": "string"
+              },
               "name": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "provider_name": {
                 "type": "string"
               }
             }
@@ -4215,9 +4251,20 @@
         }
       }
     },
+    "phenix.application.type.selection-default-select-input@1": {
+      "type": "table",
+      "value": {
+        "selection_id": {
+          "type": "string"
+        }
+      }
+    },
     "phenix.application.type.selection-info@1": {
       "type": "table",
       "value": {
+        "authenticated": {
+          "type": "bool"
+        },
         "description": {
           "type": "option",
           "value": {
@@ -4226,6 +4273,12 @@
         },
         "id": {
           "type": "string"
+        },
+        "model": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
         },
         "name": {
           "type": "string"
@@ -4243,6 +4296,12 @@
         },
         "provider": {
           "type": "string"
+        },
+        "thinking": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
         }
       }
     },
@@ -4276,6 +4335,9 @@
           "value": {
             "type": "table",
             "value": {
+              "authenticated": {
+                "type": "bool"
+              },
               "description": {
                 "type": "option",
                 "value": {
@@ -4284,6 +4346,12 @@
               },
               "id": {
                 "type": "string"
+              },
+              "model": {
+                "type": "option",
+                "value": {
+                  "type": "string"
+                }
               },
               "name": {
                 "type": "string"
@@ -4301,6 +4369,12 @@
               },
               "provider": {
                 "type": "string"
+              },
+              "thinking": {
+                "type": "option",
+                "value": {
+                  "type": "string"
+                }
               }
             }
           }

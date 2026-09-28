@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 
 use crate::routing_service::{RoutingServiceState, ROUTING_RUNTIME_KEY};
 
+mod catalog;
 mod packaged;
 
 const MODEL_ROUTING_PLUGIN: &str = "phenix.models";
@@ -172,6 +173,10 @@ fn handle_routing(
 
     match command {
         ModelCommand::PreparePackagedProfiles { profiles } => packaged::prepare(context, profiles),
+        ModelCommand::PublishProviderCatalogProfiles {
+            provider_plugin,
+            profiles,
+        } => catalog::publish(context, provider_plugin, profiles),
         ModelCommand::RegisterProfile { profile } => {
             insert_profile(context, &profile)?;
             Ok(ModelResponse::Profile {
@@ -188,7 +193,11 @@ fn handle_routing(
             profile: read_profile(context, &id)?,
         }),
         ModelCommand::ListProfiles => {
-            let retired = packaged::retired(context)?;
+            let (mut owned, mut active) = packaged::ownership(context)?;
+            let (catalog_owned, catalog_active) = catalog::ownership(context)?;
+            owned.extend(catalog_owned);
+            active.extend(catalog_active);
+            let retired = owned.difference(&active).cloned().collect::<BTreeSet<_>>();
             Ok(ModelResponse::Profiles {
                 profiles: load_profiles(context)?
                     .into_iter()

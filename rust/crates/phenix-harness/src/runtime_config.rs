@@ -17,6 +17,7 @@ use phenix_sdk::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -249,25 +250,11 @@ fn apply_configuration(
     harness: &mut PhenixHarness,
     configuration: RuntimeConfiguration,
 ) -> Result<(), Box<dyn Error>> {
-    let mut profiles = configuration
+    let profiles = configuration
         .routing_profiles
         .into_iter()
         .map(RuntimeRoutingProfile::into_routing_profile)
         .collect::<Vec<_>>();
-    let mut direct_targets = BTreeMap::new();
-    for profile in &profiles {
-        for target in std::iter::once(&profile.default_target)
-            .chain(profile.fallback_targets.iter())
-            .chain(profile.callable_targets.values())
-        {
-            direct_targets
-                .entry(serde_json::to_string(target)?)
-                .or_insert_with(|| target.clone());
-        }
-    }
-    for target in direct_targets.into_values() {
-        profiles.push(direct_routing_profile(target)?);
-    }
     let response: ExecutionConfigurationResponse = invoke_projected(
         harness,
         &execution_configuration_service(),
@@ -288,6 +275,7 @@ fn apply_configuration(
     }
     Ok(())
 }
+#[cfg(test)]
 fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
     let encoded = serde_json::to_vec(&target)?;
     let digest = Sha256::digest(encoded);
@@ -363,7 +351,7 @@ fn cache_capabilities_for_target(target: &ModelTarget) -> CacheCapabilities {
     }
 }
 
-fn publish_routing_profile_runtime_state(
+pub(crate) fn publish_routing_profile_runtime_state(
     harness: &mut PhenixHarness,
     profile: &RoutingProfile,
 ) -> Result<(), Box<dyn Error>> {
@@ -484,6 +472,31 @@ mod tests {
             }]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn packaged_router_policy_does_not_publish_implicit_direct_model_profiles() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+        apply_configuration(&mut harness, sample_runtime()).unwrap();
+
+        let catalog: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ListProfiles,
+            &default_suite_authority(),
+        )
+        .unwrap();
+        let ModelResponse::Profiles { profiles } = catalog else {
+            panic!("expected routing profile catalog");
+        };
+        assert_eq!(
+            profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["router.test"]
+        );
     }
 
     #[test]
