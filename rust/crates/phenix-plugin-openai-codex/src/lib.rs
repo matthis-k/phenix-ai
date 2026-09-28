@@ -657,6 +657,7 @@ impl PluginInstance for OpenAiCodexPlugin {
                 serde_json::from_slice(input).map_err(|error| error.to_string())?;
             let response = match command {
                 ProviderModelsCommand::List => ProviderModelsResponse::Models {
+                    provider_name: "OpenAI ChatGPT".to_owned(),
                     models: DECLARED_MODELS
                         .iter()
                         .map(|model| {
