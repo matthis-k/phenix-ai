@@ -17,7 +17,7 @@ use phenix_core::{
     PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 pub const PROVIDER_AUTH_SERVICE: &str = "phenix.providers.auth@1";
 pub const PROVIDER_MODELS_SERVICE: &str = "phenix.providers.models@1";
@@ -166,6 +166,7 @@ pub enum ProviderModelOrigin {
 pub struct ProviderModel {
     pub id: ModelId,
     pub origin: ProviderModelOrigin,
+    pub thinking: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -201,6 +202,7 @@ pub(crate) struct ProviderSpec {
     auth: auth::Definition,
     default_auth: Option<Auth>,
     declared_models: Vec<ModelId>,
+    model_thinking: BTreeMap<ModelId, Vec<String>>,
     protocol: Arc<dyn ProtocolAdapter>,
 }
 
@@ -239,6 +241,7 @@ impl ProviderDefinition {
                 auth: auth.into(),
                 default_auth: None,
                 declared_models: Vec::new(),
+                model_thinking: BTreeMap::new(),
                 protocol: Arc::new(protocol),
             }),
         }
@@ -259,6 +262,7 @@ impl ProviderDefinition {
                 auth: self.spec.auth.clone(),
                 default_auth: self.spec.default_auth.clone(),
                 declared_models: self.spec.declared_models.clone(),
+                model_thinking: self.spec.model_thinking.clone(),
                 protocol: Arc::clone(&self.spec.protocol),
             }),
         }
@@ -278,6 +282,7 @@ impl ProviderDefinition {
                 auth: self.spec.auth.clone(),
                 default_auth: Some(default_auth),
                 declared_models: self.spec.declared_models.clone(),
+                model_thinking: self.spec.model_thinking.clone(),
                 protocol: Arc::clone(&self.spec.protocol),
             }),
         }
@@ -296,6 +301,40 @@ impl ProviderDefinition {
                 auth: self.spec.auth.clone(),
                 default_auth: self.spec.default_auth.clone(),
                 declared_models,
+                model_thinking: self.spec.model_thinking.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn with_model_thinking<I, S>(self, model: ModelId, levels: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut levels = levels.into_iter().map(Into::into).collect::<Vec<_>>();
+        assert!(
+            levels.iter().all(|level| !level.trim().is_empty()),
+            "provider thinking level must not be empty"
+        );
+        levels.sort();
+        levels.dedup();
+        let mut model_thinking = self.spec.model_thinking.clone();
+        if levels.is_empty() {
+            model_thinking.remove(&model);
+        } else {
+            model_thinking.insert(model, levels);
+        }
+        Self {
+            spec: Arc::new(ProviderSpec {
+                id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
+                endpoint: self.spec.endpoint.clone(),
+                auth: self.spec.auth.clone(),
+                default_auth: self.spec.default_auth.clone(),
+                declared_models: self.spec.declared_models.clone(),
+                model_thinking,
                 protocol: Arc::clone(&self.spec.protocol),
             }),
         }

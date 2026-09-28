@@ -1386,16 +1386,26 @@ impl ApplicationWorker {
     fn refresh_provider_model_catalog(&self, provider: &PluginId) -> Result<(), ApplicationError> {
         let response = self.invoke_provider_models(provider, ProviderModelsCommand::List)?;
         let ProviderModelsResponse::Models { models } = response;
-        let profiles = models
-            .into_iter()
-            .map(|model| {
-                direct_provider_model_profile(ModelTarget {
-                    provider_plugin: provider.clone(),
-                    model: model.id,
-                    options: BTreeMap::new(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut profiles = Vec::new();
+        for model in models {
+            let base_target = ModelTarget {
+                provider_plugin: provider.clone(),
+                model: model.id,
+                options: BTreeMap::new(),
+            };
+            profiles.push(direct_provider_model_profile(base_target.clone())?);
+            for effort in model.thinking {
+                let mut target = base_target.clone();
+                target.options.insert(
+                    "inference".to_owned(),
+                    PhenixValue::Map(BTreeMap::from([(
+                        "effort".to_owned(),
+                        PhenixValue::String(effort),
+                    )])),
+                );
+                profiles.push(direct_provider_model_profile(target)?);
+            }
+        }
 
         let published =
             self.invoke_model_command(ModelCommand::PublishProviderCatalogProfiles {

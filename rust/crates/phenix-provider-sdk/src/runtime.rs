@@ -279,7 +279,16 @@ impl ProviderPlugin {
                 Ok(ProviderModelsResponse::Models {
                     models: models
                         .into_iter()
-                        .map(|(id, origin)| ProviderModel { id, origin })
+                        .map(|(id, origin)| ProviderModel {
+                            thinking: self
+                                .spec
+                                .model_thinking
+                                .get(&id)
+                                .cloned()
+                                .unwrap_or_default(),
+                            id,
+                            origin,
+                        })
                         .collect(),
                 })
             }

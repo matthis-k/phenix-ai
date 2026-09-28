@@ -20,6 +20,7 @@ pub struct ProviderPreset {
     api_token: ApiTokenAuth,
     environment: &'static str,
     declared_models: &'static [&'static str],
+    model_thinking: &'static [(&'static str, &'static [&'static str])],
 }
 
 impl ProviderPreset {
@@ -38,6 +39,7 @@ impl ProviderPreset {
             api_token: ApiTokenAuth::Bearer,
             environment,
             declared_models: &[],
+            model_thinking: &[],
         }
     }
 
@@ -57,11 +59,20 @@ impl ProviderPreset {
             api_token: ApiTokenAuth::Header(header),
             environment,
             declared_models: &[],
+            model_thinking: &[],
         }
     }
 
     pub const fn with_declared_models(mut self, models: &'static [&'static str]) -> Self {
         self.declared_models = models;
+        self
+    }
+
+    pub const fn with_model_thinking(
+        mut self,
+        model_thinking: &'static [(&'static str, &'static [&'static str])],
+    ) -> Self {
+        self.model_thinking = model_thinking;
         self
     }
 
@@ -114,7 +125,7 @@ impl ProviderPreset {
             auth,
         )
         .with_display_name(self.name);
-        if self.declared_models.is_empty() {
+        let definition = if self.declared_models.is_empty() {
             definition
         } else {
             definition.with_declared_models(
@@ -122,7 +133,15 @@ impl ProviderPreset {
                     ModelId::parse(*model).expect("common provider model id is valid")
                 }),
             )
-        }
+        };
+        self.model_thinking
+            .iter()
+            .fold(definition, |definition, (model, levels)| {
+                definition.with_model_thinking(
+                    ModelId::parse(*model).expect("common provider model id is valid"),
+                    levels.iter().copied(),
+                )
+            })
     }
 }
 
@@ -133,7 +152,12 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "https://api.openai.com/v1",
         Protocol::OpenAiResponses,
         "OPENAI_API_KEY",
-    ),
+    )
+    .with_model_thinking(&[
+        ("gpt-5.6-terra", &["medium", "high"]),
+        ("gpt-5.6-luna", &["low", "medium"]),
+        ("gpt-5.6-sol", &["medium"]),
+    ]),
     ProviderPreset::header(
         "anthropic",
         "Anthropic",
@@ -148,7 +172,8 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "https://openrouter.ai/api/v1",
         Protocol::OpenAiChatCompletions,
         "OPEN_ROUTER_API_KEY",
-    ),
+    )
+    .with_model_thinking(&[("openrouter/auto", &["low", "medium", "high"])]),
     ProviderPreset::bearer(
         "opencode-go",
         "OpenCode Go",
@@ -162,6 +187,12 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "mimo-v2.5",
         "minimax-m3",
         "qwen3.7-plus",
+    ])
+    .with_model_thinking(&[
+        ("gpt-5.6-luna", &["medium"]),
+        ("deepseek-v4-flash", &["medium", "high"]),
+        ("mimo-v2.5", &["low", "medium"]),
+        ("qwen3.7-plus", &["medium", "high"]),
     ]),
     ProviderPreset::bearer(
         "opencode-zen",
@@ -178,6 +209,14 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "qwen3.7-plus",
         "deepseek-v4-flash",
         "mimo-v2.5-free",
+    ])
+    .with_model_thinking(&[
+        ("gpt-5.6-terra", &["medium", "high"]),
+        ("gpt-5.6-luna", &["low", "medium"]),
+        ("gpt-5.6-sol", &["medium"]),
+        ("qwen3.7-plus", &["medium", "high"]),
+        ("deepseek-v4-flash", &["medium", "high"]),
+        ("mimo-v2.5-free", &["medium"]),
     ]),
     ProviderPreset::bearer(
         "groq",
@@ -220,7 +259,8 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
         "https://api.x.ai/v1",
         Protocol::OpenAiResponses,
         "XAI_API_KEY",
-    ),
+    )
+    .with_model_thinking(&[("grok-4.6", &["low", "medium", "high", "xhigh"])]),
     ProviderPreset::bearer(
         "fireworks",
         "Fireworks AI",
