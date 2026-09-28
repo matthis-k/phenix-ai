@@ -1235,6 +1235,24 @@ fn application_selection_info(
             })?,
         id: RoutingProfileId::parse(option.value.to_string())
             .map_err(|error| BindingError::conversion(error.to_string()))?,
+        model: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.model"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        thinking: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.thinking"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        authenticated: option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("phenix.authenticated"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
         name,
         description: option.description.clone(),
         presentation,

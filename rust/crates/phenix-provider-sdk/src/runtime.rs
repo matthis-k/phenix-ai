@@ -1,13 +1,14 @@
 use crate::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore,
-    HttpMethod, ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderRequest,
-    ProviderResponse, ProviderSpec, RateLimits, Token,
+    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth,
+    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
+    ProviderError, ProviderModel, ProviderModelOrigin, ProviderModelsCommand,
+    ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
 };
 use phenix_core::{
-    model_inference_service, ArtifactRevision, ComponentInterface, ModelInferenceInterface,
-    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginHost,
-    PluginInstance, ServiceId,
+    model_inference_service, ArtifactRevision, ComponentInterface, ModelId,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
+    PluginContext, PluginHost, PluginInstance, ServiceId,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use std::{
@@ -185,9 +186,20 @@ impl ProviderPlugin {
                 methods: self.spec.auth_kinds(),
             }),
             ProviderAuthCommand::InteractiveMethods => {
-                Ok(ProviderAuthResponse::InteractiveMethods {
-                    methods: Vec::new(),
-                })
+                let mut methods = Vec::new();
+                if self.spec.auth.api_token.is_some() {
+                    methods.push(crate::ProviderAuthMethod {
+                        id: "api-token".to_owned(),
+                        kind: AuthKind::ApiToken,
+                        provider_name: self.spec.display_name.clone(),
+                        name: "API key".to_owned(),
+                        description: Some(
+                            "Enter an API key. Phenix stores it in its provider credential store."
+                                .to_owned(),
+                        ),
+                    });
+                }
+                Ok(ProviderAuthResponse::InteractiveMethods { methods })
             }
             ProviderAuthCommand::Authenticate { method } => Err(ProviderError::Authentication {
                 message: format!(
@@ -206,6 +218,79 @@ impl ProviderPlugin {
             ProviderAuthCommand::Remove { kind } => {
                 let auth = self.credentials()?.remove(self.spec.id.as_str(), kind)?;
                 Ok(ProviderAuthResponse::Removed { auth })
+            }
+        }
+    }
+
+    fn model_catalog(
+        &self,
+        command: ProviderModelsCommand,
+    ) -> Result<ProviderModelsResponse, ProviderError> {
+        match command {
+            ProviderModelsCommand::List => {
+                let mut models = BTreeMap::<ModelId, ProviderModelOrigin>::new();
+                for model in &self.spec.declared_models {
+                    models.insert(model.clone(), ProviderModelOrigin::Declared);
+                }
+
+                if self.spec.protocol.supports_model_catalog() {
+                    let discovered = (|| -> Result<Vec<ModelId>, ProviderError> {
+                        let request = self
+                            .spec
+                            .protocol
+                            .model_catalog_request(&self.spec.endpoint)?
+                            .ok_or_else(|| ProviderError::Protocol {
+                                message: format!(
+                                    "protocol {} advertises model discovery without a request",
+                                    self.spec.protocol.name()
+                                ),
+                            })?;
+                        let mut request = request;
+                        let auth = self.resolve_auth()?;
+                        apply_auth(&self.spec, &mut request.headers, auth.as_ref())?;
+                        let client = self.client()?.clone();
+                        let protocol = Arc::clone(&self.spec.protocol);
+                        self.runtime()?.block_on(async move {
+                            let response = send_http(&client, request).await?;
+                            if !(200..300).contains(&response.status) {
+                                return Err(normalize_http_error(&response));
+                            }
+                            protocol.decode_model_catalog(&response)
+                        })
+                    })();
+
+                    match discovered {
+                        Ok(discovered) => {
+                            for model in discovered {
+                                let origin = match models.get(&model) {
+                                    Some(ProviderModelOrigin::Declared) => {
+                                        ProviderModelOrigin::DiscoveredAndDeclared
+                                    }
+                                    _ => ProviderModelOrigin::Discovered,
+                                };
+                                models.insert(model, origin);
+                            }
+                        }
+                        Err(error) if models.is_empty() => return Err(error),
+                        Err(_) => {}
+                    }
+                }
+
+                Ok(ProviderModelsResponse::Models {
+                    models: models
+                        .into_iter()
+                        .map(|(id, origin)| ProviderModel {
+                            thinking: self
+                                .spec
+                                .model_thinking
+                                .get(&id)
+                                .cloned()
+                                .unwrap_or_default(),
+                            id,
+                            origin,
+                        })
+                        .collect(),
+                })
             }
         }
     }
@@ -273,6 +358,17 @@ impl PluginInstance for ProviderPlugin {
             let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;
             return self
                 .auth_command(command)
+                .and_then(|response| {
+                    serde_json::to_vec(&response).map_err(|error| ProviderError::Protocol {
+                        message: error.to_string(),
+                    })
+                })
+                .map_err(|error| error.to_wire());
+        }
+        if service == &provider_models_service() {
+            let command = serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            return self
+                .model_catalog(command)
                 .and_then(|response| {
                     serde_json::to_vec(&response).map_err(|error| ProviderError::Protocol {
                         message: error.to_string(),
