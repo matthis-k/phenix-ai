@@ -22,11 +22,6 @@ pub const MODEL_DIAGNOSTIC_EVENT_VERSION: u32 = 1;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ModelDiagnosticEvent {
-    AuthenticationChanged {
-        provider_plugin: String,
-        authenticated: bool,
-        authenticated_providers: Vec<String>,
-    },
     RoutingDecision {
         profile_id: String,
         callable_id: Option<String>,
@@ -38,8 +33,6 @@ pub enum ModelDiagnosticEvent {
     DispatchPreflight {
         provider_plugin: String,
         model: String,
-        authenticated: bool,
-        authenticated_providers: Vec<String>,
         candidate_ordinal: u32,
         policy_revision: String,
         capability_generation: String,
@@ -50,8 +43,6 @@ pub enum ModelDiagnosticEvent {
     DispatchPreflightRejected {
         provider_plugin: String,
         model: String,
-        authenticated: bool,
-        authenticated_providers: Vec<String>,
         reason: String,
     },
     DispatchPrepared {
@@ -379,10 +370,6 @@ pub enum ModelCommand {
         id: RoutingProfileId,
     },
     ListProfiles,
-    SetProviderAuthenticated {
-        provider_plugin: PluginId,
-        authenticated: bool,
-    },
     PublishCapabilities {
         capabilities: EffectiveModelCapabilities,
     },
@@ -414,10 +401,6 @@ pub enum ModelResponse {
     },
     Profiles {
         profiles: Vec<RoutingProfileDescriptor>,
-    },
-    Authentication {
-        provider_plugin: PluginId,
-        authenticated: bool,
     },
     Capabilities {
         capabilities: EffectiveModelCapabilities,

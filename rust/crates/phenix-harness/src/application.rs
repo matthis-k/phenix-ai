@@ -1265,7 +1265,6 @@ impl ApplicationWorker {
                     ),
                 });
             }
-            self.set_provider_authenticated(&provider)?;
             let _ = self.refresh_provider_model_catalog(&provider);
             return Ok(AuthenticationResult::Authenticated);
         }
@@ -1289,7 +1288,6 @@ impl ApplicationWorker {
         };
         match authentication {
             ProviderAuthenticationResult::Authenticated => {
-                self.set_provider_authenticated(&provider)?;
                 let _ = self.refresh_provider_model_catalog(&provider);
                 Ok(AuthenticationResult::Authenticated)
             }
@@ -1448,44 +1446,6 @@ impl ApplicationWorker {
         serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
             message: error.to_string(),
         })
-    }
-
-    fn set_provider_authenticated(&self, provider: &PluginId) -> Result<(), ApplicationError> {
-        let command = ModelCommand::SetProviderAuthenticated {
-            provider_plugin: provider.clone(),
-            authenticated: true,
-        };
-        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = self
-            .harness
-            .lock()
-            .invoke(&model_routing_service(), &input, &self.authority, None)
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
-            })?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        match ModelResponse::try_from(Project(&output)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })? {
-            ModelResponse::Authentication {
-                provider_plugin,
-                authenticated: true,
-            } if &provider_plugin == provider => Ok(()),
-            response => Err(ApplicationError::InvalidResponse {
-                message: format!(
-                    "model routing returned an unexpected authentication response: {response:?}"
-                ),
-            }),
-        }
     }
 
     fn invoke_session(
