@@ -1350,12 +1350,13 @@ impl ApplicationWorker {
         })
     }
 
-    fn refresh_provider_model_catalogs(
-        &self,
-        provider_authentication: &BTreeMap<PluginId, bool>,
-    ) {
+    fn refresh_provider_model_catalogs(&self, provider_authentication: &BTreeMap<PluginId, bool>) {
         for provider in self.provider_model_plugins() {
-            if provider_authentication.get(&provider).copied().unwrap_or(true) {
+            if provider_authentication
+                .get(&provider)
+                .copied()
+                .unwrap_or(true)
+            {
                 let _ = self.refresh_provider_model_catalog(&provider);
             }
         }
