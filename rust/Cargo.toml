@@ -39,6 +39,7 @@ members = [
   "crates/phenix-plugin-openai-codex",
   "crates/phenix-plugin-planning",
   "crates/phenix-plugin-providers",
+  "crates/phenix-plugin-provider-runtime",
   "crates/phenix-plugin-repository-workers",
   "crates/phenix-plugin-api",
   "crates/phenix-plugin-sessions",
