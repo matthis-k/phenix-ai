@@ -2507,10 +2507,7 @@ mod tests {
     #[test]
     fn standard_acp_model_config_projects_to_application_selections() {
         let provider = serde_json::Map::from_iter([
-            (
-                "phenix.provider".into(),
-                serde_json::json!("openai-codex"),
-            ),
+            ("phenix.provider".into(), serde_json::json!("openai-codex")),
             (
                 "phenix.provider_name".into(),
                 serde_json::json!("OpenAI ChatGPT"),
