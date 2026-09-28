@@ -502,6 +502,14 @@ impl OpenAiCodexPlugin {
                 let authentication = self.authenticate(&method)?;
                 Ok(ProviderAuthResponse::Authentication { authentication })
             }
+            ProviderAuthCommand::Status => {
+                let authenticated = self
+                    .store()?
+                    .resolve()
+                    .map_err(authentication_error)?
+                    .is_some();
+                Ok(ProviderAuthResponse::Status { authenticated })
+            }
             ProviderAuthCommand::List => {
                 let credentials = self
                     .store()?
