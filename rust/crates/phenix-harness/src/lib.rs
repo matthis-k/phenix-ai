@@ -42,8 +42,8 @@ use std::{
 
 pub mod application;
 mod basic_suite;
-mod invocation_defaults;
 pub use invocation_defaults::{invocation_defaults_manifest, INVOCATION_DEFAULTS_PLUGIN};
+use phenix_plugin_invocation_defaults as invocation_defaults;
 pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;

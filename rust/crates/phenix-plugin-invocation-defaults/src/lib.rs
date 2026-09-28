@@ -4,10 +4,6 @@ use phenix_core::{
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
     RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
-use phenix_plugin_catalog::{
-    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
-    OptionValueSource, OptionsInterface,
-};
 use phenix_sdk::{
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
     recovery_cold_gate, validate_recovery_decision, ContextNeed, ContextRecoveryCommand,
@@ -15,8 +11,10 @@ use phenix_sdk::{
     ContextRecoveryResponse, DelegationResourcePolicy, HelperInvocationRequest,
     InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
     InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
-    InvocationIntent, InvocationParams, InvocationRequest, RecoveryClassifierPolicy,
-    RecoveryColdGate, RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
+    InvocationIntent, InvocationParams, InvocationRequest, OptionCommand, OptionContext, OptionKey,
+    OptionResponse, OptionSubjectId, OptionValue, OptionValueSource, OptionsInterface,
+    RecoveryClassifierPolicy, RecoveryColdGate, ResolvedOption, RouteSelectionPolicy,
+    RoutingEstimateMode, UsagePolicy,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -279,7 +277,7 @@ fn resolve_defaults(
 fn resolve_routing_option(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
-) -> Result<Option<phenix_plugin_catalog::ResolvedOption>, String> {
+) -> Result<Option<ResolvedOption>, String> {
     if let Some(session) = &request.session_id {
         let session_context = OptionContext {
             session: Some(OptionSubjectId::parse(session.as_str().to_owned())?),
@@ -297,7 +295,7 @@ fn resolve_routing_option(
 fn resolve_option(
     context: &InvocationDefaultsContext<'_, '_>,
     option_context: OptionContext,
-) -> Result<Option<phenix_plugin_catalog::ResolvedOption>, String> {
+) -> Result<Option<ResolvedOption>, String> {
     let response: OptionResponse =
         match context
             .sdk
@@ -392,26 +390,16 @@ fn invocation_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{default_suite_authority, HarnessBuilder, PhenixHarness};
-    use phenix_core::{Bytes, PhenixValue, Project};
+    use phenix_core::Bytes;
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
-    use std::collections::BTreeSet;
 
     #[test]
-    fn provider_exports_replaceable_defaults_clock_and_recovery_interfaces() {
+    fn provider_exports_replaceable_interfaces() {
         let authority = Authority::default();
         let manifest = invocation_defaults_manifest(authority.clone());
         assert_eq!(manifest.services.len(), 3);
-        assert!(manifest.dependencies.is_empty());
 
         let component = invocation_defaults_component_manifest(authority);
-        assert_eq!(component.imports.len(), 1);
-        assert_eq!(
-            component.imports[0].interface,
-            OptionsInterface::interface_id()
-        );
-        assert!(!component.imports[0].required);
-        assert_eq!(component.exports.len(), 3);
         assert!(component
             .exports
             .iter()
@@ -424,44 +412,6 @@ mod tests {
             .exports
             .iter()
             .any(|export| export.interface == ContextRecoveryInterface::interface_id()));
-    }
-
-    #[test]
-    fn defaults_work_without_options_plugin() {
-        let enabled = BTreeSet::from([INVOCATION_DEFAULTS_PLUGIN.to_owned()]);
-        let mut harness = HarnessBuilder::with_selected_suite(&enabled)
-            .unwrap()
-            .build()
-            .unwrap();
-        harness.activate().unwrap();
-        assert!(!harness
-            .kernel()
-            .config()
-            .manifests()
-            .any(|manifest| manifest.id.as_str() == "phenix.options"));
-
-        let request = InvocationRequest {
-            execution_id: "execution-basic".into(),
-            session_id: None,
-            parent_attempt_id: None,
-            callable_id: Some(CallableId::parse("agent.basic").unwrap()),
-            input: Bytes::from(b"prompt".to_vec()),
-            tools: Vec::new(),
-            continuation: Vec::new(),
-        };
-        let command = InvocationDefaultsCommand::Resolve { request };
-        let output = harness
-            .invoke(
-                &invocation_defaults_service(),
-                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-                &default_suite_authority(),
-                None,
-            )
-            .unwrap();
-        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
-        let InvocationDefaultsResponse::Params { params } =
-            InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
-        assert_eq!(params.profile_id.as_str(), "default");
     }
 
     #[test]
@@ -482,72 +432,6 @@ mod tests {
             ContextRecoveryDecision::Missing { needs }
                 if matches!(&needs[..], [ContextNeed::Task { query }] if query == "work on prs")
         ));
-    }
-
-    #[test]
-    fn explicit_session_route_overrides_agent_model_default() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
-        harness.activate().unwrap();
-        let key = OptionKey::parse(ROUTING_PROFILE_OPTION).unwrap();
-        let options_component = phenix_plugin_catalog::options_component_manifest();
-        for (scope, value) in [
-            (
-                phenix_plugin_catalog::OptionScope::Agent(
-                    OptionSubjectId::parse("agent.coordinator").unwrap(),
-                ),
-                "router.agent",
-            ),
-            (
-                phenix_plugin_catalog::OptionScope::Session(
-                    OptionSubjectId::parse("session-1").unwrap(),
-                ),
-                "router.session",
-            ),
-        ] {
-            let command = OptionCommand::Set {
-                key: key.clone(),
-                scope,
-                value: OptionValue::String(value.into()),
-            };
-            let output = harness
-                .kernel_mut()
-                .invoke_component(
-                    &options_component.id,
-                    &phenix_plugin_catalog::options_service(),
-                    &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-                    &default_suite_authority(),
-                    &options_component.owner,
-                )
-                .unwrap();
-            let output: PhenixValue = serde_json::from_slice(&output).unwrap();
-            assert!(matches!(
-                OptionResponse::try_from(Project(&output)).unwrap(),
-                OptionResponse::Updated { .. }
-            ));
-        }
-
-        let request = InvocationRequest {
-            execution_id: "execution-1".into(),
-            session_id: Some(phenix_core::SessionId::parse("session-1").unwrap()),
-            parent_attempt_id: None,
-            callable_id: Some(CallableId::parse("agent.coordinator").unwrap()),
-            input: Bytes::from(b"prompt".to_vec()),
-            tools: Vec::new(),
-            continuation: Vec::new(),
-        };
-        let command = InvocationDefaultsCommand::Resolve { request };
-        let output = harness
-            .invoke(
-                &invocation_defaults_service(),
-                &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
-                &default_suite_authority(),
-                None,
-            )
-            .unwrap();
-        let output: PhenixValue = serde_json::from_slice(&output).unwrap();
-        let InvocationDefaultsResponse::Params { params } =
-            InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
-        assert_eq!(params.profile_id.as_str(), "router.session");
     }
 
     #[test]

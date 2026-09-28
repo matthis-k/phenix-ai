@@ -34,6 +34,7 @@ members = [
   "crates/phenix-plugin-frontend",
   "crates/phenix-plugin-hooks",
   "crates/phenix-plugin-jobs",
+  "crates/phenix-plugin-invocation-defaults",
   "crates/phenix-plugin-memory",
   "crates/phenix-plugin-models",
   "crates/phenix-plugin-options",
