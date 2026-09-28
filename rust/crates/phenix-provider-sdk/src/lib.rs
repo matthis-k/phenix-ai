@@ -2,12 +2,9 @@
 
 pub mod auth;
 mod protocol;
-mod runtime;
-mod store;
 mod types;
 
 pub use protocol::{normalize_http_error, Protocol, ProtocolAdapter};
-pub use store::*;
 pub use types::*;
 
 use phenix_core::{
@@ -23,7 +20,6 @@ pub const PROVIDER_AUTH_SERVICE: &str = "phenix.providers.auth@1";
 pub const PROVIDER_MODELS_SERVICE: &str = "phenix.providers.models@1";
 pub const NETWORK_HTTP_CAPABILITY: &str = "network.http";
 pub const SECRETS_MANAGE_CAPABILITY: &str = "secrets.manage";
-pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
 
 pub fn encode_model_inference_outcome(
     result: Result<ModelInferenceResponse, ProviderError>,
@@ -36,48 +32,6 @@ pub fn encode_model_inference_outcome(
     };
     serde_json::to_vec(&outcome.into_transport_value())
         .map_err(|error| format!("cannot encode model inference outcome: {error}"))
-}
-
-/// Configure provider HTTP clients with an explicit CA bundle when the product
-/// supplies one. This avoids relying on a host certificate store in pure
-/// packaging environments while preserving platform verification elsewhere.
-pub fn provider_http_client_builder() -> Result<reqwest::ClientBuilder, ProviderError> {
-    let mut builder = reqwest::Client::builder().tls_backend_rustls();
-    let Some(path) =
-        provider_ca_bundle_from(|name| std::env::var_os(name).map(std::path::PathBuf::from))
-    else {
-        return Ok(builder);
-    };
-    let source = PHENIX_CA_BUNDLE_ENV;
-    let pem = std::fs::read(&path).map_err(|error| ProviderError::Transport {
-        message: format!(
-            "cannot read CA bundle from {source} ({}): {error}",
-            path.display()
-        ),
-    })?;
-    let certificates =
-        reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| ProviderError::Transport {
-            message: format!(
-                "cannot parse CA bundle from {source} ({}): {error}",
-                path.display()
-            ),
-        })?;
-    if certificates.is_empty() {
-        return Err(ProviderError::Transport {
-            message: format!(
-                "CA bundle from {source} ({}) contains no certificates",
-                path.display()
-            ),
-        });
-    }
-    builder = builder.tls_certs_only(certificates);
-    Ok(builder)
-}
-
-fn provider_ca_bundle_from(
-    mut value: impl FnMut(&str) -> Option<std::path::PathBuf>,
-) -> Option<std::path::PathBuf> {
-    value(PHENIX_CA_BUNDLE_ENV)
 }
 
 pub mod provider {
@@ -121,7 +75,7 @@ pub enum ProviderAuthenticationResult {
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderAuthResponse {
     Added {
-        auth: AuthDescriptor,
+        pub auth: AuthDescriptor,
     },
     Methods {
         methods: Vec<AuthKind>,
@@ -136,7 +90,7 @@ pub enum ProviderAuthResponse {
         credentials: Vec<AuthDescriptor>,
     },
     Removed {
-        auth: Option<AuthDescriptor>,
+        pub auth: Option<AuthDescriptor>,
     },
 }
 
@@ -195,54 +149,54 @@ pub fn provider_models_service() -> ServiceId {
     ServiceId::parse(PROVIDER_MODELS_SERVICE).expect("static provider models service is valid")
 }
 
-pub(crate) struct ProviderSpec {
-    id: PluginId,
-    display_name: String,
-    endpoint: Endpoint,
-    auth: auth::Definition,
-    default_auth: Option<Auth>,
-    declared_models: Vec<ModelId>,
-    model_thinking: BTreeMap<ModelId, Vec<String>>,
-    protocol: Arc<dyn ProtocolAdapter>,
+pub struct ProviderRuntimeSpec {
+    pub id: PluginId,
+    pub display_name: String,
+    pub endpoint: Endpoint,
+    pub auth: auth::Definition,
+    pub default_auth: Option<Auth>,
+    pub declared_models: Vec<ModelId>,
+    pub model_thinking: BTreeMap<ModelId, Vec<String>>,
+    pub protocol: Arc<dyn ProtocolAdapter>,
 }
 
-impl ProviderSpec {
-    fn auth_kinds(&self) -> Vec<AuthKind> {
+impl ProviderRuntimeSpec {
+    pub fn auth_kinds(&self) -> Vec<AuthKind> {
         self.auth.kinds()
     }
 
-    fn supports_auth(&self) -> bool {
+    pub fn supports_auth(&self) -> bool {
         !self.auth.is_empty()
     }
 
-    fn supports_model_catalog(&self) -> bool {
+    pub fn supports_model_catalog(&self) -> bool {
         self.protocol.supports_model_catalog() || !self.declared_models.is_empty()
     }
 }
 
 #[derive(Clone)]
 pub struct ProviderDefinition {
-    spec: Arc<ProviderSpec>,
+    spec: Arc<ProviderRuntimeSpec>,
 }
 
 impl ProviderDefinition {
     pub fn new(
-        id: PluginId,
-        endpoint: Endpoint,
-        protocol: impl ProtocolAdapter + 'static,
-        auth: impl Into<auth::Definition>,
+        pub id: PluginId,
+        pub endpoint: Endpoint,
+        pub protocol: impl ProtocolAdapter + 'static,
+        pub auth: impl Into<auth::Definition>,
     ) -> Self {
         let display_name = id.to_string();
         Self {
-            spec: Arc::new(ProviderSpec {
+            spec: Arc::new(ProviderRuntimeSpec {
                 id,
                 display_name,
                 endpoint,
-                auth: auth.into(),
-                default_auth: None,
-                declared_models: Vec::new(),
-                model_thinking: BTreeMap::new(),
-                protocol: Arc::new(protocol),
+                pub auth: auth.into(),
+                pub default_auth: None,
+                pub declared_models: Vec::new(),
+                pub model_thinking: BTreeMap::new(),
+                pub protocol: Arc::new(protocol),
             }),
         }
     }
@@ -255,15 +209,15 @@ impl ProviderDefinition {
             "provider display name must not be empty"
         );
         Self {
-            spec: Arc::new(ProviderSpec {
-                id: self.spec.id.clone(),
+            spec: Arc::new(ProviderRuntimeSpec {
+                pub id: self.spec.id.clone(),
                 display_name,
-                endpoint: self.spec.endpoint.clone(),
-                auth: self.spec.auth.clone(),
-                default_auth: self.spec.default_auth.clone(),
-                declared_models: self.spec.declared_models.clone(),
-                model_thinking: self.spec.model_thinking.clone(),
-                protocol: Arc::clone(&self.spec.protocol),
+                pub endpoint: self.spec.endpoint.clone(),
+                pub auth: self.spec.auth.clone(),
+                pub default_auth: self.spec.default_auth.clone(),
+                pub declared_models: self.spec.declared_models.clone(),
+                pub model_thinking: self.spec.model_thinking.clone(),
+                pub protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -275,15 +229,15 @@ impl ProviderDefinition {
             "provider default auth must use a supported authentication method"
         );
         Self {
-            spec: Arc::new(ProviderSpec {
-                id: self.spec.id.clone(),
-                display_name: self.spec.display_name.clone(),
-                endpoint: self.spec.endpoint.clone(),
-                auth: self.spec.auth.clone(),
-                default_auth: Some(default_auth),
-                declared_models: self.spec.declared_models.clone(),
-                model_thinking: self.spec.model_thinking.clone(),
-                protocol: Arc::clone(&self.spec.protocol),
+            spec: Arc::new(ProviderRuntimeSpec {
+                pub id: self.spec.id.clone(),
+                pub display_name: self.spec.display_name.clone(),
+                pub endpoint: self.spec.endpoint.clone(),
+                pub auth: self.spec.auth.clone(),
+                pub default_auth: Some(default_auth),
+                pub declared_models: self.spec.declared_models.clone(),
+                pub model_thinking: self.spec.model_thinking.clone(),
+                pub protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -294,15 +248,15 @@ impl ProviderDefinition {
         declared_models.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         declared_models.dedup();
         Self {
-            spec: Arc::new(ProviderSpec {
-                id: self.spec.id.clone(),
-                display_name: self.spec.display_name.clone(),
-                endpoint: self.spec.endpoint.clone(),
-                auth: self.spec.auth.clone(),
-                default_auth: self.spec.default_auth.clone(),
+            spec: Arc::new(ProviderRuntimeSpec {
+                pub id: self.spec.id.clone(),
+                pub display_name: self.spec.display_name.clone(),
+                pub endpoint: self.spec.endpoint.clone(),
+                pub auth: self.spec.auth.clone(),
+                pub default_auth: self.spec.default_auth.clone(),
                 declared_models,
-                model_thinking: self.spec.model_thinking.clone(),
-                protocol: Arc::clone(&self.spec.protocol),
+                pub model_thinking: self.spec.model_thinking.clone(),
+                pub protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -327,15 +281,15 @@ impl ProviderDefinition {
             model_thinking.insert(model, levels);
         }
         Self {
-            spec: Arc::new(ProviderSpec {
-                id: self.spec.id.clone(),
-                display_name: self.spec.display_name.clone(),
-                endpoint: self.spec.endpoint.clone(),
-                auth: self.spec.auth.clone(),
-                default_auth: self.spec.default_auth.clone(),
-                declared_models: self.spec.declared_models.clone(),
+            spec: Arc::new(ProviderRuntimeSpec {
+                pub id: self.spec.id.clone(),
+                pub display_name: self.spec.display_name.clone(),
+                pub endpoint: self.spec.endpoint.clone(),
+                pub auth: self.spec.auth.clone(),
+                pub default_auth: self.spec.default_auth.clone(),
+                pub declared_models: self.spec.declared_models.clone(),
                 model_thinking,
-                protocol: Arc::clone(&self.spec.protocol),
+                pub protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -399,7 +353,7 @@ impl ProviderDefinition {
             });
         }
         PluginManifest {
-            id: self.spec.id.clone(),
+            pub id: self.spec.id.clone(),
             version: 1,
             execution: PluginExecution::Embedded,
             dependencies: Vec::new(),
@@ -439,7 +393,7 @@ impl ProviderDefinition {
         }
         ComponentManifest {
             listeners: Vec::new(),
-            id: provider_component_id(&self.spec.id),
+            pub id: provider_component_id(&self.spec.id),
             owner: self.spec.id.clone(),
             imports: Vec::new(),
             exports,
@@ -447,9 +401,9 @@ impl ProviderDefinition {
         }
     }
 
-    pub fn factory(&self) -> impl Fn() -> Box<dyn PluginInstance> + Send + Sync + 'static {
-        let spec = Arc::clone(&self.spec);
-        move || Box::new(runtime::ProviderPlugin::new(Arc::clone(&spec)))
+    #[must_use]
+    pub fn runtime_spec(&self) -> Arc<ProviderRuntimeSpec> {
+        Arc::clone(&self.spec)
     }
 }
 
@@ -473,31 +427,7 @@ fn capability(value: &str) -> CapabilityId {
 mod tests {
     use super::*;
     use phenix_core::{Kernel, KernelConfig, ModelInferenceRequest, ModelInferenceResponse};
-    use std::{
-        collections::BTreeMap,
-        io::{Read, Write},
-        net::TcpListener,
-        thread,
-    };
-
-    #[test]
-    fn ca_bundle_selection_uses_only_the_explicit_phenix_override() {
-        let explicit = provider_ca_bundle_from(|name| {
-            (name == PHENIX_CA_BUNDLE_ENV)
-                .then(|| std::path::PathBuf::from("/missing/explicit.pem"))
-        });
-        assert_eq!(
-            explicit,
-            Some(std::path::PathBuf::from("/missing/explicit.pem"))
-        );
-
-        let inherited = provider_ca_bundle_from(|name| match name {
-            "SSL_CERT_FILE" => Some(std::path::PathBuf::from("/missing/ssl.pem")),
-            "NIX_SSL_CERT_FILE" => Some(std::path::PathBuf::from("/nix/store/ca-bundle.crt")),
-            _ => None,
-        });
-        assert_eq!(inherited, None);
-    }
+    use std::collections::BTreeMap;
 
     #[test]
     fn provider_definition_derives_plugin_contracts_from_description() {
@@ -505,7 +435,7 @@ mod tests {
             PluginId::parse("provider.example").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::api_token(auth::ApiTokenMethod::bearer())
+            pub auth::Definition::api_token(auth::ApiTokenMethod::bearer())
                 .with_oauth(auth::OAuthMethod::bearer()),
         );
 
@@ -544,7 +474,7 @@ mod tests {
             PluginId::parse("provider.environment").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
+            pub auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
         )
         .with_default_auth(Auth::api_token(
             ApiTokenSource::env("EXAMPLE_API_KEY").unwrap(),
@@ -563,7 +493,7 @@ mod tests {
             PluginId::parse("provider.public").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::none(),
+            pub auth::Definition::none(),
         );
         let manifest = definition.manifest();
         assert_eq!(manifest.services.len(), 2);
@@ -598,7 +528,7 @@ mod tests {
             PluginId::parse("provider.catalog").unwrap(),
             Endpoint::parse(format!("http://{address}/v1")).unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::none(),
+            pub auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-declared").unwrap()])
         .with_model_thinking(ModelId::parse("model-live").unwrap(), ["low", "high"]);
@@ -628,12 +558,12 @@ mod tests {
             ProviderModelsResponse::Models {
                 models: vec![
                     ProviderModel {
-                        id: ModelId::parse("model-declared").unwrap(),
+                        pub id: ModelId::parse("model-declared").unwrap(),
                         origin: ProviderModelOrigin::DiscoveredAndDeclared,
                         thinking: Vec::new(),
                     },
                     ProviderModel {
-                        id: ModelId::parse("model-live").unwrap(),
+                        pub id: ModelId::parse("model-live").unwrap(),
                         origin: ProviderModelOrigin::Discovered,
                         thinking: vec!["high".to_owned(), "low".to_owned()],
                     },
@@ -665,7 +595,7 @@ mod tests {
             PluginId::parse("provider.catalog-fallback").unwrap(),
             Endpoint::parse(format!("http://{address}/v1")).unwrap(),
             Protocol::OpenAiResponses,
-            auth::Definition::none(),
+            pub auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-declared").unwrap()]);
         let manifest = definition.manifest();
@@ -689,7 +619,7 @@ mod tests {
             response,
             ProviderModelsResponse::Models {
                 models: vec![ProviderModel {
-                    id: ModelId::parse("model-declared").unwrap(),
+                    pub id: ModelId::parse("model-declared").unwrap(),
                     origin: ProviderModelOrigin::Declared,
                     thinking: Vec::new(),
                 }],
@@ -704,7 +634,7 @@ mod tests {
             PluginId::parse("provider.declared").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenCodeGo,
-            auth::Definition::none(),
+            pub auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-a").unwrap()]);
         assert!(definition
@@ -714,81 +644,4 @@ mod tests {
             .any(|service| service.service == provider_models_service()));
     }
 
-    #[test]
-    fn generated_provider_executes_protocol_end_to_end() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 4096];
-            let count = stream.read(&mut request).unwrap();
-            let request = String::from_utf8_lossy(&request[..count]);
-            assert!(request.starts_with("POST /v1/responses HTTP/1.1"));
-            assert!(request.contains("\"model\":\"model-a\""));
-            assert!(request.contains("\"input\":\"hello\""));
-
-            let body = r#"{"id":"response-1","output":[{"content":[{"type":"output_text","text":"world"}]}]}"#;
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-ratelimit-limit-requests: 100\r\nx-ratelimit-remaining-requests: 99\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .unwrap();
-        });
-
-        let definition = ProviderDefinition::new(
-            PluginId::parse("provider.local").unwrap(),
-            Endpoint::parse(format!("http://{address}/v1")).unwrap(),
-            Protocol::OpenAiResponses,
-            auth::Definition::none(),
-        );
-        let manifest = definition.manifest();
-        let plugin = manifest.id.clone();
-        let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
-        kernel
-            .register_embedded_factory(plugin.clone(), definition.factory())
-            .unwrap();
-        kernel.activate_all().unwrap();
-
-        let output = kernel
-            .invoke(
-                &model_inference_service(),
-                &serde_json::to_vec(&phenix_core::PhenixValue::from(&ModelInferenceRequest {
-                    session_id: None,
-                    model: phenix_core::ModelId::parse("model-a").unwrap(),
-                    input: b"hello".to_vec().into(),
-                    options: BTreeMap::new(),
-                    cache: Default::default(),
-                    tools: Vec::new(),
-                    continuation: Vec::new(),
-                }))
-                .unwrap(),
-                &network_authority(),
-                Some(&plugin),
-            )
-            .unwrap();
-        let output: phenix_core::PhenixValue = serde_json::from_slice(&output).unwrap();
-        let response = ModelInferenceResponse::try_from(phenix_core::Project(&output)).unwrap();
-        assert_eq!(response.output.as_ref(), b"world");
-        assert_eq!(
-            response.provider_metadata["id"],
-            phenix_core::PhenixValue::String("response-1".into())
-        );
-        assert_eq!(
-            response.provider_metadata["protocol"],
-            phenix_core::PhenixValue::String("openai_responses".into())
-        );
-        assert_eq!(
-            response.provider_metadata["rate_limits"],
-            serde_json::json!({
-                "requests": {
-                    "limit": 100,
-                    "remaining": 99
-                }
-            })
-            .into()
-        );
-        server.join().unwrap();
-    }
 }
