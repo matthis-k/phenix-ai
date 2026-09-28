@@ -3735,9 +3735,14 @@ mod tests {
             fallback_targets: vec![fixed],
             callable_targets: BTreeMap::new(),
         };
-        let fixed_info = selection_info(&fixed_profile, true).unwrap();
+        let provider_names = BTreeMap::from([(
+            PluginId::parse("provider-a").unwrap(),
+            "Provider A".to_owned(),
+        )]);
+        let fixed_info = selection_info(&fixed_profile, true, &provider_names).unwrap();
         assert_eq!(fixed_info.presentation, SelectionPresentation::Model);
         assert_eq!(fixed_info.name, "model-a");
+        assert_eq!(fixed_info.provider_name, "Provider A");
 
         let routed_profile = RoutingProfile {
             id: RoutingProfileId::parse("router").unwrap(),
@@ -3745,9 +3750,10 @@ mod tests {
             fallback_targets: vec![selection_target("provider-b", "model-b")],
             callable_targets: BTreeMap::new(),
         };
-        let routed_info = selection_info(&routed_profile, true).unwrap();
+        let routed_info = selection_info(&routed_profile, true, &provider_names).unwrap();
         assert_eq!(routed_info.presentation, SelectionPresentation::Router);
         assert_eq!(routed_info.name, "router");
+        assert_eq!(routed_info.provider_name, "Provider A");
     }
 
     #[test]
@@ -3766,7 +3772,8 @@ mod tests {
             fallback_targets: Vec::new(),
             callable_targets: BTreeMap::new(),
         };
-        let info = selection_info(&profile, true).unwrap();
+        let info = selection_info(&profile, true, &BTreeMap::new()).unwrap();
+        assert_eq!(info.provider_name, "openai-codex");
         assert_eq!(
             info.description.as_deref(),
             Some("openai-codex · effort high")
