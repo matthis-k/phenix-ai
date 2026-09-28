@@ -442,6 +442,22 @@ mod tests {
     }
 
     #[test]
+    fn configured_advanced_agent_closes_through_basic_configuration() {
+        let advanced = advanced_agent_configuration_manifest().id.as_str().to_owned();
+        let basic = basic_agent_configuration_manifest().id.as_str().to_owned();
+        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&advanced))
+            .unwrap()
+            .unwrap();
+
+        assert!(enabled.contains(&advanced));
+        assert!(enabled.contains(&basic));
+        assert!(enabled.contains("phenix.agent-loop"));
+        assert!(enabled.contains("phenix.options"));
+        assert!(enabled.contains("phenix.memory"));
+        assert!(enabled.contains("phenix.planning"));
+    }
+
+    #[test]
     fn configured_local_environment_is_a_bundled_plugin() {
         let plugin = local_environment_manifest().id.as_str().to_owned();
         let enabled = resolve_first_party_plugins(&Cli::default(), Some(&plugin))
