@@ -1,8 +1,7 @@
 use crate::{provider_http_client_builder, CredentialStore};
 use phenix_provider_sdk::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth,
-    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
+    provider_models_service, ApiTokenScheme, ApiTokenSource, Auth, AuthKind, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
     ProviderError, ProviderModel, ProviderModelOrigin, ProviderModelsCommand,
     ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderRuntimeSpec, RateLimits, Token,
 };
@@ -103,7 +102,7 @@ impl ProviderPlugin {
         })
     }
 
-    fn available_auth_descriptors(&self) -> Result<Vec<crate::AuthDescriptor>, ProviderError> {
+    fn available_auth_descriptors(&self) -> Result<Vec<phenix_provider_sdk::AuthDescriptor>, ProviderError> {
         let mut credentials = self.credentials()?.list(self.spec.id.as_str())?;
         if let Some(default_auth) = &self.spec.default_auth {
             let available = match default_auth {
@@ -189,7 +188,7 @@ impl ProviderPlugin {
             ProviderAuthCommand::InteractiveMethods => {
                 let mut methods = Vec::new();
                 if self.spec.auth.api_token.is_some() {
-                    methods.push(crate::ProviderAuthMethod {
+                    methods.push(phenix_provider_sdk::ProviderAuthMethod {
                         id: "api-token".to_owned(),
                         kind: AuthKind::ApiToken,
                         provider_name: self.spec.display_name.clone(),
