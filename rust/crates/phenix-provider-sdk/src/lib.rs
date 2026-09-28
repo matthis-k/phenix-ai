@@ -600,7 +600,11 @@ mod tests {
             Protocol::OpenAiResponses,
             auth::Definition::none(),
         )
-        .with_declared_models([ModelId::parse("model-declared").unwrap()]);
+        .with_declared_models([ModelId::parse("model-declared").unwrap()])
+        .with_model_thinking(
+            ModelId::parse("model-live").unwrap(),
+            ["low", "high"],
+        );
         let manifest = definition.manifest();
         assert!(manifest
             .services
@@ -629,10 +633,12 @@ mod tests {
                     ProviderModel {
                         id: ModelId::parse("model-declared").unwrap(),
                         origin: ProviderModelOrigin::DiscoveredAndDeclared,
+                        thinking: Vec::new(),
                     },
                     ProviderModel {
                         id: ModelId::parse("model-live").unwrap(),
                         origin: ProviderModelOrigin::Discovered,
+                        thinking: vec!["high".to_owned(), "low".to_owned()],
                     },
                 ],
             }
@@ -688,6 +694,7 @@ mod tests {
                 models: vec![ProviderModel {
                     id: ModelId::parse("model-declared").unwrap(),
                     origin: ProviderModelOrigin::Declared,
+                    thinking: Vec::new(),
                 }],
             }
         );
