@@ -1747,6 +1747,7 @@ dependencies = [
  "phenix-application-interface",
  "phenix-core",
  "phenix-plugin-catalog",
+ "phenix-plugin-provider-runtime",
  "phenix-provider-sdk",
  "phenix-runtime",
  "phenix-sdk",
@@ -2032,6 +2033,7 @@ dependencies = [
  "getrandom 0.4.3",
  "parking_lot",
  "phenix-core",
+ "phenix-plugin-provider-runtime",
  "phenix-provider-sdk",
  "reqwest",
  "serde",
@@ -2061,6 +2063,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "phenix-plugin-provider-runtime"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-provider-sdk",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
 ]
 
 [[package]]
@@ -2141,7 +2156,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "tokio",
  "url",
 ]
 
