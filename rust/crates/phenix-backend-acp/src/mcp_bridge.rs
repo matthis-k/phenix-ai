@@ -349,7 +349,9 @@ pub(super) struct BridgeToolRequest {
 }
 
 fn server_capabilities() -> ServerCapabilities {
-    ServerCapabilities::builder().enable_tools().build()
+    let mut capabilities = ServerCapabilities::default();
+    capabilities.tools = Some(Default::default());
+    capabilities
 }
 
 fn server_implementation() -> Implementation {
