@@ -17,6 +17,7 @@ use phenix_sdk::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
