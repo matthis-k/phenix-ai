@@ -102,7 +102,7 @@ The definition uses one optional slot per auth kind, so duplicate or contradicto
 
 ## Model catalog
 
-Providers publish one normalized model catalog through `phenix.providers.models@1`. Consumers do not inspect provider-specific discovery responses.
+Providers publish one normalized model catalog through `phenix.providers.models@1`. Consumers do not inspect provider-specific discovery responses. The catalog response also carries the provider-owned display name. Clients use that label for presentation and keep the plugin ID as the routing identity instead of deriving provider names themselves.
 
 A catalog may have two sources:
 
