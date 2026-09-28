@@ -7,6 +7,7 @@ record!(CapabilityList, "phenix.application.type.capability-list@1", {
 record!(AuthenticationMethod, "phenix.application.type.authentication-method@1", {
     id: String,
     provider: PluginId,
+    provider_name: String,
     kind: String,
     name: String,
     description: Option<String>,

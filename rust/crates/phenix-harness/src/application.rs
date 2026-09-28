@@ -1232,6 +1232,7 @@ impl ApplicationWorker {
                 methods.push(AuthenticationMethod {
                     id: authentication_method_id(&provider, &method.id)?,
                     provider: provider.clone(),
+                    provider_name: method.provider_name,
                     kind: kind.to_owned(),
                     name: method.name,
                     description: method.description,
@@ -3811,6 +3812,7 @@ mod tests {
         let (provider, local_method) =
             parse_authentication_method_id(&method.id).expect("application auth id round-trips");
         assert_eq!(provider.as_str(), "openai-codex");
+        assert_eq!(method.provider_name, "OpenAI ChatGPT");
         assert_eq!(local_method, "oauth");
     }
 

@@ -490,6 +490,7 @@ impl OpenAiCodexPlugin {
                     methods: vec![ProviderAuthMethod {
                         id: AUTH_METHOD.to_owned(),
                         kind: AuthKind::OAuth,
+                        provider_name: "OpenAI ChatGPT".to_owned(),
                         name: "OpenAI Codex (ChatGPT OAuth)".to_owned(),
                         description: Some(
                             "Browser OAuth using your ChatGPT subscription".to_owned(),

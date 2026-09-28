@@ -100,6 +100,7 @@ pub enum ProviderAuthCommand {
 pub struct ProviderAuthMethod {
     pub id: String,
     pub kind: AuthKind,
+    pub provider_name: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -195,6 +196,7 @@ pub fn provider_models_service() -> ServiceId {
 
 pub(crate) struct ProviderSpec {
     id: PluginId,
+    display_name: String,
     endpoint: Endpoint,
     auth: auth::Definition,
     default_auth: Option<Auth>,
@@ -228,14 +230,36 @@ impl ProviderDefinition {
         protocol: impl ProtocolAdapter + 'static,
         auth: impl Into<auth::Definition>,
     ) -> Self {
+        let display_name = id.to_string();
         Self {
             spec: Arc::new(ProviderSpec {
                 id,
+                display_name,
                 endpoint,
                 auth: auth.into(),
                 default_auth: None,
                 declared_models: Vec::new(),
                 protocol: Arc::new(protocol),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn with_display_name(self, display_name: impl Into<String>) -> Self {
+        let display_name = display_name.into();
+        assert!(
+            !display_name.trim().is_empty(),
+            "provider display name must not be empty"
+        );
+        Self {
+            spec: Arc::new(ProviderSpec {
+                id: self.spec.id.clone(),
+                display_name,
+                endpoint: self.spec.endpoint.clone(),
+                auth: self.spec.auth.clone(),
+                default_auth: self.spec.default_auth.clone(),
+                declared_models: self.spec.declared_models.clone(),
+                protocol: Arc::clone(&self.spec.protocol),
             }),
         }
     }
@@ -249,6 +273,7 @@ impl ProviderDefinition {
         Self {
             spec: Arc::new(ProviderSpec {
                 id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
                 endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
                 default_auth: Some(default_auth),
@@ -266,6 +291,7 @@ impl ProviderDefinition {
         Self {
             spec: Arc::new(ProviderSpec {
                 id: self.spec.id.clone(),
+                display_name: self.spec.display_name.clone(),
                 endpoint: self.spec.endpoint.clone(),
                 auth: self.spec.auth.clone(),
                 default_auth: self.spec.default_auth.clone(),

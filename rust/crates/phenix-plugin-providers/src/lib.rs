@@ -14,6 +14,7 @@ enum ApiTokenAuth {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProviderPreset {
     id: &'static str,
+    name: &'static str,
     endpoint: &'static str,
     protocol: Protocol,
     api_token: ApiTokenAuth,
@@ -24,12 +25,14 @@ pub struct ProviderPreset {
 impl ProviderPreset {
     const fn bearer(
         id: &'static str,
+        name: &'static str,
         endpoint: &'static str,
         protocol: Protocol,
         environment: &'static str,
     ) -> Self {
         Self {
             id,
+            name,
             endpoint,
             protocol,
             api_token: ApiTokenAuth::Bearer,
@@ -40,6 +43,7 @@ impl ProviderPreset {
 
     const fn header(
         id: &'static str,
+        name: &'static str,
         endpoint: &'static str,
         protocol: Protocol,
         header: &'static str,
@@ -47,6 +51,7 @@ impl ProviderPreset {
     ) -> Self {
         Self {
             id,
+            name,
             endpoint,
             protocol,
             api_token: ApiTokenAuth::Header(header),
@@ -62,6 +67,10 @@ impl ProviderPreset {
 
     pub const fn id(self) -> &'static str {
         self.id
+    }
+
+    pub const fn name(self) -> &'static str {
+        self.name
     }
 
     pub const fn endpoint(self) -> &'static str {
@@ -103,7 +112,8 @@ impl ProviderPreset {
             Endpoint::parse(self.endpoint).expect("common provider endpoint is valid"),
             self.protocol,
             auth,
-        );
+        )
+        .with_display_name(self.name);
         if self.declared_models.is_empty() {
             definition
         } else {
@@ -119,12 +129,14 @@ impl ProviderPreset {
 pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
     ProviderPreset::bearer(
         "openai-api",
+        "OpenAI API",
         "https://api.openai.com/v1",
         Protocol::OpenAiResponses,
         "OPENAI_API_KEY",
     ),
     ProviderPreset::header(
         "anthropic",
+        "Anthropic",
         "https://api.anthropic.com/v1",
         Protocol::AnthropicMessages,
         "x-api-key",
@@ -132,12 +144,14 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
     ),
     ProviderPreset::bearer(
         "open-router",
+        "OpenRouter",
         "https://openrouter.ai/api/v1",
         Protocol::OpenAiChatCompletions,
         "OPEN_ROUTER_API_KEY",
     ),
     ProviderPreset::bearer(
         "opencode-go",
+        "OpenCode Go",
         "https://opencode.ai/zen/go/v1/",
         Protocol::OpenCodeGo,
         "OPENCODE_API_KEY",
@@ -151,6 +165,7 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
     ]),
     ProviderPreset::bearer(
         "opencode-zen",
+        "OpenCode Zen",
         "https://opencode.ai/zen/v1/",
         Protocol::OpenCodeZen,
         "OPENCODE_API_KEY",
@@ -166,42 +181,49 @@ pub const COMMON_PROVIDERS: [ProviderPreset; 12] = [
     ]),
     ProviderPreset::bearer(
         "groq",
+        "Groq",
         "https://api.groq.com/openai/v1",
         Protocol::OpenAiResponses,
         "GROQ_API_KEY",
     ),
     ProviderPreset::bearer(
         "gemini",
+        "Google Gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         Protocol::OpenAiChatCompletions,
         "GEMINI_API_KEY",
     ),
     ProviderPreset::bearer(
         "deepseek",
+        "DeepSeek",
         "https://api.deepseek.com",
         Protocol::OpenAiChatCompletions,
         "DEEPSEEK_API_KEY",
     ),
     ProviderPreset::bearer(
         "together",
+        "Together AI",
         "https://api.together.xyz/v1",
         Protocol::OpenAiChatCompletions,
         "TOGETHER_API_KEY",
     ),
     ProviderPreset::bearer(
         "mistral",
+        "Mistral AI",
         "https://api.mistral.ai/v1",
         Protocol::OpenAiChatCompletions,
         "MISTRAL_API_KEY",
     ),
     ProviderPreset::bearer(
         "xai",
+        "xAI",
         "https://api.x.ai/v1",
         Protocol::OpenAiResponses,
         "XAI_API_KEY",
     ),
     ProviderPreset::bearer(
         "fireworks",
+        "Fireworks AI",
         "https://api.fireworks.ai/inference/v1",
         Protocol::OpenAiChatCompletions,
         "FIREWORKS_API_KEY",

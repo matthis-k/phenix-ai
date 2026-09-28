@@ -191,6 +191,7 @@ impl ProviderPlugin {
                     methods.push(crate::ProviderAuthMethod {
                         id: "api-token".to_owned(),
                         kind: AuthKind::ApiToken,
+                        provider_name: self.spec.display_name.clone(),
                         name: "API key".to_owned(),
                         description: Some(
                             "Enter an API key. Phenix stores it in its provider credential store."
