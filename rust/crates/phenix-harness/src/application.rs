@@ -461,6 +461,7 @@ impl ApplicationWorker {
         selected: RoutingProfileId,
     ) -> Result<Selections, ApplicationError> {
         self.refresh_provider_model_catalogs();
+        let provider_authentication = self.provider_authentication_states()?;
         let descriptors = match self.invoke_model_command(ModelCommand::ListProfiles)? {
             ModelResponse::Profiles { profiles } => profiles,
             response => {
@@ -488,7 +489,7 @@ impl ApplicationWorker {
                     })
                 }
             };
-            let authenticated = self.routing_profile_authenticated(&profile)?;
+            let authenticated = self.routing_profile_authenticated(&profile, &provider_authentication);
             available.push(selection_info(&profile, authenticated)?);
         }
         if !available.iter().any(|item| item.id == selected) {
@@ -497,7 +498,7 @@ impl ApplicationWorker {
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
             })? {
-                let authenticated = self.routing_profile_authenticated(&profile)?;
+                let authenticated = self.routing_profile_authenticated(&profile, &provider_authentication);
                 available.push(selection_info(&profile, authenticated)?);
             }
         }
@@ -518,26 +519,37 @@ impl ApplicationWorker {
     fn routing_profile_authenticated(
         &self,
         profile: &RoutingProfile,
-    ) -> Result<bool, ApplicationError> {
-        let mut providers = BTreeSet::new();
-        for target in std::iter::once(&profile.default_target)
+        provider_authentication: &BTreeMap<PluginId, bool>,
+    ) -> bool {
+        std::iter::once(&profile.default_target)
             .chain(profile.fallback_targets.iter())
             .chain(profile.callable_targets.values())
-        {
-            providers.insert(target.provider_plugin.clone());
+            .all(|target| {
+                provider_authentication
+                    .get(&target.provider_plugin)
+                    .copied()
+                    .unwrap_or(true)
+            })
+    }
+
+    fn provider_authentication_states(
+        &self,
+    ) -> Result<BTreeMap<PluginId, bool>, ApplicationError> {
+        let mut states = BTreeMap::new();
+        for provider in self.provider_auth_plugins() {
+            states.insert(provider.clone(), self.provider_has_credentials(&provider)?);
         }
-        for provider in providers {
-            if !self.provider_authenticated(&provider)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(states)
     }
 
     fn provider_authenticated(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
         if !self.provider_auth_plugins().contains(provider) {
             return Ok(true);
         }
+        self.provider_has_credentials(provider)
+    }
+
+    fn provider_has_credentials(&self, provider: &PluginId) -> Result<bool, ApplicationError> {
         match self.invoke_provider_auth(provider, ProviderAuthCommand::List)? {
             ProviderAuthResponse::Credentials { credentials } => Ok(!credentials.is_empty()),
             response => Err(ApplicationError::InvalidResponse {
