@@ -32,6 +32,7 @@ A provider definition owns:
 - one protocol adapter;
 - one composite authentication definition;
 - optional provider-declared models;
+- optional model capability metadata such as known thinking variants;
 - the derived plugin and component contracts.
 
 Credentials are runtime data. They are not part of the provider definition.
@@ -110,6 +111,8 @@ A catalog may have two sources:
 
 Both sources may be active. Phenix merges them by model ID and records whether an entry was discovered, declared, or both.
 
+A provider may attach capability metadata to a model ID without declaring that model as available. For example, a provider can publish known thinking variants for a model that still has to arrive through standards-based discovery. Capability metadata enriches an existing catalog entry; it does not create one. This keeps model-version discovery independent from provider-specific capability knowledge.
+
 Standard discovery belongs to the protocol adapter. An OpenAI-compatible provider using the normal model-list endpoint therefore gains discovery without adding provider-specific model names. The same rule applies to another protocol once its adapter implements that protocol's model-list contract.
 
 Provider declarations belong to the provider plugin, not the kernel, router, application client, or Neovim plugin. A nonstandard provider can update its declared list without changing those layers.
@@ -118,7 +121,7 @@ Catalog production and routing are separate. The catalog says which provider/mod
 
 Discovery may require provider authentication. A client can discover provider authentication methods before model discovery, authenticate through the provider service, then refresh the catalog.
 
-The application refreshes authenticated provider catalogs and materializes each catalog entry as a derived one-target routing profile. Catalog-owned profiles use provider-scoped desired-state ownership. A later refresh retires models that disappeared from that provider's catalog, while keeping their durable profile records available to sessions that already reference them.
+The application refreshes authenticated provider catalogs and materializes each catalog entry as a provider-default one-target routing profile. When an entry reports thinking variants, the application also materializes one route per explicit effort. Catalog-owned profiles use provider-scoped desired-state ownership. A later refresh retires models that disappeared from that provider's catalog, while keeping their durable profile records available to sessions that already reference them.
 
 Existing packaged routes remain independent routing policy. If a packaged router explicitly names a model, that route stays available even when provider discovery no longer advertises it. Provider discovery controls derived direct-model selections; explicit routing configuration controls routers.
 
@@ -212,6 +215,7 @@ The provider description is the source of truth for this wiring. Callers still n
 - A protocol adapter owns standards-based model discovery for that protocol.
 - A provider plugin owns declared models when discovery is unavailable or incomplete.
 - Discovered and declared entries merge by model ID before consumers see them.
+- Capability metadata never makes a model available by itself.
 - Clients consume normalized provider/model data and never parse provider-specific catalog responses.
 Neovim is one such client. It renders catalog data and sends selections back through the application API.
 - Provider selection remains model-router policy, not endpoint-registry policy.
