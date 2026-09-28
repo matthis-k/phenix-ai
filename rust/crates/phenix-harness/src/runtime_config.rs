@@ -153,6 +153,7 @@ pub(super) fn apply_startup_settings(
         return Ok(());
     }
 
+    // Resolve the Options provider through its interface; product code does not pin a component.
     let response: OptionResponse = invoke_projected(
         harness,
         &options_service(),
