@@ -1296,7 +1296,7 @@ impl ApplicationWorker {
         };
         match authentication {
             ProviderAuthenticationResult::Authenticated => {
-                    let _ = self.refresh_provider_model_catalog(&provider);
+                let _ = self.refresh_provider_model_catalog(&provider);
                 Ok(AuthenticationResult::Authenticated)
             }
             ProviderAuthenticationResult::External { uri, instructions } => {
