@@ -185,33 +185,33 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     let authority = default_suite_authority();
     vec![
-        (advanced_agent_configuration_manifest(), false),
+        (advanced_agent_configuration_manifest(), true),
         (basic_agent_configuration_manifest(), false),
         (adapter_acp_manifest(), false),
-        (repository_worker_manifest(), true),
-        (session_manifest(), true),
-        (session_tree_manifest(), true),
-        (artifact_manifest(), true),
-        (cli_manifest(authority.clone()), true),
-        (context_manifest(), true),
-        (execution_manifest(authority.clone()), true),
-        (efficiency_evaluation_manifest(), true),
+        (repository_worker_manifest(), false),
+        (session_manifest(), false),
+        (session_tree_manifest(), false),
+        (artifact_manifest(), false),
+        (cli_manifest(authority.clone()), false),
+        (context_manifest(), false),
+        (execution_manifest(authority.clone()), false),
+        (efficiency_evaluation_manifest(), false),
         (benchmark_outcome_manifest(), false),
-        (agent_loop_manifest(authority.clone()), true),
-        (language_manifest(), true),
-        (memory_manifest(), true),
-        (planning_manifest(), true),
-        (local_environment_manifest(), true),
-        (workspace_manifest(), true),
-        (model_routing_manifest(authority.clone()), true),
-        (step_runner_manifest(authority.clone()), true),
-        (job_manifest(), true),
-        (frontend_manifest(authority.clone()), true),
-        (hook_manifest(authority.clone()), true),
-        (debug_manifest(authority.clone()), true),
-        (options_manifest(), true),
-        (invocation_defaults_manifest(authority.clone()), true),
-        (sdk_manifest(authority), true),
+        (agent_loop_manifest(authority.clone()), false),
+        (language_manifest(), false),
+        (memory_manifest(), false),
+        (planning_manifest(), false),
+        (local_environment_manifest(), false),
+        (workspace_manifest(), false),
+        (model_routing_manifest(authority.clone()), false),
+        (step_runner_manifest(authority.clone()), false),
+        (job_manifest(), false),
+        (frontend_manifest(authority.clone()), false),
+        (hook_manifest(authority.clone()), false),
+        (debug_manifest(authority.clone()), false),
+        (options_manifest(), false),
+        (invocation_defaults_manifest(authority.clone()), false),
+        (sdk_manifest(authority), false),
         (basic_model_manifest(), false),
         (basic_tools_manifest(), false),
         (basic_skills_manifest(), false),
@@ -421,6 +421,19 @@ mod tests {
             resolve_first_party_plugins(&Cli::default(), None).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn cli_overrides_preserve_advanced_configuration_ancestry() {
+        let plugin = benchmark_outcome_manifest().id.as_str().to_owned();
+        let cli = parse_cli(["--enable-plugin".into(), plugin.clone()]).unwrap();
+        let enabled = resolve_first_party_plugins(&cli, None).unwrap().unwrap();
+
+        assert!(enabled.contains(ADVANCED_AGENT_CONFIGURATION));
+        assert!(enabled.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(enabled.contains("phenix.agent-loop"));
+        assert!(enabled.contains("phenix.options"));
+        assert!(enabled.contains(&plugin));
     }
 
     #[test]
