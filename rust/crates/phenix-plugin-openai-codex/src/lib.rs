@@ -651,6 +651,27 @@ impl PluginInstance for OpenAiCodexPlugin {
                 .map_err(|error| error.to_wire());
         }
 
+        if service == &provider_models_service() {
+            let command: ProviderModelsCommand =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let response = match command {
+                ProviderModelsCommand::List => ProviderModelsResponse::Models {
+                    models: DECLARED_MODELS
+                        .iter()
+                        .map(|model| {
+                            phenix_core::ModelId::parse(*model)
+                                .map(|id| ProviderModel {
+                                    id,
+                                    origin: ProviderModelOrigin::Declared,
+                                })
+                                .map_err(|error| error.to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                },
+            };
+            return serde_json::to_vec(&response).map_err(|error| error.to_string());
+        }
+
         Err(format!("unsupported Codex provider service: {service}"))
     }
 }
