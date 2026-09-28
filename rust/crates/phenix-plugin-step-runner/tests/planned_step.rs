@@ -456,7 +456,6 @@ mod pre_dispatch_cleanup {
         assert_eq!(remaining.attempts, 4);
         let _ = fs::remove_file(path);
     }
-
 }
 
 mod successful_lifecycle {

@@ -575,10 +575,7 @@ fn descriptor(profile: &RoutingProfile) -> RoutingProfileDescriptor {
     }
 }
 
-fn insert_profile(
-    context: &ModelContext<'_, '_>,
-    profile: &RoutingProfile,
-) -> Result<(), String> {
+fn insert_profile(context: &ModelContext<'_, '_>, profile: &RoutingProfile) -> Result<(), String> {
     let key = profile_key(&profile.id);
     let old_index = read_raw(context, PROFILE_INDEX)?;
     let mut ids: Vec<RoutingProfileId> = old_index
