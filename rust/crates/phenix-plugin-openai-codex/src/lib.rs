@@ -10,10 +10,12 @@ use phenix_core::{
 };
 use phenix_provider_sdk::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, AuthDescriptor, AuthKind, Endpoint, HttpMethod, Protocol,
-    ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
-    ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderRequest,
-    ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY, SECRETS_MANAGE_CAPABILITY,
+    provider_http_client_builder, provider_models_service, AuthDescriptor, AuthKind, Endpoint,
+    HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface,
+    ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult, ProviderError,
+    ProviderModel, ProviderModelOrigin, ProviderModelsCommand, ProviderModelsInterface,
+    ProviderModelsResponse, ProviderRequest, ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY,
+    SECRETS_MANAGE_CAPABILITY,
 };
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,7 @@ use url::Url;
 
 pub const OPENAI_CODEX_PROVIDER: &str = "openai-codex";
 const AUTH_METHOD: &str = "oauth";
+const DECLARED_MODELS: &[&str] = &["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"];
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER: &str = "https://auth.openai.com";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -70,6 +73,12 @@ pub fn openai_codex_manifest() -> PluginManifest {
                 priority: 100,
                 required_authority: secrets.clone(),
             },
+            ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: provider_models_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
         ],
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::new(
@@ -100,6 +109,12 @@ pub fn openai_codex_component_manifest() -> ComponentManifest {
                 schema: ProviderAuthInterface::schema(),
                 priority: 100,
                 required_authority: secrets_authority(),
+            },
+            ComponentExport {
+                interface: ProviderModelsInterface::interface_id(),
+                schema: ProviderModelsInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
             },
         ],
         listeners: Vec::new(),
