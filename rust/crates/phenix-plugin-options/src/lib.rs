@@ -896,7 +896,10 @@ fn persistence_authority() -> Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, Project};
+    use phenix_core::{
+        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedHarness,
+        ResolvedHarnessActivation,
+    };
     use std::{
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -945,9 +948,18 @@ mod tests {
         let path = temp_db("options-service");
         let manifest = options_manifest();
         let plugin = manifest.id.clone();
+        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+            [manifest.clone()],
+            [options_component_manifest()],
+            options_durable_schema_registrations(),
+            [],
+            &persistence_authority(),
+        )
+        .unwrap();
         let persistence = LocalPersistence::open(&path).unwrap();
         let mut kernel =
             Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
+        kernel.activate_resolved_harness(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, options_factory)
             .unwrap();
