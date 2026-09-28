@@ -35,7 +35,7 @@ use phenix_core::{
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, execution_review_service, options_component_manifest,
+    agent_tool_execution_service, execution_review_service,
     sdk_contribution, session_service, AgentLoopCommand, AgentLoopControlInterface,
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
@@ -602,18 +602,10 @@ impl ApplicationWorker {
                 message: error.to_string(),
             }
         })?;
-        let component = options_component_manifest();
         let output = self
             .harness
             .lock()
-            .kernel_mut()
-            .invoke_component(
-                &component.id,
-                &options_service(),
-                &input,
-                &self.authority,
-                &component.owner,
-            )
+            .invoke(&options_service(), &input, &self.authority, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
