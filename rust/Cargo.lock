@@ -1613,6 +1613,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-agent-configurations"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+]
+
+[[package]]
 name = "phenix-application-interface"
 version = "0.1.0"
 dependencies = [
@@ -1840,6 +1847,7 @@ name = "phenix-plugin-catalog"
 version = "0.1.0"
 dependencies = [
  "phenix-adapter-acp",
+ "phenix-agent-configurations",
  "phenix-core",
  "phenix-plugin-api",
  "phenix-plugin-artifacts",
