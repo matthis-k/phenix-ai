@@ -601,10 +601,7 @@ mod tests {
             auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-declared").unwrap()])
-        .with_model_thinking(
-            ModelId::parse("model-live").unwrap(),
-            ["low", "high"],
-        );
+        .with_model_thinking(ModelId::parse("model-live").unwrap(), ["low", "high"]);
         let manifest = definition.manifest();
         assert!(manifest
             .services
