@@ -11,7 +11,7 @@ use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
     ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelId,
     ModelInferenceInterface, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
