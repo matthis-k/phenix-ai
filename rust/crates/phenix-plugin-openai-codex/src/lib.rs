@@ -8,9 +8,10 @@ use phenix_core::{
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
+use phenix_plugin_provider_runtime::{provider_http_client_builder, CredentialStore};
 use phenix_provider_sdk::{
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, AuthDescriptor, AuthKind, Endpoint,
+    provider_models_service, AuthDescriptor, AuthKind, Endpoint,
     HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface,
     ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult, ProviderError,
     ProviderModel, ProviderModelOrigin, ProviderModelsCommand, ProviderModelsInterface,
@@ -405,7 +406,7 @@ impl OpenAiCodexPlugin {
             })
     }
 
-    fn store(&self) -> Result<&CredentialStore, ProviderError> {
+    fn store(&self) -> Result<&ProviderError> {
         self.store.as_ref().ok_or_else(|| ProviderError::Protocol {
             message: "Codex credential store is not initialized".to_owned(),
         })
@@ -905,8 +906,7 @@ fn start_authorization() -> Result<AuthorizationStart, String> {
 }
 
 async fn finish_authorization(
-    store: &CredentialStore,
-    start: AuthorizationStart,
+    store: &start: AuthorizationStart,
 ) -> Result<(), String> {
     let listener = TcpListener::from_std(start.listener)
         .map_err(|error| format!("cannot activate OAuth callback listener: {error}"))?;
@@ -1060,8 +1060,7 @@ async fn exchange_code(
 }
 
 async fn refresh(
-    store: &CredentialStore,
-    client: &reqwest::Client,
+    store: &client: &reqwest::Client,
     credential: CodexCredential,
 ) -> Result<CodexCredential, String> {
     let response: RefreshResponse = post_token_form(
@@ -1092,8 +1091,7 @@ async fn refresh(
 }
 
 async fn credential_for_request(
-    store: &CredentialStore,
-    client: &reqwest::Client,
+    store: &client: &reqwest::Client,
 ) -> Result<Option<CodexCredential>, String> {
     let Some(credential) = store.resolve()? else {
         return Ok(None);
