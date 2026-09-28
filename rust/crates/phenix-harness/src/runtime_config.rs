@@ -274,7 +274,8 @@ fn apply_configuration(
     }
     Ok(())
 }
-pub(crate) fn direct_routing_profile(
+#[cfg(test)]
+fn direct_routing_profile(
     target: ModelTarget,
 ) -> Result<RoutingProfile, Box<dyn Error>> {
     let encoded = serde_json::to_vec(&target)?;
