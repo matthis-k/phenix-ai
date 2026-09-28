@@ -429,8 +429,8 @@ mod tests {
         let cli = parse_cli(["--enable-plugin".into(), plugin.clone()]).unwrap();
         let enabled = resolve_first_party_plugins(&cli, None).unwrap().unwrap();
 
-        assert!(enabled.contains(ADVANCED_AGENT_CONFIGURATION));
-        assert!(enabled.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(enabled.contains(phenix_plugin_catalog::ADVANCED_AGENT_CONFIGURATION));
+        assert!(enabled.contains(phenix_plugin_catalog::BASIC_AGENT_CONFIGURATION));
         assert!(enabled.contains("phenix.agent-loop"));
         assert!(enabled.contains("phenix.options"));
         assert!(enabled.contains(&plugin));
