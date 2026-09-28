@@ -354,6 +354,10 @@ fn selection_config(
                 "phenix.provider".into(),
                 serde_json::Value::String(selection.provider.to_string()),
             );
+            meta.insert(
+                "phenix.provider_name".into(),
+                serde_json::Value::String(selection.provider_name.clone()),
+            );
             if let Some(model) = &selection.model {
                 meta.insert(
                     "phenix.model".into(),
