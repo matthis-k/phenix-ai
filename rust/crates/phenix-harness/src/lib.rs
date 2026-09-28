@@ -5,16 +5,17 @@ use phenix_core::{
     ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
-    basic_context_component_manifest, basic_context_factory, basic_context_manifest,
-    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
-    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
-    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
-    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
-    cli_component_manifest, cli_factory, cli_manifest, common_provider_definitions,
-    context_component_manifest, context_factory, context_manifest, debug_component_manifest,
-    debug_factory, debug_manifest, debug_runtime_trace_sink,
+    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
+    artifact_component_manifest, artifact_factory, artifact_manifest,
+    basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
+    basic_context_manifest, basic_model_component_manifest, basic_model_factory,
+    basic_model_manifest, basic_skills_component_manifest, basic_skills_factory,
+    basic_skills_manifest, basic_tools_component_manifest, basic_tools_factory,
+    basic_tools_manifest, benchmark_outcome_component_manifest, benchmark_outcome_factory,
+    benchmark_outcome_manifest, cli_component_manifest, cli_factory, cli_manifest,
+    common_provider_definitions, context_component_manifest, context_factory, context_manifest,
+    debug_component_manifest, debug_factory, debug_manifest, debug_runtime_trace_sink,
     efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
     efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
     execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
@@ -43,6 +44,7 @@ use std::{
 pub mod application;
 mod basic_suite;
 mod invocation_defaults;
+pub use invocation_defaults::{invocation_defaults_manifest, INVOCATION_DEFAULTS_PLUGIN};
 pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
@@ -135,79 +137,17 @@ impl HarnessBuilder {
     }
 
     pub fn with_default_suite() -> Result<Self, KernelError> {
-        let mut builder = Self::new();
-        let authority = default_suite_authority();
-        builder.component_authority = authority.clone();
-        builder.add_embedded(repository_worker_manifest(), repository_worker_factory)?;
-        builder.add_embedded(session_manifest(), session_factory)?;
-        builder.add_embedded(session_tree_manifest(), session_tree_factory)?;
-        builder.add_embedded(artifact_manifest(), artifact_factory)?;
-        builder.add_embedded(cli_manifest(authority.clone()), cli_factory)?;
-        builder.add_embedded(context_manifest(), context_factory)?;
-        builder.add_embedded(execution_manifest(authority.clone()), execution_factory)?;
-        builder.add_embedded(
-            efficiency_evaluation_manifest(),
-            efficiency_evaluation_factory,
-        )?;
-        builder.add_embedded(agent_loop_manifest(authority.clone()), agent_loop_factory)?;
-        let application_agent_tools = builder.application_agent_tools.clone();
-        builder.add_embedded(
-            application::application_agent_tool_manifest(authority.clone()),
-            move || application::application_agent_tool_factory(application_agent_tools.clone()),
-        )?;
-        builder.add_embedded(language_manifest(), language_factory)?;
-        builder.add_embedded(memory_manifest(), memory_factory)?;
-        builder.add_embedded(planning_manifest(), planning_factory)?;
-        builder.add_embedded(local_environment_manifest(), local_environment_factory)?;
-        builder.add_embedded(workspace_manifest(), workspace_factory)?;
-        builder.add_embedded(
-            model_routing_manifest(authority.clone()),
-            model_routing_factory,
-        )?;
+        let mut builder = Self::with_selected_suite(&BTreeSet::from([
+            phenix_plugin_catalog::ADVANCED_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .expect("static advanced agent configuration resolves through the first-party catalog");
+
         let provider_definitions = common_provider_definitions();
         for provider in &provider_definitions {
             builder.add_embedded(provider.manifest(), provider.factory())?;
         }
         builder.add_embedded(openai_codex_manifest(), openai_codex_factory)?;
-        builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
-        builder.add_embedded(job_manifest(), job_factory)?;
-        builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
-        builder.add_embedded(debug_manifest(authority.clone()), debug_factory)?;
-        builder.add_embedded(options_manifest(), options_factory)?;
-        builder.add_embedded(
-            invocation_defaults::invocation_defaults_manifest(authority.clone()),
-            invocation_defaults::invocation_defaults_factory,
-        )?;
-        builder.add_embedded(sdk_manifest(authority.clone()), sdk_factory)?;
-        for component in [
-            repository_worker_component_manifest(),
-            session_component_manifest(),
-            session_tree_component_manifest(),
-            artifact_component_manifest(),
-            cli_component_manifest(authority.clone()),
-            context_component_manifest(),
-            execution_component_manifest(authority.clone()),
-            efficiency_evaluation_component_manifest(),
-            agent_loop_component_manifest(authority.clone()),
-            application::application_agent_tool_component_manifest(authority.clone()),
-            language_component_manifest(),
-            memory_component_manifest(),
-            planning_component_manifest(),
-            local_environment_component_manifest(),
-            workspace_component_manifest(),
-            model_routing_component_manifest(authority.clone()),
-            openai_codex_component_manifest(),
-            step_runner_component_manifest(authority.clone()),
-            helper_invocation_component_manifest(authority.clone()),
-            job_component_manifest(),
-            frontend_component_manifest(authority.clone()),
-            debug_component_manifest(authority.clone()),
-            options_component_manifest(),
-            invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
-            sdk_component_manifest(authority),
-        ] {
-            builder.add_component(component);
-        }
+        builder.add_component(openai_codex_component_manifest());
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
@@ -217,6 +157,8 @@ impl HarnessBuilder {
     pub fn with_selected_suite(enabled: &BTreeSet<String>) -> Result<Self, String> {
         let authority = default_suite_authority();
         let available = [
+            advanced_agent_configuration_manifest(),
+            basic_agent_configuration_manifest(),
             adapter_acp_manifest(),
             repository_worker_manifest(),
             session_manifest(),
@@ -286,6 +228,14 @@ impl HarnessBuilder {
 
         let mut builder = Self::new();
         builder.component_authority = authority.clone();
+        for manifest in [
+            basic_agent_configuration_manifest(),
+            advanced_agent_configuration_manifest(),
+        ] {
+            if enabled.contains(manifest.id.as_str()) {
+                builder.add_manifest(manifest);
+            }
+        }
         builder.add_selected(&enabled, adapter_acp_manifest(), adapter_acp_factory)?;
         builder.add_selected(
             &enabled,
@@ -602,7 +552,7 @@ mod tests {
         ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
         ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
         EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-        SessionCommand, SessionResponse,
+        SessionCommand, SessionResponse, ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -730,6 +680,78 @@ mod tests {
         ) -> Result<Vec<u8>, String> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
+        let basic = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            BASIC_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap();
+        let basic_ids = basic
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            BASIC_AGENT_CONFIGURATION,
+            "phenix.agent-loop",
+            "phenix.context",
+            "phenix.execution",
+            "phenix.harness.invocation-defaults",
+            "phenix.models",
+            "phenix.step-runner",
+        ] {
+            assert!(
+                basic_ids.contains(required),
+                "basic configuration missed {required}"
+            );
+        }
+        for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
+            assert!(
+                !basic_ids.contains(optional),
+                "basic configuration unexpectedly included {optional}"
+            );
+        }
+        basic.build().unwrap();
+
+        let advanced = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            ADVANCED_AGENT_CONFIGURATION.to_owned(),
+        ]))
+        .unwrap();
+        let advanced_ids = advanced
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            ADVANCED_AGENT_CONFIGURATION,
+            BASIC_AGENT_CONFIGURATION,
+            "phenix.agent-loop",
+            "phenix.options",
+            "phenix.memory",
+            "phenix.planning",
+            "phenix.repository-workers",
+            "phenix.session-tree",
+            "phenix.language",
+            "phenix.hooks",
+            "phenix.debug",
+        ] {
+            assert!(
+                advanced_ids.contains(required),
+                "advanced configuration missed {required}"
+            );
+        }
+        advanced.build().unwrap();
+
+        let default = HarnessBuilder::with_default_suite().unwrap();
+        let default_ids = default
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(default_ids.contains(ADVANCED_AGENT_CONFIGURATION));
+        assert!(default_ids.contains(BASIC_AGENT_CONFIGURATION));
     }
 
     #[test]
