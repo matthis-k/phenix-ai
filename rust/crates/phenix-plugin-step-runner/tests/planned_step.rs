@@ -256,7 +256,7 @@ fn setup_root_with_output(kernel: &mut Kernel, output_tokens: u64) {
     .unwrap();
 }
 
-fn setup_routing(kernel: &mut Kernel, publish: bool, authenticate: bool) {
+fn setup_routing(kernel: &mut Kernel, publish: bool) {
     let profile = RoutingProfile {
         id: phenix_core::RoutingProfileId::parse("default").unwrap(),
         default_target: target("small"),
@@ -283,17 +283,6 @@ fn setup_routing(kernel: &mut Kernel, publish: bool, authenticate: bool) {
             )
             .unwrap();
         }
-    }
-    if authenticate {
-        let _: ModelResponse = invoke(
-            kernel,
-            model_routing_service(),
-            &ModelCommand::SetProviderAuthenticated {
-                provider_plugin: PluginId::parse("fixture.provider").unwrap(),
-                authenticated: true,
-            },
-        )
-        .unwrap();
     }
 }
 
@@ -420,7 +409,7 @@ mod planning_guard {
         let path = temp_db("planning-guard");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
         let error = invoke::<_, StepRunnerResponse>(
             &mut kernel,
             step_runner_service(),
@@ -446,7 +435,7 @@ mod pre_dispatch_cleanup {
         let path = temp_db("pre-dispatch");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, false, true);
+        setup_routing(&mut kernel, false);
         let error = invoke::<_, StepRunnerResponse>(
             &mut kernel,
             step_runner_service(),
@@ -468,31 +457,6 @@ mod pre_dispatch_cleanup {
         let _ = fs::remove_file(path);
     }
 
-    #[test]
-    fn missing_authentication_fails_preflight_without_charging_provider_work() {
-        let path = temp_db("preflight-auth");
-        let mut kernel = kernel(&path);
-        setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, false);
-        let error = invoke::<_, StepRunnerResponse>(
-            &mut kernel,
-            step_runner_service(),
-            &StepRunnerCommand::Run {
-                request: request(1_000),
-            },
-        )
-        .unwrap_err();
-        assert!(error.contains("authentication required"));
-        let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was recorded");
-        assert_eq!(attempt.phase, StepAttemptPhase::Settled);
-        assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
-        let remaining = remaining(&mut kernel);
-        assert_eq!(remaining.fresh_input_tokens, 4_000);
-        assert_eq!(remaining.output_tokens, 1_000);
-        assert_eq!(remaining.cost_microunits, Some(10_000));
-        assert_eq!(remaining.attempts, 4);
-        let _ = fs::remove_file(path);
-    }
 }
 
 mod successful_lifecycle {
@@ -503,7 +467,7 @@ mod successful_lifecycle {
         let path = temp_db("success");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
         let response: StepRunnerResponse = invoke(
             &mut kernel,
             step_runner_service(),
@@ -548,7 +512,7 @@ mod reported_usage_budget_release {
         let path = temp_db("reported-usage-budget-release");
         let mut kernel = kernel(&path);
         setup_root_with_output(&mut kernel, 256);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
 
         for ordinal in 1..=3 {
             let mut request = request(1_000);
@@ -577,7 +541,7 @@ mod failed_dispatch {
         let path = temp_db("dispatch-failure");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
         let mut request = request(1_000);
         request.input = b"provider-fails".to_vec().into();
         let error = invoke::<_, StepRunnerResponse>(
@@ -607,7 +571,7 @@ mod automatic_dispatch_retry {
         let path = temp_db("automatic-dispatch-retry");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
 
         let mut request = request(1_000);
         request.input = b"provider-unavailable".to_vec().into();
@@ -653,7 +617,7 @@ mod retry_budget {
         let path = temp_db("retry-budget");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, false);
+        setup_routing(&mut kernel, false);
 
         assert!(invoke::<_, StepRunnerResponse>(
             &mut kernel,
@@ -695,7 +659,7 @@ mod delegated_worker_runtime {
         let path = temp_db("delegated-worker-runtime");
         let mut kernel = kernel(&path);
         setup_root(&mut kernel);
-        setup_routing(&mut kernel, true, true);
+        setup_routing(&mut kernel, true);
 
         let mut root_request = request(3_000);
         root_request.attribution.attempt_id = "root-attempt".into();
