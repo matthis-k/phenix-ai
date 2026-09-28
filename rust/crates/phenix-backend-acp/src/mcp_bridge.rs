@@ -8,13 +8,16 @@ use phenix_backend::{
     BackendError, PreparedToolSurface, ToolInvocation, ToolPresentation, ToolResult,
 };
 use phenix_domain::{CallableDescriptor, PhenixSchema};
+use rmcp::model::{
+    CacheScope, CallToolRequestParams, CallToolResult, ContentBlock, DiscoverResult,
+    Implementation, ListToolsResult, ProtocolVersion, RequestMetaObject, ServerCapabilities, Tool,
+};
 use serde_json::{json, value::RawValue, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{mpsc, Arc, Mutex};
 
 const SERVER_ID: &str = "phenix-tools";
 const SERVER_NAME: &str = "Phenix tools";
-const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 #[derive(Clone, Default)]
 pub(super) struct ToolBridge {
@@ -25,7 +28,7 @@ pub(super) struct ToolBridge {
 struct ToolBridgeState {
     callables: BTreeMap<String, CallableDescriptor>,
     worker: Option<mpsc::Sender<WorkerMessage>>,
-    connections: BTreeSet<String>,
+    connections: BTreeMap<String, Option<ProtocolVersion>>,
     next_connection: u64,
 }
 
@@ -86,7 +89,7 @@ impl ToolBridge {
         })?;
         state.next_connection += 1;
         let connection_id = format!("phenix-tools-{}", state.next_connection);
-        state.connections.insert(connection_id.clone());
+        state.connections.insert(connection_id.clone(), None);
         Ok(ConnectMcpResponse::new(connection_id))
     }
 
@@ -107,14 +110,24 @@ impl ToolBridge {
     ) -> Result<MessageMcpResponse, agent_client_protocol::Error> {
         self.require_connection(&request.connection_id)?;
         let result = match request.method.as_str() {
-            "initialize" => json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "phenix-runtime", "version": "0.1.0" }
-            }),
-            "ping" => json!({}),
-            "tools/list" => self.list_tools()?,
-            "tools/call" => self.call_tool(request.params.as_ref())?,
+            "server/discover" => discover_result()?,
+            "initialize" => {
+                self.initialize(&request.connection_id, request.params.as_ref())?
+            }
+            "ping" => {
+                self.request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                json!({})
+            }
+            "tools/list" => {
+                let version = self
+                    .request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                self.list_tools(&version)?
+            }
+            "tools/call" => {
+                let version = self
+                    .request_protocol_version(&request.connection_id, request.params.as_ref())?;
+                self.call_tool(request.params.as_ref(), &version)?
+            }
             method => {
                 return Err(agent_client_protocol::Error::method_not_found()
                     .data(format!("unsupported Phenix MCP method {method}")));
@@ -135,6 +148,37 @@ impl ToolBridge {
         }
     }
 
+    fn initialize(
+        &self,
+        connection_id: &McpConnectionId,
+        params: Option<&Map<String, Value>>,
+    ) -> Result<Value, agent_client_protocol::Error> {
+        let requested = params
+            .and_then(|params| params.get("protocolVersion"))
+            .cloned()
+            .map(serde_json::from_value::<ProtocolVersion>)
+            .transpose()
+            .map_err(|error| {
+                agent_client_protocol::Error::invalid_params()
+                    .data(format!("invalid MCP protocolVersion: {error}"))
+            })?
+            .unwrap_or(ProtocolVersion::V_2025_06_18);
+        let selected = if requested.as_str() < ProtocolVersion::V_2026_07_28.as_str()
+            && supports_protocol(&requested)
+        {
+            requested
+        } else {
+            ProtocolVersion::V_2025_11_25
+        };
+        self.set_connection_protocol(connection_id, selected.clone())?;
+
+        Ok(json!({
+            "protocolVersion": selected,
+            "capabilities": server_capabilities(),
+            "serverInfo": server_implementation(),
+        }))
+    }
+
     fn require_connection(
         &self,
         connection_id: &McpConnectionId,
@@ -142,7 +186,7 @@ impl ToolBridge {
         let state = self.state.lock().map_err(|_| {
             agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
         })?;
-        if state.connections.contains(connection_id.0.as_ref()) {
+        if state.connections.contains_key(connection_id.0.as_ref()) {
             Ok(())
         } else {
             Err(agent_client_protocol::Error::invalid_params()
@@ -150,7 +194,76 @@ impl ToolBridge {
         }
     }
 
-    fn list_tools(&self) -> Result<Value, agent_client_protocol::Error> {
+    fn set_connection_protocol(
+        &self,
+        connection_id: &McpConnectionId,
+        version: ProtocolVersion,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let mut state = self.state.lock().map_err(|_| {
+            agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
+        })?;
+        let selected = state
+            .connections
+            .get_mut(connection_id.0.as_ref())
+            .ok_or_else(|| {
+                agent_client_protocol::Error::invalid_params()
+                    .data(format!("unknown Phenix MCP connection {connection_id}"))
+            })?;
+        *selected = Some(version);
+        Ok(())
+    }
+
+    fn connection_protocol(
+        &self,
+        connection_id: &McpConnectionId,
+    ) -> Result<Option<ProtocolVersion>, agent_client_protocol::Error> {
+        let state = self.state.lock().map_err(|_| {
+            agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
+        })?;
+        state
+            .connections
+            .get(connection_id.0.as_ref())
+            .cloned()
+            .ok_or_else(|| {
+                agent_client_protocol::Error::invalid_params()
+                    .data(format!("unknown Phenix MCP connection {connection_id}"))
+            })
+    }
+
+    fn request_protocol_version(
+        &self,
+        connection_id: &McpConnectionId,
+        params: Option<&Map<String, Value>>,
+    ) -> Result<ProtocolVersion, agent_client_protocol::Error> {
+        let legacy = self.connection_protocol(connection_id)?;
+        let Some(meta) = params.and_then(|params| params.get("_meta")) else {
+            return Ok(legacy.unwrap_or(ProtocolVersion::V_2025_06_18));
+        };
+        let meta = serde_json::from_value::<RequestMetaObject>(meta.clone()).map_err(|error| {
+            agent_client_protocol::Error::invalid_params()
+                .data(format!("invalid MCP request _meta: {error}"))
+        })?;
+        let Some(version) = meta.protocol_version() else {
+            return Ok(legacy.unwrap_or(ProtocolVersion::V_2025_06_18));
+        };
+        if !supports_protocol(&version) {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data(format!("unsupported MCP protocol version {version}")));
+        }
+        let missing = meta.missing_required_keys(&version);
+        if !missing.is_empty() {
+            return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                "MCP {version} request is missing required _meta keys: {}",
+                missing.join(", ")
+            )));
+        }
+        Ok(version)
+    }
+
+    fn list_tools(
+        &self,
+        version: &ProtocolVersion,
+    ) -> Result<Value, agent_client_protocol::Error> {
         let state = self.state.lock().map_err(|_| {
             agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
         })?;
@@ -158,39 +271,53 @@ impl ToolBridge {
             .callables
             .values()
             .map(|callable| {
-                let input_schema = json_schema(&callable.input_schema).map_err(|error| {
+                let input_schema = json_schema_object(&callable.input_schema).map_err(|error| {
                     agent_client_protocol::Error::internal_error().data(error.to_string())
                 })?;
-                Ok(json!({
-                    "name": callable.id.as_str(),
-                    "description": callable.description,
-                    "inputSchema": input_schema,
-                }))
+                Ok(Tool::new(
+                    callable.id.as_str().to_owned(),
+                    callable.description.clone(),
+                    input_schema,
+                ))
             })
             .collect::<Result<Vec<_>, agent_client_protocol::Error>>()?;
-        Ok(json!({ "tools": tools }))
+        let mut result = ListToolsResult::with_all_items(tools);
+        if is_current_protocol(version) {
+            result = result
+                .with_ttl_ms(0)
+                .with_cache_scope(CacheScope::Private);
+        } else {
+            result.result_type = None;
+        }
+        serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
     }
 
     fn call_tool(
         &self,
         params: Option<&Map<String, Value>>,
+        version: &ProtocolVersion,
     ) -> Result<Value, agent_client_protocol::Error> {
-        let params = params.cloned().unwrap_or_default();
-        let name = params.get("name").and_then(Value::as_str).ok_or_else(|| {
-            agent_client_protocol::Error::invalid_params().data("tools/call is missing name")
+        let request = serde_json::from_value::<CallToolRequestParams>(Value::Object(
+            params.cloned().unwrap_or_default(),
+        ))
+        .map_err(|error| {
+            agent_client_protocol::Error::invalid_params()
+                .data(format!("invalid MCP tools/call params: {error}"))
         })?;
-        let arguments = params
-            .get("arguments")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        if request.input_responses.is_some() || request.request_state.is_some() {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("Phenix MCP tools do not support MRTR retries"));
+        }
+        let arguments = request.arguments.unwrap_or_default();
 
         let (callable, worker) = {
             let state = self.state.lock().map_err(|_| {
                 agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
             })?;
-            let callable = state.callables.get(name).ok_or_else(|| {
+            let callable = state.callables.get(request.name.as_ref()).ok_or_else(|| {
                 agent_client_protocol::Error::invalid_params().data(format!(
-                    "tool is not provisioned for this execution: {name}"
+                    "tool is not provisioned for this execution: {}",
+                    request.name
                 ))
             })?;
             let worker = state.worker.clone().ok_or_else(|| {
@@ -218,7 +345,7 @@ impl ToolBridge {
             agent_client_protocol::Error::internal_error()
                 .data(format!("runtime tool result channel closed: {error}"))
         })?;
-        Ok(tool_result(result))
+        serialize_tool_result(result, version)
     }
 }
 
@@ -226,6 +353,43 @@ impl ToolBridge {
 pub(super) struct BridgeToolRequest {
     pub(super) invocation: ToolInvocation,
     pub(super) response: mpsc::SyncSender<Result<ToolResult, BackendError>>,
+}
+
+fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities::builder().enable_tools().build()
+}
+
+fn server_implementation() -> Implementation {
+    Implementation::new("phenix-runtime", env!("CARGO_PKG_VERSION"))
+}
+
+fn discover_result() -> Result<Value, agent_client_protocol::Error> {
+    let result = DiscoverResult::new(
+        ProtocolVersion::KNOWN_VERSIONS.to_vec(),
+        server_capabilities(),
+    )
+    .with_server_info(server_implementation());
+    serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
+}
+
+fn supports_protocol(version: &ProtocolVersion) -> bool {
+    ProtocolVersion::KNOWN_VERSIONS
+        .iter()
+        .any(|candidate| candidate == version)
+}
+
+fn is_current_protocol(version: &ProtocolVersion) -> bool {
+    version.as_str() >= ProtocolVersion::V_2026_07_28.as_str()
+}
+
+fn json_schema_object(schema: &PhenixSchema) -> Result<Map<String, Value>, BackendError> {
+    let value = json_schema(schema)?;
+    let Value::Object(object) = value else {
+        return Err(BackendError::Protocol(
+            "Phenix callable JSON Schema must be an object".to_owned(),
+        ));
+    };
+    Ok(object)
 }
 
 fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
@@ -279,17 +443,21 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
     Ok(schema)
 }
 
-fn tool_result(result: Result<ToolResult, BackendError>) -> Value {
-    match result {
-        Ok(result) => json!({
-            "content": [{ "type": "text", "text": result.output }],
-            "isError": !result.success,
-        }),
-        Err(error) => json!({
-            "content": [{ "type": "text", "text": error.to_string() }],
-            "isError": true,
-        }),
+fn serialize_tool_result(
+    result: Result<ToolResult, BackendError>,
+    version: &ProtocolVersion,
+) -> Result<Value, agent_client_protocol::Error> {
+    let mut result = match result {
+        Ok(result) if result.success => {
+            CallToolResult::success(vec![ContentBlock::text(result.output)])
+        }
+        Ok(result) => CallToolResult::error(vec![ContentBlock::text(result.output)]),
+        Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+    };
+    if !is_current_protocol(version) {
+        result.result_type = None;
     }
+    serde_json::to_value(result).map_err(agent_client_protocol::Error::into_internal_error)
 }
 
 fn raw_value(value: Value) -> Result<Arc<RawValue>, agent_client_protocol::Error> {
@@ -303,6 +471,7 @@ mod tests {
     use super::*;
     use phenix_backend::{BackendCapabilities, ToolProvision};
     use phenix_domain::{CallableId, CallableKind, CallablePolicy, CapabilitySet, PhenixSchema};
+    use std::collections::BTreeSet;
 
     fn callable() -> CallableDescriptor {
         CallableDescriptor {
@@ -337,15 +506,69 @@ mod tests {
     }
 
     #[test]
+    fn discovery_advertises_current_and_legacy_mcp_versions() {
+        let discovered = discover_result().unwrap();
+        assert_eq!(discovered["resultType"], "complete");
+        assert!(discovered["supportedVersions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|version| version == "2026-07-28"));
+        assert_eq!(discovered["capabilities"]["tools"], json!({}));
+        assert_eq!(discovered["cacheScope"], "private");
+        assert_eq!(discovered["ttlMs"], 0);
+    }
+
+    #[test]
     fn list_tools_adapts_structural_schema_at_the_mcp_boundary() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
-        let listed = bridge.list_tools().unwrap();
+        let listed = bridge
+            .list_tools(&ProtocolVersion::V_2026_07_28)
+            .unwrap();
+        assert_eq!(listed["resultType"], "complete");
+        assert_eq!(listed["ttlMs"], 0);
+        assert_eq!(listed["cacheScope"], "private");
         assert_eq!(listed["tools"][0]["name"], "phenix.echo");
         assert_eq!(listed["tools"][0]["inputSchema"]["type"], "object");
         assert_eq!(
             listed["tools"][0]["inputSchema"]["properties"]["value"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn legacy_tool_list_keeps_legacy_wire_shape() {
+        let bridge = ToolBridge::default();
+        bridge.provision(&surface()).unwrap();
+        let listed = bridge
+            .list_tools(&ProtocolVersion::V_2025_06_18)
+            .unwrap();
+        assert!(listed.get("resultType").is_none());
+        assert!(listed.get("ttlMs").is_none());
+        assert!(listed.get("cacheScope").is_none());
+    }
+
+    #[test]
+    fn tool_results_add_result_type_only_for_current_protocol() {
+        let legacy = serialize_tool_result(
+            Ok(ToolResult {
+                output: "ok".into(),
+                success: true,
+            }),
+            &ProtocolVersion::V_2025_06_18,
+        )
+        .unwrap();
+        assert!(legacy.get("resultType").is_none());
+
+        let current = serialize_tool_result(
+            Ok(ToolResult {
+                output: "ok".into(),
+                success: true,
+            }),
+            &ProtocolVersion::V_2026_07_28,
+        )
+        .unwrap();
+        assert_eq!(current["resultType"], "complete");
     }
 }
