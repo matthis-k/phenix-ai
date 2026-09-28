@@ -262,7 +262,9 @@ fn resolve_defaults(
             RoutingProfileId::parse(profile)
                 .map_err(|error| format!("invalid {ROUTING_PROFILE_OPTION}: {error}"))?
         }
-        None => RoutingProfileId::parse("default").expect("static default routing profile is valid"),
+        None => {
+            RoutingProfileId::parse("default").expect("static default routing profile is valid")
+        }
     };
     Ok(invocation_params(
         profile_id,
@@ -296,17 +298,18 @@ fn resolve_option(
     context: &InvocationDefaultsContext<'_, '_>,
     option_context: OptionContext,
 ) -> Result<Option<phenix_plugin_catalog::ResolvedOption>, String> {
-    let response: OptionResponse = match context
-        .sdk
-        .options
-        .invoke_projected(&OptionCommand::Resolve {
-            key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
-            context: option_context,
-        }) {
-        Ok(response) => response,
-        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(None),
-        Err(error) => return Err(format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}")),
-    };
+    let response: OptionResponse =
+        match context
+            .sdk
+            .options
+            .invoke_projected(&OptionCommand::Resolve {
+                key: OptionKey::parse(ROUTING_PROFILE_OPTION)?,
+                context: option_context,
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(None),
+            Err(error) => return Err(format!("cannot resolve {ROUTING_PROFILE_OPTION}: {error}")),
+        };
     let OptionResponse::Value { option } = response else {
         return Err(format!(
             "options service returned a non-value response for {ROUTING_PROFILE_OPTION}"
