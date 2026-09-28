@@ -1,3 +1,4 @@
+use phenix_plugin_provider_runtime::provider_factory;
 use phenix_core::{
     Authority, CapabilityId, ComponentManifest, ConfigContribution, DurableSchemaRegistration,
     GraphGenerationId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution,
@@ -166,7 +167,7 @@ impl HarnessBuilder {
         )?;
         let provider_definitions = common_provider_definitions();
         for provider in &provider_definitions {
-            builder.add_embedded(provider.manifest(), provider.factory())?;
+            builder.add_embedded(provider.manifest(), provider_factory(provider))?;
         }
         builder.add_embedded(openai_codex_manifest(), openai_codex_factory)?;
         builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
