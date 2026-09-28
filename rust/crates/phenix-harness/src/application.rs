@@ -301,7 +301,6 @@ pub struct ApplicationWorker {
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
-    next_session_ordinal: u64,
 }
 
 impl ApplicationWorker {
@@ -315,7 +314,6 @@ impl ApplicationWorker {
                 elicitation: None,
             },
             event_sender: None,
-            next_session_ordinal: 1,
         })
     }
 
@@ -632,9 +630,9 @@ impl ApplicationWorker {
         &mut self,
         request: SessionCreateInput,
     ) -> Result<SessionInfo, ApplicationError> {
-        let id = self.allocate_session_id()?;
-        let response = self.invoke_session(SessionCommand::Create {
-            session: SessionRecord::application(id, request.working_directory, request.title),
+        let response = self.invoke_session(SessionCommand::Allocate {
+            working_directory: Some(request.working_directory),
+            title: request.title,
         })?;
         let SessionResponse::Created { session } = response else {
             return Err(unexpected_session_response("create", response));
@@ -814,26 +812,6 @@ impl ApplicationWorker {
             return Err(unexpected_session_response("append journal", response));
         };
         self.project_journal_entry(application_session_info(session)?, entry)
-    }
-
-    fn allocate_session_id(&mut self) -> Result<SessionId, ApplicationError> {
-        loop {
-            let ordinal = self.next_session_ordinal;
-            self.next_session_ordinal =
-                ordinal
-                    .checked_add(1)
-                    .ok_or_else(|| ApplicationError::Failed {
-                        message: "application session id space exhausted".to_owned(),
-                    })?;
-            let id = SessionId::parse(format!("session-{ordinal}")).map_err(|message| {
-                ApplicationError::Failed {
-                    message: format!("generated invalid session id: {message}"),
-                }
-            })?;
-            if self.session_record(&id)?.is_none() {
-                return Ok(id);
-            }
-        }
     }
 
     fn allocate_root_execution(&mut self) -> Result<String, ApplicationError> {

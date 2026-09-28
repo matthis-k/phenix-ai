@@ -146,6 +146,10 @@ fn handle_session(
 ) -> Result<SessionResponse, String> {
     match command {
         SessionCommand::Create { session } => create_session(context, session),
+        SessionCommand::Allocate {
+            working_directory,
+            title,
+        } => allocate_session(context, working_directory, title),
         SessionCommand::Get { id } => Ok(SessionResponse::Session {
             session: read_session(context, &id)?,
         }),
@@ -255,6 +259,37 @@ fn create_session(
         .transact_durable(&session_namespace(), &operations)
         .map_err(|error| error.to_string())?;
     Ok(SessionResponse::Created { session })
+}
+
+fn allocate_session(
+    context: &SessionContext<'_, '_>,
+    working_directory: Option<String>,
+    title: Option<String>,
+) -> Result<SessionResponse, String> {
+    let id = allocate_session_id(context)?;
+    create_session(
+        context,
+        SessionRecord {
+            id,
+            working_directory,
+            title,
+            lifecycle: SessionLifecycle::Open,
+        },
+    )
+}
+
+fn allocate_session_id(context: &SessionContext<'_, '_>) -> Result<SessionId, String> {
+    let mut ordinal = 1_u64;
+    loop {
+        let id = SessionId::parse(format!("session-{ordinal}"))
+            .map_err(|error| format!("generated invalid session id: {error}"))?;
+        if read_session(context, &id)?.is_none() {
+            return Ok(id);
+        }
+        ordinal = ordinal
+            .checked_add(1)
+            .ok_or_else(|| "session id space exhausted".to_owned())?;
+    }
 }
 
 fn rename_session(
@@ -932,6 +967,49 @@ mod tests {
             invoke(&mut restored, &SessionCommand::Get { id: root }).unwrap(),
             SessionResponse::Session { session: Some(ref session) }
                 if session.lifecycle == SessionLifecycle::Closed
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn allocated_session_ids_skip_existing_ids_and_survive_restart() {
+        let path = temp_db("session-allocation");
+        {
+            let mut kernel = kernel_with(&path);
+            invoke(
+                &mut kernel,
+                &SessionCommand::Create {
+                    session: SessionRecord::new(SessionId::parse("session-1").unwrap()),
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                invoke(
+                    &mut kernel,
+                    &SessionCommand::Allocate {
+                        working_directory: Some("/workspace".into()),
+                        title: Some("allocated".into()),
+                    },
+                )
+                .unwrap(),
+                SessionResponse::Created { ref session }
+                    if session.id.as_str() == "session-2"
+                        && session.working_directory.as_deref() == Some("/workspace")
+                        && session.title.as_deref() == Some("allocated")
+            ));
+        }
+
+        let mut restored = kernel_with(&path);
+        assert!(matches!(
+            invoke(
+                &mut restored,
+                &SessionCommand::Allocate {
+                    working_directory: None,
+                    title: None,
+                },
+            )
+            .unwrap(),
+            SessionResponse::Created { ref session } if session.id.as_str() == "session-3"
         ));
         let _ = fs::remove_file(path);
     }
