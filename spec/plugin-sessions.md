@@ -23,6 +23,7 @@ The kernel provides only generic mechanisms used by the session service:
 A session service owns:
 
 - `SessionId` and its allocation rules;
+- allocated session creation, so product/application callers never synthesize canonical session IDs;
 - session lifecycle;
 - accepted user/root input ordering;
 - conversation/execution association;
