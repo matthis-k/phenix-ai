@@ -905,7 +905,7 @@ impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionDefaultSelect
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum Structural340 { r#Model,r#Router, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeSelectionInfo1Type { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural340,pub r#provider: String,pub r#thinking: Option<String>, }
+pub struct PhenixApplicationTypeSelectionInfo1Type { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural340,pub r#provider: String,pub r#provider_name: String,pub r#thinking: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionInfo1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.selection-info@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum PhenixApplicationTypeSelectionPresentation1Type { r#Model,r#Router, }
@@ -916,7 +916,7 @@ impl phenix_core::PhenixContract for PhenixApplicationTypeSelectionSelectInput1T
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub enum Structural342 { r#Model,r#Router, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct Structural341 { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural342,pub r#provider: String,pub r#thinking: Option<String>, }
+pub struct Structural341 { pub r#authenticated: bool,pub r#description: Option<String>,pub r#id: String,pub r#model: Option<String>,pub r#name: String,pub r#presentation: Structural342,pub r#provider: String,pub r#provider_name: String,pub r#thinking: Option<String>, }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub struct PhenixApplicationTypeSelections1Type { pub r#available: Vec<Structural341>,pub r#selected: Option<String>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeSelections1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.selections@1").expect("generated contract id is valid") } }
