@@ -389,10 +389,10 @@ fn invocation_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{default_suite_authority, PhenixHarness};
+    use crate::{default_suite_authority, HarnessBuilder, PhenixHarness};
     use phenix_core::{Bytes, PhenixValue, Project};
-    use std::collections::BTreeSet;
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
+    use std::collections::BTreeSet;
 
     #[test]
     fn provider_exports_replaceable_defaults_clock_and_recovery_interfaces() {
