@@ -2,8 +2,8 @@
 
 use phenix_core::{
     Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
-    PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
-    ServiceId, ServiceRole, TransactionOp,
+    PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
+    ServiceContribution, ServiceId, ServiceRole, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
