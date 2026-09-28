@@ -475,6 +475,31 @@ mod tests {
     }
 
     #[test]
+    fn packaged_router_policy_does_not_publish_implicit_direct_model_profiles() {
+        let mut harness = PhenixHarness::default_suite().unwrap();
+        harness.activate().unwrap();
+        apply_configuration(&mut harness, sample_runtime()).unwrap();
+
+        let catalog: ModelResponse = invoke_projected(
+            &mut harness,
+            &model_routing_service(),
+            &ModelCommand::ListProfiles,
+            &default_suite_authority(),
+        )
+        .unwrap();
+        let ModelResponse::Profiles { profiles } = catalog else {
+            panic!("expected routing profile catalog");
+        };
+        assert_eq!(
+            profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["router.test"]
+        );
+    }
+
+    #[test]
     fn direct_openai_and_anthropic_publish_only_supported_cache_capabilities() {
         let target = |provider: &str, model: &str| ModelTarget {
             provider_plugin: PluginId::parse(provider).unwrap(),
