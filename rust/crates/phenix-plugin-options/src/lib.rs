@@ -948,7 +948,9 @@ mod tests {
         let persistence = LocalPersistence::open(&path).unwrap();
         let mut kernel =
             Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-        kernel.register_embedded_factory(plugin, options_factory).unwrap();
+        kernel
+            .register_embedded_factory(plugin, options_factory)
+            .unwrap();
         kernel.activate_all().unwrap();
 
         let command = OptionCommand::Resolve {
