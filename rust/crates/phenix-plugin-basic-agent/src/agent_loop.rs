@@ -173,7 +173,11 @@ pub struct AgentToolExecutionRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentToolExecutionResponse {
-    Completed { result: ModelToolResult },
+    Completed {
+        result: ModelToolResult,
+        #[serde(default)]
+        activated_tools: Vec<ModelToolDescriptor>,
+    },
     Cancelled,
 }
 
@@ -388,8 +392,9 @@ fn run(
     parent_attempt_id: Option<String>,
     callable_id: Option<CallableId>,
     input: Bytes,
-    tools: Vec<ModelToolDescriptor>,
+    mut tools: Vec<ModelToolDescriptor>,
 ) -> Result<AgentLoopResponse, String> {
+    validate_initial_tools(&tools)?;
     let mut continuation = Vec::<ModelToolTurn>::new();
     let mut usage = AgentLoopUsage {
         model_calls: 0,
@@ -474,8 +479,11 @@ fn run(
                 })
                 .map_err(|error| error.to_string())?;
 
-            let result = match response {
-                AgentToolExecutionResponse::Completed { result } => result,
+            let (result, activated_tools) = match response {
+                AgentToolExecutionResponse::Completed {
+                    result,
+                    activated_tools,
+                } => (result, activated_tools),
                 AgentToolExecutionResponse::Cancelled => {
                     return Ok(AgentLoopResponse::Cancelled { usage });
                 }
@@ -501,6 +509,7 @@ fn run(
                 },
             )?;
             tool_results.push(result);
+            activate_tools(&mut tools, activated_tools)?;
         }
 
         continuation.push(ModelToolTurn {
@@ -516,6 +525,52 @@ fn run(
         },
         usage,
     })
+}
+
+fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
+    let mut ids = std::collections::BTreeSet::new();
+    for tool in tools {
+        if !ids.insert(tool.id.clone()) {
+            return Err(format!(
+                "agent loop received duplicate tool descriptor {}",
+                tool.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn activate_tools(
+    active: &mut Vec<ModelToolDescriptor>,
+    activated: Vec<ModelToolDescriptor>,
+) -> Result<(), String> {
+    let mut additions = Vec::new();
+    for tool in activated {
+        if let Some(existing) = active.iter().find(|existing| existing.id == tool.id) {
+            if existing != &tool {
+                return Err(format!(
+                    "tool executor attempted to change active descriptor {}",
+                    tool.id
+                ));
+            }
+            continue;
+        }
+        if let Some(existing) = additions
+            .iter()
+            .find(|existing: &&ModelToolDescriptor| existing.id == tool.id)
+        {
+            if *existing != tool {
+                return Err(format!(
+                    "tool executor returned conflicting activated descriptors {}",
+                    tool.id
+                ));
+            }
+            continue;
+        }
+        additions.push(tool);
+    }
+    active.extend(additions);
+    Ok(())
 }
 
 fn emit_progress(

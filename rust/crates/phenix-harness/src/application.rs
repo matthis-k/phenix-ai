@@ -2158,6 +2158,7 @@ fn execute_application_agent_tool(
                     output: error.to_value(),
                     is_error: true,
                 },
+                activated_tools: Vec::new(),
             });
         }
     };
@@ -2202,7 +2203,10 @@ fn execute_application_agent_tool(
         _ => return Err("tool executor returned a non-terminal tool change".into()),
     };
 
-    Ok(AgentToolExecutionResponse::Completed { result })
+    Ok(AgentToolExecutionResponse::Completed {
+        result,
+        activated_tools: Vec::new(),
+    })
 }
 
 fn record_application_agent_progress(
@@ -3576,7 +3580,7 @@ mod tests {
             .unwrap();
         let value: PhenixValue = serde_json::from_slice(&output).unwrap();
         let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-        let AgentToolExecutionResponse::Completed { result } = response else {
+        let AgentToolExecutionResponse::Completed { result, .. } = response else {
             panic!("default bash tool must complete through the application adapter");
         };
         assert_eq!(result.call_id, "call-1");
@@ -3608,7 +3612,7 @@ mod tests {
                 .unwrap();
             let value: PhenixValue = serde_json::from_slice(&output).unwrap();
             let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-            let AgentToolExecutionResponse::Completed { result: inspected } = response else {
+            let AgentToolExecutionResponse::Completed { result: inspected, .. } = response else {
                 panic!("runtime inspection must complete through the application adapter");
             };
             assert!(!inspected.is_error, "{query} inspection failed");
@@ -3659,7 +3663,7 @@ mod tests {
             .unwrap();
         let rejected: PhenixValue = serde_json::from_slice(&rejected).unwrap();
         let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
-        let AgentToolExecutionResponse::Completed { result: rejected } = rejected else {
+        let AgentToolExecutionResponse::Completed { result: rejected, .. } = rejected else {
             panic!("unadvertised tool must be reported as a tool failure");
         };
         assert!(rejected.is_error);

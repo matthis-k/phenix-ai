@@ -6,6 +6,9 @@ use phenix_core::{CallableId, SkillId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// Model/runtime capability required before optional tool schemas may be deferred.
+pub const DEFERRED_TOOL_SCHEMAS_CAPABILITY: &str = "tools.deferred_schemas";
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct UsagePolicy {
@@ -155,6 +158,7 @@ pub enum UsagePlanError {
     MandatoryInputExceedsBudget { requested: u64, allowed: u64 },
     OutputReserveExceedsBudget { requested: u64, allowed: u64 },
     RequiredToolSetExceedsBudget { requested: u32, allowed: u32 },
+    EagerToolSetExceedsBudget { requested: u32, allowed: u32 },
     RequiredSkillSetExceedsBudget { requested: u32, allowed: u32 },
 }
 
@@ -209,6 +213,26 @@ impl UsagePolicy {
                 allowed: self.max_tool_schemas,
             });
         }
+
+        let deferred_tool_schemas = input
+            .task
+            .required_capabilities
+            .contains(DEFERRED_TOOL_SCHEMAS_CAPABILITY);
+        let eager_tools = input
+            .task
+            .required_tools
+            .union(&input.task.optional_tools)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if !deferred_tool_schemas {
+            let eager_tool_count = u32::try_from(eager_tools.len()).unwrap_or(u32::MAX);
+            if eager_tool_count > self.max_tool_schemas {
+                return Err(UsagePlanError::EagerToolSetExceedsBudget {
+                    requested: eager_tool_count,
+                    allowed: self.max_tool_schemas,
+                });
+            }
+        }
         let required_skills = u32::try_from(input.task.required_skills.len()).unwrap_or(u32::MAX);
         if required_skills > self.max_skills {
             return Err(UsagePlanError::RequiredSkillSetExceedsBudget {
@@ -257,8 +281,16 @@ impl UsagePolicy {
                 .map(|level| ReasoningBudget::Requested { level })
                 .unwrap_or(ReasoningBudget::BackendDefault),
             tools: ToolProvisionBudget {
-                initial: input.task.required_tools.clone(),
-                expandable: input.task.optional_tools.clone(),
+                initial: if deferred_tool_schemas {
+                    input.task.required_tools.clone()
+                } else {
+                    eager_tools
+                },
+                expandable: if deferred_tool_schemas {
+                    input.task.optional_tools.clone()
+                } else {
+                    BTreeSet::new()
+                },
                 max_schemas: self.max_tool_schemas,
                 max_result_bytes: self.max_tool_result_bytes,
             },
@@ -406,6 +438,81 @@ mod tests {
             Err(UsagePlanError::MandatoryInputExceedsBudget {
                 requested: 1_001,
                 allowed: 1_000,
+            })
+        );
+    }
+
+    #[test]
+    fn eager_tool_fallback_projects_the_complete_bounded_tool_set() {
+        let mut request = input(ContextDemand::default());
+        request
+            .task
+            .required_tools
+            .insert(CallableId::parse("tool.required").unwrap());
+        request
+            .task
+            .optional_tools
+            .insert(CallableId::parse("tool.optional").unwrap());
+
+        let plan = policy().plan(&request).unwrap();
+
+        assert_eq!(
+            plan.tools.initial,
+            BTreeSet::from([
+                CallableId::parse("tool.optional").unwrap(),
+                CallableId::parse("tool.required").unwrap(),
+            ])
+        );
+        assert!(plan.tools.expandable.is_empty());
+    }
+
+    #[test]
+    fn deferred_tool_capability_keeps_optional_schemas_out_of_the_initial_set() {
+        let mut request = input(ContextDemand::default());
+        request
+            .task
+            .required_capabilities
+            .insert(DEFERRED_TOOL_SCHEMAS_CAPABILITY.into());
+        request
+            .task
+            .required_tools
+            .insert(CallableId::parse("tool.catalog").unwrap());
+        request
+            .task
+            .optional_tools
+            .insert(CallableId::parse("tool.large").unwrap());
+
+        let plan = policy().plan(&request).unwrap();
+
+        assert_eq!(
+            plan.tools.initial,
+            BTreeSet::from([CallableId::parse("tool.catalog").unwrap()])
+        );
+        assert_eq!(
+            plan.tools.expandable,
+            BTreeSet::from([CallableId::parse("tool.large").unwrap()])
+        );
+        assert!(plan
+            .routing
+            .required_capabilities
+            .contains(DEFERRED_TOOL_SCHEMAS_CAPABILITY));
+    }
+
+    #[test]
+    fn eager_tool_fallback_fails_closed_when_the_full_schema_set_exceeds_policy() {
+        let mut request = input(ContextDemand::default());
+        for index in 0..9 {
+            request
+                .task
+                .optional_tools
+                .insert(CallableId::parse(format!("tool.{index}")).unwrap());
+        }
+
+        assert_eq!(
+            policy().plan(&request),
+            Err(UsagePlanError::EagerToolSetExceedsBudget {
+                requested: 9,
+                allowed: 8,
             })
         );
     }
