@@ -178,7 +178,10 @@ pub enum ProviderModelsCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderModelsResponse {
-    Models { models: Vec<ProviderModel> },
+    Models {
+        provider_name: String,
+        models: Vec<ProviderModel>,
+    },
 }
 
 pub struct ProviderModelsInterface;
@@ -629,6 +632,7 @@ mod tests {
         assert_eq!(
             response,
             ProviderModelsResponse::Models {
+                provider_name: "provider.catalog".to_owned(),
                 models: vec![
                     ProviderModel {
                         id: ModelId::parse("model-declared").unwrap(),
@@ -691,6 +695,7 @@ mod tests {
         assert_eq!(
             response,
             ProviderModelsResponse::Models {
+                provider_name: "provider.catalog-fallback".to_owned(),
                 models: vec![ProviderModel {
                     id: ModelId::parse("model-declared").unwrap(),
                     origin: ProviderModelOrigin::Declared,
