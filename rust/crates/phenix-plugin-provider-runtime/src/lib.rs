@@ -6,7 +6,7 @@ mod store;
 pub use store::{CredentialStore, CredentialStoreError};
 
 use phenix_core::PluginInstance;
-use phenix_provider_sdk::{ProviderDefinition, ProviderError, ProviderRuntimeSpec};
+use phenix_provider_sdk::{ProviderDefinition, ProviderError};
 use std::sync::Arc;
 
 pub const PHENIX_CA_BUNDLE_ENV: &str = "PHENIX_CA_BUNDLE";
