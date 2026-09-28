@@ -105,7 +105,6 @@ impl RoutingServiceState {
             ModelCommand::RegisterProfile { .. }
             | ModelCommand::PreparePackagedProfiles { .. }
             | ModelCommand::PublishProviderCatalogProfiles { .. }
-            | ModelCommand::PrepareProviderCatalogProfiles { .. }
             | ModelCommand::ReplaceProfile { .. }
             | ModelCommand::GetProfile { .. }
             | ModelCommand::ListProfiles
