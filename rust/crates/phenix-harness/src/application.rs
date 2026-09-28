@@ -814,7 +814,6 @@ impl ApplicationWorker {
         self.project_journal_entry(application_session_info(session)?, entry)
     }
 
-
     fn allocate_root_execution(&mut self) -> Result<String, ApplicationError> {
         let response = self.invoke_execution(ExecutionCommand::AllocateExecution {
             prefix: "execution-".to_owned(),
