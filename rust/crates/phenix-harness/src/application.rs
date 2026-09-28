@@ -1,7 +1,5 @@
 use crate::{
-    default_suite_authority,
-    runtime_config::{direct_routing_profile, publish_routing_profile_runtime_state},
-    PhenixHarness,
+    default_suite_authority, runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
@@ -61,6 +59,7 @@ use phenix_sdk::{
     OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger,
     RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -1389,15 +1388,10 @@ impl ApplicationWorker {
         let profiles = models
             .into_iter()
             .map(|model| {
-                direct_routing_profile(ModelTarget {
+                direct_provider_model_profile(ModelTarget {
                     provider_plugin: provider.clone(),
                     model: model.id,
                     options: BTreeMap::new(),
-                })
-                .map_err(|error| ApplicationError::InvalidResponse {
-                    message: format!(
-                        "provider {provider} returned a model that cannot form a direct route: {error}"
-                    ),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1568,6 +1562,33 @@ fn parse_authentication_method_id(value: &str) -> Result<(PluginId, String), App
         message: format!("invalid authentication provider id: {error}"),
     })?;
     Ok((provider, method))
+}
+
+fn direct_provider_model_profile(
+    target: ModelTarget,
+) -> Result<RoutingProfile, ApplicationError> {
+    let encoded =
+        serde_json::to_vec(&target).map_err(|error| ApplicationError::InvalidResponse {
+            message: format!("cannot encode provider model target: {error}"),
+        })?;
+    let digest = Sha256::digest(encoded);
+    let suffix = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let id = RoutingProfileId::parse(format!(
+        "model.{}.{}.{}",
+        target.provider_plugin, target.model, suffix
+    ))
+    .map_err(|error| ApplicationError::InvalidResponse {
+        message: format!("provider model target cannot form a direct route: {error}"),
+    })?;
+    Ok(RoutingProfile {
+        id,
+        default_target: target,
+        fallback_targets: Vec::new(),
+        callable_targets: BTreeMap::new(),
+    })
 }
 
 fn model_default_option() -> OptionKey {
