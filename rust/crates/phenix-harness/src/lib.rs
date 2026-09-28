@@ -263,9 +263,6 @@ impl HarnessBuilder {
         }
 
         let mut enabled = enabled.clone();
-        if enabled.contains("phenix.workspace") {
-            enabled.insert(LOCAL_ENVIRONMENT_PLUGIN.to_owned());
-        }
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
         while let Some(plugin) = pending.pop() {
             let manifest = available
@@ -1203,5 +1200,29 @@ mod tests {
             assert!(authority.permits(&capability("kernel.persistence.write")));
             assert!(!authority.permits(&capability("fs.write")));
         }
+    }
+}
+
+
+#[cfg(test)]
+mod exact_selected_suite_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_workspace_selection_does_not_inject_local_environment() {
+        let enabled = BTreeSet::from(["phenix.workspace".to_owned()]);
+        let builder = HarnessBuilder::with_selected_suite(&enabled)
+            .expect("workspace is a known first-party plugin");
+        let selected = builder
+            .manifests
+            .iter()
+            .map(|manifest| manifest.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(selected.contains("phenix.workspace"));
+        assert!(
+            !selected.contains("phenix.environment.local"),
+            "explicit composition must not choose an Environment implementation"
+        );
     }
 }
