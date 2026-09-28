@@ -4,6 +4,7 @@ exclude = [
   "crates/phenix-sdk/tests/fixtures/external-consumer",
 ]
 members = [
+  "crates/phenix-agent-configurations",
   "crates/phenix-application-interface",
   "crates/phenix-adapter-acp",
   "crates/phenix-acp-stdio",
