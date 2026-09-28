@@ -276,9 +276,7 @@ fn apply_configuration(
     Ok(())
 }
 #[cfg(test)]
-fn direct_routing_profile(
-    target: ModelTarget,
-) -> Result<RoutingProfile, Box<dyn Error>> {
+fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
     let encoded = serde_json::to_vec(&target)?;
     let digest = Sha256::digest(encoded);
     let suffix = digest[..8]

@@ -1564,9 +1564,7 @@ fn parse_authentication_method_id(value: &str) -> Result<(PluginId, String), App
     Ok((provider, method))
 }
 
-fn direct_provider_model_profile(
-    target: ModelTarget,
-) -> Result<RoutingProfile, ApplicationError> {
+fn direct_provider_model_profile(target: ModelTarget) -> Result<RoutingProfile, ApplicationError> {
     let encoded =
         serde_json::to_vec(&target).map_err(|error| ApplicationError::InvalidResponse {
             message: format!("cannot encode provider model target: {error}"),
