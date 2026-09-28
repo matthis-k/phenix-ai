@@ -959,7 +959,7 @@ mod tests {
         };
         let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
         let output = kernel
-            .invoke(&options_service(), &input, &Authority::default(), None)
+            .invoke(&options_service(), &input, &persistence_authority(), None)
             .unwrap();
         let output: PhenixValue = serde_json::from_slice(&output).unwrap();
         assert!(matches!(
