@@ -9,6 +9,7 @@ role = "assembly"
 
 [dependencies]
 phenix-adapter-acp = { path = "../phenix-adapter-acp" }
+phenix-agent-configurations = { path = "../phenix-agent-configurations" }
 phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-plugin-artifacts = { path = "../phenix-plugin-artifacts" }
