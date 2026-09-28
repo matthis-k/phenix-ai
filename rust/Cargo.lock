@@ -1978,21 +1978,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-plugin-invocation-defaults"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+]
+
+[[package]]
 name = "phenix-plugin-jobs"
 version = "0.1.0"
 dependencies = [
  "phenix-core",
  "phenix-sdk",
  "serde_json",
-]
-
-
-[[package]]
-name = "phenix-plugin-invocation-defaults"
-version = "0.1.0"
-dependencies = [
- "phenix-core",
- "phenix-sdk",
 ]
 
 [[package]]
