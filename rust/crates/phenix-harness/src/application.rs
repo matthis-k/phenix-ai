@@ -3612,7 +3612,10 @@ mod tests {
                 .unwrap();
             let value: PhenixValue = serde_json::from_slice(&output).unwrap();
             let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-            let AgentToolExecutionResponse::Completed { result: inspected, .. } = response else {
+            let AgentToolExecutionResponse::Completed {
+                result: inspected, ..
+            } = response
+            else {
                 panic!("runtime inspection must complete through the application adapter");
             };
             assert!(!inspected.is_error, "{query} inspection failed");
@@ -3663,7 +3666,10 @@ mod tests {
             .unwrap();
         let rejected: PhenixValue = serde_json::from_slice(&rejected).unwrap();
         let rejected = AgentToolExecutionResponse::try_from(Project(&rejected)).unwrap();
-        let AgentToolExecutionResponse::Completed { result: rejected, .. } = rejected else {
+        let AgentToolExecutionResponse::Completed {
+            result: rejected, ..
+        } = rejected
+        else {
             panic!("unadvertised tool must be reported as a tool failure");
         };
         assert!(rejected.is_error);

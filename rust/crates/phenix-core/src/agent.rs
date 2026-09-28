@@ -1,6 +1,6 @@
 use crate::{
-    ArtifactRevision, Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
-    ModelId, PhenixSchema, PhenixValue, ServiceId, SessionId, SkillId,
+    ArtifactRevision, Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId,
+    InterfaceId, ModelId, PhenixSchema, PhenixValue, ServiceId, SessionId, SkillId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
