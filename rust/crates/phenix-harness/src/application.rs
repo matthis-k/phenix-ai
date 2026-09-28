@@ -577,16 +577,18 @@ impl ApplicationWorker {
         &self,
         selection_id: &RoutingProfileId,
     ) -> Result<(), ApplicationError> {
-        match self.invoke_model_command(ModelCommand::GetProfile {
-            id: selection_id.clone(),
-        })? {
-            ModelResponse::Profile { profile: Some(_) } => Ok(()),
-            ModelResponse::Profile { profile: None } => Err(ApplicationError::InvalidInput {
-                message: format!("unknown routing selection {selection_id}"),
+        match self.invoke_model_command(ModelCommand::ListProfiles)? {
+            ModelResponse::Profiles { profiles }
+                if profiles.iter().any(|profile| &profile.id == selection_id) =>
+            {
+                Ok(())
+            }
+            ModelResponse::Profiles { .. } => Err(ApplicationError::InvalidInput {
+                message: format!("routing selection {selection_id} is not available"),
             }),
             response => Err(ApplicationError::InvalidResponse {
                 message: format!(
-                    "model routing returned an unexpected profile response: {response:?}"
+                    "model routing returned an unexpected profile-list response: {response:?}"
                 ),
             }),
         }
@@ -3975,7 +3977,7 @@ mod tests {
         let choices = invoke_operation::<ListSelections>(
             &mut worker,
             ApplicationSessionInput {
-                session_id: session.session_id,
+                session_id: session.session_id.clone(),
             },
         )
         .unwrap();
@@ -3988,6 +3990,33 @@ mod tests {
         assert!(
             matches!(worker.invoke_model_command(ModelCommand::ListProfiles).unwrap(), ModelResponse::Profiles { profiles } if profiles.is_empty())
         );
+
+        let retired = RoutingProfileId::parse("default").unwrap();
+        let default_error = invoke_operation::<SelectDefaultSelection>(
+            &mut worker,
+            SelectionDefaultSelectInput {
+                selection_id: retired.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            default_error,
+            ApplicationError::InvalidInput { ref message }
+                if message.contains("not available")
+        ));
+        let session_error = invoke_operation::<SelectSelection>(
+            &mut worker,
+            SelectionSelectInput {
+                session_id: session.session_id,
+                selection_id: retired,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            session_error,
+            ApplicationError::InvalidInput { ref message }
+                if message.contains("not available")
+        ));
         drop(worker);
         std::fs::remove_file(config_path).unwrap();
         std::fs::remove_file(path).unwrap();
