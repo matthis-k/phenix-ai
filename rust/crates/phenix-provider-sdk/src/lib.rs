@@ -11,7 +11,7 @@ use phenix_core::{
     model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
     ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelId,
     ModelInferenceInterface, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -75,7 +75,7 @@ pub enum ProviderAuthenticationResult {
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProviderAuthResponse {
     Added {
-        pub auth: AuthDescriptor,
+        auth: AuthDescriptor,
     },
     Methods {
         methods: Vec<AuthKind>,
@@ -90,7 +90,7 @@ pub enum ProviderAuthResponse {
         credentials: Vec<AuthDescriptor>,
     },
     Removed {
-        pub auth: Option<AuthDescriptor>,
+        auth: Option<AuthDescriptor>,
     },
 }
 
@@ -184,7 +184,7 @@ impl ProviderDefinition {
         pub id: PluginId,
         pub endpoint: Endpoint,
         pub protocol: impl ProtocolAdapter + 'static,
-        pub auth: impl Into<auth::Definition>,
+        auth: impl Into<auth::Definition>,
     ) -> Self {
         let display_name = id.to_string();
         Self {
@@ -192,7 +192,7 @@ impl ProviderDefinition {
                 id,
                 display_name,
                 endpoint,
-                pub auth: auth.into(),
+                auth: auth.into(),
                 pub default_auth: None,
                 pub declared_models: Vec::new(),
                 pub model_thinking: BTreeMap::new(),
@@ -213,7 +213,7 @@ impl ProviderDefinition {
                 pub id: self.spec.id.clone(),
                 display_name,
                 pub endpoint: self.spec.endpoint.clone(),
-                pub auth: self.spec.auth.clone(),
+                auth: self.spec.auth.clone(),
                 pub default_auth: self.spec.default_auth.clone(),
                 pub declared_models: self.spec.declared_models.clone(),
                 pub model_thinking: self.spec.model_thinking.clone(),
@@ -233,7 +233,7 @@ impl ProviderDefinition {
                 pub id: self.spec.id.clone(),
                 pub display_name: self.spec.display_name.clone(),
                 pub endpoint: self.spec.endpoint.clone(),
-                pub auth: self.spec.auth.clone(),
+                auth: self.spec.auth.clone(),
                 pub default_auth: Some(default_auth),
                 pub declared_models: self.spec.declared_models.clone(),
                 pub model_thinking: self.spec.model_thinking.clone(),
@@ -252,7 +252,7 @@ impl ProviderDefinition {
                 pub id: self.spec.id.clone(),
                 pub display_name: self.spec.display_name.clone(),
                 pub endpoint: self.spec.endpoint.clone(),
-                pub auth: self.spec.auth.clone(),
+                auth: self.spec.auth.clone(),
                 pub default_auth: self.spec.default_auth.clone(),
                 declared_models,
                 pub model_thinking: self.spec.model_thinking.clone(),
@@ -285,7 +285,7 @@ impl ProviderDefinition {
                 pub id: self.spec.id.clone(),
                 pub display_name: self.spec.display_name.clone(),
                 pub endpoint: self.spec.endpoint.clone(),
-                pub auth: self.spec.auth.clone(),
+                auth: self.spec.auth.clone(),
                 pub default_auth: self.spec.default_auth.clone(),
                 pub declared_models: self.spec.declared_models.clone(),
                 model_thinking,
@@ -435,7 +435,7 @@ mod tests {
             PluginId::parse("provider.example").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            pub auth::Definition::api_token(auth::ApiTokenMethod::bearer())
+            auth::Definition::api_token(auth::ApiTokenMethod::bearer())
                 .with_oauth(auth::OAuthMethod::bearer()),
         );
 
@@ -474,7 +474,7 @@ mod tests {
             PluginId::parse("provider.environment").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            pub auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
+            auth::Definition::api_token(auth::ApiTokenMethod::bearer()),
         )
         .with_default_auth(Auth::api_token(
             ApiTokenSource::env("EXAMPLE_API_KEY").unwrap(),
@@ -493,7 +493,7 @@ mod tests {
             PluginId::parse("provider.public").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenAiResponses,
-            pub auth::Definition::none(),
+            auth::Definition::none(),
         );
         let manifest = definition.manifest();
         assert_eq!(manifest.services.len(), 2);
@@ -528,7 +528,7 @@ mod tests {
             PluginId::parse("provider.catalog").unwrap(),
             Endpoint::parse(format!("http://{address}/v1")).unwrap(),
             Protocol::OpenAiResponses,
-            pub auth::Definition::none(),
+            auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-declared").unwrap()])
         .with_model_thinking(ModelId::parse("model-live").unwrap(), ["low", "high"]);
@@ -595,7 +595,7 @@ mod tests {
             PluginId::parse("provider.catalog-fallback").unwrap(),
             Endpoint::parse(format!("http://{address}/v1")).unwrap(),
             Protocol::OpenAiResponses,
-            pub auth::Definition::none(),
+            auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-declared").unwrap()]);
         let manifest = definition.manifest();
@@ -634,7 +634,7 @@ mod tests {
             PluginId::parse("provider.declared").unwrap(),
             Endpoint::parse("https://api.example.com/v1").unwrap(),
             Protocol::OpenCodeGo,
-            pub auth::Definition::none(),
+            auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-a").unwrap()]);
         assert!(definition
