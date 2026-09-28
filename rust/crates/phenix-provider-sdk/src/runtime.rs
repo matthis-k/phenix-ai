@@ -277,6 +277,7 @@ impl ProviderPlugin {
                 }
 
                 Ok(ProviderModelsResponse::Models {
+                    provider_name: self.spec.display_name.clone(),
                     models: models
                         .into_iter()
                         .map(|(id, origin)| ProviderModel {
