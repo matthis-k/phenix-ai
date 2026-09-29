@@ -2812,6 +2812,64 @@ mod tests {
         .unwrap();
     }
 
+    fn validate_semantic_edit(
+        kernel: &mut Kernel,
+        revision: &CodeEntityRevision,
+        operation_id: &str,
+        target: SemanticEditTarget,
+        replacement: &str,
+        observation_id: &str,
+    ) {
+        let fact_id = format!("validation-{operation_id}");
+        invoke(
+            kernel,
+            LanguageCommand::Consume {
+                observation_id: observation_id.into(),
+                execution_id: format!("execution-{observation_id}"),
+                workspace_id: "workspace".into(),
+                provider_id: revision.provider_id.clone(),
+                epoch: revision.provider_epoch,
+                result: LanguageOperationResult {
+                    operation: LanguageOperationKind::EditValidation,
+                    payload: serde_json::json!({
+                        "facts": [{
+                            "id": fact_id,
+                            "operation_id": operation_id,
+                            "entity": {
+                                "id": revision.entity.id,
+                                "repository_id": revision.entity.repository_id
+                            },
+                            "revision": revision.revision,
+                            "intent_identity": semantic_edit_intent_identity(target, replacement),
+                            "valid": true
+                        }]
+                    })
+                    .into(),
+                    documents: vec![revision.document.clone()],
+                },
+            },
+        )
+        .unwrap();
+
+        let response = invoke(
+            kernel,
+            LanguageCommand::IngestEditValidation {
+                observation_id: observation_id.into(),
+                fact_id,
+            },
+        )
+        .unwrap();
+        let LanguageResponse::EditValidation {
+            validation: Some(validation),
+        } = response
+        else {
+            panic!("expected semantic edit validation");
+        };
+        assert_eq!(validation.operation_id, operation_id);
+        assert_eq!(validation.entity, revision.entity);
+        assert_eq!(validation.revision, revision.revision);
+    }
+
     fn workspace_result(operation: LanguageOperationKind) -> LanguageOperationResult {
         LanguageOperationResult {
             operation,
@@ -3119,6 +3177,15 @@ mod tests {
         assert_eq!(body.range.start.character, 14);
         assert_eq!(body.range.end.character, 16);
 
+        validate_semantic_edit(
+            &mut kernel,
+            &revision,
+            "replace-observed-body-1",
+            SemanticEditTarget::Body,
+            "{ 42 }",
+            "validate-replace-observed-body-1",
+        );
+
         let LanguageResponse::EntityEdit { result: edit } = invoke(
             &mut kernel,
             LanguageCommand::ReplaceEntityBody {
@@ -3155,6 +3222,15 @@ mod tests {
             "fn observed() { 42 }\n"
         );
 
+        validate_semantic_edit(
+            &mut kernel,
+            &revision,
+            "replace-observed-body-2",
+            SemanticEditTarget::Body,
+            "{ 99 }",
+            "validate-replace-observed-body-2",
+        );
+
         let stale_edit = invoke(
             &mut kernel,
             LanguageCommand::ReplaceEntityBody {
@@ -3176,6 +3252,15 @@ mod tests {
         );
 
         fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        validate_semantic_edit(
+            &mut kernel,
+            &revision,
+            "insert-before-observed-1",
+            SemanticEditTarget::BeforeEntity,
+            "/* before */\n",
+            "validate-insert-before-observed-1",
+        );
+
         let LanguageResponse::EntityEdit { result: before } = invoke(
             &mut kernel,
             LanguageCommand::InsertRelativeToEntity {
@@ -3197,6 +3282,15 @@ mod tests {
         );
 
         fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        validate_semantic_edit(
+            &mut kernel,
+            &revision,
+            "insert-after-observed-1",
+            SemanticEditTarget::AfterEntity,
+            "/* after */",
+            "validate-insert-after-observed-1",
+        );
+
         let LanguageResponse::EntityEdit { result: after } = invoke(
             &mut kernel,
             LanguageCommand::InsertRelativeToEntity {
@@ -3218,6 +3312,15 @@ mod tests {
         );
 
         fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        validate_semantic_edit(
+            &mut kernel,
+            &revision,
+            "remove-observed-1",
+            SemanticEditTarget::Entity,
+            "",
+            "validate-remove-observed-1",
+        );
+
         let LanguageResponse::EntityEdit { result: removed } = invoke(
             &mut kernel,
             LanguageCommand::RemoveEntity {
