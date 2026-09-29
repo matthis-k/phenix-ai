@@ -464,14 +464,14 @@ impl ContextReducerProposal {
         let mut deterministic_input_bytes = 0_u64;
         let mut reduced_output_bytes = 0_u64;
         for item in &request.eligible {
-            let source_bytes = u64::try_from(item.content.len()).unwrap_or(u64::MAX);
+            let source_bytes = u64::try_from(item.content.as_ref().len()).unwrap_or(u64::MAX);
             deterministic_input_bytes = deterministic_input_bytes.saturating_add(source_bytes);
             if omitted.contains(item.item_id.as_str()) {
                 continue;
             }
             let retained_bytes = summaries
                 .get(item.item_id.as_str())
-                .map(|summary| u64::try_from(summary.content.len()).unwrap_or(u64::MAX))
+                .map(|summary| u64::try_from(summary.content.as_ref().len()).unwrap_or(u64::MAX))
                 .unwrap_or(source_bytes);
             reduced_output_bytes = reduced_output_bytes.saturating_add(retained_bytes);
         }
@@ -528,6 +528,9 @@ pub enum CompactionValidationError {
         to: ContextRetention,
     },
     CheckpointSourceMismatch,
+    SplitToolCallGroup {
+        call_id: String,
+    },
 }
 
 impl CompactionProposal {
@@ -551,6 +554,24 @@ impl CompactionProposal {
             || self.checkpoint.execution_id != self.execution_id
         {
             return Err(CompactionValidationError::CheckpointSourceMismatch);
+        }
+
+        for group in &self.checkpoint.tool_groups {
+            let call = self
+                .transitions
+                .iter()
+                .find(|transition| transition.item_id == group.call.resource_id.as_str());
+            let result = self
+                .transitions
+                .iter()
+                .find(|transition| transition.item_id == group.result.resource_id.as_str());
+            if matches!((call, result), (Some(_), None) | (None, Some(_)))
+                || matches!((call, result), (Some(call), Some(result)) if call.to != result.to)
+            {
+                return Err(CompactionValidationError::SplitToolCallGroup {
+                    call_id: group.call_id.clone(),
+                });
+            }
         }
 
         for transition in &self.transitions {
@@ -1006,6 +1027,35 @@ mod tests {
             proposal.validate_against(&proposal.expected_projection),
             Err(CompactionValidationError::PinnedItemDemoted { .. })
         ));
+    }
+
+    #[test]
+    fn compaction_cannot_split_tool_call_and_result_group() {
+        let mut value = proposal(RetentionTransition {
+            item_id: "context:call".into(),
+            from: ContextRetention::Full,
+            to: ContextRetention::Reference,
+            recovery: Some(exact("context:call")),
+        });
+        value.checkpoint.tool_groups = vec![ToolCallGroupReference {
+            call_id: "call-1".into(),
+            call: exact("context:call"),
+            result: exact("context:result"),
+        }];
+        assert_eq!(
+            value.validate_against(&value.expected_projection),
+            Err(CompactionValidationError::SplitToolCallGroup {
+                call_id: "call-1".into(),
+            })
+        );
+
+        value.transitions.push(RetentionTransition {
+            item_id: "context:result".into(),
+            from: ContextRetention::Full,
+            to: ContextRetention::Reference,
+            recovery: Some(exact("context:result")),
+        });
+        assert!(value.validate_against(&value.expected_projection).is_ok());
     }
 
     #[test]
