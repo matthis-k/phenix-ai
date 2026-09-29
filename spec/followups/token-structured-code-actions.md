@@ -30,7 +30,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 ## Acceptance
 
 - [x] A semantic edit fails rather than applying to a stale entity or source revision.
-- [ ] Successful edits produce exact changed-file evidence.
+- [x] Successful edits return the Workspace commit receipt with exact path plus pre/post content revisions; diff/artifact payload retention remains open.
 - [x] Unsupported semantic support fails closed; file operations remain a separate explicit fallback without semantic guarantees.
 - [ ] Reads use bounded entity neighborhoods instead of whole files when supported.
 - [ ] Provider replacement does not change the public Phenix action contract.
