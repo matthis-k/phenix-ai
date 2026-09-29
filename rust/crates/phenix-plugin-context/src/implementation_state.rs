@@ -397,8 +397,21 @@ fn reduction_compaction_proposal(
         .checked_add(1)
         .ok_or_else(|| "context reducer cache epoch overflow".to_owned())?;
     let mut transitions = Vec::new();
-    let mut exact_sources = Vec::new();
-    let mut compact_view = Vec::new();
+    let mut exact_sources = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.exact_sources.clone())
+        .unwrap_or_default();
+    let mut tool_groups = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.tool_groups.clone())
+        .unwrap_or_default();
+    let mut compact_view = projection
+        .committed_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.compact_view.as_ref().to_vec())
+        .unwrap_or_default();
 
     for eligible in &request.eligible {
         let admitted = projection
@@ -409,6 +422,14 @@ fn reduction_compaction_proposal(
             .summaries
             .iter()
             .find(|summary| summary.item_id == eligible.item_id);
+        let changes_item =
+            proposal.omitted_item_ids.contains(&eligible.item_id) || summary.is_some();
+        if changes_item && is_reduced_item(admitted) {
+            return Err(format!(
+                "context reducer cannot rewrite already reduced item: {}",
+                eligible.item_id
+            ));
+        }
 
         if proposal.omitted_item_ids.contains(&eligible.item_id) {
             let recovery = eligible.recovery.clone().ok_or_else(|| {
@@ -450,6 +471,8 @@ fn reduction_compaction_proposal(
 
     exact_sources.sort();
     exact_sources.dedup();
+    tool_groups.sort_by(|left, right| left.call_id.cmp(&right.call_id));
+    tool_groups.dedup_by(|left, right| left.call_id == right.call_id);
     let content_identity = content_hash(&compact_view).as_str().to_owned();
 
     Ok(CompactionProposal {
@@ -464,7 +487,7 @@ fn reduction_compaction_proposal(
             content_identity,
             compact_view: Bytes::from(compact_view),
             exact_sources,
-            tool_groups: Vec::new(),
+            tool_groups,
         },
     })
 }
