@@ -1274,6 +1274,7 @@ mod tests {
             }
         ));
 
+        let commit = authority(&[WORKSPACE_WRITE, PERSISTENCE_READ, PERSISTENCE_WRITE]);
         let response = invoke(
             &mut kernel,
             WorkspaceCommand::CommitBatch {
@@ -1284,7 +1285,7 @@ mod tests {
                     expected_version: WorkspaceFileVersion::Absent,
                 }],
             },
-            &authority(&[WORKSPACE_WRITE]),
+            &commit,
         )
         .unwrap();
         assert_eq!(
@@ -1516,7 +1517,7 @@ mod tests {
         fs::write(root.join("b.txt"), "old-b").unwrap();
         let mut kernel = kernel(root.clone());
         let read = authority(&[WORKSPACE_READ]);
-        let write = authority(&[WORKSPACE_WRITE]);
+        let write = authority(&[WORKSPACE_WRITE, PERSISTENCE_READ, PERSISTENCE_WRITE]);
 
         let read_version = |kernel: &mut Kernel, path: &str| match invoke(
             kernel,
