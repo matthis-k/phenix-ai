@@ -124,6 +124,8 @@ impl CaptureBuffer {
     }
 }
 
+type CapturedProcessOutput = (Vec<u8>, Vec<u8>, bool, bool, u64, u64);
+
 struct PersistentProcess {
     child: Child,
     process_group: Option<Pid>,
@@ -151,7 +153,7 @@ impl PersistentProcess {
         }
     }
 
-    fn take_output(&self) -> Result<(Vec<u8>, Vec<u8>, bool, bool, u64, u64), String> {
+    fn take_output(&self) -> Result<CapturedProcessOutput, String> {
         let (stdout, stdout_complete, stdout_bytes) = self
             .stdout
             .lock()
