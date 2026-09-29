@@ -20,6 +20,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Context rejects reducer proposals unless the claimed helper attempt exists, belongs to the request execution and parent attempt, has a charged reservation, is an ordinary helper attempt, and settled successfully.
 - [x] Reducer proposals derive their causal reduction identity from that verified helper attempt. The evaluator fixture proves helper cost remains in total task cost while later reacquisition stays attributed to the same reduction.
 - [x] Stage measurements report input bytes presented after deterministic filtering, retained output bytes, and the marginal byte delta. Task success/cost remains the #599 decision metric.
+- [x] Added a typed rollout assessment keyed by a benchmark-criteria revision. It only permits default-on eligibility when paired #599 cohorts have complete terminal/cost coverage, success stays within the configured basis-point bound, and cost per success improves by the configured minimum. Real benchmark evidence is still required before enabling a reducer by default.
 
 ## Required implementation
 
