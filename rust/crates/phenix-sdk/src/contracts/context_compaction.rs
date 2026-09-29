@@ -252,6 +252,9 @@ pub struct ContextReducerProposal {
     pub capability_generation: String,
     pub stage: ContextReducerStage,
     pub helper_attempt_id: String,
+    /// Stable causal identity for this reduction. Later reacquisition uses this as
+    /// `ReacquisitionUsage::cause_identity`.
+    pub reduction_id: String,
     #[serde(default)]
     pub retained_item_ids: Vec<String>,
     #[serde(default)]
@@ -300,6 +303,7 @@ pub enum ReducerValidationError {
     AuthorityMismatch,
     CapabilityGenerationMismatch,
     StageMismatch,
+    ReductionIdentityMismatch,
     UnknownItem { item_id: String },
     DuplicateItem { item_id: String },
     MissingItemDecision { item_id: String },
@@ -311,6 +315,11 @@ pub enum ReducerValidationError {
 }
 
 impl ContextReducerProposal {
+    #[must_use]
+    pub fn reduction_identity(helper_attempt_id: &str) -> String {
+        format!("context-reduction:{helper_attempt_id}")
+    }
+
     pub fn validate_against(
         &self,
         request: &ContextReducerRequest,
@@ -335,6 +344,9 @@ impl ContextReducerProposal {
         }
         if self.stage != request.stage {
             return Err(ReducerValidationError::StageMismatch);
+        }
+        if self.reduction_id != Self::reduction_identity(&self.helper_attempt_id) {
+            return Err(ReducerValidationError::ReductionIdentityMismatch);
         }
         let encoded = serde_json::to_vec(&phenix_core::PhenixValue::from(self))
             .expect("context reducer proposal has a deterministic PhenixValue encoding");
@@ -681,6 +693,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: Vec::new(),
             omitted_item_ids: vec!["history-1".into()],
             summaries: Vec::new(),
@@ -704,6 +717,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: vec!["history-1".into()],
             omitted_item_ids: Vec::new(),
             summaries: Vec::new(),
@@ -729,6 +743,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: vec!["fabricated".into()],
             omitted_item_ids: Vec::new(),
             summaries: Vec::new(),
@@ -759,6 +774,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: vec!["history-1".into()],
             omitted_item_ids: Vec::new(),
             summaries: vec![DerivedReductionSummary {
@@ -789,6 +805,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: vec!["history-1".into()],
             omitted_item_ids: Vec::new(),
             summaries: Vec::new(),
@@ -815,6 +832,7 @@ mod tests {
             capability_generation: request.capability_generation.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
             retained_item_ids: Vec::new(),
             omitted_item_ids: Vec::new(),
             summaries: Vec::new(),
