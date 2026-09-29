@@ -1,4 +1,4 @@
-use phenix_core::{ArtifactRevision, ComponentInterface, InterfaceId, InterfaceSchema};
+use phenix_core::{ArtifactRevision, ComponentInterface, ContentReference, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -94,6 +94,18 @@ const fn complete_capture() -> bool {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ProcessStreamRecovery {
+    Inline,
+    Reference { reference: ContentReference },
+    Unavailable { reason: String },
+}
+
+const fn inline_stream_recovery() -> ProcessStreamRecovery {
+    ProcessStreamRecovery::Inline
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum EnvironmentResponse {
     Description {
@@ -126,6 +138,10 @@ pub enum EnvironmentResponse {
         stdout_content_identity: Option<ArtifactRevision>,
         #[serde(default)]
         stderr_content_identity: Option<ArtifactRevision>,
+        #[serde(default = "inline_stream_recovery")]
+        stdout_recovery: ProcessStreamRecovery,
+        #[serde(default = "inline_stream_recovery")]
+        stderr_recovery: ProcessStreamRecovery,
     },
     ProcessOpened {
         handle: String,
@@ -147,6 +163,10 @@ pub enum EnvironmentResponse {
         stdout_content_identity: Option<ArtifactRevision>,
         #[serde(default)]
         stderr_content_identity: Option<ArtifactRevision>,
+        #[serde(default = "inline_stream_recovery")]
+        stdout_recovery: ProcessStreamRecovery,
+        #[serde(default = "inline_stream_recovery")]
+        stderr_recovery: ProcessStreamRecovery,
     },
     ProcessClosed {
         stdout: Vec<u8>,
@@ -165,6 +185,10 @@ pub enum EnvironmentResponse {
         stdout_content_identity: Option<ArtifactRevision>,
         #[serde(default)]
         stderr_content_identity: Option<ArtifactRevision>,
+        #[serde(default = "inline_stream_recovery")]
+        stdout_recovery: ProcessStreamRecovery,
+        #[serde(default = "inline_stream_recovery")]
+        stderr_recovery: ProcessStreamRecovery,
     },
 }
 
