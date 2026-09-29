@@ -1,21 +1,21 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ServiceContribution,
-    ServiceId,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
     EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery,
 };
-use sha2::{Digest, Sha256};
 use rustix::{
     fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
     io::Errno,
     process::{kill_process_group, Pid, Signal},
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,

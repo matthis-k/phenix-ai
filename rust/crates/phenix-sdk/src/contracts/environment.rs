@@ -1,4 +1,6 @@
-use phenix_core::{ArtifactRevision, ComponentInterface, ContentReference, InterfaceId, InterfaceSchema};
+use phenix_core::{
+    ArtifactRevision, ComponentInterface, ContentReference, InterfaceId, InterfaceSchema,
+};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
