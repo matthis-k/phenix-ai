@@ -4,7 +4,8 @@ mod implementation;
 pub use component::*;
 pub use implementation::*;
 pub use phenix_sdk::{
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
+    WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt, WorkspaceCommittedFile,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch,
+    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
     WORKSPACE_SERVICE,
 };
