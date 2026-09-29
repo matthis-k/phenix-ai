@@ -2710,6 +2710,20 @@ mod tests {
         assert_eq!(edit.source_revision, revision.revision);
         assert_eq!(edit.receipt.operation_id, "replace-observed-body-1");
         assert_eq!(edit.receipt.files.len(), 1);
+        let evidence = &edit.receipt.files[0];
+        assert_eq!(evidence.path, "src/lib.rs");
+        assert_eq!(
+            evidence.before_version,
+            WorkspaceFileVersion::Present {
+                content_hash: format!("{:x}", Sha256::digest(b"fn observed() {}\n")),
+            }
+        );
+        assert_eq!(
+            evidence.version,
+            WorkspaceFileVersion::Present {
+                content_hash: format!("{:x}", Sha256::digest(b"fn observed() { 42 }\n")),
+            }
+        );
         assert_eq!(
             fs::read_to_string(root.join("src/lib.rs")).unwrap(),
             "fn observed() { 42 }\n"
