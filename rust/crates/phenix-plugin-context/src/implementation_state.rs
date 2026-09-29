@@ -328,11 +328,14 @@ fn request_reduction(
         })
         .map_err(|error| format!("context reducer unavailable or failed: {error}"))?;
     let ContextReducerResponse::Proposal { proposal } = response;
-    proposal
-        .validate_against(&request, &actual_projection)
+    let measurement = proposal
+        .measure_against(&request, &actual_projection)
         .map_err(|error| format!("context reducer proposal rejected: {error:?}"))?;
     verify_reducer_helper_attempt(context, &request, &proposal)?;
-    Ok(ContextResponse::ReductionProposed { proposal })
+    Ok(ContextResponse::ReductionProposed {
+        proposal,
+        measurement,
+    })
 }
 
 fn verify_reducer_helper_attempt(
