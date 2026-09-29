@@ -1,5 +1,7 @@
 use crate::projection_state::{ContextProjectionState, ProjectionStateError};
-use phenix_sdk::{ContextCommand, ContextResponse, ProjectionRevision};
+use phenix_sdk::{
+    CompactionCommit, CompactionProposal, ContextCommand, ContextResponse, ProjectionRevision,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -127,10 +129,26 @@ impl ContextStateService {
             | ContextCommand::MaterializeInvocation { .. }
             | ContextCommand::EvaluateCompactionCost { .. }
             | ContextCommand::RequestReduction { .. }
+            | ContextCommand::CommitReduction { .. }
             | ContextCommand::ExportContinuation { .. }
             | ContextCommand::ProjectContinuationImport { .. } => return None,
         };
         Some(response)
+    }
+
+    pub(crate) fn commit_compaction_proposal(
+        &mut self,
+        proposal: CompactionProposal,
+    ) -> Result<CompactionCommit, ContextStateServiceError> {
+        let execution_id = proposal.execution_id.clone();
+        let checkpoint_id = proposal.checkpoint.checkpoint_id.clone();
+        let state = self.projection_mut(&execution_id)?;
+        state
+            .prepare_compaction(proposal)
+            .map_err(ContextStateServiceError::Projection)?;
+        state
+            .commit_compaction(&checkpoint_id)
+            .map_err(ContextStateServiceError::Projection)
     }
 
     pub(crate) fn projection_revision(&self, execution_id: &str) -> ProjectionRevision {
