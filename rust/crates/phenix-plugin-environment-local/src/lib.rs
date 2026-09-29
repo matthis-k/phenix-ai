@@ -100,10 +100,14 @@ pub fn local_environment_factory_for_policy(
 struct CaptureBuffer {
     bytes: Vec<u8>,
     truncated: bool,
+    total_bytes: u64,
 }
 
 impl CaptureBuffer {
     fn push(&mut self, bytes: &[u8]) {
+        self.total_bytes = self
+            .total_bytes
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         let remaining = MAX_CAPTURE_BYTES.saturating_sub(self.bytes.len());
         self.bytes
             .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
@@ -112,10 +116,11 @@ impl CaptureBuffer {
         }
     }
 
-    fn take(&mut self) -> (Vec<u8>, bool) {
+    fn take(&mut self) -> (Vec<u8>, bool, u64) {
         let bytes = std::mem::take(&mut self.bytes);
         let truncated = std::mem::take(&mut self.truncated);
-        (bytes, truncated)
+        let total_bytes = std::mem::take(&mut self.total_bytes);
+        (bytes, !truncated, total_bytes)
     }
 }
 
@@ -146,18 +151,25 @@ impl PersistentProcess {
         }
     }
 
-    fn take_output(&self) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
-        let (stdout, stdout_truncated) = self
+    fn take_output(&self) -> Result<(Vec<u8>, Vec<u8>, bool, bool, u64, u64), String> {
+        let (stdout, stdout_complete, stdout_bytes) = self
             .stdout
             .lock()
             .map_err(|_| "local environment stdout capture poisoned".to_owned())?
             .take();
-        let (stderr, stderr_truncated) = self
+        let (stderr, stderr_complete, stderr_bytes) = self
             .stderr
             .lock()
             .map_err(|_| "local environment stderr capture poisoned".to_owned())?
             .take();
-        Ok((stdout, stderr, stdout_truncated || stderr_truncated))
+        Ok((
+            stdout,
+            stderr,
+            stdout_complete,
+            stderr_complete,
+            stdout_bytes,
+            stderr_bytes,
+        ))
     }
 }
 
@@ -759,12 +771,23 @@ impl LocalEnvironment {
                     .map_err(|error| format!("wait {program}: {error}"))?;
                 process.terminate_tree();
                 process.finish_readers();
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::Process {
                     exit_code: status.code().unwrap_or(-1),
                     stdout,
                     stderr,
-                    truncated,
+                    truncated: !stdout_complete || !stderr_complete,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes: Some(stdout_bytes),
+                    stderr_bytes: Some(stderr_bytes),
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -850,12 +873,23 @@ impl LocalEnvironment {
                     process.terminate_tree();
                     process.finish_readers();
                 }
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::ProcessOutput {
                     stdout,
                     stderr,
                     exit_code,
-                    truncated,
+                    truncated: !stdout_complete || !stderr_complete,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes: Some(stdout_bytes),
+                    stderr_bytes: Some(stderr_bytes),
                 })
             }
             EnvironmentCommand::CloseProcess { handle } => {
@@ -870,12 +904,23 @@ impl LocalEnvironment {
                     .wait()
                     .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::ProcessClosed {
                     stdout,
                     stderr,
                     exit_code: Some(status.code().unwrap_or(-1)),
-                    truncated,
+                    truncated: !stdout_complete || !stderr_complete,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes: Some(stdout_bytes),
+                    stderr_bytes: Some(stderr_bytes),
                 })
             }
         }
@@ -936,6 +981,22 @@ mod tests {
 
     fn invoke(kernel: &mut Kernel, command: EnvironmentCommand) -> EnvironmentResponse {
         invoke_result(kernel, command).unwrap()
+    }
+
+    #[test]
+    fn capture_buffer_reports_full_stream_size_when_view_is_truncated() {
+        let mut capture = CaptureBuffer::default();
+        capture.push(&vec![b'x'; MAX_CAPTURE_BYTES + 17]);
+        let (bytes, complete, total_bytes) = capture.take();
+        assert_eq!(bytes.len(), MAX_CAPTURE_BYTES);
+        assert!(!complete);
+        assert_eq!(total_bytes, (MAX_CAPTURE_BYTES + 17) as u64);
+
+        capture.push(b"small");
+        let (bytes, complete, total_bytes) = capture.take();
+        assert_eq!(bytes, b"small");
+        assert!(complete);
+        assert_eq!(total_bytes, 5);
     }
 
     #[test]
