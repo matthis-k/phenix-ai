@@ -383,6 +383,70 @@ fn handle(
                 view: read_entity_body(context, &repository_id, &entity_id, &revision, max_bytes)?,
             })
         }
+        LanguageCommand::IngestEntityRelations {
+            observation_id,
+            fact_id,
+        } => {
+            validate_identity("language observation id", &observation_id)?;
+            validate_identity("provider relation fact id", &fact_id)?;
+            Ok(LanguageResponse::EntityRelations {
+                relations: Some(ingest_entity_relations(context, &observation_id, &fact_id)?),
+            })
+        }
+        LanguageCommand::ReadEntityRelations {
+            repository_id,
+            entity_id,
+            revision,
+            kind,
+            max_items,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntityRelations {
+                relations: read_entity_relations(
+                    context,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                    kind,
+                    max_items,
+                )?,
+            })
+        }
+        LanguageCommand::ReadChangedNeighborhood {
+            repository_id,
+            entity_id,
+            from_revision,
+            max_items,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &from_revision)?;
+            Ok(LanguageResponse::ChangedNeighborhood {
+                neighborhood: read_changed_neighborhood(
+                    context,
+                    &repository_id,
+                    &entity_id,
+                    &from_revision,
+                    max_items,
+                )?,
+            })
+        }
+        LanguageCommand::IngestEditValidation {
+            observation_id,
+            fact_id,
+        } => {
+            validate_identity("language observation id", &observation_id)?;
+            validate_identity("provider edit validation fact id", &fact_id)?;
+            Ok(LanguageResponse::EditValidation {
+                validation: Some(ingest_edit_validation(
+                    context,
+                    &observation_id,
+                    &fact_id,
+                )?),
+            })
+        }
         LanguageCommand::ReplaceEntityBody {
             operation_id,
             repository_id,
