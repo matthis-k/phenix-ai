@@ -114,9 +114,11 @@ pub use phenix_plugin_jobs::{
 };
 pub use phenix_plugin_language::{
     language_component_id, language_component_manifest, language_factory, language_manifest,
-    language_service, DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
-    LanguageInterface, LanguageObservation, LanguageOperationKind, LanguageOperationResult,
-    LanguageProviderEpoch, LanguageResponse, LANGUAGE_SERVICE,
+    language_service, CodeChangedNeighborhood, CodeEntityEditEvidence, CodeEntityEditResult,
+    CodeEntityEditValidation, CodeEntityInsertPosition, CodeEntityRelationKind,
+    CodeEntityRelationTarget, CodeEntityRelations, DocumentProvenance, LanguageCommand,
+    LanguageDocumentIdentity, LanguageInterface, LanguageObservation, LanguageOperationKind,
+    LanguageOperationResult, LanguageProviderEpoch, LanguageResponse, LANGUAGE_SERVICE,
 };
 pub use phenix_plugin_memory::{
     memory_component_id, memory_component_manifest, memory_factory, memory_manifest,
@@ -177,8 +179,10 @@ pub use phenix_plugin_step_runner::{
 };
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
-    workspace_manifest, workspace_service, WorkspaceCommand, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WORKSPACE_SERVICE,
+    workspace_manifest, workspace_service, WorkspaceCapabilities, WorkspaceCommand,
+    WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 pub use phenix_sdk::{
     context_service, execution_inspection_service, execution_service, step_runner_service,

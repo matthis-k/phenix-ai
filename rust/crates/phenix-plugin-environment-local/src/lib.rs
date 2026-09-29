@@ -224,6 +224,7 @@ struct LocalEnvironment {
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
     process_output_store: FileContentReferenceStore,
+    next_write_id: u64,
 }
 
 impl LocalEnvironment {
@@ -238,6 +239,7 @@ impl LocalEnvironment {
             processes: BTreeMap::new(),
             next_process_id: 1,
             process_output_store,
+            next_write_id: 1,
         }
     }
 
@@ -270,6 +272,7 @@ impl LocalEnvironment {
             processes: BTreeMap::new(),
             next_process_id: 1,
             process_output_store,
+            next_write_id: 1,
         }
     }
 
@@ -457,6 +460,74 @@ impl LocalEnvironment {
         let mut file = fs::File::from(fd);
         file.write_all(content)
             .map_err(|error| format!("confined write {}: {error}", resolved.display()))
+    }
+
+    fn atomic_write_unrestricted(
+        &mut self,
+        resolved: &Path,
+        content: &[u8],
+        create_parents: bool,
+    ) -> Result<(), String> {
+        let parent = resolved
+            .parent()
+            .ok_or_else(|| format!("write path has no parent: {}", resolved.display()))?;
+        if create_parents {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create parent for {}: {error}", resolved.display()))?;
+        }
+
+        let name = resolved
+            .file_name()
+            .ok_or_else(|| format!("write path has no file name: {}", resolved.display()))?;
+        let write_id = self.next_write_id;
+        self.next_write_id = self
+            .next_write_id
+            .checked_add(1)
+            .ok_or_else(|| "local environment atomic write id space exhausted".to_owned())?;
+        let temporary = parent.join(format!(
+            ".{}.phenix-write-{}-{write_id}",
+            name.to_string_lossy(),
+            std::process::id()
+        ));
+
+        let result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(|error| {
+                    format!(
+                        "create atomic write temporary {}: {error}",
+                        temporary.display()
+                    )
+                })?;
+            if let Ok(metadata) = fs::metadata(resolved) {
+                file.set_permissions(metadata.permissions())
+                    .map_err(|error| {
+                        format!("preserve permissions for {}: {error}", resolved.display())
+                    })?;
+            }
+            file.write_all(content)
+                .map_err(|error| format!("write {}: {error}", temporary.display()))?;
+            file.sync_all()
+                .map_err(|error| format!("sync {}: {error}", temporary.display()))?;
+            drop(file);
+            fs::rename(&temporary, resolved).map_err(|error| {
+                format!(
+                    "publish atomic write {} -> {}: {error}",
+                    temporary.display(),
+                    resolved.display()
+                )
+            })?;
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| format!("sync parent {}: {error}", parent.display()))
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 
     fn requested_working_directory(
@@ -661,6 +732,8 @@ impl LocalEnvironment {
                 environment: EnvironmentDescription {
                     provider: LOCAL_ENVIRONMENT_PLUGIN.into(),
                     filesystem_policy: self.filesystem_policy()?,
+                    atomic_file_replace: self.filesystem_policy()?
+                        == EnvironmentFilesystemPolicy::Unrestricted,
                     persistent_processes: true,
                     pty: false,
                 },
@@ -724,14 +797,7 @@ impl LocalEnvironment {
             } => {
                 let resolved = self.resolve(&path);
                 if self.filesystem_policy()? == EnvironmentFilesystemPolicy::Unrestricted {
-                    if create_parents {
-                        if let Some(parent) = resolved.parent() {
-                            fs::create_dir_all(parent)
-                                .map_err(|error| format!("create parent for {path}: {error}"))?;
-                        }
-                    }
-                    fs::write(&resolved, content)
-                        .map_err(|error| format!("write {path}: {error}"))?;
+                    self.atomic_write_unrestricted(&resolved, &content, create_parents)?;
                 } else {
                     self.confined_write(&resolved, &content, create_parents)?;
                 }

@@ -1,13 +1,16 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, SdkClient,
+    ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
+    WorkspaceCommittedFile, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity,
     WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -20,6 +23,11 @@ const WORKSPACE_WRITE: &str = "workspace.write";
 const WORKSPACE_SHELL: &str = "workspace.shell";
 const WORKSPACE_GIT: &str = "workspace.git";
 const MAX_PROCESS_MODEL_VIEW_BYTES: usize = 64 * 1024;
+const WORKSPACE_STATE_NAMESPACE: &str = "phenix.workspace.state";
+const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
+const PERSISTENCE_READ: &str = "kernel.persistence.read";
+const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
+
 struct WorkspaceSdk<'host, 'runtime> {
     environment: SdkClient<'host, 'runtime, EnvironmentInterface>,
 }
@@ -54,12 +62,15 @@ pub fn workspace_manifest() -> PluginManifest {
             priority: 100,
             required_authority: Authority::default(),
         }],
-        resource_namespaces: Vec::new(),
+        resource_namespaces: vec![workspace_state_namespace()],
         maximum_authority: Authority::new([
             capability(WORKSPACE_READ),
             capability(WORKSPACE_WRITE),
             capability(WORKSPACE_SHELL),
             capability(WORKSPACE_GIT),
+            capability(PERSISTENCE_SCHEMA),
+            capability(PERSISTENCE_READ),
+            capability(PERSISTENCE_WRITE),
         ]),
     }
 }
@@ -85,6 +96,52 @@ fn capability(value: &str) -> CapabilityId {
     CapabilityId::parse(value).expect("static capability is valid")
 }
 
+fn workspace_state_namespace() -> ResourceNamespace {
+    ResourceNamespace::parse(WORKSPACE_STATE_NAMESPACE)
+        .expect("static workspace state namespace is valid")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceCommitState {
+    Prepared,
+    Committed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct WorkspaceCommitJournalFile {
+    path: String,
+    before_version: WorkspaceFileVersion,
+    content: String,
+    version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct WorkspaceCommitJournal {
+    operation_id: String,
+    intent_identity: String,
+    state: WorkspaceCommitState,
+    files: Vec<WorkspaceCommitJournalFile>,
+}
+
+impl WorkspaceCommitJournal {
+    fn receipt(&self) -> WorkspaceCommitReceipt {
+        WorkspaceCommitReceipt {
+            operation_id: self.operation_id.clone(),
+            intent_identity: self.intent_identity.clone(),
+            files: self
+                .files
+                .iter()
+                .map(|file| WorkspaceCommittedFile {
+                    path: file.path.clone(),
+                    before_version: file.before_version.clone(),
+                    version: file.version.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 struct WorkspacePlugin {
     root: PathBuf,
 }
@@ -96,10 +153,14 @@ impl WorkspacePlugin {
 }
 
 impl PluginInstance for WorkspacePlugin {
-    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+    fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String> {
         // The workspace root is an Environment-namespace path. Validating it with
         // host filesystem APIs would make remote/container providers impossible.
-        Ok(())
+        let context = context(host, &self.root);
+        context
+            .kernel
+            .register_durable_schema(&DurableSchema::new(workspace_state_namespace(), 1))
+            .map_err(|error| error.to_string())
     }
 
     fn invoke(
@@ -130,6 +191,7 @@ fn handle(
     command: WorkspaceCommand,
 ) -> Result<WorkspaceResponse, String> {
     match command {
+        WorkspaceCommand::Capabilities => capabilities(context),
         WorkspaceCommand::Read { path } => read(context, path),
         WorkspaceCommand::Write {
             path,
@@ -154,6 +216,10 @@ fn handle(
                 )),
             }
         }
+        WorkspaceCommand::CommitBatch {
+            operation_id,
+            writes,
+        } => commit_batch(context, operation_id, writes),
         WorkspaceCommand::Search {
             needle,
             path,
@@ -209,6 +275,40 @@ fn environment(
 
 fn environment_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn capabilities(context: &WorkspaceContext<'_, '_, '_>) -> Result<WorkspaceResponse, String> {
+    let EnvironmentResponse::Description { environment } =
+        environment(context, EnvironmentCommand::Describe)?
+    else {
+        return Err("environment returned unexpected description response".into());
+    };
+    Ok(WorkspaceResponse::Capabilities {
+        capabilities: WorkspaceCapabilities {
+            write_atomicity: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+            recoverable_commit_atomicity: environment
+                .atomic_file_replace
+                .then_some(WorkspaceWriteAtomicity::CrashRecoverable),
+        },
+    })
+}
+
+fn require_recoverable_commit(
+    context: &WorkspaceContext<'_, '_, '_>,
+) -> Result<Option<WorkspaceResponse>, String> {
+    let EnvironmentResponse::Description { environment } =
+        environment(context, EnvironmentCommand::Describe)?
+    else {
+        return Err("environment returned unexpected description response".into());
+    };
+    if environment.atomic_file_replace {
+        Ok(None)
+    } else {
+        Ok(Some(WorkspaceResponse::UnsupportedAtomicScope {
+            requested: WorkspaceWriteAtomicity::CrashRecoverable,
+            available: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+        }))
+    }
 }
 
 fn read(context: &WorkspaceContext<'_, '_, '_>, path: String) -> Result<WorkspaceResponse, String> {
@@ -304,6 +404,177 @@ fn write_batch(
         });
     }
     Ok(WorkspaceResponse::WrittenBatch { files })
+}
+
+fn commit_batch(
+    context: &WorkspaceContext<'_, '_, '_>,
+    operation_id: String,
+    writes: Vec<WorkspaceWrite>,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_WRITE)?;
+    if operation_id.trim().is_empty() {
+        return Err("workspace commit operation id must not be empty".into());
+    }
+    if writes.is_empty() {
+        return Err("workspace commit batch must not be empty".into());
+    }
+    let intent_identity = commit_intent_identity(&writes)?;
+    if let Some(mut journal) = read_commit_journal(context, &operation_id)? {
+        if journal.intent_identity != intent_identity {
+            return Err(format!(
+                "workspace commit operation {operation_id} is already bound to another intent"
+            ));
+        }
+        if journal.state == WorkspaceCommitState::Prepared {
+            if let Some(response) = require_recoverable_commit(context)? {
+                return Ok(response);
+            }
+            recover_commit(context, &mut journal)?;
+        }
+        return Ok(WorkspaceResponse::CommittedBatch {
+            receipt: journal.receipt(),
+        });
+    }
+
+    if let Some(response) = require_recoverable_commit(context)? {
+        return Ok(response);
+    }
+
+    let mut paths = BTreeSet::new();
+    let mut files = Vec::with_capacity(writes.len());
+    let mut conflicts = Vec::new();
+    for write in writes {
+        if !paths.insert(write.path.clone()) {
+            return Err(format!(
+                "workspace commit batch contains duplicate path: {}",
+                write.path
+            ));
+        }
+        let resolved = resolve(context, &write.path)?;
+        let observed = inspect_version(context, &resolved, &write.path)?;
+        if observed != write.expected_version {
+            conflicts.push(WorkspaceVersionConflict {
+                path: write.path,
+                expected_version: write.expected_version,
+                observed_version: observed,
+            });
+            continue;
+        }
+        files.push(WorkspaceCommitJournalFile {
+            path: write.path,
+            before_version: observed,
+            version: version_for_bytes(write.content.as_bytes()),
+            content: write.content,
+        });
+    }
+    if !conflicts.is_empty() {
+        return Ok(WorkspaceResponse::VersionConflict { conflicts });
+    }
+
+    let mut journal = WorkspaceCommitJournal {
+        operation_id,
+        intent_identity,
+        state: WorkspaceCommitState::Prepared,
+        files,
+    };
+    persist_commit_journal(context, None, &journal)?;
+    recover_commit(context, &mut journal)?;
+    Ok(WorkspaceResponse::CommittedBatch {
+        receipt: journal.receipt(),
+    })
+}
+
+fn commit_intent_identity(writes: &[WorkspaceWrite]) -> Result<String, String> {
+    let encoded = serde_json::to_vec(writes).map_err(|error| error.to_string())?;
+    Ok(format!("sha256:{:x}", Sha256::digest(encoded)))
+}
+
+fn commit_journal_key(context: &WorkspaceContext<'_, '_, '_>, operation_id: &str) -> String {
+    let root = environment_path(context.plugin.state);
+    let root_identity = format!("{:x}", Sha256::digest(root.as_bytes()));
+    let operation_identity = format!("{:x}", Sha256::digest(operation_id.as_bytes()));
+    format!("commit/{root_identity}/{operation_identity}")
+}
+
+fn read_commit_journal(
+    context: &WorkspaceContext<'_, '_, '_>,
+    operation_id: &str,
+) -> Result<Option<WorkspaceCommitJournal>, String> {
+    let key = commit_journal_key(context, operation_id);
+    context
+        .kernel
+        .read_durable(&workspace_state_namespace(), &key)
+        .map_err(|error| error.to_string())?
+        .map(|value| {
+            let journal: WorkspaceCommitJournal =
+                serde_json::from_slice(&value).map_err(|error| error.to_string())?;
+            if journal.operation_id != operation_id {
+                return Err("workspace commit journal identity collision".into());
+            }
+            Ok(journal)
+        })
+        .transpose()
+}
+
+fn persist_commit_journal(
+    context: &WorkspaceContext<'_, '_, '_>,
+    expected: Option<&WorkspaceCommitJournal>,
+    journal: &WorkspaceCommitJournal,
+) -> Result<(), String> {
+    let key = commit_journal_key(context, &journal.operation_id);
+    let expected = expected
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let value = serde_json::to_vec(journal).map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .transact_durable(
+            &workspace_state_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected,
+                },
+                TransactionOp::Put { key, value },
+            ],
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn recover_commit(
+    context: &WorkspaceContext<'_, '_, '_>,
+    journal: &mut WorkspaceCommitJournal,
+) -> Result<(), String> {
+    if journal.state == WorkspaceCommitState::Committed {
+        return Ok(());
+    }
+
+    for file in &journal.files {
+        let resolved = resolve(context, &file.path)?;
+        let observed = inspect_version(context, &resolved, &file.path)?;
+        if observed == file.version {
+            continue;
+        }
+        if observed != file.before_version {
+            return Err(format!(
+                "workspace commit recovery conflict for {}: expected preimage {:?} or target {:?}, observed {:?}",
+                file.path, file.before_version, file.version, observed
+            ));
+        }
+        write_resolved(context, &resolved, &file.path, &file.content)?;
+        let confirmed = inspect_version(context, &resolved, &file.path)?;
+        if confirmed != file.version {
+            return Err(format!(
+                "workspace commit write verification failed for {}: expected {:?}, observed {:?}",
+                file.path, file.version, confirmed
+            ));
+        }
+    }
+
+    let prepared = journal.clone();
+    journal.state = WorkspaceCommitState::Committed;
+    persist_commit_journal(context, Some(&prepared), journal)
 }
 
 fn inspect_version(
@@ -681,6 +952,15 @@ mod tests {
                 .push(command.clone());
 
             let response = match command {
+                EnvironmentCommand::Describe => EnvironmentResponse::Description {
+                    environment: phenix_sdk::EnvironmentDescription {
+                        provider: "fixture.environment".into(),
+                        filesystem_policy: phenix_sdk::EnvironmentFilesystemPolicy::Unrestricted,
+                        atomic_file_replace: false,
+                        persistent_processes: false,
+                        pty: false,
+                    },
+                },
                 EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
                     content: path
                         .ends_with("input.txt")
@@ -1079,6 +1359,89 @@ mod tests {
     }
 
     #[test]
+    fn provider_without_atomic_replace_rejects_recoverable_commit_before_write() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(virtual_root.clone())
+            })
+            .unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(FixtureEnvironment {
+                    commands: Arc::clone(&recorded),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let capabilities = invoke(
+            &mut kernel,
+            WorkspaceCommand::Capabilities,
+            &authority(&[WORKSPACE_WRITE]),
+        )
+        .unwrap();
+        assert!(matches!(
+            capabilities,
+            WorkspaceResponse::Capabilities {
+                capabilities: WorkspaceCapabilities {
+                    recoverable_commit_atomicity: None,
+                    ..
+                }
+            }
+        ));
+
+        let commit = authority(&[WORKSPACE_WRITE, PERSISTENCE_READ, PERSISTENCE_WRITE]);
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::CommitBatch {
+                operation_id: "operation-1".into(),
+                writes: vec![WorkspaceWrite {
+                    path: "new.txt".into(),
+                    content: "new".into(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                }],
+            },
+            &commit,
+        )
+        .unwrap();
+        assert_eq!(
+            response,
+            WorkspaceResponse::UnsupportedAtomicScope {
+                requested: WorkspaceWriteAtomicity::CrashRecoverable,
+                available: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+            }
+        );
+
+        let commands = commands.lock().unwrap();
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, EnvironmentCommand::Describe)));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, EnvironmentCommand::WriteFile { .. })));
+    }
+
+    #[test]
     fn search_rejects_environment_directory_entries_outside_workspace_root() {
         let workspace = workspace_manifest();
         let workspace_id = workspace.id.clone();
@@ -1280,6 +1643,83 @@ mod tests {
             WorkspaceResponse::WrittenBatch { .. }
         ));
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "new");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recoverable_commit_retries_return_the_same_receipt() {
+        let root = temp_workspace("workspace-commit-retry");
+        fs::write(root.join("a.txt"), "old-a").unwrap();
+        fs::write(root.join("b.txt"), "old-b").unwrap();
+        let mut kernel = kernel(root.clone());
+        let read = authority(&[WORKSPACE_READ]);
+        let write = authority(&[WORKSPACE_WRITE, PERSISTENCE_READ, PERSISTENCE_WRITE]);
+
+        let read_version = |kernel: &mut Kernel, path: &str| match invoke(
+            kernel,
+            WorkspaceCommand::Read { path: path.into() },
+            &read,
+        )
+        .unwrap()
+        {
+            WorkspaceResponse::Read { version, .. } => version,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let a_version = read_version(&mut kernel, "a.txt");
+        let b_version = read_version(&mut kernel, "b.txt");
+
+        let capabilities = invoke(&mut kernel, WorkspaceCommand::Capabilities, &write).unwrap();
+        assert!(matches!(
+            capabilities,
+            WorkspaceResponse::Capabilities {
+                capabilities: WorkspaceCapabilities {
+                    recoverable_commit_atomicity: Some(WorkspaceWriteAtomicity::CrashRecoverable),
+                    ..
+                }
+            }
+        ));
+
+        let command = WorkspaceCommand::CommitBatch {
+            operation_id: "semantic-edit-1".into(),
+            writes: vec![
+                WorkspaceWrite {
+                    path: "a.txt".into(),
+                    content: "new-a".into(),
+                    expected_version: a_version,
+                },
+                WorkspaceWrite {
+                    path: "b.txt".into(),
+                    content: "new-b".into(),
+                    expected_version: b_version,
+                },
+            ],
+        };
+        let first = invoke(&mut kernel, command.clone(), &write).unwrap();
+        let second = invoke(&mut kernel, command, &write).unwrap();
+        assert_eq!(first, second);
+        let WorkspaceResponse::CommittedBatch { receipt } = first else {
+            panic!("expected committed batch");
+        };
+        assert_eq!(receipt.operation_id, "semantic-edit-1");
+        assert_eq!(receipt.files.len(), 2);
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "new-a");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "new-b");
+
+        let conflicting_retry = invoke(
+            &mut kernel,
+            WorkspaceCommand::CommitBatch {
+                operation_id: "semantic-edit-1".into(),
+                writes: vec![WorkspaceWrite {
+                    path: "a.txt".into(),
+                    content: "different".into(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                }],
+            },
+            &write,
+        )
+        .unwrap_err();
+        assert!(conflicting_retry.contains("already bound to another intent"));
+
         let _ = fs::remove_dir_all(root);
     }
 
