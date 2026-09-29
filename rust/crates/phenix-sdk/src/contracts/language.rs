@@ -470,7 +470,15 @@ pub struct CodeIdentityRebuildCheckpoint {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
     phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]

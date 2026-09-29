@@ -6,8 +6,8 @@ use phenix_core::{
 use phenix_sdk::{
     CodeChangedNeighborhood, CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditEvidence,
     CodeEntityEditResult, CodeEntityEditValidation, CodeEntityFacet, CodeEntityFacetChanges,
-    CodeEntityInsertPosition, CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
+    CodeEntityInsertPosition, CodeEntityLineage, CodeEntityLineageConfidence,
+    CodeEntityLineageKind, CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
     CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelations,
     CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView, CodeIdentityContinuityState,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
@@ -440,11 +440,7 @@ fn handle(
             validate_identity("language observation id", &observation_id)?;
             validate_identity("provider edit validation fact id", &fact_id)?;
             Ok(LanguageResponse::EditValidation {
-                validation: Some(ingest_edit_validation(
-                    context,
-                    &observation_id,
-                    &fact_id,
-                )?),
+                validation: Some(ingest_edit_validation(context, &observation_id, &fact_id)?),
             })
         }
         LanguageCommand::ReplaceEntityBody {
@@ -1256,17 +1252,13 @@ fn ingest_entity_relations(
     validate_identity("code repository id", &fact.entity.repository_id)?;
     validate_identity("logical code entity id", &fact.entity.id)?;
     validate_identity("code entity revision", &fact.revision)?;
-    let current = read_entity_revision(
-        context,
-        &fact.entity.repository_id,
-        &fact.entity.id,
-    )?
-    .ok_or_else(|| {
-        format!(
-            "unknown logical code entity: {}/{}",
-            fact.entity.repository_id, fact.entity.id
-        )
-    })?;
+    let current = read_entity_revision(context, &fact.entity.repository_id, &fact.entity.id)?
+        .ok_or_else(|| {
+            format!(
+                "unknown logical code entity: {}/{}",
+                fact.entity.repository_id, fact.entity.id
+            )
+        })?;
     if current.revision != fact.revision {
         return Err(format!(
             "relation fact revision is stale: expected {}, current {}",
@@ -1289,7 +1281,10 @@ fn ingest_entity_relations(
     });
     targets.dedup();
     for target in &targets {
-        validate_identity("relation target repository id", &target.entity.repository_id)?;
+        validate_identity(
+            "relation target repository id",
+            &target.entity.repository_id,
+        )?;
         validate_identity("relation target entity id", &target.entity.id)?;
         if let Some(revision) = &target.revision {
             validate_identity("relation target revision", revision)?;
@@ -1322,7 +1317,10 @@ fn ingest_entity_relations(
                         .read_durable(&language_namespace(), &key)
                         .map_err(|error| error.to_string())?,
                 },
-                TransactionOp::Put { key, value: encoded },
+                TransactionOp::Put {
+                    key,
+                    value: encoded,
+                },
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -1416,11 +1414,7 @@ fn read_changed_neighborhood(
     }))
 }
 
-fn edit_validation_key(
-    repository_id: &str,
-    entity_id: &str,
-    operation_id: &str,
-) -> String {
+fn edit_validation_key(repository_id: &str, entity_id: &str, operation_id: &str) -> String {
     let operation = format!("{:x}", Sha256::digest(operation_id.as_bytes()));
     format!("entity/{repository_id}/{entity_id}/edit-validation/{operation}")
 }
@@ -1453,17 +1447,13 @@ fn ingest_edit_validation(
     validate_identity("code entity revision", &fact.revision)?;
     validate_identity("semantic edit intent identity", &fact.intent_identity)?;
 
-    let current = read_entity_revision(
-        context,
-        &fact.entity.repository_id,
-        &fact.entity.id,
-    )?
-    .ok_or_else(|| {
-        format!(
-            "unknown logical code entity: {}/{}",
-            fact.entity.repository_id, fact.entity.id
-        )
-    })?;
+    let current = read_entity_revision(context, &fact.entity.repository_id, &fact.entity.id)?
+        .ok_or_else(|| {
+            format!(
+                "unknown logical code entity: {}/{}",
+                fact.entity.repository_id, fact.entity.id
+            )
+        })?;
     if current.revision != fact.revision {
         return Err("edit validation targets a stale entity revision".into());
     }
@@ -1498,7 +1488,10 @@ fn ingest_edit_validation(
                         .read_durable(&language_namespace(), &key)
                         .map_err(|error| error.to_string())?,
                 },
-                TransactionOp::Put { key, value: encoded },
+                TransactionOp::Put {
+                    key,
+                    value: encoded,
+                },
             ],
         )
         .map_err(|error| error.to_string())?;
