@@ -114,9 +114,10 @@ pub use phenix_plugin_jobs::{
 };
 pub use phenix_plugin_language::{
     language_component_id, language_component_manifest, language_factory, language_manifest,
-    language_service, DocumentProvenance, LanguageCommand, LanguageDocumentIdentity,
-    LanguageInterface, LanguageObservation, LanguageOperationKind, LanguageOperationResult,
-    LanguageProviderEpoch, LanguageResponse, LANGUAGE_SERVICE,
+    language_service, CodeEntityEditResult, CodeEntityInsertPosition, DocumentProvenance,
+    LanguageCommand, LanguageDocumentIdentity, LanguageInterface, LanguageObservation,
+    LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch, LanguageResponse,
+    LANGUAGE_SERVICE,
 };
 pub use phenix_plugin_memory::{
     memory_component_id, memory_component_manifest, memory_factory, memory_manifest,
