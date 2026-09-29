@@ -330,10 +330,11 @@ Implemented in this PR:
 
 The local provider currently:
 
-- reports its effective filesystem policy through `EnvironmentDescription`;
+- reports its effective filesystem policy and atomic-file-replace capability through `EnvironmentDescription`;
 - defaults to unrestricted host filesystem/process behavior;
 - selects restricted local policies through `PHENIX_LOCAL_FILESYSTEM_POLICY`;
-- uses `openat2` for race-safe restricted direct filesystem access;
+- uses same-directory fsync + rename publication for unrestricted direct writes and advertises atomic file replacement there;
+- uses `openat2` for race-safe restricted direct filesystem access; restricted writes do not yet advertise atomic replacement;
 - uses Bubblewrap for restricted scratch and persistent process execution;
 - inherits restricted process views across descendants;
 - provides Environment-private writable scratch in restricted modes;
@@ -392,6 +393,8 @@ The architecture is considered preserved only if tests prove:
 | Persistent process real handle | Environment provider |
 | Workspace root/project semantics | Workspace plugin |
 | Exact versions/conflict checks | Workspace plugin |
+| Recoverable project commit journal and receipts | Workspace plugin |
+| Physical file replacement guarantees | Environment provider/backend |
 | Model-visible tool schema | Tool plugin/application |
 | Model-visible shell alias | Shell tool |
 | Presets/default provider choice | Product configuration |
