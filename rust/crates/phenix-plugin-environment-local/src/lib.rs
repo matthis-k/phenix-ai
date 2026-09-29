@@ -849,29 +849,22 @@ impl LocalEnvironment {
                     .map_err(|error| format!("wait {program}: {error}"))?;
                 process.terminate_tree();
                 process.finish_readers();
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                    stdout_content_identity,
-                    stderr_content_identity,
-                ) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::Process {
                     exit_code: status.code().unwrap_or(-1),
-                    stdout,
-                    stderr,
-                    truncated: !stdout_complete || !stderr_complete,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes: Some(stdout_bytes),
-                    stderr_bytes: Some(stderr_bytes),
-                    stdout_content_identity: Some(stdout_content_identity),
-                    stderr_content_identity: Some(stderr_content_identity),
-                    stdout_recovery: stream_recovery(stdout_complete),
-                    stderr_recovery: stream_recovery(stderr_complete),
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -957,29 +950,22 @@ impl LocalEnvironment {
                     process.terminate_tree();
                     process.finish_readers();
                 }
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                    stdout_content_identity,
-                    stderr_content_identity,
-                ) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::ProcessOutput {
-                    stdout,
-                    stderr,
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
                     exit_code,
-                    truncated: !stdout_complete || !stderr_complete,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes: Some(stdout_bytes),
-                    stderr_bytes: Some(stderr_bytes),
-                    stdout_content_identity: Some(stdout_content_identity),
-                    stderr_content_identity: Some(stderr_content_identity),
-                    stdout_recovery: stream_recovery(stdout_complete),
-                    stderr_recovery: stream_recovery(stderr_complete),
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
             EnvironmentCommand::CloseProcess { handle } => {
@@ -994,29 +980,22 @@ impl LocalEnvironment {
                     .wait()
                     .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                    stdout_content_identity,
-                    stderr_content_identity,
-                ) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::ProcessClosed {
-                    stdout,
-                    stderr,
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
                     exit_code: Some(status.code().unwrap_or(-1)),
-                    truncated: !stdout_complete || !stderr_complete,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes: Some(stdout_bytes),
-                    stderr_bytes: Some(stderr_bytes),
-                    stdout_content_identity: Some(stdout_content_identity),
-                    stderr_content_identity: Some(stderr_content_identity),
-                    stdout_recovery: stream_recovery(stdout_complete),
-                    stderr_recovery: stream_recovery(stderr_complete),
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
         }
@@ -1084,27 +1063,69 @@ mod tests {
         let mut capture = CaptureBuffer::default();
         let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
         capture.push(&full);
-        let (bytes, complete, total_bytes, content_identity) = capture.take();
-        assert_eq!(bytes.len(), MAX_CAPTURE_BYTES);
-        assert!(!complete);
-        assert_eq!(total_bytes, (MAX_CAPTURE_BYTES + 17) as u64);
+        let stream = capture.take();
+        assert_eq!(stream.view.len(), MAX_CAPTURE_BYTES);
+        assert!(!stream.complete);
+        assert_eq!(stream.total_bytes, (MAX_CAPTURE_BYTES + 17) as u64);
         assert_eq!(
-            content_identity,
+            stream.content_identity,
             ArtifactRevision::from_content(&full),
             "stream identity must cover bytes discarded from the bounded view"
         );
-        assert!(matches!(
-            stream_recovery(complete),
-            ProcessStreamRecovery::Unavailable { .. }
-        ));
+        assert_eq!(stream.exact.as_deref(), Some(full.as_slice()));
 
         capture.push(b"small");
-        let (bytes, complete, total_bytes, content_identity) = capture.take();
-        assert_eq!(bytes, b"small");
-        assert!(complete);
-        assert_eq!(total_bytes, 5);
-        assert_eq!(content_identity, ArtifactRevision::from_content(b"small"));
-        assert_eq!(stream_recovery(complete), ProcessStreamRecovery::Inline);
+        let stream = capture.take();
+        assert_eq!(stream.view, b"small");
+        assert!(stream.complete);
+        assert_eq!(stream.total_bytes, 5);
+        assert_eq!(stream.content_identity, ArtifactRevision::from_content(b"small"));
+        assert_eq!(stream.exact.as_deref(), Some(b"small".as_slice()));
+    }
+
+    #[test]
+    fn exact_capture_quota_fails_recovery_explicitly() {
+        let root = temp_root();
+        let environment = LocalEnvironment::new(
+            root.clone(),
+            EnvironmentFilesystemPolicy::Unrestricted,
+        );
+        let mut capture = CaptureBuffer::default();
+        capture.push(&vec![b'x'; MAX_EXACT_CAPTURE_BYTES + 1]);
+        let stream = capture.take();
+        assert!(matches!(
+            environment.stream_recovery(&stream),
+            ProcessStreamRecovery::Unavailable { reason }
+                if reason.contains("exact-capture quota")
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn truncated_stream_is_persisted_as_an_exact_reference() {
+        let root = temp_root();
+        let environment = LocalEnvironment::new(
+            root.clone(),
+            EnvironmentFilesystemPolicy::Unrestricted,
+        );
+        let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
+        let mut capture = CaptureBuffer::default();
+        capture.push(&full);
+        let stream = capture.take();
+        let ProcessStreamRecovery::Reference { reference } =
+            environment.stream_recovery(&stream)
+        else {
+            panic!("bounded process view must retain an exact reference");
+        };
+        assert_eq!(reference.digest, ArtifactRevision::from_content(&full));
+        assert_eq!(reference.bytes, full.len());
+        let recovered = environment
+            .process_output_store
+            .get(&reference)
+            .unwrap()
+            .expect("persisted stream remains recoverable");
+        assert_eq!(recovered, full);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
