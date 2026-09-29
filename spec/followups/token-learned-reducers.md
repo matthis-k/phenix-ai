@@ -37,9 +37,9 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Reducer cannot mutate history, memory, code identity, routing, or usage-policy truth.
 - [x] Reducer input is self-contained and bounded; the backend does not need context/source-fetch authority to inspect eligible material.
 - [x] Added a separate zero-authority helper-backed reducer plugin. It imports only `phenix.invocation.helper@1`, rejects helper tool calls, and derives proposal recovery evidence from the authorized request rather than model output.
-- [ ] Removed material stays exactly recoverable while retention requires it.
+- [x] Removed material stays exactly recoverable while retention requires it. Omission and derived summaries require exact context references, and compaction rejects reduced retained forms without recovery evidence.
 - [ ] Benchmarks report marginal savings after deterministic reductions, not standalone compression ratios.
-- [ ] Quality regressions and retries count against the reducer.
+- [x] Quality regressions and retries count against the reducer. #599 derives success-normalized task cost from every distinct charged attempt, including failed/retry/helper work; reducer reacquisition remains causal metadata on that charged work.
 
 ## Ownership
 
