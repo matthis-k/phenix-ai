@@ -749,7 +749,8 @@ mod tests {
 
     #[test]
     fn reducer_summary_must_reference_the_eligible_items_exact_recovery() {
-        let request = reducer_request();
+        let mut request = reducer_request();
+        request.max_output_bytes = 4096;
         let proposal = ContextReducerProposal {
             execution_id: "e1".into(),
             expected_projection: request.expected_projection.clone(),
