@@ -29,6 +29,7 @@ pub mod step_attempt;
 pub mod step_runner;
 pub mod step_transaction;
 pub mod usage;
+pub mod tool_observation;
 pub mod usage_policy;
 pub mod workspace;
 
@@ -64,6 +65,7 @@ pub use sessions::*;
 pub use step_attempt::*;
 pub use step_runner::*;
 pub use step_transaction::*;
+pub use tool_observation::*;
 pub use usage::*;
 pub use usage_policy::*;
 pub use workspace::*;
