@@ -26,17 +26,17 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Preserve a deterministic eager fallback for providers without deferred tool support.
 - [x] Define one typed tool observation with compact model view, exact source/artifact reference or explicit recovery failure, content identity, and invalidation metadata.
 - [x] Promote large raw outputs to artifacts before collapsing their model view.
-- [ ] Reuse unchanged observations only when the tool declares safe invalidation semantics.
+- [x] Reuse unchanged observations only when the tool declares safe invalidation semantics.
 - [ ] Run deterministic filtering/joining/aggregation outside the frontier-model context.
-- [ ] Keep tool call/result groups intact across pruning and compaction.
+- [x] Keep tool call/result groups intact across pruning and compaction.
 
 ## Acceptance
 
 - [x] Inactive tool schemas do not enter a deferred-capable model request.
 - [x] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
-- [ ] Repeated unchanged observations avoid reinserting the full payload.
-- [ ] Volatile shell output is never reused merely because command text matches.
-- [ ] Disabling lazy/result reduction restores a bounded eager path or typed exhaustion.
+- [x] Repeated unchanged observations avoid reinserting the full payload.
+- [x] Volatile shell output is never reused merely because command text matches.
+- [x] Disabling lazy/result reduction restores a bounded eager path or typed exhaustion.
 
 ## Ownership
 
