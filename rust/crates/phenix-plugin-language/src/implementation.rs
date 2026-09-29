@@ -4,9 +4,11 @@ use phenix_core::{
     ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
-    CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditResult, CodeEntityFacet,
-    CodeEntityFacetChanges, CodeEntityInsertPosition, CodeEntityLineage,
-    CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFactBatch,
+    CodeChangedNeighborhood, CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditEvidence,
+    CodeEntityEditResult, CodeEntityEditValidation, CodeEntityFacet, CodeEntityFacetChanges,
+    CodeEntityInsertPosition, CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
+    CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
+    CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelations,
     CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView, CodeIdentityContinuityState,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
     CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
