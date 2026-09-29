@@ -18,6 +18,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] The optional reducer import executes with empty authority and can only return a proposal; canonical context, persistence, routing, memory, and usage-policy mutation remain context/owner-controlled.
 - [x] Ordinary helper invocation responses expose the durable charged attempt ID, so reducer backends can return verifiable helper-attempt evidence instead of inventing an opaque accounting identifier.
 - [x] Context rejects reducer proposals unless the claimed helper attempt exists, belongs to the request execution and parent attempt, has a charged reservation, is an ordinary helper attempt, and settled successfully.
+- [x] Reducer proposals derive their causal reduction identity from that verified helper attempt. The evaluator fixture proves helper cost remains in total task cost while later reacquisition stays attributed to the same reduction.
 
 ## Required implementation
 
@@ -26,7 +27,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [ ] Benchmark SWE-Pruner-style code evidence reduction after deterministic graph/context filtering.
 - [ ] Benchmark ACON-style history reduction separately from TokenPilot-inspired cache/layout policy.
 - [x] Route reducer model work through ordinary bounded helper invocation; the helper-backed reducer calls `phenix.invocation.helper@1` with no tools or reducer authority and returns the charged helper attempt ID for validation.
-- [ ] Attribute reducer cost and later reacquisition to the same task evaluation.
+- [x] Attribute reducer cost and later reacquisition to the same task evaluation. Reducer proposals expose a stable `context-reduction:<helper-attempt>` causal identity; #599 charges the helper attempt as ordinary task work and groups later `ReacquisitionUsage` under that identity without double-counting it.
 - [x] Keep reducers independently disableable.
 - [ ] Reject a default-on reducer unless it improves the success/cost frontier on representative tasks.
 
