@@ -3688,6 +3688,7 @@ mod tests {
                 exit_code: 0,
                 ref stdout,
                 ref stderr,
+                ..
             } if stdout == "phenix-runtime-bash" && stderr.is_empty()
         ));
 
