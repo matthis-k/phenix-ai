@@ -5,10 +5,10 @@ use phenix_core::{
     ServiceId, ServiceRole,
 };
 use phenix_sdk::{
-    context_reducer_service, ContextReducerCommand, ContextReducerInterface, ContextReducerProposal,
-    ContextReducerRequest, ContextReducerResponse, DerivedReductionSummary,
-    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind, HelperInvocationRequest,
-    HelperInvocationResponse,
+    context_reducer_service, ContextReducerCommand, ContextReducerInterface,
+    ContextReducerProposal, ContextReducerRequest, ContextReducerResponse, DerivedReductionSummary,
+    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
+    HelperInvocationRequest, HelperInvocationResponse,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,11 +26,12 @@ pub struct HelperReducerConfig {
 #[must_use]
 pub fn helper_reducer_manifest() -> PluginManifest {
     PluginManifest {
-        id: PluginId::parse(HELPER_REDUCER_PLUGIN).expect("static helper reducer plugin id is valid"),
+        id: PluginId::parse(HELPER_REDUCER_PLUGIN)
+            .expect("static helper reducer plugin id is valid"),
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: vec![
-            PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid"),
+            PluginId::parse(STEP_RUNNER_PLUGIN).expect("static step runner plugin id is valid")
         ],
         services: vec![ServiceContribution {
             role: ServiceRole::Terminal,
@@ -88,7 +89,9 @@ struct HelperReducerSdk<'host, 'runtime> {
 type HelperReducerContext<'host, 'runtime> =
     PluginContext<'host, 'runtime, HelperReducerSdk<'host, 'runtime>>;
 
-fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> HelperReducerContext<'host, 'runtime> {
+fn context<'host, 'runtime>(
+    host: &'host PluginHost<'runtime>,
+) -> HelperReducerContext<'host, 'runtime> {
     PluginContext::new(
         host,
         HelperReducerSdk {
@@ -116,7 +119,10 @@ impl PluginInstance for HelperReducer {
         let context = context(host);
         let command = context
             .kernel
-            .decode_projected::<ContextReducerCommand>(&ContextReducerInterface::interface_id(), input)
+            .decode_projected::<ContextReducerCommand>(
+                &ContextReducerInterface::interface_id(),
+                input,
+            )
             .map_err(|error| error.to_string())?;
         let ContextReducerCommand::Reduce { request } = command;
         let response = reduce(&context, &self.config, request)?;
@@ -153,8 +159,9 @@ fn reduce(
     }
     let output = std::str::from_utf8(response.output.as_ref())
         .map_err(|_| "context reducer helper output is not UTF-8".to_owned())?;
-    let decisions: HelperReducerOutput = serde_json::from_str(output.trim())
-        .map_err(|error| format!("context reducer helper output is not valid decision JSON: {error}"))?;
+    let decisions: HelperReducerOutput = serde_json::from_str(output.trim()).map_err(|error| {
+        format!("context reducer helper output is not valid decision JSON: {error}")
+    })?;
     build_proposal(&request, &response.attempt_id, decisions)
 }
 
@@ -203,7 +210,10 @@ fn build_proposal(
     let mut eligible = BTreeMap::new();
     for item in &request.eligible {
         if eligible.insert(item.item_id.as_str(), item).is_some() {
-            return Err(format!("context reducer request contains duplicate item {}", item.item_id));
+            return Err(format!(
+                "context reducer request contains duplicate item {}",
+                item.item_id
+            ));
         }
     }
 
@@ -229,18 +239,21 @@ fn build_proposal(
             DecisionAction::Retain => retained_item_ids.push(item_id),
             DecisionAction::Omit => {
                 if item.recovery.is_none() {
-                    return Err(format!("context reducer helper cannot omit unrecoverable item {item_id}"));
+                    return Err(format!(
+                        "context reducer helper cannot omit unrecoverable item {item_id}"
+                    ));
                 }
                 omitted_item_ids.push(item_id);
             }
             DecisionAction::Summarize(summary) => {
                 if summary.trim().is_empty() {
-                    return Err(format!("context reducer helper returned empty summary for {item_id}"));
+                    return Err(format!(
+                        "context reducer helper returned empty summary for {item_id}"
+                    ));
                 }
-                let recovery = item
-                    .recovery
-                    .clone()
-                    .ok_or_else(|| format!("context reducer helper cannot summarize unrecoverable item {item_id}"))?;
+                let recovery = item.recovery.clone().ok_or_else(|| {
+                    format!("context reducer helper cannot summarize unrecoverable item {item_id}")
+                })?;
                 retained_item_ids.push(item_id.clone());
                 summaries.push(DerivedReductionSummary {
                     item_id,
@@ -252,7 +265,9 @@ fn build_proposal(
     }
     for item_id in eligible.keys() {
         if !seen.contains(*item_id) {
-            return Err(format!("context reducer helper omitted decision for item {item_id}"));
+            return Err(format!(
+                "context reducer helper omitted decision for item {item_id}"
+            ));
         }
     }
 
