@@ -22,7 +22,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 ## Required implementation
 
 - [x] Expose authorized tool descriptors through a searchable catalog.
-- [ ] Load full schemas only for the selected task-relevant tool set.
+- [x] Load full schemas only for the selected task-relevant tool set.
 - [x] Preserve a deterministic eager fallback for providers without deferred tool support.
 - [ ] Define one typed tool observation with compact model view, exact source/artifact reference, content identity, and invalidation metadata.
 - [ ] Promote large raw outputs to artifacts before collapsing their model view.
@@ -32,7 +32,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 
 ## Acceptance
 
-- [ ] Inactive tool schemas do not enter a deferred-capable model request.
+- [x] Inactive tool schemas do not enter a deferred-capable model request.
 - [ ] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
 - [ ] Repeated unchanged observations avoid reinserting the full payload.
 - [ ] Volatile shell output is never reused merely because command text matches.
