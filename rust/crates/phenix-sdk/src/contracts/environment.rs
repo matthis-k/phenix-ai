@@ -1,4 +1,4 @@
-use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
+use phenix_core::{ArtifactRevision, ComponentInterface, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -122,6 +122,10 @@ pub enum EnvironmentResponse {
         stdout_bytes: Option<u64>,
         #[serde(default)]
         stderr_bytes: Option<u64>,
+        #[serde(default)]
+        stdout_content_identity: Option<ArtifactRevision>,
+        #[serde(default)]
+        stderr_content_identity: Option<ArtifactRevision>,
     },
     ProcessOpened {
         handle: String,
@@ -139,6 +143,10 @@ pub enum EnvironmentResponse {
         stdout_bytes: Option<u64>,
         #[serde(default)]
         stderr_bytes: Option<u64>,
+        #[serde(default)]
+        stdout_content_identity: Option<ArtifactRevision>,
+        #[serde(default)]
+        stderr_content_identity: Option<ArtifactRevision>,
     },
     ProcessClosed {
         stdout: Vec<u8>,
@@ -153,6 +161,10 @@ pub enum EnvironmentResponse {
         stdout_bytes: Option<u64>,
         #[serde(default)]
         stderr_bytes: Option<u64>,
+        #[serde(default)]
+        stdout_content_identity: Option<ArtifactRevision>,
+        #[serde(default)]
+        stderr_content_identity: Option<ArtifactRevision>,
     },
 }
 
