@@ -265,6 +265,19 @@ pub struct ContextReducerProposal {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextReducerMeasurement {
+    pub reduction_id: String,
+    pub stage: ContextReducerStage,
+    /// Bytes presented to the learned reducer after deterministic filtering.
+    pub deterministic_input_bytes: u64,
+    /// Bytes the reducer would retain in the projected context for those items.
+    pub reduced_output_bytes: u64,
+    /// Diagnostic byte delta for this stage only. Task efficiency still comes from #599.
+    pub marginal_saved_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContextReducerCommand {
     Reduce { request: ContextReducerRequest },
@@ -310,6 +323,7 @@ pub enum ReducerValidationError {
     MissingRecoveryReference { item_id: String },
     DuplicateSummary { item_id: String },
     SummaryWithoutExactSource { item_id: String },
+    SummaryForNonRetainedItem { item_id: String },
     SummaryMissingEligibleRecovery { item_id: String },
     OutputBudgetExceeded { requested: u64, allowed: u64 },
 }
@@ -411,6 +425,11 @@ impl ContextReducerProposal {
                     item_id: summary.item_id.clone(),
                 });
             }
+            if !self.retained_item_ids.contains(&summary.item_id) {
+                return Err(ReducerValidationError::SummaryForNonRetainedItem {
+                    item_id: summary.item_id.clone(),
+                });
+            }
             if let Some(expected) = eligible
                 .get(summary.item_id.as_str())
                 .and_then(|item| item.recovery.as_ref())
@@ -423,6 +442,47 @@ impl ContextReducerProposal {
             }
         }
         Ok(())
+    }
+
+    pub fn measure_against(
+        &self,
+        request: &ContextReducerRequest,
+        actual_projection: &ProjectionRevision,
+    ) -> Result<ContextReducerMeasurement, ReducerValidationError> {
+        self.validate_against(request, actual_projection)?;
+        let summaries = self
+            .summaries
+            .iter()
+            .map(|summary| (summary.item_id.as_str(), summary))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let omitted = self
+            .omitted_item_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+
+        let mut deterministic_input_bytes = 0_u64;
+        let mut reduced_output_bytes = 0_u64;
+        for item in &request.eligible {
+            let source_bytes = u64::try_from(item.content.len()).unwrap_or(u64::MAX);
+            deterministic_input_bytes = deterministic_input_bytes.saturating_add(source_bytes);
+            if omitted.contains(item.item_id.as_str()) {
+                continue;
+            }
+            let retained_bytes = summaries
+                .get(item.item_id.as_str())
+                .map(|summary| u64::try_from(summary.content.len()).unwrap_or(u64::MAX))
+                .unwrap_or(source_bytes);
+            reduced_output_bytes = reduced_output_bytes.saturating_add(retained_bytes);
+        }
+
+        Ok(ContextReducerMeasurement {
+            reduction_id: self.reduction_id.clone(),
+            stage: self.stage,
+            deterministic_input_bytes,
+            reduced_output_bytes,
+            marginal_saved_bytes: deterministic_input_bytes.saturating_sub(reduced_output_bytes),
+        })
     }
 }
 
@@ -819,6 +879,80 @@ mod tests {
                 allowed: 64
             }) if requested > 64
         ));
+    }
+
+    #[test]
+    fn reducer_summary_must_be_a_retained_replacement() {
+        let mut request = reducer_request();
+        request.max_output_bytes = 4096;
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
+            retained_item_ids: Vec::new(),
+            omitted_item_ids: vec!["history-1".into()],
+            summaries: vec![DerivedReductionSummary {
+                item_id: "history-1".into(),
+                content: Bytes::from(b"summary".to_vec()),
+                exact_sources: vec![exact("context:history-1")],
+            }],
+            encoded_output_bytes: 10,
+        };
+
+        assert_eq!(
+            proposal.validate_against(&request, &request.expected_projection),
+            Err(ReducerValidationError::SummaryForNonRetainedItem {
+                item_id: "history-1".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn reducer_measurement_reports_marginal_bytes_after_deterministic_filtering() {
+        let mut request = reducer_request();
+        request.max_output_bytes = 4096;
+        request.eligible.push(ReducerEligibleItem {
+            item_id: "history-2".into(),
+            content: Bytes::from(b"second payload".to_vec()),
+            recovery: Some(exact("context:history-2")),
+        });
+        let proposal = ContextReducerProposal {
+            execution_id: "e1".into(),
+            expected_projection: request.expected_projection.clone(),
+            configuration_revision: request.configuration_revision.clone(),
+            authority_revision: request.authority_revision.clone(),
+            capability_generation: request.capability_generation.clone(),
+            stage: request.stage,
+            helper_attempt_id: "attempt-1".into(),
+            reduction_id: ContextReducerProposal::reduction_identity("attempt-1"),
+            retained_item_ids: vec!["history-1".into()],
+            omitted_item_ids: vec!["history-2".into()],
+            summaries: vec![DerivedReductionSummary {
+                item_id: "history-1".into(),
+                content: Bytes::from(b"short".to_vec()),
+                exact_sources: vec![exact("context:history-1")],
+            }],
+            encoded_output_bytes: 10,
+        };
+
+        let measurement = proposal
+            .measure_against(&request, &request.expected_projection)
+            .unwrap();
+        assert_eq!(measurement.stage, ContextReducerStage::HistorySummary);
+        assert_eq!(
+            measurement.deterministic_input_bytes,
+            (b"history payload".len() + b"second payload".len()) as u64
+        );
+        assert_eq!(measurement.reduced_output_bytes, b"short".len() as u64);
+        assert_eq!(
+            measurement.marginal_saved_bytes,
+            measurement.deterministic_input_bytes - measurement.reduced_output_bytes
+        );
     }
 
     #[test]
