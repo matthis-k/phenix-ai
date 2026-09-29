@@ -2352,6 +2352,24 @@ mod tests {
         output.project().map_err(|error| error.to_string())
     }
 
+    fn invoke_workspace(
+        kernel: &mut Kernel,
+        command: WorkspaceCommand,
+    ) -> Result<WorkspaceResponse, String> {
+        let input = serde_json::to_vec(&phenix_core::PhenixValue::from(&command)).unwrap();
+        let output = kernel
+            .invoke(
+                &workspace_service(),
+                &input,
+                &phenix_plugin_workspace::workspace_manifest().maximum_authority,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+        let output: phenix_core::PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| error.to_string())?;
+        output.project().map_err(|error| error.to_string())
+    }
+
     fn epoch(value: u64) -> ProviderEpoch {
         ProviderEpoch::new(value).unwrap()
     }
@@ -2961,6 +2979,49 @@ mod tests {
         )
         .unwrap_err();
         assert!(body_error.contains("no exact semantic body range"));
+
+        let semantic_edit_error = invoke(
+            &mut kernel,
+            LanguageCommand::ReplaceEntityBody {
+                operation_id: "unsupported-body-edit".into(),
+                repository_id: first.entity.repository_id.clone(),
+                entity_id: first.entity.id.clone(),
+                revision: first.revision.clone(),
+                content: "{ 42 }".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(semantic_edit_error.contains("no exact semantic body range"));
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "pub fn outer() { fn inner() {} }\n"
+        );
+
+        let expected_version = WorkspaceFileVersion::Present {
+            content_hash: fallback
+                .document
+                .file_version
+                .as_deref()
+                .and_then(|revision| revision.strip_prefix("sha256:"))
+                .expect("workspace fallback has a canonical source revision")
+                .to_owned(),
+        };
+        assert!(matches!(
+            invoke_workspace(
+                &mut kernel,
+                WorkspaceCommand::Write {
+                    path: "src/lib.rs".into(),
+                    content: "pub fn textual_fallback() {}\n".into(),
+                    expected_version,
+                },
+            )
+            .unwrap(),
+            WorkspaceResponse::Written { .. }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "pub fn textual_fallback() {}\n"
+        );
 
         let LanguageResponse::EntityChanges { page } = invoke(
             &mut kernel,
