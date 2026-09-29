@@ -119,7 +119,7 @@ pub enum WorkspaceResponse {
         stdout_content_identity: Option<ArtifactRevision>,
         #[serde(default)]
         stderr_content_identity: Option<ArtifactRevision>,
-        stdout_recovery: ProcessStreamRecovery,
-        stderr_recovery: ProcessStreamRecovery,
+        stdout_recovery: Box<ProcessStreamRecovery>,
+        stderr_recovery: Box<ProcessStreamRecovery>,
     },
 }
