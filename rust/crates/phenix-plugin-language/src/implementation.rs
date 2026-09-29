@@ -2302,6 +2302,21 @@ mod tests {
                             "name": "observed",
                             "signature_identity": "signature-1",
                             "body_identity": "body-1",
+                            "source": {
+                                "position_encoding": "utf8",
+                                "range": {
+                                    "start": {"line": 0, "character": 0},
+                                    "end": {"line": 0, "character": 16}
+                                },
+                                "selection_range": {
+                                    "start": {"line": 0, "character": 3},
+                                    "end": {"line": 0, "character": 11}
+                                },
+                                "body_range": {
+                                    "start": {"line": 0, "character": 14},
+                                    "end": {"line": 0, "character": 16}
+                                }
+                            },
                             "facets": {
                                 "existence": "existence-1",
                                 "name_location": "location-1",
@@ -2355,6 +2370,24 @@ mod tests {
         assert_eq!(revision.provider_id, "rust-analyzer");
         assert_eq!(revision.provider_epoch, epoch(7));
         assert_eq!(revision.document, fallback.document);
+
+        let LanguageResponse::EntityBody { view: Some(body) } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntityBody {
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                max_bytes: 1024,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected provider-backed semantic body");
+        };
+        assert_eq!(body.content, "{}");
+        assert!(body.complete);
+        assert_eq!(body.range.start.character, 14);
+        assert_eq!(body.range.end.character, 16);
 
         fs::write(
             root.join("src/lib.rs"),
@@ -2529,6 +2562,19 @@ mod tests {
         assert_eq!(locator.range.end.character, 34);
         assert_eq!(locator.selection_range.start.character, 7);
         assert_eq!(locator.selection_range.end.character, 12);
+        assert!(locator.body_range.is_none());
+
+        let body_error = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntityBody {
+                repository_id: first.entity.repository_id.clone(),
+                entity_id: first.entity.id.clone(),
+                revision: first.revision.clone(),
+                max_bytes: 1024,
+            },
+        )
+        .unwrap_err();
+        assert!(body_error.contains("no exact semantic body range"));
 
         let LanguageResponse::EntityChanges { page } = invoke(
             &mut kernel,
