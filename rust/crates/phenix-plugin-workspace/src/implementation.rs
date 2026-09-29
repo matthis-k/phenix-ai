@@ -901,6 +901,15 @@ mod tests {
                 .push(command.clone());
 
             let response = match command {
+                EnvironmentCommand::Describe => EnvironmentResponse::Description {
+                    environment: phenix_sdk::EnvironmentDescription {
+                        provider: "fixture.environment".into(),
+                        filesystem_policy: phenix_sdk::EnvironmentFilesystemPolicy::Unrestricted,
+                        atomic_file_replace: false,
+                        persistent_processes: false,
+                        pty: false,
+                    },
+                },
                 EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
                     content: path
                         .ends_with("input.txt")
@@ -1212,6 +1221,88 @@ mod tests {
     }
 
     #[test]
+    fn provider_without_atomic_replace_rejects_recoverable_commit_before_write() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedHarness::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_harness(&resolved).unwrap();
+
+        let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(virtual_root.clone())
+            })
+            .unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(FixtureEnvironment {
+                    commands: Arc::clone(&recorded),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let capabilities = invoke(
+            &mut kernel,
+            WorkspaceCommand::Capabilities,
+            &authority(&[WORKSPACE_WRITE]),
+        )
+        .unwrap();
+        assert!(matches!(
+            capabilities,
+            WorkspaceResponse::Capabilities {
+                capabilities: WorkspaceCapabilities {
+                    recoverable_commit_atomicity: None,
+                    ..
+                }
+            }
+        ));
+
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::CommitBatch {
+                operation_id: "operation-1".into(),
+                writes: vec![WorkspaceWrite {
+                    path: "new.txt".into(),
+                    content: "new".into(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                }],
+            },
+            &authority(&[WORKSPACE_WRITE]),
+        )
+        .unwrap();
+        assert_eq!(
+            response,
+            WorkspaceResponse::UnsupportedAtomicScope {
+                requested: WorkspaceWriteAtomicity::CrashRecoverable,
+                available: WorkspaceWriteAtomicity::PreconditionCheckedSequential,
+            }
+        );
+
+        let commands = commands.lock().unwrap();
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, EnvironmentCommand::Describe)));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, EnvironmentCommand::WriteFile { .. })));
+    }
+
+    #[test]
     fn search_rejects_environment_directory_entries_outside_workspace_root() {
         let workspace = workspace_manifest();
         let workspace_id = workspace.id.clone();
@@ -1413,6 +1504,84 @@ mod tests {
             WorkspaceResponse::WrittenBatch { .. }
         ));
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "new");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recoverable_commit_retries_return_the_same_receipt() {
+        let root = temp_workspace("workspace-commit-retry");
+        fs::write(root.join("a.txt"), "old-a").unwrap();
+        fs::write(root.join("b.txt"), "old-b").unwrap();
+        let mut kernel = kernel(root.clone());
+        let read = authority(&[WORKSPACE_READ]);
+        let write = authority(&[WORKSPACE_WRITE]);
+
+        let read_version = |kernel: &mut Kernel, path: &str| match invoke(
+            kernel,
+            WorkspaceCommand::Read { path: path.into() },
+            &read,
+        )
+        .unwrap()
+        {
+            WorkspaceResponse::Read { version, .. } => version,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let a_version = read_version(&mut kernel, "a.txt");
+        let b_version = read_version(&mut kernel, "b.txt");
+
+        let capabilities = invoke(&mut kernel, WorkspaceCommand::Capabilities, &write).unwrap();
+        assert!(matches!(
+            capabilities,
+            WorkspaceResponse::Capabilities {
+                capabilities: WorkspaceCapabilities {
+                    recoverable_commit_atomicity:
+                        Some(WorkspaceWriteAtomicity::CrashRecoverable),
+                    ..
+                }
+            }
+        ));
+
+        let command = WorkspaceCommand::CommitBatch {
+            operation_id: "semantic-edit-1".into(),
+            writes: vec![
+                WorkspaceWrite {
+                    path: "a.txt".into(),
+                    content: "new-a".into(),
+                    expected_version: a_version,
+                },
+                WorkspaceWrite {
+                    path: "b.txt".into(),
+                    content: "new-b".into(),
+                    expected_version: b_version,
+                },
+            ],
+        };
+        let first = invoke(&mut kernel, command.clone(), &write).unwrap();
+        let second = invoke(&mut kernel, command, &write).unwrap();
+        assert_eq!(first, second);
+        let WorkspaceResponse::CommittedBatch { receipt } = first else {
+            panic!("expected committed batch");
+        };
+        assert_eq!(receipt.operation_id, "semantic-edit-1");
+        assert_eq!(receipt.files.len(), 2);
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "new-a");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "new-b");
+
+        let conflicting_retry = invoke(
+            &mut kernel,
+            WorkspaceCommand::CommitBatch {
+                operation_id: "semantic-edit-1".into(),
+                writes: vec![WorkspaceWrite {
+                    path: "a.txt".into(),
+                    content: "different".into(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                }],
+            },
+            &write,
+        )
+        .unwrap_err();
+        assert!(conflicting_retry.contains("already bound to another intent"));
+
         let _ = fs::remove_dir_all(root);
     }
 
