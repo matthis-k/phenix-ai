@@ -18,21 +18,21 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 
 ## Required implementation
 
-- [ ] Add semantic reads for entity body, callers, references, implementations, and changed neighborhood.
+- [x] Add semantic reads for entity body, callers, references, implementations, and changed neighborhood.
 - [x] Add semantic edits for replace body, insert relative to entity, and remove entity.
 - [x] Bind semantic reads and edits to exact logical entity and source revision.
 - [x] Apply semantic writes through recoverable workspace commits and reject stale source revisions before mutation.
-- [ ] Require declared syntax/structure validation for syntax-preserving edits; unsupported actions remain explicit textual operations.
+- [x] Require declared syntax/structure validation for syntax-preserving edits; unsupported actions remain explicit textual operations.
 - [x] Keep textual file operations as an explicit fallback for unsupported semantic actions; unsupported entity edits fail before mutation and callers may then choose revision-checked Workspace writes.
 - [ ] Reuse language providers for facts; do not expose raw LSP transport.
-- [ ] Preserve exact diff/artifact evidence for applied edits.
+- [x] Preserve exact diff/artifact evidence for applied edits.
 
 ## Acceptance
 
 - [x] A semantic edit fails rather than applying to a stale entity or source revision.
 - [x] Successful edits return the Workspace commit receipt with exact path plus pre/post content revisions; diff/artifact payload retention remains open.
 - [x] Unsupported semantic support fails closed; file operations remain a separate explicit fallback without semantic guarantees.
-- [ ] Reads use bounded entity neighborhoods instead of whole files when supported.
+- [x] Reads use bounded entity neighborhoods instead of whole files when supported.
 - [ ] Provider replacement does not change the public Phenix action contract.
 
 ## Ownership
