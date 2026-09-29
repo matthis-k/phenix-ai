@@ -51,6 +51,40 @@ pub struct ToolObservation {
     pub invalidation: ToolObservationInvalidation,
 }
 
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "projection", rename_all = "snake_case")]
+pub enum ToolObservationProjection {
+    View {
+        occurrence_id: String,
+        value: PhenixValue,
+        complete: bool,
+        content_identity: ArtifactRevision,
+        exact_source: ToolObservationExactSource,
+    },
+    Reference {
+        occurrence_id: String,
+        content_identity: ArtifactRevision,
+        exact_source: ToolObservationExactSource,
+    },
+    Reused {
+        occurrence_id: String,
+        prior_occurrence_id: String,
+        content_identity: ArtifactRevision,
+        exact_source: ToolObservationExactSource,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolObservationProjectionError {
+    Invalid(ToolObservationValidationError),
+    ModelViewExceedsBound {
+        observed: u64,
+        limit: u64,
+    },
+    ExactRecoveryUnavailable,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolObservationValidationError {
     MissingOccurrenceId,
@@ -91,6 +125,69 @@ impl ToolObservation {
             ToolObservationInvalidation::Dependencies { context } if context == current
         )
     }
+
+    #[must_use]
+    pub fn reusable_from(&self, prior: &Self) -> bool {
+        self.status == prior.status
+            && self.content_identity == prior.content_identity
+            && matches!(
+                (&self.invalidation, &prior.invalidation),
+                (
+                    ToolObservationInvalidation::Dependencies { context: current },
+                    ToolObservationInvalidation::Dependencies { context: previous },
+                ) if current == previous
+            )
+    }
+
+    pub fn project(
+        &self,
+        prior: Option<&Self>,
+        max_model_view_bytes: u64,
+        reduction_enabled: bool,
+    ) -> Result<ToolObservationProjection, ToolObservationProjectionError> {
+        self.validate()
+            .map_err(ToolObservationProjectionError::Invalid)?;
+
+        if let Some(prior) = prior.filter(|prior| self.reusable_from(prior)) {
+            return Ok(ToolObservationProjection::Reused {
+                occurrence_id: self.occurrence_id.clone(),
+                prior_occurrence_id: prior.occurrence_id.clone(),
+                content_identity: self.content_identity.clone(),
+                exact_source: self.exact_source.clone(),
+            });
+        }
+
+        if self.model_view_bytes <= max_model_view_bytes {
+            return Ok(ToolObservationProjection::View {
+                occurrence_id: self.occurrence_id.clone(),
+                value: self.model_view.clone(),
+                complete: self.model_view_complete,
+                content_identity: self.content_identity.clone(),
+                exact_source: self.exact_source.clone(),
+            });
+        }
+
+        if !reduction_enabled {
+            return Err(ToolObservationProjectionError::ModelViewExceedsBound {
+                observed: self.model_view_bytes,
+                limit: max_model_view_bytes,
+            });
+        }
+
+        if !matches!(
+            self.exact_source,
+            ToolObservationExactSource::Reference { .. }
+        ) {
+            return Err(ToolObservationProjectionError::ExactRecoveryUnavailable);
+        }
+
+        Ok(ToolObservationProjection::Reference {
+            occurrence_id: self.occurrence_id.clone(),
+            content_identity: self.content_identity.clone(),
+            exact_source: self.exact_source.clone(),
+        })
+    }
+}
 }
 
 #[cfg(test)]
@@ -191,4 +288,60 @@ mod tests {
             .insert("workspace:file".into(), "rev-2".into());
         assert!(!value.reusable_under(&changed));
     }
+    #[test]
+    fn unchanged_reusable_observation_projects_as_reference_to_prior_occurrence() {
+        let context = reuse_context();
+        let first = observation(ToolObservationInvalidation::Dependencies {
+            context: context.clone(),
+        });
+        let mut second = observation(ToolObservationInvalidation::Dependencies { context });
+        second.occurrence_id = "call-2".into();
+
+        assert!(matches!(
+            second.project(Some(&first), 1024, true).unwrap(),
+            ToolObservationProjection::Reused {
+                prior_occurrence_id,
+                ..
+            } if prior_occurrence_id == "call-1"
+        ));
+    }
+
+    #[test]
+    fn volatile_observation_never_reuses_matching_bytes() {
+        let first = observation(ToolObservationInvalidation::Volatile);
+        let mut second = observation(ToolObservationInvalidation::Volatile);
+        second.occurrence_id = "call-2".into();
+
+        assert!(matches!(
+            second.project(Some(&first), 1024, true).unwrap(),
+            ToolObservationProjection::View { .. }
+        ));
+    }
+
+    #[test]
+    fn oversized_view_requires_recovery_or_typed_exhaustion() {
+        let mut value = observation(ToolObservationInvalidation::Volatile);
+        value.model_view_bytes = 4096;
+
+        assert!(matches!(
+            value.project(None, 1024, false),
+            Err(ToolObservationProjectionError::ModelViewExceedsBound {
+                observed: 4096,
+                limit: 1024,
+            })
+        ));
+        assert!(matches!(
+            value.project(None, 1024, true).unwrap(),
+            ToolObservationProjection::Reference { .. }
+        ));
+
+        value.exact_source = ToolObservationExactSource::Unavailable {
+            reason: "quota".into(),
+        };
+        assert_eq!(
+            value.project(None, 1024, true),
+            Err(ToolObservationProjectionError::ExactRecoveryUnavailable)
+        );
+    }
+
 }
