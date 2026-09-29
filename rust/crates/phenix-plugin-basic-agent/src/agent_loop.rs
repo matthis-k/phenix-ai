@@ -193,7 +193,7 @@ pub enum AgentToolExecutionResponse {
         #[serde(default)]
         activated_tools: Vec<ModelToolDescriptor>,
         #[serde(default)]
-        observation: Option<ToolObservation>,
+        observation: Option<Box<ToolObservation>>,
     },
     Cancelled,
 }
@@ -528,7 +528,7 @@ fn run(
                     )
                     .map_err(|error| format!("tool observation projection failed: {error:?}"))?;
                 result.output = projection.to_value();
-                observations.insert(call.callable_id.clone(), observation);
+                observations.insert(call.callable_id.clone(), *observation);
             }
             usage.tool_calls = usage
                 .tool_calls
