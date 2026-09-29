@@ -14,14 +14,14 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 - [x] Declaration, name, and semantic body ranges stay distinct. Provider facts may supply an exact encoding-aware body range and `ReadEntityBody` reads only that range; document-symbol declarations do not fabricate body evidence.
 - [x] Provider source/name/body ranges are validated for ordering and containment before they become durable source locators.
 - [x] Workspace exposes a durable `CommitBatch` operation with exact preconditions, operation identity, pre/post revision receipts, and roll-forward recovery. All target reads/writes stay behind Environment. Providers that do not advertise atomic file replacement reject the recoverable scope before mutation.
-- [x] Added revision-bound `ReplaceEntityBody`: it revalidates the current logical revision and exact workspace source revision, converts the provider body range with the negotiated position encoding, and commits through `Workspace::CommitBatch`. A retry against the changed source fails before a second mutation.
+- [x] Added revision-bound semantic writes for body replacement, insertion before or after an entity, and entity removal. Each action revalidates the current logical revision and exact workspace source revision, converts provider ranges with the negotiated position encoding, and commits through `Workspace::CommitBatch`. A retry against changed source fails before another mutation.
 
 ## Required implementation
 
 - [ ] Add semantic reads for entity body, callers, references, implementations, and changed neighborhood.
-- [ ] Add semantic edits for replace body, insert relative to entity, and remove entity.
-- [ ] Bind every operation to exact logical entity and source revision.
-- [ ] Apply writes transactionally and reject stale source revisions.
+- [x] Add semantic edits for replace body, insert relative to entity, and remove entity.
+- [x] Bind semantic reads and edits to exact logical entity and source revision.
+- [x] Apply semantic writes through recoverable workspace commits and reject stale source revisions before mutation.
 - [ ] Require declared syntax/structure validation for syntax-preserving edits; unsupported actions remain explicit textual operations.
 - [ ] Keep textual file read/patch as the fallback for unsupported languages/providers.
 - [ ] Reuse language providers for facts; do not expose raw LSP transport.
