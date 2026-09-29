@@ -1109,6 +1109,23 @@ mod tests {
     }
 
     #[test]
+    fn complete_stream_stays_inline_without_persisting() {
+        let root = temp_root();
+        let environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
+        let mut capture = CaptureBuffer::default();
+        capture.push(b"complete");
+        let stream = capture.take();
+
+        assert_eq!(environment.stream_recovery(&stream), ProcessStreamRecovery::Inline);
+        assert!(
+            !root.join(".phenix/process-output").exists(),
+            "complete inline output must not create recovery artifacts"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn truncated_stream_is_persisted_as_an_exact_reference() {
         let root = temp_root();
         let mut environment =
