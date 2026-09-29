@@ -1530,6 +1530,24 @@ enum SemanticEditTarget {
     Entity,
 }
 
+impl SemanticEditTarget {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Body => "replace_body",
+            Self::BeforeEntity => "insert_before",
+            Self::AfterEntity => "insert_after",
+            Self::Entity => "remove_entity",
+        }
+    }
+}
+
+fn semantic_edit_intent_identity(target: SemanticEditTarget, replacement: &str) -> String {
+    digest_identity(
+        "semantic-edit-intent",
+        &[target.label().to_owned(), replacement.to_owned()],
+    )
+}
+
 fn replace_entity_body(
     context: &LanguageContext<'_, '_, '_>,
     operation_id: String,
@@ -1626,6 +1644,19 @@ fn edit_entity_source(
         },
         SemanticEditTarget::Entity => locator.range.clone(),
     };
+    let intent_identity = semantic_edit_intent_identity(target, &replacement);
+    let validation = read_edit_validation(context, repository_id, entity_id, &operation_id)?
+        .ok_or_else(|| {
+            "semantic edit requires provider syntax/structure validation before mutation".to_owned()
+        })?;
+    if validation.revision != revision
+        || validation.entity != locator.entity
+        || validation.intent_identity != intent_identity
+        || validation.provider_id != locator.provider_id
+        || validation.provider_epoch != locator.provider_epoch
+    {
+        return Err("semantic edit validation does not match the current edit intent".into());
+    }
     if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
         return Err("semantic edit requires workspace-backed provenance".into());
     }
@@ -1678,6 +1709,11 @@ fn edit_entity_source(
     if end < start {
         return Err("semantic edit range end precedes start".into());
     }
+    let before = source
+        .get(start..end)
+        .ok_or_else(|| "semantic edit range is not on UTF-8 boundaries".to_owned())?
+        .to_owned();
+    let before_content_identity = format!("sha256:{:x}", Sha256::digest(source.as_bytes()));
     let mut updated = String::with_capacity(
         source
             .len()
@@ -1695,6 +1731,15 @@ fn edit_entity_source(
             .get(end..)
             .ok_or_else(|| "semantic edit range end is not on a UTF-8 boundary".to_owned())?,
     );
+
+    let after_content_identity = format!("sha256:{:x}", Sha256::digest(updated.as_bytes()));
+    let evidence = CodeEntityEditEvidence {
+        range: edit_range,
+        before,
+        after: replacement,
+        before_content_identity,
+        after_content_identity,
+    };
 
     let input = context
         .kernel
@@ -1742,6 +1787,8 @@ fn edit_entity_source(
         source_revision: locator.revision,
         document: locator.document,
         receipt,
+        validation,
+        evidence,
     })
 }
 
