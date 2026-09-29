@@ -293,7 +293,6 @@ fn require_recoverable_commit(
     }
 }
 
-
 fn read(context: &WorkspaceContext<'_, '_, '_>, path: String) -> Result<WorkspaceResponse, String> {
     require(context, WORKSPACE_READ)?;
     let resolved = resolve(context, &path)?;
@@ -1537,8 +1536,7 @@ mod tests {
             capabilities,
             WorkspaceResponse::Capabilities {
                 capabilities: WorkspaceCapabilities {
-                    recoverable_commit_atomicity:
-                        Some(WorkspaceWriteAtomicity::CrashRecoverable),
+                    recoverable_commit_atomicity: Some(WorkspaceWriteAtomicity::CrashRecoverable),
                     ..
                 }
             }

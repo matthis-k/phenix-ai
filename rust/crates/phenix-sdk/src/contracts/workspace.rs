@@ -52,7 +52,6 @@ pub struct WorkspaceCommitReceipt {
     pub files: Vec<WorkspaceCommittedFile>,
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 pub struct WorkspaceVersionConflict {
     pub path: String,
@@ -81,7 +80,6 @@ pub struct WorkspaceCapabilities {
     #[serde(default)]
     pub recoverable_commit_atomicity: Option<WorkspaceWriteAtomicity>,
 }
-
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]

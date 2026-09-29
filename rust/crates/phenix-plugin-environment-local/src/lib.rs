@@ -404,12 +404,16 @@ impl LocalEnvironment {
                 .create_new(true)
                 .open(&temporary)
                 .map_err(|error| {
-                    format!("create atomic write temporary {}: {error}", temporary.display())
+                    format!(
+                        "create atomic write temporary {}: {error}",
+                        temporary.display()
+                    )
                 })?;
             if let Ok(metadata) = fs::metadata(resolved) {
-                file.set_permissions(metadata.permissions()).map_err(|error| {
-                    format!("preserve permissions for {}: {error}", resolved.display())
-                })?;
+                file.set_permissions(metadata.permissions())
+                    .map_err(|error| {
+                        format!("preserve permissions for {}: {error}", resolved.display())
+                    })?;
             }
             file.write_all(content)
                 .map_err(|error| format!("write {}: {error}", temporary.display()))?;
