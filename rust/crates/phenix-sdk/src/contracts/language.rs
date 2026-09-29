@@ -489,6 +489,15 @@ pub struct CodeEntityEditResult {
     pub receipt: WorkspaceCommitReceipt,
 }
 
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeEntityInsertPosition {
+    Before,
+    After,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
@@ -576,6 +585,20 @@ pub enum LanguageCommand {
         entity_id: String,
         revision: String,
         content: String,
+    },
+    InsertRelativeToEntity {
+        operation_id: String,
+        repository_id: String,
+        entity_id: String,
+        revision: String,
+        position: CodeEntityInsertPosition,
+        content: String,
+    },
+    RemoveEntity {
+        operation_id: String,
+        repository_id: String,
+        entity_id: String,
+        revision: String,
     },
     GetEntityFacet {
         repository_id: String,
