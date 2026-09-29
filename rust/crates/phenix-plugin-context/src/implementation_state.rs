@@ -363,7 +363,8 @@ fn verify_reducer_helper_attempt(
     if attempt.attribution.kind != UsageAttemptKind::Helper {
         return Err("context reducer helper attempt is not an ordinary helper invocation".into());
     }
-    if attempt.attribution.parent_attempt_id.as_deref() != Some(request.parent_attempt_id.as_str()) {
+    if attempt.attribution.parent_attempt_id.as_deref() != Some(request.parent_attempt_id.as_str())
+    {
         return Err("context reducer helper attempt parent does not match request".into());
     }
     if attempt.reservation_id.is_none() {
