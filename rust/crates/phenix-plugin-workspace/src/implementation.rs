@@ -515,11 +515,19 @@ fn process(
             exit_code,
             stdout,
             stderr,
+            stdout_complete,
+            stderr_complete,
+            stdout_bytes,
+            stderr_bytes,
             ..
         } => Ok(WorkspaceResponse::Process {
             exit_code,
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout_complete,
+            stderr_complete,
+            stdout_bytes,
+            stderr_bytes,
         }),
         other => Err(format!(
             "environment returned unexpected process response: {other:?}"
@@ -643,6 +651,10 @@ mod tests {
                     stdout: b"fixture-process".to_vec(),
                     stderr: Vec::new(),
                     truncated: false,
+                    stdout_complete: true,
+                    stderr_complete: true,
+                    stdout_bytes: Some(b"fixture-process".len() as u64),
+                    stderr_bytes: Some(0),
                 },
                 other => return Err(format!("unexpected fixture environment command: {other:?}")),
             };
