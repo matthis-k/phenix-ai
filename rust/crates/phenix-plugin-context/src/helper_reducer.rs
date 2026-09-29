@@ -279,6 +279,7 @@ fn build_proposal(
         capability_generation: request.capability_generation.clone(),
         stage: request.stage,
         helper_attempt_id: helper_attempt_id.to_owned(),
+        reduction_id: ContextReducerProposal::reduction_identity(helper_attempt_id),
         retained_item_ids,
         omitted_item_ids,
         summaries,
@@ -379,6 +380,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(proposal.helper_attempt_id, "attempt-helper");
+        assert_eq!(
+            proposal.reduction_id,
+            ContextReducerProposal::reduction_identity("attempt-helper")
+        );
         assert_eq!(proposal.summaries.len(), 1);
         assert_eq!(
             proposal.summaries[0].exact_sources,
