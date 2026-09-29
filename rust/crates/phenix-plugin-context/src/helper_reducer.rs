@@ -200,7 +200,7 @@ fn reducer_strategy(stage: ContextReducerStage) -> &'static str {
 fn reducer_instruction(stage: ContextReducerStage) -> &'static str {
     match stage {
         ContextReducerStage::CodeEvidence => {
-            "Return JSON with one decision per item. Keep code evidence needed to answer the query. Omit recoverable code that is unrelated to the task. Summaries must preserve relevant entity names, signatures, relationships, and failure evidence. Each decision is retain, omit, or summarize. Do not invent item IDs."
+            "Return JSON with one decision per item. Keep code evidence needed to answer the query. Prefer retain or omit for code so exact relevant lines stay intact. Omit recoverable code that is unrelated to the task. Use summaries only for explanatory material, preserving relevant entity names, signatures, relationships, and failure evidence. Each decision is retain, omit, or summarize. Do not invent item IDs."
         }
         ContextReducerStage::ObservationSummary => {
             "Return JSON with one decision per item. Reduce repeated observation detail while preserving errors, exit status, changed state, identifiers, and facts needed for the query. Each decision is retain, omit, or summarize. Do not invent item IDs."
