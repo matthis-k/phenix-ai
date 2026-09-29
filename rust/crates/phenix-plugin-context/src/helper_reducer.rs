@@ -6,11 +6,11 @@ use phenix_core::{
 };
 use phenix_sdk::{
     context_reducer_service, ContextReducerCommand, ContextReducerInterface, ContextReducerProposal,
-    ContextReducerRequest, ContextReducerResponse, ContextReducerStage, DerivedReductionSummary,
+    ContextReducerRequest, ContextReducerResponse, DerivedReductionSummary,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind, HelperInvocationRequest,
     HelperInvocationResponse,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const HELPER_REDUCER_PLUGIN: &str = "phenix.context-reducer.helper";
@@ -285,7 +285,9 @@ enum DecisionAction {
 mod tests {
     use super::*;
     use phenix_core::{ContextResourceId, ContextRevisionId};
-    use phenix_sdk::{ExactContextReference, ProjectionRevision, ReducerEligibleItem};
+    use phenix_sdk::{
+        ContextReducerStage, ExactContextReference, ProjectionRevision, ReducerEligibleItem,
+    };
 
     fn request() -> ContextReducerRequest {
         ContextReducerRequest {
