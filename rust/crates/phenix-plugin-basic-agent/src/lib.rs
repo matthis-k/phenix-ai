@@ -68,8 +68,7 @@ mod tests {
         ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
         ContextScope, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
         PhenixSchema, PhenixValue, ResolvedHarness, ResolvedHarnessActivation, SkillCommand,
-        SkillDefinition, SkillId,
-        SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
+        SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
     };
     use phenix_sdk::{
         model_inference_service, ModelInferenceInterface, ModelInferenceRequest,
