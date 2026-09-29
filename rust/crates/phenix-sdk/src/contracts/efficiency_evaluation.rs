@@ -1199,7 +1199,14 @@ mod tests {
     }
 
     #[test]
-    fn task_derivation_preserves_reacquisition_cause_attribution() {
+    fn task_derivation_charges_reducer_helper_and_preserves_reacquisition_cause() {
+        let helper = attempt(
+            "root-1",
+            "helper-attempt",
+            super::super::UsageAttemptKind::Helper,
+            super::super::AttemptOutcome::Succeeded,
+            7,
+        );
         let mut charged = attempt(
             "root-1",
             "retry-attempt",
@@ -1211,9 +1218,9 @@ mod tests {
             .record
             .reacquisition
             .push(super::super::ReacquisitionUsage {
-                reacquisition_id: "reacquire:checkpoint-7:retry-attempt".into(),
-                cause_identity: "context-reduction:checkpoint-7".into(),
-                source_attempt_id: Some("root-attempt".into()),
+                reacquisition_id: "reacquire:helper-attempt:retry-attempt".into(),
+                cause_identity: "context-reduction:helper-attempt".into(),
+                source_attempt_id: Some("helper-attempt".into()),
                 fresh_input_tokens: super::super::UsageQuantity::Reported { value: 11 },
                 tool_result_bytes: 120,
                 model_calls: 1,
@@ -1232,15 +1239,19 @@ mod tests {
                 evidence_revision: "result-v1".into(),
                 outcome: EvaluationOutcome::Succeeded,
             },
-            attempts: vec![charged],
+            attempts: vec![helper, charged],
             root_elapsed_ms: Some(250),
         };
 
         let record = derive_efficiency_task_record(&evidence).unwrap();
+        assert_eq!(
+            record.known_cost_microunits, 10,
+            "reducer helper work remains part of total task cost"
+        );
         assert_eq!(record.reacquisition_causes.len(), 1);
         let cause = &record.reacquisition_causes[0];
-        assert_eq!(cause.cause_identity, "context-reduction:checkpoint-7");
-        assert_eq!(cause.source_attempt_id.as_deref(), Some("root-attempt"));
+        assert_eq!(cause.cause_identity, "context-reduction:helper-attempt");
+        assert_eq!(cause.source_attempt_id.as_deref(), Some("helper-attempt"));
         assert_eq!(cause.fresh_input_tokens.reported, 11);
         assert_eq!(cause.tool_result_bytes, 120);
         assert_eq!(cause.model_calls, 1);
