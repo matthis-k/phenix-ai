@@ -1079,17 +1079,18 @@ mod tests {
         assert_eq!(stream.view, b"small");
         assert!(stream.complete);
         assert_eq!(stream.total_bytes, 5);
-        assert_eq!(stream.content_identity, ArtifactRevision::from_content(b"small"));
+        assert_eq!(
+            stream.content_identity,
+            ArtifactRevision::from_content(b"small")
+        );
         assert_eq!(stream.exact.as_deref(), Some(b"small".as_slice()));
     }
 
     #[test]
     fn exact_capture_quota_fails_recovery_explicitly() {
         let root = temp_root();
-        let environment = LocalEnvironment::new(
-            root.clone(),
-            EnvironmentFilesystemPolicy::Unrestricted,
-        );
+        let environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
         let mut capture = CaptureBuffer::default();
         capture.push(&vec![b'x'; MAX_EXACT_CAPTURE_BYTES + 1]);
         let stream = capture.take();
@@ -1112,8 +1113,7 @@ mod tests {
         let mut capture = CaptureBuffer::default();
         capture.push(&full);
         let stream = capture.take();
-        let ProcessStreamRecovery::Reference { reference } =
-            environment.stream_recovery(&stream)
+        let ProcessStreamRecovery::Reference { reference } = environment.stream_recovery(&stream)
         else {
             panic!("bounded process view must retain an exact reference");
         };
