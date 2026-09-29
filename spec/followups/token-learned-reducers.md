@@ -25,7 +25,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Keep exact recovery references for every removed exact payload.
 - [ ] Benchmark SWE-Pruner-style code evidence reduction after deterministic graph/context filtering.
 - [ ] Benchmark ACON-style history reduction separately from TokenPilot-inspired cache/layout policy.
-- [ ] Route reducer model work through ordinary bounded helper invocation.
+- [x] Route reducer model work through ordinary bounded helper invocation; the helper-backed reducer calls `phenix.invocation.helper@1` with no tools or reducer authority and returns the charged helper attempt ID for validation.
 - [ ] Attribute reducer cost and later reacquisition to the same task evaluation.
 - [x] Keep reducers independently disableable.
 - [ ] Reject a default-on reducer unless it improves the success/cost frontier on representative tasks.
