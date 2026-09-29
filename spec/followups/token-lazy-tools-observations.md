@@ -11,8 +11,8 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 ## Implementation progress
 
 - [x] Artifact content identities are bounded digest references independent of payload size.
-- [ ] Project environment-owned process completeness and recovery metadata through the workspace response.
-- [ ] Compute full-stream identities at the environment process owner before any truncation.
+- [x] Project environment-owned process completeness, full byte counts, content identities, and typed recovery state through the workspace response.
+- [x] Compute stdout/stderr SHA-256 identities incrementally at the environment process owner before bounded views discard bytes.
 - [ ] Persist exact stdout/stderr artifacts at the environment process owner and project typed references or explicit recovery failure.
 - [x] The tool service exposes bounded, revision-bound descriptor search with schema identities and selected schema loading; stale cursors and catalog revisions fail closed.
 - [x] Regression coverage rejects query-mismatched pagination cursors and schema loads against a superseded catalog revision.
