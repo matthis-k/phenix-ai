@@ -4,9 +4,9 @@ use phenix_core::{
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
-    WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
+    WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -534,8 +534,8 @@ fn process(
             stderr_bytes,
             stdout_content_identity,
             stderr_content_identity,
-            stdout_recovery,
-            stderr_recovery,
+            stdout_recovery: Box::new(stdout_recovery),
+            stderr_recovery: Box::new(stderr_recovery),
         }),
         other => Err(format!(
             "environment returned unexpected process response: {other:?}"
@@ -561,7 +561,7 @@ mod tests {
         local_environment_component_manifest, local_environment_factory_for,
         local_environment_manifest,
     };
-    use phenix_sdk::environment_service;
+    use phenix_sdk::{environment_service, ProcessStreamRecovery};
     use std::{
         fs,
         process::Command,
@@ -934,8 +934,8 @@ mod tests {
                     == Some(&phenix_core::ArtifactRevision::from_content(b"fixture-process"))
                 && stderr_content_identity.as_ref()
                     == Some(&phenix_core::ArtifactRevision::from_content(b""))
-                && stdout_recovery == &ProcessStreamRecovery::Inline
-                && stderr_recovery == &ProcessStreamRecovery::Inline
+                && stdout_recovery.as_ref() == &ProcessStreamRecovery::Inline
+                && stderr_recovery.as_ref() == &ProcessStreamRecovery::Inline
         ));
         assert!(matches!(
             invoke(
