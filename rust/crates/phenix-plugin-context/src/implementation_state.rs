@@ -13,18 +13,20 @@ use phenix_sdk::{
     assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
     context_service, derive_continuation_delta, project_continuation_import,
     select_continuation_export, AdmittedContextItem, AttemptOutcome, CachePlacement,
-    ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
+    CompactionProposal, ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDescriptor,
+    ContextInjection,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
-    ContextReducerCommand, ContextReducerInterface, ContextReducerRequest, ContextReducerResponse,
-    ContextReducerStage, ContextResourceKind, ContextResourceRevision, ContextResponse,
+    ContextReducerCommand, ContextReducerInterface, ContextReducerProposal, ContextReducerRequest,
+    ContextReducerResponse, ContextReducerStage, ContextResourceKind, ContextResourceRevision,
+    ContextResponse,
     ContextRetention, ContextScope, ContextSource, ContinuationExportResult,
     ContinuationImportRequest, ContinuationProjectionRequest, ExactContextReference,
     ExecutionCommand, ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
-    StepAttemptCommand, StepAttemptInterface, StepAttemptPhase, StepAttemptResponse,
-    UsageAttemptKind, WorkerTaskState,
+    RetentionTransition, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
+    StepAttemptResponse, UsageAttemptKind, WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -142,8 +144,12 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
-        if let ContextCommand::RequestReduction { request } = &command {
-            require_reducer_stage_enabled(&self.enabled_reducer_stages, request.stage)?;
+        match &command {
+            ContextCommand::RequestReduction { request }
+            | ContextCommand::CommitReduction { request, .. } => {
+                require_reducer_stage_enabled(&self.enabled_reducer_stages, request.stage)?;
+            }
+            _ => {}
         }
         let response = handle(&context, &mut self.state, command)?;
         context
@@ -288,6 +294,10 @@ fn handle(
             require_active_execution(context, &request.execution_id)?;
             request_reduction(context, state, request)
         }
+        ContextCommand::CommitReduction { request, proposal } => {
+            require_active_execution(context, &request.execution_id)?;
+            commit_reduction(context, state, request, proposal)
+        }
         ContextCommand::ExportContinuation { request } => {
             Ok(ContextResponse::ContinuationExported {
                 result: export_continuation(context, state, request)?,
@@ -335,6 +345,127 @@ fn request_reduction(
     Ok(ContextResponse::ReductionProposed {
         proposal,
         measurement,
+    })
+}
+
+fn commit_reduction(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    request: ContextReducerRequest,
+    proposal: ContextReducerProposal,
+) -> Result<ContextResponse, String> {
+    let actual_projection = state.projection_revision(&request.execution_id);
+    let measurement = proposal
+        .measure_against(&request, &actual_projection)
+        .map_err(|error| format!("context reducer proposal rejected at commit: {error:?}"))?;
+    verify_reducer_helper_attempt(context, &request, &proposal)?;
+
+    let compaction = reduction_compaction_proposal(state, &request, &proposal)?;
+    let previous = read_raw(context, CONTEXT_PROJECTION_STATE_KEY)?;
+    let mut next = state.clone();
+    let commit = next
+        .commit_compaction_proposal(compaction)
+        .map_err(|error| format!("context reduction commit failed: {error:?}"))?;
+    persist_state(context, &mut next, previous)?;
+    *state = next;
+
+    Ok(ContextResponse::ReductionCommitted {
+        proposal,
+        measurement,
+        commit,
+    })
+}
+
+fn reduction_compaction_proposal(
+    state: &ContextStateService,
+    request: &ContextReducerRequest,
+    proposal: &ContextReducerProposal,
+) -> Result<CompactionProposal, String> {
+    let projection = state
+        .projection(&request.execution_id)
+        .ok_or_else(|| format!("context projection is not admitted: {}", request.execution_id))?;
+    if projection.revision != request.expected_projection {
+        return Err(format!(
+            "context reducer commit is stale: expected {:?}, actual {:?}",
+            request.expected_projection, projection.revision
+        ));
+    }
+
+    let next_cache_epoch = projection
+        .revision
+        .cache_epoch
+        .checked_add(1)
+        .ok_or_else(|| "context reducer cache epoch overflow".to_owned())?;
+    let mut transitions = Vec::new();
+    let mut exact_sources = Vec::new();
+    let mut compact_view = Vec::new();
+
+    for eligible in &request.eligible {
+        let admitted = projection
+            .admitted
+            .get(&eligible.item_id)
+            .ok_or_else(|| format!("context reducer item is not admitted: {}", eligible.item_id))?;
+        let summary = proposal
+            .summaries
+            .iter()
+            .find(|summary| summary.item_id == eligible.item_id);
+
+        if proposal.omitted_item_ids.contains(&eligible.item_id) {
+            let recovery = eligible.recovery.clone().ok_or_else(|| {
+                format!(
+                    "context reducer omitted item without recovery: {}",
+                    eligible.item_id
+                )
+            })?;
+            exact_sources.push(recovery.clone());
+            transitions.push(RetentionTransition {
+                item_id: eligible.item_id.clone(),
+                from: admitted.retention,
+                to: ContextRetention::Reference,
+                recovery: Some(recovery),
+            });
+        } else if let Some(summary) = summary {
+            let recovery = eligible.recovery.clone().ok_or_else(|| {
+                format!(
+                    "context reducer summarized item without recovery: {}",
+                    eligible.item_id
+                )
+            })?;
+            exact_sources.extend(summary.exact_sources.iter().cloned());
+            if !compact_view.is_empty() {
+                compact_view.extend_from_slice(b"\n\n");
+            }
+            compact_view.extend_from_slice(b"[");
+            compact_view.extend_from_slice(eligible.item_id.as_bytes());
+            compact_view.extend_from_slice(b"]\n");
+            compact_view.extend_from_slice(summary.content.as_ref());
+            transitions.push(RetentionTransition {
+                item_id: eligible.item_id.clone(),
+                from: admitted.retention,
+                to: ContextRetention::Compact,
+                recovery: Some(recovery),
+            });
+        }
+    }
+
+    exact_sources.sort();
+    exact_sources.dedup();
+    let content_identity = content_hash(&compact_view).as_str().to_owned();
+
+    Ok(CompactionProposal {
+        execution_id: request.execution_id.clone(),
+        expected_projection: request.expected_projection.clone(),
+        next_cache_epoch,
+        transitions,
+        checkpoint: ProjectionCheckpoint {
+            checkpoint_id: proposal.reduction_id.clone(),
+            execution_id: request.execution_id.clone(),
+            source_revision: request.expected_projection.clone(),
+            content_identity,
+            compact_view: Bytes::from(compact_view),
+            exact_sources,
+            tool_groups: Vec::new(),
+        },
     })
 }
 
