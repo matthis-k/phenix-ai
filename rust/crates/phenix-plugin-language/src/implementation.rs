@@ -2551,6 +2551,49 @@ mod tests {
         assert_eq!(body.range.start.character, 14);
         assert_eq!(body.range.end.character, 16);
 
+        let LanguageResponse::EntityEdit { result: edit } = invoke(
+            &mut kernel,
+            LanguageCommand::ReplaceEntityBody {
+                operation_id: "replace-observed-body-1".into(),
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                content: "{ 42 }".into(),
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected committed semantic body replacement");
+        };
+        assert_eq!(edit.entity, revision.entity);
+        assert_eq!(edit.source_revision, revision.revision);
+        assert_eq!(edit.receipt.operation_id, "replace-observed-body-1");
+        assert_eq!(edit.receipt.files.len(), 1);
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "fn observed() { 42 }\n"
+        );
+
+        let stale_edit = invoke(
+            &mut kernel,
+            LanguageCommand::ReplaceEntityBody {
+                operation_id: "replace-observed-body-2".into(),
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                content: "{ 99 }".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            stale_edit.contains("source revision is stale"),
+            "unexpected stale semantic edit error: {stale_edit}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "fn observed() { 42 }\n"
+        );
+
         fs::write(
             root.join("src/lib.rs"),
             "fn changed_after_observation() {}\n",
