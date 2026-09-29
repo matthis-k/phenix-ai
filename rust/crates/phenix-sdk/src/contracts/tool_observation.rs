@@ -51,7 +51,6 @@ pub struct ToolObservation {
     pub invalidation: ToolObservationInvalidation,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "projection", rename_all = "snake_case")]
 pub enum ToolObservationProjection {
@@ -78,10 +77,7 @@ pub enum ToolObservationProjection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolObservationProjectionError {
     Invalid(ToolObservationValidationError),
-    ModelViewExceedsBound {
-        observed: u64,
-        limit: u64,
-    },
+    ModelViewExceedsBound { observed: u64, limit: u64 },
     ExactRecoveryUnavailable,
 }
 
