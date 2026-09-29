@@ -6,12 +6,13 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
-    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
+    CodeEntityEditResult, CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator,
+    CodeEntitySourceView, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
+    CodeIdentityRebuildCheckpoint,
     CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, LANGUAGE_SERVICE,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceWrite, LANGUAGE_SERVICE,
     WORKSPACE_SERVICE,
 };
 use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
@@ -24,6 +25,7 @@ const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const WORKSPACE_READ: &str = "workspace.read";
+const WORKSPACE_WRITE: &str = "workspace.write";
 
 #[derive(Default)]
 struct LanguageState {
@@ -60,6 +62,7 @@ pub fn language_manifest() -> PluginManifest {
             capability(PERSISTENCE_READ),
             capability(PERSISTENCE_WRITE),
             capability(WORKSPACE_READ),
+            capability(WORKSPACE_WRITE),
         ]),
     }
 }
@@ -377,6 +380,28 @@ fn handle(
             validate_identity("code entity revision", &revision)?;
             Ok(LanguageResponse::EntityBody {
                 view: read_entity_body(context, &repository_id, &entity_id, &revision, max_bytes)?,
+            })
+        }
+        LanguageCommand::ReplaceEntityBody {
+            operation_id,
+            repository_id,
+            entity_id,
+            revision,
+            content,
+        } => {
+            validate_identity("semantic edit operation id", &operation_id)?;
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntityEdit {
+                result: replace_entity_body(
+                    context,
+                    operation_id,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                    content,
+                )?,
             })
         }
         LanguageCommand::GetEntityFacet {
@@ -1066,6 +1091,148 @@ fn read_entity_body(
         .clone()
         .ok_or_else(|| "code entity has no exact semantic body range".to_owned())?;
     read_entity_range(context, locator, range, max_bytes, "entity body")
+}
+
+fn replace_entity_body(
+    context: &LanguageContext<'_, '_, '_>,
+    operation_id: String,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    replacement: String,
+) -> Result<CodeEntityEditResult, String> {
+    let current = read_entity_revision(context, repository_id, entity_id)?
+        .ok_or_else(|| format!("unknown logical code entity: {repository_id}/{entity_id}"))?;
+    if current.revision != revision {
+        return Err(format!(
+            "code entity revision is stale: expected {revision}, current {}",
+            current.revision
+        ));
+    }
+
+    let locator = read_entity_source_locator(context, repository_id, entity_id, revision)?
+        .ok_or_else(|| format!("code entity revision has no exact source locator: {revision}"))?;
+    let body_range = locator
+        .body_range
+        .clone()
+        .ok_or_else(|| "code entity has no exact semantic body range".to_owned())?;
+    if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
+        return Err("semantic body replacement requires workspace-backed provenance".into());
+    }
+    let expected_revision = locator
+        .document
+        .file_version
+        .as_deref()
+        .ok_or_else(|| "semantic body replacement requires an exact workspace revision".to_owned())?;
+
+    let input = context
+        .kernel
+        .encode_value(&WorkspaceCommand::Read {
+            path: locator.document.path.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+    let output = context
+        .kernel
+        .invoke_service_abi(&workspace_service(), &input, context.call.authority, None)
+        .map_err(|error| error.to_string())?;
+    let response = context
+        .kernel
+        .decode_projected::<WorkspaceResponse>(&WorkspaceInterface::interface_id(), &output)
+        .map_err(|error| error.to_string())?;
+    let WorkspaceResponse::Read {
+        path,
+        content: source,
+        version,
+    } = response
+    else {
+        return Err("workspace returned a non-read response while preparing semantic edit".into());
+    };
+    if path != locator.document.path {
+        return Err(format!(
+            "semantic edit path mismatch: expected {}, observed {path}",
+            locator.document.path
+        ));
+    }
+    let WorkspaceFileVersion::Present { content_hash } = &version else {
+        return Err(format!("semantic edit source path is absent: {path}"));
+    };
+    if !workspace_revision_matches(content_hash, expected_revision) {
+        return Err(format!(
+            "semantic edit source revision is stale: expected {expected_revision}, current {}",
+            workspace_revision_label(content_hash)
+        ));
+    }
+
+    let start = source_position_offset(&source, &body_range.start, locator.position_encoding)?;
+    let end = source_position_offset(&source, &body_range.end, locator.position_encoding)?;
+    if end < start {
+        return Err("semantic body range end precedes start".into());
+    }
+    let mut updated = String::with_capacity(
+        source
+            .len()
+            .saturating_sub(end.saturating_sub(start))
+            .saturating_add(replacement.len()),
+    );
+    updated.push_str(
+        source
+            .get(..start)
+            .ok_or_else(|| "semantic body range start is not on a UTF-8 boundary".to_owned())?,
+    );
+    updated.push_str(&replacement);
+    updated.push_str(
+        source
+            .get(end..)
+            .ok_or_else(|| "semantic body range end is not on a UTF-8 boundary".to_owned())?,
+    );
+
+    let input = context
+        .kernel
+        .encode_value(&WorkspaceCommand::CommitBatch {
+            operation_id,
+            writes: vec![WorkspaceWrite {
+                path: locator.document.path.clone(),
+                content: updated,
+                expected_version: version,
+            }],
+        })
+        .map_err(|error| error.to_string())?;
+    let output = context
+        .kernel
+        .invoke_service_abi(&workspace_service(), &input, context.call.authority, None)
+        .map_err(|error| error.to_string())?;
+    let response = context
+        .kernel
+        .decode_projected::<WorkspaceResponse>(&WorkspaceInterface::interface_id(), &output)
+        .map_err(|error| error.to_string())?;
+    let receipt = match response {
+        WorkspaceResponse::CommittedBatch { receipt } => receipt,
+        WorkspaceResponse::VersionConflict { conflicts } => {
+            return Err(format!(
+                "semantic edit source became stale before commit: {conflicts:?}"
+            ))
+        }
+        WorkspaceResponse::UnsupportedAtomicScope {
+            requested,
+            available,
+        } => {
+            return Err(format!(
+                "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
+            ))
+        }
+        other => {
+            return Err(format!(
+                "workspace returned an unexpected semantic edit response: {other:?}"
+            ))
+        }
+    };
+
+    Ok(CodeEntityEditResult {
+        entity: locator.entity,
+        source_revision: locator.revision,
+        document: locator.document,
+        receipt,
+    })
 }
 
 fn read_entity_range(
