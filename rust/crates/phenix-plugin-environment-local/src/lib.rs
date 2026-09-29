@@ -274,6 +274,9 @@ impl LocalEnvironment {
     }
 
     fn stream_recovery(&self, stream: &CapturedStream) -> ProcessStreamRecovery {
+        if stream.complete {
+            return ProcessStreamRecovery::Inline;
+        }
         let Some(exact) = stream.exact.as_deref() else {
             return ProcessStreamRecovery::Unavailable {
                 reason: format!(
@@ -294,7 +297,6 @@ impl LocalEnvironment {
             Ok(_) => ProcessStreamRecovery::Unavailable {
                 reason: "persisted process stream did not match its captured identity".into(),
             },
-            Err(_error) if stream.complete => ProcessStreamRecovery::Inline,
             Err(error) => ProcessStreamRecovery::Unavailable {
                 reason: format!("persist exact process stream: {error}"),
             },
