@@ -798,6 +798,10 @@ impl LocalEnvironment {
                 };
                 Ok(EnvironmentResponse::Directory { entries })
             }
+            EnvironmentCommand::ReadContentReference { reference } => {
+                let content = self.process_output_store.get(&reference)?;
+                Ok(EnvironmentResponse::ReferencedContent { content })
+            }
             EnvironmentCommand::Exec {
                 program,
                 arguments,
