@@ -89,6 +89,10 @@ pub enum EnvironmentCommand {
     },
 }
 
+const fn complete_capture() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum EnvironmentResponse {
@@ -110,6 +114,14 @@ pub enum EnvironmentResponse {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         truncated: bool,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
     },
     ProcessOpened {
         handle: String,
@@ -119,12 +131,28 @@ pub enum EnvironmentResponse {
         stderr: Vec<u8>,
         exit_code: Option<i32>,
         truncated: bool,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
     },
     ProcessClosed {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         exit_code: Option<i32>,
         truncated: bool,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
     },
 }
 
