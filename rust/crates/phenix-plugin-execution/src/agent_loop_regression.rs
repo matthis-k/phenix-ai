@@ -321,6 +321,7 @@ impl PluginInstance for ToolAdapter {
                         ),
                         is_error,
                     },
+                    observation: None,
                 },
             ))
             .map_err(|error| error.to_string());
