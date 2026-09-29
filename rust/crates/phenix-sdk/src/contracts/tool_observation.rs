@@ -3,14 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    phenix_sdk_macros::PhenixValue,
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ToolObservationStatus {
@@ -77,10 +70,12 @@ impl ToolObservation {
             ToolObservationExactSource::Reference { reference }
                 if reference.digest != self.content_identity =>
             {
-                Err(ToolObservationValidationError::ExactReferenceIdentityMismatch {
-                    expected: self.content_identity.clone(),
-                    observed: reference.digest.clone(),
-                })
+                Err(
+                    ToolObservationValidationError::ExactReferenceIdentityMismatch {
+                        expected: self.content_identity.clone(),
+                        observed: reference.digest.clone(),
+                    },
+                )
             }
             ToolObservationExactSource::Unavailable { reason } if reason.trim().is_empty() => {
                 Err(ToolObservationValidationError::MissingRecoveryFailureReason)
@@ -130,9 +125,8 @@ mod tests {
     }
 
     fn observation(invalidation: ToolObservationInvalidation) -> ToolObservation {
-        let content_identity = revision(
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        );
+        let content_identity =
+            revision("sha256:0000000000000000000000000000000000000000000000000000000000000000");
         ToolObservation {
             occurrence_id: "call-1".into(),
             status: ToolObservationStatus::Succeeded,

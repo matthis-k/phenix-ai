@@ -28,8 +28,8 @@ pub mod sessions;
 pub mod step_attempt;
 pub mod step_runner;
 pub mod step_transaction;
-pub mod usage;
 pub mod tool_observation;
+pub mod usage;
 pub mod usage_policy;
 pub mod workspace;
 
