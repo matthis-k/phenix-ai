@@ -188,7 +188,6 @@ impl ToolObservation {
         })
     }
 }
-}
 
 #[cfg(test)]
 mod tests {
