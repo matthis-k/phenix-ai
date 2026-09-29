@@ -967,7 +967,10 @@ mod tests {
         }
     }
 
-    fn rollout_criteria(maximum_success_drop: u32, minimum_cost_improvement: u32) -> EfficiencyRolloutCriteria {
+    fn rollout_criteria(
+        maximum_success_drop: u32,
+        minimum_cost_improvement: u32,
+    ) -> EfficiencyRolloutCriteria {
         EfficiencyRolloutCriteria {
             criteria_revision: "reducer-rollout-v1".into(),
             maximum_success_rate_drop_basis_points: maximum_success_drop,
