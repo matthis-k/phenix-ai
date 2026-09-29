@@ -1,19 +1,22 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginContext,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, ContentReferenceStore, FileContentReferenceStore, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ServiceContribution,
     ServiceId,
 };
 use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
     EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
+    ProcessStreamRecovery,
 };
 use rustix::{
     fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
     io::Errno,
     process::{kill_process_group, Pid, Signal},
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
@@ -31,6 +34,7 @@ use std::{
 pub const LOCAL_ENVIRONMENT_PLUGIN: &str = "phenix.environment.local";
 const LOCAL_ENVIRONMENT_COMPONENT: &str = "phenix.environment.local";
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+const MAX_EXACT_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
 const LOCAL_FILESYSTEM_POLICY_ENV: &str = "PHENIX_LOCAL_FILESYSTEM_POLICY";
 
 #[must_use]
@@ -96,14 +100,39 @@ pub fn local_environment_factory_for_policy(
     Box::new(LocalEnvironment::new(root.into(), filesystem_policy))
 }
 
-#[derive(Default)]
 struct CaptureBuffer {
     bytes: Vec<u8>,
     truncated: bool,
+    total_bytes: u64,
+    digest: Sha256,
+    exact: Option<Vec<u8>>,
+}
+
+impl Default for CaptureBuffer {
+    fn default() -> Self {
+        Self {
+            bytes: Vec::new(),
+            truncated: false,
+            total_bytes: 0,
+            digest: Sha256::new(),
+            exact: Some(Vec::new()),
+        }
+    }
 }
 
 impl CaptureBuffer {
     fn push(&mut self, bytes: &[u8]) {
+        self.digest.update(bytes);
+        self.total_bytes = self
+            .total_bytes
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        if let Some(exact) = &mut self.exact {
+            if exact.len().saturating_add(bytes.len()) <= MAX_EXACT_CAPTURE_BYTES {
+                exact.extend_from_slice(bytes);
+            } else {
+                self.exact = None;
+            }
+        }
         let remaining = MAX_CAPTURE_BYTES.saturating_sub(self.bytes.len());
         self.bytes
             .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
@@ -112,11 +141,37 @@ impl CaptureBuffer {
         }
     }
 
-    fn take(&mut self) -> (Vec<u8>, bool) {
-        let bytes = std::mem::take(&mut self.bytes);
+    fn take(&mut self) -> CapturedStream {
+        let view = std::mem::take(&mut self.bytes);
         let truncated = std::mem::take(&mut self.truncated);
-        (bytes, truncated)
+        let total_bytes = std::mem::take(&mut self.total_bytes);
+        let digest = std::mem::take(&mut self.digest).finalize();
+        let content_identity = format!("sha256:{digest:x}")
+            .parse()
+            .expect("sha256 digest is a valid artifact revision");
+        let exact = self.exact.take();
+        self.exact = Some(Vec::new());
+        CapturedStream {
+            view,
+            complete: !truncated,
+            total_bytes,
+            content_identity,
+            exact,
+        }
     }
+}
+
+struct CapturedStream {
+    view: Vec<u8>,
+    complete: bool,
+    total_bytes: u64,
+    content_identity: ArtifactRevision,
+    exact: Option<Vec<u8>>,
+}
+
+struct CapturedProcessOutput {
+    stdout: CapturedStream,
+    stderr: CapturedStream,
 }
 
 struct PersistentProcess {
@@ -146,18 +201,18 @@ impl PersistentProcess {
         }
     }
 
-    fn take_output(&self) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
-        let (stdout, stdout_truncated) = self
+    fn take_output(&self) -> Result<CapturedProcessOutput, String> {
+        let stdout = self
             .stdout
             .lock()
             .map_err(|_| "local environment stdout capture poisoned".to_owned())?
             .take();
-        let (stderr, stderr_truncated) = self
+        let stderr = self
             .stderr
             .lock()
             .map_err(|_| "local environment stderr capture poisoned".to_owned())?
             .take();
-        Ok((stdout, stderr, stdout_truncated || stderr_truncated))
+        Ok(CapturedProcessOutput { stdout, stderr })
     }
 }
 
@@ -168,11 +223,14 @@ struct LocalEnvironment {
     bubblewrap_program: PathBuf,
     processes: BTreeMap<String, PersistentProcess>,
     next_process_id: u64,
+    process_output_store: FileContentReferenceStore,
     next_write_id: u64,
 }
 
 impl LocalEnvironment {
     fn new(root: PathBuf, filesystem_policy: EnvironmentFilesystemPolicy) -> Self {
+        let process_output_store =
+            FileContentReferenceStore::new(root.join(".phenix/process-output"));
         Self {
             root,
             root_fd: None,
@@ -180,6 +238,7 @@ impl LocalEnvironment {
             bubblewrap_program: PathBuf::from("bwrap"),
             processes: BTreeMap::new(),
             next_process_id: 1,
+            process_output_store,
             next_write_id: 1,
         }
     }
@@ -203,6 +262,8 @@ impl LocalEnvironment {
                 Err(format!("{LOCAL_FILESYSTEM_POLICY_ENV} must be valid UTF-8"))
             }
         };
+        let process_output_store =
+            FileContentReferenceStore::new(root.join(".phenix/process-output"));
         Self {
             root,
             root_fd: None,
@@ -210,7 +271,38 @@ impl LocalEnvironment {
             bubblewrap_program: PathBuf::from("bwrap"),
             processes: BTreeMap::new(),
             next_process_id: 1,
+            process_output_store,
             next_write_id: 1,
+        }
+    }
+
+    fn stream_recovery(&self, stream: &CapturedStream) -> ProcessStreamRecovery {
+        if stream.complete {
+            return ProcessStreamRecovery::Inline;
+        }
+        let Some(exact) = stream.exact.as_deref() else {
+            return ProcessStreamRecovery::Unavailable {
+                reason: format!(
+                    "process stream exceeded exact-capture quota of {MAX_EXACT_CAPTURE_BYTES} bytes"
+                ),
+            };
+        };
+        match self
+            .process_output_store
+            .put("application/octet-stream", exact)
+        {
+            Ok(reference)
+                if reference.digest == stream.content_identity
+                    && u64::try_from(reference.bytes).ok() == Some(stream.total_bytes) =>
+            {
+                ProcessStreamRecovery::Reference { reference }
+            }
+            Ok(_) => ProcessStreamRecovery::Unavailable {
+                reason: "persisted process stream did not match its captured identity".into(),
+            },
+            Err(error) => ProcessStreamRecovery::Unavailable {
+                reason: format!("persist exact process stream: {error}"),
+            },
         }
     }
 
@@ -774,6 +866,10 @@ impl LocalEnvironment {
                 };
                 Ok(EnvironmentResponse::Directory { entries })
             }
+            EnvironmentCommand::ReadContentReference { reference } => {
+                let content = self.process_output_store.get(&reference)?;
+                Ok(EnvironmentResponse::ReferencedContent { content })
+            }
             EnvironmentCommand::Exec {
                 program,
                 arguments,
@@ -825,12 +921,22 @@ impl LocalEnvironment {
                     .map_err(|error| format!("wait {program}: {error}"))?;
                 process.terminate_tree();
                 process.finish_readers();
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::Process {
                     exit_code: status.code().unwrap_or(-1),
-                    stdout,
-                    stderr,
-                    truncated,
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -916,12 +1022,22 @@ impl LocalEnvironment {
                     process.terminate_tree();
                     process.finish_readers();
                 }
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::ProcessOutput {
-                    stdout,
-                    stderr,
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
                     exit_code,
-                    truncated,
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
             EnvironmentCommand::CloseProcess { handle } => {
@@ -936,12 +1052,22 @@ impl LocalEnvironment {
                     .wait()
                     .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
-                let (stdout, stderr, truncated) = process.take_output()?;
+                let output = process.take_output()?;
+                let stdout_recovery = self.stream_recovery(&output.stdout);
+                let stderr_recovery = self.stream_recovery(&output.stderr);
                 Ok(EnvironmentResponse::ProcessClosed {
-                    stdout,
-                    stderr,
+                    stdout: output.stdout.view,
+                    stderr: output.stderr.view,
                     exit_code: Some(status.code().unwrap_or(-1)),
-                    truncated,
+                    truncated: !output.stdout.complete || !output.stderr.complete,
+                    stdout_complete: output.stdout.complete,
+                    stderr_complete: output.stderr.complete,
+                    stdout_bytes: Some(output.stdout.total_bytes),
+                    stderr_bytes: Some(output.stderr.total_bytes),
+                    stdout_content_identity: Some(output.stdout.content_identity),
+                    stderr_content_identity: Some(output.stderr.content_identity),
+                    stdout_recovery,
+                    stderr_recovery,
                 })
             }
         }
@@ -1002,6 +1128,104 @@ mod tests {
 
     fn invoke(kernel: &mut Kernel, command: EnvironmentCommand) -> EnvironmentResponse {
         invoke_result(kernel, command).unwrap()
+    }
+
+    #[test]
+    fn capture_buffer_reports_full_stream_size_when_view_is_truncated() {
+        let mut capture = CaptureBuffer::default();
+        let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
+        capture.push(&full);
+        let stream = capture.take();
+        assert_eq!(stream.view.len(), MAX_CAPTURE_BYTES);
+        assert!(!stream.complete);
+        assert_eq!(stream.total_bytes, (MAX_CAPTURE_BYTES + 17) as u64);
+        assert_eq!(
+            stream.content_identity,
+            ArtifactRevision::from_content(&full),
+            "stream identity must cover bytes discarded from the bounded view"
+        );
+        assert_eq!(stream.exact.as_deref(), Some(full.as_slice()));
+
+        capture.push(b"small");
+        let stream = capture.take();
+        assert_eq!(stream.view, b"small");
+        assert!(stream.complete);
+        assert_eq!(stream.total_bytes, 5);
+        assert_eq!(
+            stream.content_identity,
+            ArtifactRevision::from_content(b"small")
+        );
+        assert_eq!(stream.exact.as_deref(), Some(b"small".as_slice()));
+    }
+
+    #[test]
+    fn exact_capture_quota_fails_recovery_explicitly() {
+        let root = temp_root();
+        let environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
+        let mut capture = CaptureBuffer::default();
+        capture.push(&vec![b'x'; MAX_EXACT_CAPTURE_BYTES + 1]);
+        let stream = capture.take();
+        assert!(matches!(
+            environment.stream_recovery(&stream),
+            ProcessStreamRecovery::Unavailable { reason }
+                if reason.contains("exact-capture quota")
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_stream_stays_inline_without_persisting() {
+        let root = temp_root();
+        let environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
+        let mut capture = CaptureBuffer::default();
+        capture.push(b"complete");
+        let stream = capture.take();
+
+        assert_eq!(
+            environment.stream_recovery(&stream),
+            ProcessStreamRecovery::Inline
+        );
+        assert!(
+            !root.join(".phenix/process-output").exists(),
+            "complete inline output must not create recovery artifacts"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn truncated_stream_is_persisted_as_an_exact_reference() {
+        let root = temp_root();
+        let mut environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
+        let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
+        let mut capture = CaptureBuffer::default();
+        capture.push(&full);
+        let stream = capture.take();
+        let ProcessStreamRecovery::Reference { reference } = environment.stream_recovery(&stream)
+        else {
+            panic!("bounded process view must retain an exact reference");
+        };
+        assert_eq!(reference.digest, ArtifactRevision::from_content(&full));
+        assert_eq!(reference.bytes, full.len());
+        let recovered = environment
+            .process_output_store
+            .get(&reference)
+            .unwrap()
+            .expect("persisted stream remains recoverable");
+        assert_eq!(recovered, full);
+        assert!(matches!(
+            environment
+                .handle(EnvironmentCommand::ReadContentReference {
+                    reference: reference.clone(),
+                })
+                .unwrap(),
+            EnvironmentResponse::ReferencedContent {
+                content: Some(content),
+            } if content == full
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
