@@ -461,6 +461,11 @@ pub enum EfficiencyEvaluationError {
         baseline: String,
         candidate: String,
     },
+    InvalidRolloutCriteriaRevision,
+    InvalidRolloutBasisPoints {
+        field: String,
+        value: u32,
+    },
     CohortTooLarge,
     AttemptRootMismatch {
         expected: String,
@@ -664,6 +669,24 @@ pub struct EfficiencyVariantSetReport {
     pub variants: Vec<EfficiencyVariantComparison>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyRolloutCriteria {
+    pub criteria_revision: String,
+    pub maximum_success_rate_drop_basis_points: u32,
+    pub minimum_cost_per_success_improvement_basis_points: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct EfficiencyRolloutAssessment {
+    pub criteria_revision: String,
+    pub comparison: EfficiencyPolicyComparison,
+    pub success_rate_within_bound: bool,
+    pub cost_per_success_improved: bool,
+    pub default_on_eligible: bool,
+}
+
 pub fn compare_efficiency_policies(
     baseline: &[EfficiencyTaskRecord],
     candidate: &[EfficiencyTaskRecord],
@@ -711,6 +734,86 @@ pub fn compare_efficiency_policies(
     Ok(EfficiencyPolicyComparison {
         baseline,
         candidate,
+    })
+}
+
+pub fn assess_efficiency_rollout(
+    baseline: &[EfficiencyTaskRecord],
+    candidate: &[EfficiencyTaskRecord],
+    criteria: &EfficiencyRolloutCriteria,
+) -> Result<EfficiencyRolloutAssessment, EfficiencyEvaluationError> {
+    if criteria.criteria_revision.trim().is_empty() {
+        return Err(EfficiencyEvaluationError::InvalidRolloutCriteriaRevision);
+    }
+    for (field, value) in [
+        (
+            "maximum_success_rate_drop_basis_points",
+            criteria.maximum_success_rate_drop_basis_points,
+        ),
+        (
+            "minimum_cost_per_success_improvement_basis_points",
+            criteria.minimum_cost_per_success_improvement_basis_points,
+        ),
+    ] {
+        if value > 10_000 {
+            return Err(EfficiencyEvaluationError::InvalidRolloutBasisPoints {
+                field: field.into(),
+                value,
+            });
+        }
+    }
+
+    let comparison = compare_efficiency_policies(baseline, candidate)?;
+    let comparable =
+        comparison.baseline.rollout_comparable && comparison.candidate.rollout_comparable;
+
+    let success_rate_within_bound = comparable && {
+        let baseline_successes = u128::from(comparison.baseline.successful_tasks);
+        let baseline_tasks = u128::from(comparison.baseline.total_tasks);
+        let candidate_successes = u128::from(comparison.candidate.successful_tasks);
+        let candidate_tasks = u128::from(comparison.candidate.total_tasks);
+        let scale = 10_000_u128;
+        candidate_successes
+            .saturating_mul(baseline_tasks)
+            .saturating_mul(scale)
+            .saturating_add(
+                u128::from(criteria.maximum_success_rate_drop_basis_points)
+                    .saturating_mul(candidate_tasks)
+                    .saturating_mul(baseline_tasks),
+            )
+            >= baseline_successes
+                .saturating_mul(candidate_tasks)
+                .saturating_mul(scale)
+    };
+
+    let cost_per_success_improved = comparable
+        && match (
+            &comparison.baseline.cost_per_success,
+            &comparison.candidate.cost_per_success,
+        ) {
+            (Some(baseline_cost), Some(candidate_cost)) => {
+                let candidate_cross = u128::from(candidate_cost.total_cost_microunits)
+                    .saturating_mul(u128::from(baseline_cost.successful_tasks));
+                let baseline_cross = u128::from(baseline_cost.total_cost_microunits)
+                    .saturating_mul(u128::from(candidate_cost.successful_tasks));
+                let strictly_better = candidate_cross < baseline_cross;
+                let required = u128::from(
+                    10_000_u32
+                        .saturating_sub(criteria.minimum_cost_per_success_improvement_basis_points),
+                );
+                let meets_minimum = candidate_cross.saturating_mul(10_000)
+                    <= baseline_cross.saturating_mul(required);
+                strictly_better && meets_minimum
+            }
+            _ => false,
+        };
+
+    Ok(EfficiencyRolloutAssessment {
+        criteria_revision: criteria.criteria_revision.clone(),
+        default_on_eligible: success_rate_within_bound && cost_per_success_improved,
+        comparison,
+        success_rate_within_bound,
+        cost_per_success_improved,
     })
 }
 
@@ -862,6 +965,81 @@ mod tests {
             cost_complete: true,
             root_elapsed_ms: Some(1_000),
         }
+    }
+
+    fn rollout_criteria(maximum_success_drop: u32, minimum_cost_improvement: u32) -> EfficiencyRolloutCriteria {
+        EfficiencyRolloutCriteria {
+            criteria_revision: "reducer-rollout-v1".into(),
+            maximum_success_rate_drop_basis_points: maximum_success_drop,
+            minimum_cost_per_success_improvement_basis_points: minimum_cost_improvement,
+        }
+    }
+
+    fn policy_records(
+        policy: &str,
+        successes: usize,
+        total: usize,
+        cost: u64,
+    ) -> Vec<EfficiencyTaskRecord> {
+        (0..total)
+            .map(|id| {
+                let mut record = task(
+                    id,
+                    if id < successes {
+                        EvaluationOutcome::Succeeded
+                    } else {
+                        EvaluationOutcome::Failed
+                    },
+                    cost,
+                );
+                record.policy_revision = policy.into();
+                record
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rollout_assessment_requires_success_bound_and_cost_improvement() {
+        let baseline = policy_records("baseline", 10, 10, 100);
+        let cheaper = policy_records("candidate-cheaper", 10, 10, 80);
+        let assessment =
+            assess_efficiency_rollout(&baseline, &cheaper, &rollout_criteria(0, 1_000)).unwrap();
+        assert!(assessment.success_rate_within_bound);
+        assert!(assessment.cost_per_success_improved);
+        assert!(assessment.default_on_eligible);
+
+        let lower_quality = policy_records("candidate-lower-quality", 8, 10, 40);
+        let assessment =
+            assess_efficiency_rollout(&baseline, &lower_quality, &rollout_criteria(1_000, 1_000))
+                .unwrap();
+        assert!(!assessment.success_rate_within_bound);
+        assert!(assessment.cost_per_success_improved);
+        assert!(!assessment.default_on_eligible);
+
+        let equal_cost = policy_records("candidate-equal-cost", 10, 10, 100);
+        let assessment =
+            assess_efficiency_rollout(&baseline, &equal_cost, &rollout_criteria(0, 0)).unwrap();
+        assert!(assessment.success_rate_within_bound);
+        assert!(!assessment.cost_per_success_improved);
+        assert!(!assessment.default_on_eligible);
+    }
+
+    #[test]
+    fn rollout_assessment_rejects_invalid_preregistered_criteria() {
+        let baseline = policy_records("baseline", 1, 1, 100);
+        let candidate = policy_records("candidate", 1, 1, 80);
+        let mut criteria = rollout_criteria(10_001, 0);
+        assert!(matches!(
+            assess_efficiency_rollout(&baseline, &candidate, &criteria),
+            Err(EfficiencyEvaluationError::InvalidRolloutBasisPoints { .. })
+        ));
+
+        criteria.maximum_success_rate_drop_basis_points = 0;
+        criteria.criteria_revision.clear();
+        assert_eq!(
+            assess_efficiency_rollout(&baseline, &candidate, &criteria),
+            Err(EfficiencyEvaluationError::InvalidRolloutCriteriaRevision)
+        );
     }
 
     #[test]
