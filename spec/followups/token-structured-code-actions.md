@@ -14,6 +14,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 - [x] Declaration, name, and semantic body ranges stay distinct. Provider facts may supply an exact encoding-aware body range and `ReadEntityBody` reads only that range; document-symbol declarations do not fabricate body evidence.
 - [x] Provider source/name/body ranges are validated for ordering and containment before they become durable source locators.
 - [x] Workspace exposes a durable `CommitBatch` operation with exact preconditions, operation identity, pre/post revision receipts, and roll-forward recovery. All target reads/writes stay behind Environment. Providers that do not advertise atomic file replacement reject the recoverable scope before mutation.
+- [x] Added revision-bound `ReplaceEntityBody`: it revalidates the current logical revision and exact workspace source revision, converts the provider body range with the negotiated position encoding, and commits through `Workspace::CommitBatch`. A retry against the changed source fails before a second mutation.
 
 ## Required implementation
 
