@@ -34,6 +34,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 
 - [ ] Baseline with reducer disabled remains fully functional.
 - [x] Reducer cannot mutate history, memory, code identity, routing, or usage-policy truth.
+- [x] Reducer input is self-contained and bounded; the backend does not need context/source-fetch authority to inspect eligible material.
 - [ ] Removed material stays exactly recoverable while retention requires it.
 - [ ] Benchmarks report marginal savings after deterministic reductions, not standalone compression ratios.
 - [ ] Quality regressions and retries count against the reducer.
