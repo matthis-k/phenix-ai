@@ -401,10 +401,6 @@ fn commit_batch(
     if writes.is_empty() {
         return Err("workspace commit batch must not be empty".into());
     }
-    if let Some(response) = require_recoverable_commit(context)? {
-        return Ok(response);
-    }
-
     let intent_identity = commit_intent_identity(&writes)?;
     if let Some(mut journal) = read_commit_journal(context, &operation_id)? {
         if journal.intent_identity != intent_identity {
@@ -413,11 +409,18 @@ fn commit_batch(
             ));
         }
         if journal.state == WorkspaceCommitState::Prepared {
+            if let Some(response) = require_recoverable_commit(context)? {
+                return Ok(response);
+            }
             recover_commit(context, &mut journal)?;
         }
         return Ok(WorkspaceResponse::CommittedBatch {
             receipt: journal.receipt(),
         });
+    }
+
+    if let Some(response) = require_recoverable_commit(context)? {
+        return Ok(response);
     }
 
     let mut paths = BTreeSet::new();
