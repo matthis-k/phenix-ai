@@ -6,7 +6,8 @@ use phenix_core::{
 };
 use phenix_sdk::{
     context_reducer_service, ContextReducerCommand, ContextReducerInterface,
-    ContextReducerProposal, ContextReducerRequest, ContextReducerResponse, DerivedReductionSummary,
+    ContextReducerProposal, ContextReducerRequest, ContextReducerResponse, ContextReducerStage,
+    DerivedReductionSummary,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
     HelperInvocationRequest, HelperInvocationResponse,
 };
@@ -178,7 +179,8 @@ fn helper_input(request: &ContextReducerRequest) -> Result<Bytes, String> {
         })
         .collect::<Vec<_>>();
     let payload = serde_json::json!({
-        "instruction": "Return JSON with one decision per item. Each decision is retain, omit, or summarize. A summarize decision must include a concise summary. Do not invent item IDs.",
+        "instruction": reducer_instruction(request.stage),
+        "strategy": reducer_strategy(request.stage),
         "query": request.query,
         "stage": request.stage,
         "items": items,
@@ -186,6 +188,28 @@ fn helper_input(request: &ContextReducerRequest) -> Result<Bytes, String> {
     serde_json::to_vec(&payload)
         .map(Bytes::from)
         .map_err(|error| format!("context reducer helper input encoding failed: {error}"))
+}
+
+fn reducer_strategy(stage: ContextReducerStage) -> &'static str {
+    match stage {
+        ContextReducerStage::CodeEvidence => "task_conditioned_code_evidence",
+        ContextReducerStage::ObservationSummary => "observation_summary",
+        ContextReducerStage::HistorySummary => "history_summary",
+    }
+}
+
+fn reducer_instruction(stage: ContextReducerStage) -> &'static str {
+    match stage {
+        ContextReducerStage::CodeEvidence => {
+            "Return JSON with one decision per item. Keep code evidence needed to answer the query. Omit recoverable code that is unrelated to the task. Summaries must preserve relevant entity names, signatures, relationships, and failure evidence. Each decision is retain, omit, or summarize. Do not invent item IDs."
+        }
+        ContextReducerStage::ObservationSummary => {
+            "Return JSON with one decision per item. Reduce repeated observation detail while preserving errors, exit status, changed state, identifiers, and facts needed for the query. Each decision is retain, omit, or summarize. Do not invent item IDs."
+        }
+        ContextReducerStage::HistorySummary => {
+            "Return JSON with one decision per item. Compress history while preserving the current goal, decisions, constraints, unresolved work, failures, and evidence needed to continue the query. Prefer omitting superseded recoverable detail. Each decision is retain, omit, or summarize. Do not invent item IDs."
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,6 +359,38 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn helper_input_uses_distinct_stage_strategies() {
+        let mut request = request();
+
+        request.stage = ContextReducerStage::CodeEvidence;
+        let code: serde_json::Value =
+            serde_json::from_slice(helper_input(&request).unwrap().as_ref()).unwrap();
+        assert_eq!(code["strategy"], "task_conditioned_code_evidence");
+        assert!(code["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("code evidence needed to answer the query"));
+
+        request.stage = ContextReducerStage::ObservationSummary;
+        let observation: serde_json::Value =
+            serde_json::from_slice(helper_input(&request).unwrap().as_ref()).unwrap();
+        assert_eq!(observation["strategy"], "observation_summary");
+        assert!(observation["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("errors, exit status, changed state"));
+
+        request.stage = ContextReducerStage::HistorySummary;
+        let history: serde_json::Value =
+            serde_json::from_slice(helper_input(&request).unwrap().as_ref()).unwrap();
+        assert_eq!(history["strategy"], "history_summary");
+        assert!(history["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("current goal, decisions, constraints"));
     }
 
     #[test]
