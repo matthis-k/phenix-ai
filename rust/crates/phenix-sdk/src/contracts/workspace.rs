@@ -1,5 +1,5 @@
 use super::environment::ProcessStreamRecovery;
-use phenix_core::{ArtifactRevision, ComponentInterface, InterfaceId, InterfaceSchema};
+use phenix_core::{ArtifactRevision, ComponentInterface, ContentReference, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +65,9 @@ pub enum WorkspaceCommand {
     WriteBatch {
         writes: Vec<WorkspaceWrite>,
     },
+    ReadContentReference {
+        reference: ContentReference,
+    },
     Search {
         needle: String,
         path: Option<String>,
@@ -99,6 +102,9 @@ pub enum WorkspaceResponse {
     },
     VersionConflict {
         conflicts: Vec<WorkspaceVersionConflict>,
+    },
+    ReferencedContent {
+        content: Vec<u8>,
     },
     Search {
         matches: Vec<WorkspaceSearchMatch>,
