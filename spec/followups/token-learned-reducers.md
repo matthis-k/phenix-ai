@@ -32,7 +32,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 
 ## Acceptance
 
-- [ ] Baseline with reducer disabled remains fully functional.
+- [x] Baseline with reducer disabled remains fully functional; the default context factory enables no reducer stages, and the supported runtime journey passes without a reducer provider.
 - [x] Reducer cannot mutate history, memory, code identity, routing, or usage-policy truth.
 - [x] Reducer input is self-contained and bounded; the backend does not need context/source-fetch authority to inspect eligible material.
 - [x] Added a separate zero-authority helper-backed reducer plugin. It imports only `phenix.invocation.helper@1`, rejects helper tool calls, and derives proposal recovery evidence from the authorized request rather than model output.
