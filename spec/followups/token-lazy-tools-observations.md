@@ -15,6 +15,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [ ] Compute full-stream identities at the environment process owner before any truncation.
 - [ ] Persist exact stdout/stderr artifacts at the environment process owner and project typed references or explicit recovery failure.
 - [x] The tool service exposes bounded, revision-bound descriptor search with schema identities and selected schema loading; stale cursors and catalog revisions fail closed.
+- [x] Regression coverage rejects query-mismatched pagination cursors and schema loads against a superseded catalog revision.
 - [x] The agent loop accepts conflict-checked schema activations from an authorized tool executor and projects newly activated descriptors only into the following model turn, enabling portable deferred loading without replaying the session.
 - [x] Usage planning now makes eager schemas the deterministic default: all allowed tools are initial and bounded by `max_tool_schemas`; deferred initial/expandable sets require the explicit `tools.deferred_schemas` routing capability.
 
