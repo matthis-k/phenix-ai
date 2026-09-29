@@ -687,6 +687,12 @@ mod tests {
                         .then(|| b"virtual-content".to_vec()),
                 },
                 EnvironmentCommand::WriteFile { .. } => EnvironmentResponse::Written,
+                EnvironmentCommand::ReadContentReference { reference } => {
+                    EnvironmentResponse::ReferencedContent {
+                        content: (reference.media_type == "application/x-phenix-fixture")
+                            .then(|| b"fixture-recovered".to_vec()),
+                    }
+                }
                 EnvironmentCommand::Exec { .. } => EnvironmentResponse::Process {
                     exit_code: 0,
                     stdout: b"fixture-process".to_vec(),
@@ -964,6 +970,27 @@ mod tests {
             WorkspaceResponse::Read { content, .. } if content == "virtual-content"
         ));
 
+        let recovery_reference = phenix_core::ContentReference::new(
+            b"fixture-recovered",
+            "application/x-phenix-fixture",
+            phenix_core::ContentLocator::Service {
+                service: "fixture.environment".into(),
+                resource: "process-output".into(),
+            },
+        );
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::ReadContentReference {
+                    reference: recovery_reference.clone(),
+                },
+                &authority(&[WORKSPACE_READ]),
+            )
+            .unwrap(),
+            WorkspaceResponse::ReferencedContent { content }
+                if content == b"fixture-recovered"
+        ));
+
         assert!(matches!(
             invoke(
                 &mut kernel,
@@ -1025,6 +1052,11 @@ mod tests {
             EnvironmentCommand::WriteFile { path, content, .. }
                 if path == "/phenix-fixture-environment-only/project/new.txt"
                     && content == b"new"
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::ReadContentReference { reference }
+                if reference == &recovery_reference
         )));
         assert!(commands.iter().any(|command| matches!(
             command,
