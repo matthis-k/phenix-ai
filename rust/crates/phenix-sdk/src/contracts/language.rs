@@ -211,6 +211,8 @@ pub struct CodeEntitySourceLocator {
     pub position_encoding: CodePositionEncoding,
     pub range: CodeSourceRange,
     pub selection_range: CodeSourceRange,
+    #[serde(default)]
+    pub body_range: Option<CodeSourceRange>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -355,6 +357,16 @@ pub struct CodeEntityRevision {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderSourceFact {
+    pub position_encoding: CodePositionEncoding,
+    pub range: CodeSourceRange,
+    pub selection_range: CodeSourceRange,
+    #[serde(default)]
+    pub body_range: Option<CodeSourceRange>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
 pub struct CodeEntityProviderFact {
     pub id: String,
     pub entity: LogicalCodeEntity,
@@ -365,6 +377,8 @@ pub struct CodeEntityProviderFact {
     pub name: String,
     pub signature_identity: Option<String>,
     pub body_identity: Option<String>,
+    #[serde(default)]
+    pub source: Option<CodeEntityProviderSourceFact>,
     pub facets: CodeEntityFacetRevisions,
 }
 
@@ -540,6 +554,12 @@ pub enum LanguageCommand {
         revision: String,
         max_bytes: u64,
     },
+    ReadEntityBody {
+        repository_id: String,
+        entity_id: String,
+        revision: String,
+        max_bytes: u64,
+    },
     GetEntityFacet {
         repository_id: String,
         entity_id: String,
@@ -595,6 +615,9 @@ pub enum LanguageResponse {
         locator: Option<CodeEntitySourceLocator>,
     },
     EntitySource {
+        view: Option<CodeEntitySourceView>,
+    },
+    EntityBody {
         view: Option<CodeEntitySourceView>,
     },
     EntityRevisions {
