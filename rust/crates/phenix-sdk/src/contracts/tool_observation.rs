@@ -338,5 +338,4 @@ mod tests {
             Err(ToolObservationProjectionError::ExactRecoveryUnavailable)
         );
     }
-
 }
