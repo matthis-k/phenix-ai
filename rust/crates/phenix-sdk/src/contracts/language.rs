@@ -1,3 +1,4 @@
+use super::workspace::WorkspaceCommitReceipt;
 use phenix_core::{
     ComponentInterface, Exact, InterfaceId, PhenixValue, Project, Type, ValueCodec, ValueError,
 };
@@ -479,6 +480,15 @@ pub struct CodeEntitySourceView {
     pub complete: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityEditResult {
+    pub entity: LogicalCodeEntity,
+    pub source_revision: String,
+    pub document: LanguageDocumentIdentity,
+    pub receipt: WorkspaceCommitReceipt,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
@@ -560,6 +570,13 @@ pub enum LanguageCommand {
         revision: String,
         max_bytes: u64,
     },
+    ReplaceEntityBody {
+        operation_id: String,
+        repository_id: String,
+        entity_id: String,
+        revision: String,
+        content: String,
+    },
     GetEntityFacet {
         repository_id: String,
         entity_id: String,
@@ -619,6 +636,9 @@ pub enum LanguageResponse {
     },
     EntityBody {
         view: Option<CodeEntitySourceView>,
+    },
+    EntityEdit {
+        result: CodeEntityEditResult,
     },
     EntityRevisions {
         revisions: Vec<CodeEntityRevision>,
