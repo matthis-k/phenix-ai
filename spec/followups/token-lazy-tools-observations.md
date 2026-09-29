@@ -24,7 +24,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Expose authorized tool descriptors through a searchable catalog.
 - [x] Load full schemas only for the selected task-relevant tool set.
 - [x] Preserve a deterministic eager fallback for providers without deferred tool support.
-- [ ] Define one typed tool observation with compact model view, exact source/artifact reference, content identity, and invalidation metadata.
+- [x] Define one typed tool observation with compact model view, exact source/artifact reference or explicit recovery failure, content identity, and invalidation metadata.
 - [ ] Promote large raw outputs to artifacts before collapsing their model view.
 - [ ] Reuse unchanged observations only when the tool declares safe invalidation semantics.
 - [ ] Run deterministic filtering/joining/aggregation outside the frontier-model context.
