@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginContext,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ServiceContribution,
     ServiceId,
 };
@@ -9,6 +9,7 @@ use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
     EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
 };
+use sha2::{Digest, Sha256};
 use rustix::{
     fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
     io::Errno,
@@ -101,10 +102,12 @@ struct CaptureBuffer {
     bytes: Vec<u8>,
     truncated: bool,
     total_bytes: u64,
+    digest: Sha256,
 }
 
 impl CaptureBuffer {
     fn push(&mut self, bytes: &[u8]) {
+        self.digest.update(bytes);
         self.total_bytes = self
             .total_bytes
             .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -116,15 +119,28 @@ impl CaptureBuffer {
         }
     }
 
-    fn take(&mut self) -> (Vec<u8>, bool, u64) {
+    fn take(&mut self) -> (Vec<u8>, bool, u64, ArtifactRevision) {
         let bytes = std::mem::take(&mut self.bytes);
         let truncated = std::mem::take(&mut self.truncated);
         let total_bytes = std::mem::take(&mut self.total_bytes);
-        (bytes, !truncated, total_bytes)
+        let digest = std::mem::take(&mut self.digest).finalize();
+        let content_identity = format!("sha256:{digest:x}")
+            .parse()
+            .expect("sha256 digest is a valid artifact revision");
+        (bytes, !truncated, total_bytes, content_identity)
     }
 }
 
-type CapturedProcessOutput = (Vec<u8>, Vec<u8>, bool, bool, u64, u64);
+type CapturedProcessOutput = (
+    Vec<u8>,
+    Vec<u8>,
+    bool,
+    bool,
+    u64,
+    u64,
+    ArtifactRevision,
+    ArtifactRevision,
+);
 
 struct PersistentProcess {
     child: Child,
@@ -154,12 +170,12 @@ impl PersistentProcess {
     }
 
     fn take_output(&self) -> Result<CapturedProcessOutput, String> {
-        let (stdout, stdout_complete, stdout_bytes) = self
+        let (stdout, stdout_complete, stdout_bytes, stdout_content_identity) = self
             .stdout
             .lock()
             .map_err(|_| "local environment stdout capture poisoned".to_owned())?
             .take();
-        let (stderr, stderr_complete, stderr_bytes) = self
+        let (stderr, stderr_complete, stderr_bytes, stderr_content_identity) = self
             .stderr
             .lock()
             .map_err(|_| "local environment stderr capture poisoned".to_owned())?
@@ -171,6 +187,8 @@ impl PersistentProcess {
             stderr_complete,
             stdout_bytes,
             stderr_bytes,
+            stdout_content_identity,
+            stderr_content_identity,
         ))
     }
 }
@@ -773,8 +791,16 @@ impl LocalEnvironment {
                     .map_err(|error| format!("wait {program}: {error}"))?;
                 process.terminate_tree();
                 process.finish_readers();
-                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
-                    process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                    stdout_content_identity,
+                    stderr_content_identity,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::Process {
                     exit_code: status.code().unwrap_or(-1),
                     stdout,
@@ -784,6 +810,8 @@ impl LocalEnvironment {
                     stderr_complete,
                     stdout_bytes: Some(stdout_bytes),
                     stderr_bytes: Some(stderr_bytes),
+                    stdout_content_identity: Some(stdout_content_identity),
+                    stderr_content_identity: Some(stderr_content_identity),
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -869,8 +897,16 @@ impl LocalEnvironment {
                     process.terminate_tree();
                     process.finish_readers();
                 }
-                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
-                    process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                    stdout_content_identity,
+                    stderr_content_identity,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::ProcessOutput {
                     stdout,
                     stderr,
@@ -880,6 +916,8 @@ impl LocalEnvironment {
                     stderr_complete,
                     stdout_bytes: Some(stdout_bytes),
                     stderr_bytes: Some(stderr_bytes),
+                    stdout_content_identity: Some(stdout_content_identity),
+                    stderr_content_identity: Some(stderr_content_identity),
                 })
             }
             EnvironmentCommand::CloseProcess { handle } => {
@@ -894,8 +932,16 @@ impl LocalEnvironment {
                     .wait()
                     .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
-                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
-                    process.take_output()?;
+                let (
+                    stdout,
+                    stderr,
+                    stdout_complete,
+                    stderr_complete,
+                    stdout_bytes,
+                    stderr_bytes,
+                    stdout_content_identity,
+                    stderr_content_identity,
+                ) = process.take_output()?;
                 Ok(EnvironmentResponse::ProcessClosed {
                     stdout,
                     stderr,
@@ -905,6 +951,8 @@ impl LocalEnvironment {
                     stderr_complete,
                     stdout_bytes: Some(stdout_bytes),
                     stderr_bytes: Some(stderr_bytes),
+                    stdout_content_identity: Some(stdout_content_identity),
+                    stderr_content_identity: Some(stderr_content_identity),
                 })
             }
         }
