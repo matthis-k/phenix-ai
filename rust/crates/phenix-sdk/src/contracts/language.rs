@@ -30,6 +30,7 @@ pub enum LanguageOperationKind {
     WorkspaceSymbols,
     Diagnostics,
     CallHierarchy,
+    EditValidation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -468,6 +469,105 @@ pub struct CodeIdentityRebuildCheckpoint {
     pub required_through_sequence: u64,
 }
 
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+    phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeEntityRelationKind {
+    Callers,
+    References,
+    Implementations,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityRelationTarget {
+    pub entity: LogicalCodeEntity,
+    pub revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderRelationFact {
+    pub id: String,
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub kind: CodeEntityRelationKind,
+    #[serde(default)]
+    pub targets: Vec<CodeEntityRelationTarget>,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderRelationFactBatch {
+    #[serde(default)]
+    pub facts: Vec<CodeEntityProviderRelationFact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityRelations {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub kind: CodeEntityRelationKind,
+    #[serde(default)]
+    pub targets: Vec<CodeEntityRelationTarget>,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeChangedNeighborhood {
+    pub entity: LogicalCodeEntity,
+    pub from_revision: String,
+    pub current_revision: String,
+    pub changes: CodeEntityFacetChanges,
+    #[serde(default)]
+    pub relations: Vec<CodeEntityRelations>,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderEditValidationFact {
+    pub id: String,
+    pub operation_id: String,
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub intent_identity: String,
+    pub valid: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityProviderEditValidationFactBatch {
+    #[serde(default)]
+    pub facts: Vec<CodeEntityProviderEditValidationFact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityEditValidation {
+    pub operation_id: String,
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub intent_identity: String,
+    pub provider_id: String,
+    pub provider_epoch: ProviderEpoch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeEntityEditEvidence {
+    pub range: CodeSourceRange,
+    pub before: String,
+    pub after: String,
+    pub before_content_identity: String,
+    pub after_content_identity: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntitySourceView {
@@ -487,6 +587,8 @@ pub struct CodeEntityEditResult {
     pub source_revision: String,
     pub document: LanguageDocumentIdentity,
     pub receipt: WorkspaceCommitReceipt,
+    pub validation: CodeEntityEditValidation,
+    pub evidence: CodeEntityEditEvidence,
 }
 
 #[derive(
@@ -579,6 +681,27 @@ pub enum LanguageCommand {
         revision: String,
         max_bytes: u64,
     },
+    IngestEntityRelations {
+        observation_id: String,
+        fact_id: String,
+    },
+    ReadEntityRelations {
+        repository_id: String,
+        entity_id: String,
+        revision: String,
+        kind: CodeEntityRelationKind,
+        max_items: u32,
+    },
+    ReadChangedNeighborhood {
+        repository_id: String,
+        entity_id: String,
+        from_revision: String,
+        max_items: u32,
+    },
+    IngestEditValidation {
+        observation_id: String,
+        fact_id: String,
+    },
     ReplaceEntityBody {
         operation_id: String,
         repository_id: String,
@@ -659,6 +782,15 @@ pub enum LanguageResponse {
     },
     EntityBody {
         view: Option<CodeEntitySourceView>,
+    },
+    EntityRelations {
+        relations: Option<CodeEntityRelations>,
+    },
+    ChangedNeighborhood {
+        neighborhood: Option<CodeChangedNeighborhood>,
+    },
+    EditValidation {
+        validation: Option<CodeEntityEditValidation>,
     },
     EntityEdit {
         result: CodeEntityEditResult,
