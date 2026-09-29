@@ -395,6 +395,11 @@ mod tests {
         let environment_id = environment.id.clone();
         let cli = cli_manifest(authority.clone());
         let cli_id = cli.id.clone();
+        let harness_authority = Authority::new(authority.capabilities().cloned().chain([
+            capability("kernel.persistence.schema"),
+            capability("kernel.persistence.read"),
+            capability("kernel.persistence.write"),
+        ]));
         let resolved = ResolvedHarness::resolve(
             [environment.clone(), workspace.clone(), cli.clone()],
             [
@@ -403,7 +408,7 @@ mod tests {
                 crate::cli_component_manifest(authority.clone()),
             ],
             [],
-            &authority,
+            &harness_authority,
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([environment, workspace, cli]).unwrap());

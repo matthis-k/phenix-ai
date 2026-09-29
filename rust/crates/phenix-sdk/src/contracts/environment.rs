@@ -45,6 +45,8 @@ pub enum EnvironmentFilesystemPolicy {
 pub struct EnvironmentDescription {
     pub provider: String,
     pub filesystem_policy: EnvironmentFilesystemPolicy,
+    #[serde(default)]
+    pub atomic_file_replace: bool,
     pub persistent_processes: bool,
     pub pty: bool,
 }
