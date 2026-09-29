@@ -1,3 +1,4 @@
+use super::environment::ProcessStreamRecovery;
 use phenix_core::{ArtifactRevision, ComponentInterface, InterfaceId, InterfaceSchema};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
@@ -118,5 +119,7 @@ pub enum WorkspaceResponse {
         stdout_content_identity: Option<ArtifactRevision>,
         #[serde(default)]
         stderr_content_identity: Option<ArtifactRevision>,
+        stdout_recovery: ProcessStreamRecovery,
+        stderr_recovery: ProcessStreamRecovery,
     },
 }
