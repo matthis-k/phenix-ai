@@ -4,7 +4,8 @@ use phenix_core::{
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse,
     WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
     WORKSPACE_SERVICE,
 };
@@ -19,6 +20,7 @@ const WORKSPACE_READ: &str = "workspace.read";
 const WORKSPACE_WRITE: &str = "workspace.write";
 const WORKSPACE_SHELL: &str = "workspace.shell";
 const WORKSPACE_GIT: &str = "workspace.git";
+const MAX_PROCESS_MODEL_VIEW_BYTES: usize = 64 * 1024;
 struct WorkspaceSdk<'host, 'runtime> {
     environment: SdkClient<'host, 'runtime, EnvironmentInterface>,
 }
@@ -524,23 +526,43 @@ fn process(
             stdout_recovery,
             stderr_recovery,
             ..
-        } => Ok(WorkspaceResponse::Process {
-            exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-            stdout_complete,
-            stderr_complete,
-            stdout_bytes,
-            stderr_bytes,
-            stdout_content_identity,
-            stderr_content_identity,
-            stdout_recovery: Box::new(stdout_recovery),
-            stderr_recovery: Box::new(stderr_recovery),
-        }),
+        } => {
+            let (stdout, stdout_view_complete) =
+                process_model_view(stdout, &stdout_recovery);
+            let (stderr, stderr_view_complete) =
+                process_model_view(stderr, &stderr_recovery);
+            Ok(WorkspaceResponse::Process {
+                exit_code,
+                stdout,
+                stderr,
+                stdout_complete: stdout_complete && stdout_view_complete,
+                stderr_complete: stderr_complete && stderr_view_complete,
+                stdout_bytes,
+                stderr_bytes,
+                stdout_content_identity,
+                stderr_content_identity,
+                stdout_recovery: Box::new(stdout_recovery),
+                stderr_recovery: Box::new(stderr_recovery),
+            })
+        }
         other => Err(format!(
             "environment returned unexpected process response: {other:?}"
         )),
     }
+}
+
+fn process_model_view(
+    bytes: Vec<u8>,
+    recovery: &ProcessStreamRecovery,
+) -> (String, bool) {
+    let may_collapse = matches!(recovery, ProcessStreamRecovery::Reference { .. });
+    if !may_collapse || bytes.len() <= MAX_PROCESS_MODEL_VIEW_BYTES {
+        return (String::from_utf8_lossy(&bytes).into_owned(), true);
+    }
+    (
+        String::from_utf8_lossy(&bytes[..MAX_PROCESS_MODEL_VIEW_BYTES]).into_owned(),
+        false,
+    )
 }
 
 fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
@@ -807,6 +829,38 @@ mod tests {
                 serde_json::from_slice(&output).map_err(|error| error.to_string())?;
             WorkspaceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
         }
+    }
+
+    #[test]
+    fn process_model_view_collapses_only_with_exact_recovery() {
+        let large = vec![b'x'; MAX_PROCESS_MODEL_VIEW_BYTES + 11];
+        let reference = phenix_core::ContentReference {
+            digest: phenix_core::ArtifactRevision::from_content(&large),
+            media_type: "application/octet-stream".into(),
+            bytes: large.len(),
+            locator: phenix_core::ContentLocator::File {
+                path: "sha256/fixture".into(),
+            },
+        };
+        let (view, complete) = process_model_view(
+            large.clone(),
+            &ProcessStreamRecovery::Reference { reference },
+        );
+        assert_eq!(view.len(), MAX_PROCESS_MODEL_VIEW_BYTES);
+        assert!(!complete);
+
+        let (view, complete) = process_model_view(large.clone(), &ProcessStreamRecovery::Inline);
+        assert_eq!(view.len(), large.len());
+        assert!(complete);
+
+        let (view, complete) = process_model_view(
+            large.clone(),
+            &ProcessStreamRecovery::Unavailable {
+                reason: "fixture".into(),
+            },
+        );
+        assert_eq!(view.len(), large.len());
+        assert!(complete);
     }
 
     #[test]
