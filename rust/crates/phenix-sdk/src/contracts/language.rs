@@ -594,6 +594,9 @@ pub enum LanguageResponse {
     EntitySourceLocator {
         locator: Option<CodeEntitySourceLocator>,
     },
+    EntitySource {
+        view: Option<CodeEntitySourceView>,
+    },
     EntityRevisions {
         revisions: Vec<CodeEntityRevision>,
     },
