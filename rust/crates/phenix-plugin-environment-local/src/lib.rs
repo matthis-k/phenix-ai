@@ -1047,6 +1047,10 @@ mod tests {
             ArtifactRevision::from_content(&full),
             "stream identity must cover bytes discarded from the bounded view"
         );
+        assert!(matches!(
+            stream_recovery(complete),
+            ProcessStreamRecovery::Unavailable { .. }
+        ));
 
         capture.push(b"small");
         let (bytes, complete, total_bytes, content_identity) = capture.take();
@@ -1054,6 +1058,7 @@ mod tests {
         assert!(complete);
         assert_eq!(total_bytes, 5);
         assert_eq!(content_identity, ArtifactRevision::from_content(b"small"));
+        assert_eq!(stream_recovery(complete), ProcessStreamRecovery::Inline);
     }
 
     #[test]
