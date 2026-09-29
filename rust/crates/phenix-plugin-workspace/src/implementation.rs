@@ -519,6 +519,8 @@ fn process(
             stderr_complete,
             stdout_bytes,
             stderr_bytes,
+            stdout_content_identity,
+            stderr_content_identity,
             ..
         } => Ok(WorkspaceResponse::Process {
             exit_code,
@@ -528,6 +530,8 @@ fn process(
             stderr_complete,
             stdout_bytes,
             stderr_bytes,
+            stdout_content_identity,
+            stderr_content_identity,
         }),
         other => Err(format!(
             "environment returned unexpected process response: {other:?}"
@@ -655,6 +659,10 @@ mod tests {
                     stderr_complete: true,
                     stdout_bytes: Some(b"fixture-process".len() as u64),
                     stderr_bytes: Some(0),
+                    stdout_content_identity: Some(phenix_core::ArtifactRevision::from_content(
+                        b"fixture-process",
+                    )),
+                    stderr_content_identity: Some(phenix_core::ArtifactRevision::from_content(b"")),
                 },
                 other => return Err(format!("unexpected fixture environment command: {other:?}")),
             };
