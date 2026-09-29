@@ -343,7 +343,10 @@ mod tests {
                 catalog_revision,
             },
         );
-        assert!(revision_error.contains("stale tool catalog revision"), "{revision_error}");
+        assert!(
+            revision_error.contains("stale tool catalog revision"),
+            "{revision_error}"
+        );
 
         let _ = fs::remove_file(path);
     }
