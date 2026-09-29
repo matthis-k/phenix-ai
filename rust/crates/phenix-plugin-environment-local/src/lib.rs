@@ -1117,7 +1117,10 @@ mod tests {
         capture.push(b"complete");
         let stream = capture.take();
 
-        assert_eq!(environment.stream_recovery(&stream), ProcessStreamRecovery::Inline);
+        assert_eq!(
+            environment.stream_recovery(&stream),
+            ProcessStreamRecovery::Inline
+        );
         assert!(
             !root.join(".phenix/process-output").exists(),
             "complete inline output must not create recovery artifacts"
