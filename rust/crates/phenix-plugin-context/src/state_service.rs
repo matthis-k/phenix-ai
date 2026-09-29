@@ -240,4 +240,81 @@ mod tests {
             }
         );
     }
+
+
+    #[test]
+    fn compaction_proposal_commits_in_one_state_operation() {
+        use phenix_core::{Bytes, ContextResourceId, ContextRevisionId};
+        use phenix_sdk::{
+            AdmittedContextItem, CachePlacement, ContextAdmissionResult, ContextProjectionForm,
+            ContextRetention, ContextSource, ExactContextReference, ProjectionCheckpoint,
+            RetentionTransition,
+        };
+
+        let recovery = ExactContextReference {
+            resource_id: ContextResourceId::parse("context:item-1").unwrap(),
+            revision: ContextRevisionId::parse("revision-1").unwrap(),
+        };
+        let mut projection = ContextProjectionState::new("execution-1");
+        projection
+            .apply_admission(ContextAdmissionResult {
+                execution_id: "execution-1".into(),
+                policy_revision: "policy-1".into(),
+                cache_epoch: 1,
+                admitted: vec![AdmittedContextItem {
+                    id: "item-1".into(),
+                    source: ContextSource::Exact {
+                        reference: recovery.clone(),
+                    },
+                    content_identity: "sha256:item-1".into(),
+                    form: ContextProjectionForm::Full,
+                    cache: CachePlacement::Epoch,
+                    retention: ContextRetention::Full,
+                    estimated_tokens: 10,
+                    recovery: Some(recovery.clone()),
+                }],
+                used_input_tokens: 10,
+                omitted_input_tokens: 0,
+                deduplicated_items: 0,
+            })
+            .unwrap();
+
+        let expected_projection = projection.revision.clone();
+        let mut service = ContextStateService::default();
+        service
+            .projections
+            .insert("execution-1".into(), projection);
+
+        let commit = service
+            .commit_compaction_proposal(CompactionProposal {
+                execution_id: "execution-1".into(),
+                expected_projection: expected_projection.clone(),
+                next_cache_epoch: expected_projection.cache_epoch + 1,
+                transitions: vec![RetentionTransition {
+                    item_id: "item-1".into(),
+                    from: ContextRetention::Full,
+                    to: ContextRetention::Reference,
+                    recovery: Some(recovery.clone()),
+                }],
+                checkpoint: ProjectionCheckpoint {
+                    checkpoint_id: "reduction-1".into(),
+                    execution_id: "execution-1".into(),
+                    source_revision: expected_projection,
+                    content_identity: "sha256:reduction-1".into(),
+                    compact_view: Bytes::from(Vec::new()),
+                    exact_sources: vec![recovery],
+                    tool_groups: Vec::new(),
+                },
+            })
+            .unwrap();
+
+        assert_eq!(commit.committed_projection.revision, 2);
+        assert_eq!(commit.committed_projection.cache_epoch, 2);
+        let state = service.projection("execution-1").unwrap();
+        assert_eq!(
+            state.admitted["item-1"].retention,
+            ContextRetention::Reference
+        );
+        assert_eq!(state.revision, commit.committed_projection);
+    }
 }
