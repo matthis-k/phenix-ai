@@ -2159,7 +2159,7 @@ fn execute_application_agent_tool(
                     is_error: true,
                 },
                 activated_tools: Vec::new(),
-            observation: None,
+                observation: None,
             });
         }
     };
@@ -2207,7 +2207,7 @@ fn execute_application_agent_tool(
     Ok(AgentToolExecutionResponse::Completed {
         result,
         activated_tools: Vec::new(),
-    observation: None,
+        observation: None,
     })
 }
 
