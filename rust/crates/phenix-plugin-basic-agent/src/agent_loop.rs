@@ -3,13 +3,14 @@ use phenix_core::{
     ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
-    SessionId,
+    SessionId, ValueCodec,
 };
 use phenix_sdk::{
     DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
+    ToolObservation,
 };
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
@@ -18,6 +19,7 @@ pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
 pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
 pub const DEFAULT_MAX_MODEL_TURNS: u32 = 16;
 pub const DEFAULT_MAX_TOOL_CALLS_PER_TURN: u32 = 10;
+pub const DEFAULT_MAX_TOOL_OBSERVATION_MODEL_BYTES: u64 = 64 * 1024;
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
 
 pub struct AgentLoopInterface;
@@ -75,6 +77,7 @@ impl ComponentInterface for AgentLoopProgressInterface {
 pub struct AgentLoopPolicy {
     max_model_turns: NonZeroU32,
     max_tool_calls_per_turn: NonZeroU32,
+    result_reduction: bool,
 }
 
 impl AgentLoopPolicy {
@@ -83,6 +86,7 @@ impl AgentLoopPolicy {
         Self {
             max_model_turns,
             max_tool_calls_per_turn,
+            result_reduction: true,
         }
     }
 
@@ -94,6 +98,17 @@ impl AgentLoopPolicy {
     #[must_use]
     pub const fn max_tool_calls_per_turn(self) -> NonZeroU32 {
         self.max_tool_calls_per_turn
+    }
+
+    #[must_use]
+    pub const fn with_result_reduction(mut self, enabled: bool) -> Self {
+        self.result_reduction = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn result_reduction(self) -> bool {
+        self.result_reduction
     }
 }
 
@@ -177,6 +192,8 @@ pub enum AgentToolExecutionResponse {
         result: ModelToolResult,
         #[serde(default)]
         activated_tools: Vec<ModelToolDescriptor>,
+        #[serde(default)]
+        observation: Option<ToolObservation>,
     },
     Cancelled,
 }
@@ -396,6 +413,7 @@ fn run(
 ) -> Result<AgentLoopResponse, String> {
     validate_initial_tools(&tools)?;
     let mut continuation = Vec::<ModelToolTurn>::new();
+    let mut observations = BTreeMap::<CallableId, ToolObservation>::new();
     let mut usage = AgentLoopUsage {
         model_calls: 0,
         tool_calls: 0,
@@ -479,11 +497,12 @@ fn run(
                 })
                 .map_err(|error| error.to_string())?;
 
-            let (result, activated_tools) = match response {
+            let (mut result, activated_tools, observation) = match response {
                 AgentToolExecutionResponse::Completed {
                     result,
                     activated_tools,
-                } => (result, activated_tools),
+                    observation,
+                } => (result, activated_tools, observation),
                 AgentToolExecutionResponse::Cancelled => {
                     return Ok(AgentLoopResponse::Cancelled { usage });
                 }
@@ -493,6 +512,23 @@ fn run(
                     "tool executor changed call identity for {}",
                     call.call_id
                 ));
+            }
+            if let Some(observation) = observation {
+                if observation.occurrence_id != call.call_id {
+                    return Err(format!(
+                        "tool executor changed observation occurrence identity for {}",
+                        call.call_id
+                    ));
+                }
+                let projection = observation
+                    .project(
+                        observations.get(&call.callable_id),
+                        DEFAULT_MAX_TOOL_OBSERVATION_MODEL_BYTES,
+                        policy.result_reduction(),
+                    )
+                    .map_err(|error| format!("tool observation projection failed: {error:?}"))?;
+                result.output = projection.to_value();
+                observations.insert(call.callable_id.clone(), observation);
             }
             usage.tool_calls = usage
                 .tool_calls
