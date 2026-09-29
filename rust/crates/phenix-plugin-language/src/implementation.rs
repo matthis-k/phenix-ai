@@ -5,7 +5,8 @@ use phenix_core::{
 };
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditResult, CodeEntityFacet,
-    CodeEntityFacetChanges, CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
+    CodeEntityFacetChanges, CodeEntityInsertPosition, CodeEntityLineage,
+    CodeEntityLineageConfidence, CodeEntityLineageKind,
     CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
     CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
     CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
@@ -400,6 +401,50 @@ fn handle(
                     &entity_id,
                     &revision,
                     content,
+                )?,
+            })
+        }
+        LanguageCommand::InsertRelativeToEntity {
+            operation_id,
+            repository_id,
+            entity_id,
+            revision,
+            position,
+            content,
+        } => {
+            validate_identity("semantic edit operation id", &operation_id)?;
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntityEdit {
+                result: insert_relative_to_entity(
+                    context,
+                    operation_id,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                    position,
+                    content,
+                )?,
+            })
+        }
+        LanguageCommand::RemoveEntity {
+            operation_id,
+            repository_id,
+            entity_id,
+            revision,
+        } => {
+            validate_identity("semantic edit operation id", &operation_id)?;
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntityEdit {
+                result: remove_entity(
+                    context,
+                    operation_id,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
                 )?,
             })
         }
@@ -1092,12 +1137,82 @@ fn read_entity_body(
     read_entity_range(context, locator, range, max_bytes, "entity body")
 }
 
+#[derive(Clone, Copy)]
+enum SemanticEditTarget {
+    Body,
+    BeforeEntity,
+    AfterEntity,
+    Entity,
+}
+
 fn replace_entity_body(
     context: &LanguageContext<'_, '_, '_>,
     operation_id: String,
     repository_id: &str,
     entity_id: &str,
     revision: &str,
+    replacement: String,
+) -> Result<CodeEntityEditResult, String> {
+    edit_entity_source(
+        context,
+        operation_id,
+        repository_id,
+        entity_id,
+        revision,
+        SemanticEditTarget::Body,
+        replacement,
+    )
+}
+
+fn insert_relative_to_entity(
+    context: &LanguageContext<'_, '_, '_>,
+    operation_id: String,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    position: CodeEntityInsertPosition,
+    content: String,
+) -> Result<CodeEntityEditResult, String> {
+    let target = match position {
+        CodeEntityInsertPosition::Before => SemanticEditTarget::BeforeEntity,
+        CodeEntityInsertPosition::After => SemanticEditTarget::AfterEntity,
+    };
+    edit_entity_source(
+        context,
+        operation_id,
+        repository_id,
+        entity_id,
+        revision,
+        target,
+        content,
+    )
+}
+
+fn remove_entity(
+    context: &LanguageContext<'_, '_, '_>,
+    operation_id: String,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+) -> Result<CodeEntityEditResult, String> {
+    edit_entity_source(
+        context,
+        operation_id,
+        repository_id,
+        entity_id,
+        revision,
+        SemanticEditTarget::Entity,
+        String::new(),
+    )
+}
+
+fn edit_entity_source(
+    context: &LanguageContext<'_, '_, '_>,
+    operation_id: String,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    target: SemanticEditTarget,
     replacement: String,
 ) -> Result<CodeEntityEditResult, String> {
     let current = read_entity_revision(context, repository_id, entity_id)?
@@ -1111,15 +1226,26 @@ fn replace_entity_body(
 
     let locator = read_entity_source_locator(context, repository_id, entity_id, revision)?
         .ok_or_else(|| format!("code entity revision has no exact source locator: {revision}"))?;
-    let body_range = locator
-        .body_range
-        .clone()
-        .ok_or_else(|| "code entity has no exact semantic body range".to_owned())?;
+    let edit_range = match target {
+        SemanticEditTarget::Body => locator
+            .body_range
+            .clone()
+            .ok_or_else(|| "code entity has no exact semantic body range".to_owned())?,
+        SemanticEditTarget::BeforeEntity => CodeSourceRange {
+            start: locator.range.start.clone(),
+            end: locator.range.start.clone(),
+        },
+        SemanticEditTarget::AfterEntity => CodeSourceRange {
+            start: locator.range.end.clone(),
+            end: locator.range.end.clone(),
+        },
+        SemanticEditTarget::Entity => locator.range.clone(),
+    };
     if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
-        return Err("semantic body replacement requires workspace-backed provenance".into());
+        return Err("semantic edit requires workspace-backed provenance".into());
     }
     let expected_revision = locator.document.file_version.as_deref().ok_or_else(|| {
-        "semantic body replacement requires an exact workspace revision".to_owned()
+        "semantic edit requires an exact workspace revision".to_owned()
     })?;
 
     let input = context
@@ -1160,10 +1286,10 @@ fn replace_entity_body(
         ));
     }
 
-    let start = source_position_offset(&source, &body_range.start, locator.position_encoding)?;
-    let end = source_position_offset(&source, &body_range.end, locator.position_encoding)?;
+    let start = source_position_offset(&source, &edit_range.start, locator.position_encoding)?;
+    let end = source_position_offset(&source, &edit_range.end, locator.position_encoding)?;
     if end < start {
-        return Err("semantic body range end precedes start".into());
+        return Err("semantic edit range end precedes start".into());
     }
     let mut updated = String::with_capacity(
         source
@@ -1174,13 +1300,13 @@ fn replace_entity_body(
     updated.push_str(
         source
             .get(..start)
-            .ok_or_else(|| "semantic body range start is not on a UTF-8 boundary".to_owned())?,
+            .ok_or_else(|| "semantic edit range start is not on a UTF-8 boundary".to_owned())?,
     );
     updated.push_str(&replacement);
     updated.push_str(
         source
             .get(end..)
-            .ok_or_else(|| "semantic body range end is not on a UTF-8 boundary".to_owned())?,
+            .ok_or_else(|| "semantic edit range end is not on a UTF-8 boundary".to_owned())?,
     );
 
     let input = context
@@ -2587,6 +2713,64 @@ mod tests {
             fs::read_to_string(root.join("src/lib.rs")).unwrap(),
             "fn observed() { 42 }\n"
         );
+
+        fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        let LanguageResponse::EntityEdit { result: before } = invoke(
+            &mut kernel,
+            LanguageCommand::InsertRelativeToEntity {
+                operation_id: "insert-before-observed-1".into(),
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                position: CodeEntityInsertPosition::Before,
+                content: "/* before */\n".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected committed insert-before edit");
+        };
+        assert_eq!(before.receipt.operation_id, "insert-before-observed-1");
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "/* before */\nfn observed() {}\n"
+        );
+
+        fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        let LanguageResponse::EntityEdit { result: after } = invoke(
+            &mut kernel,
+            LanguageCommand::InsertRelativeToEntity {
+                operation_id: "insert-after-observed-1".into(),
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+                position: CodeEntityInsertPosition::After,
+                content: "/* after */".into(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected committed insert-after edit");
+        };
+        assert_eq!(after.receipt.operation_id, "insert-after-observed-1");
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).unwrap(),
+            "fn observed() {}/* after */\n"
+        );
+
+        fs::write(root.join("src/lib.rs"), "fn observed() {}\n").unwrap();
+        let LanguageResponse::EntityEdit { result: removed } = invoke(
+            &mut kernel,
+            LanguageCommand::RemoveEntity {
+                operation_id: "remove-observed-1".into(),
+                repository_id: revision.entity.repository_id.clone(),
+                entity_id: revision.entity.id.clone(),
+                revision: revision.revision.clone(),
+            },
+        )
+        .unwrap() else {
+            panic!("expected committed entity removal");
+        };
+        assert_eq!(removed.receipt.operation_id, "remove-observed-1");
+        assert_eq!(fs::read_to_string(root.join("src/lib.rs")).unwrap(), "\n");
 
         fs::write(
             root.join("src/lib.rs"),
