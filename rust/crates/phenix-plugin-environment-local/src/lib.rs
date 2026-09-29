@@ -1019,16 +1019,24 @@ mod tests {
     fn capture_buffer_reports_full_stream_size_when_view_is_truncated() {
         let mut capture = CaptureBuffer::default();
         capture.push(&vec![b'x'; MAX_CAPTURE_BYTES + 17]);
-        let (bytes, complete, total_bytes) = capture.take();
+        let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
+        capture.push(&full);
+        let (bytes, complete, total_bytes, content_identity) = capture.take();
         assert_eq!(bytes.len(), MAX_CAPTURE_BYTES);
         assert!(!complete);
         assert_eq!(total_bytes, (MAX_CAPTURE_BYTES + 17) as u64);
+        assert_eq!(
+            content_identity,
+            ArtifactRevision::from_content(&full),
+            "stream identity must cover bytes discarded from the bounded view"
+        );
 
         capture.push(b"small");
-        let (bytes, complete, total_bytes) = capture.take();
+        let (bytes, complete, total_bytes, content_identity) = capture.take();
         assert_eq!(bytes, b"small");
         assert!(complete);
         assert_eq!(total_bytes, 5);
+        assert_eq!(content_identity, ArtifactRevision::from_content(b"small"));
     }
 
     #[test]
