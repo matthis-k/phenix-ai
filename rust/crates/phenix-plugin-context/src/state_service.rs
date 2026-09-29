@@ -143,12 +143,14 @@ impl ContextStateService {
         let execution_id = proposal.execution_id.clone();
         let checkpoint_id = proposal.checkpoint.checkpoint_id.clone();
         let state = self.projection_mut(&execution_id)?;
-        state
-            .prepare_compaction(proposal)
+        let mut next = state.clone();
+        next.prepare_compaction(proposal)
             .map_err(ContextStateServiceError::Projection)?;
-        state
+        let commit = next
             .commit_compaction(&checkpoint_id)
-            .map_err(ContextStateServiceError::Projection)
+            .map_err(ContextStateServiceError::Projection)?;
+        *state = next;
+        Ok(commit)
     }
 
     pub(crate) fn projection_revision(&self, execution_id: &str) -> ProjectionRevision {
