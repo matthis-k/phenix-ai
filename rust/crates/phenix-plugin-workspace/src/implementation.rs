@@ -4,9 +4,9 @@ use phenix_core::{
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
-    WORKSPACE_SERVICE,
+    ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,6 +19,7 @@ const WORKSPACE_READ: &str = "workspace.read";
 const WORKSPACE_WRITE: &str = "workspace.write";
 const WORKSPACE_SHELL: &str = "workspace.shell";
 const WORKSPACE_GIT: &str = "workspace.git";
+const MAX_PROCESS_MODEL_VIEW_BYTES: usize = 64 * 1024;
 struct WorkspaceSdk<'host, 'runtime> {
     environment: SdkClient<'host, 'runtime, EnvironmentInterface>,
 }
@@ -136,6 +137,23 @@ fn handle(
             expected_version,
         } => write(context, path, content, expected_version),
         WorkspaceCommand::WriteBatch { writes } => write_batch(context, writes),
+        WorkspaceCommand::ReadContentReference { reference } => {
+            require(context, WORKSPACE_READ)?;
+            match environment(
+                context,
+                EnvironmentCommand::ReadContentReference { reference },
+            )? {
+                EnvironmentResponse::ReferencedContent {
+                    content: Some(content),
+                } => Ok(WorkspaceResponse::ReferencedContent { content }),
+                EnvironmentResponse::ReferencedContent { content: None } => {
+                    Err("workspace content reference is unavailable".into())
+                }
+                other => Err(format!(
+                    "environment returned unexpected content-reference response: {other:?}"
+                )),
+            }
+        }
         WorkspaceCommand::Search {
             needle,
             path,
@@ -515,16 +533,47 @@ fn process(
             exit_code,
             stdout,
             stderr,
+            stdout_complete,
+            stderr_complete,
+            stdout_bytes,
+            stderr_bytes,
+            stdout_content_identity,
+            stderr_content_identity,
+            stdout_recovery,
+            stderr_recovery,
             ..
-        } => Ok(WorkspaceResponse::Process {
-            exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-        }),
+        } => {
+            let (stdout, stdout_view_complete) = process_model_view(stdout, &stdout_recovery);
+            let (stderr, stderr_view_complete) = process_model_view(stderr, &stderr_recovery);
+            Ok(WorkspaceResponse::Process {
+                exit_code,
+                stdout,
+                stderr,
+                stdout_complete: stdout_complete && stdout_view_complete,
+                stderr_complete: stderr_complete && stderr_view_complete,
+                stdout_bytes,
+                stderr_bytes,
+                stdout_content_identity,
+                stderr_content_identity,
+                stdout_recovery: Box::new(stdout_recovery),
+                stderr_recovery: Box::new(stderr_recovery),
+            })
+        }
         other => Err(format!(
             "environment returned unexpected process response: {other:?}"
         )),
     }
+}
+
+fn process_model_view(bytes: Vec<u8>, recovery: &ProcessStreamRecovery) -> (String, bool) {
+    let may_collapse = matches!(recovery, ProcessStreamRecovery::Reference { .. });
+    if !may_collapse || bytes.len() <= MAX_PROCESS_MODEL_VIEW_BYTES {
+        return (String::from_utf8_lossy(&bytes).into_owned(), true);
+    }
+    (
+        String::from_utf8_lossy(&bytes[..MAX_PROCESS_MODEL_VIEW_BYTES]).into_owned(),
+        false,
+    )
 }
 
 fn version_for_bytes(bytes: &[u8]) -> WorkspaceFileVersion {
@@ -545,7 +594,7 @@ mod tests {
         local_environment_component_manifest, local_environment_factory_for,
         local_environment_manifest,
     };
-    use phenix_sdk::environment_service;
+    use phenix_sdk::{environment_service, ProcessStreamRecovery};
     use std::{
         fs,
         process::Command,
@@ -638,11 +687,27 @@ mod tests {
                         .then(|| b"virtual-content".to_vec()),
                 },
                 EnvironmentCommand::WriteFile { .. } => EnvironmentResponse::Written,
+                EnvironmentCommand::ReadContentReference { reference } => {
+                    EnvironmentResponse::ReferencedContent {
+                        content: (reference.media_type == "application/x-phenix-fixture")
+                            .then(|| b"fixture-recovered".to_vec()),
+                    }
+                }
                 EnvironmentCommand::Exec { .. } => EnvironmentResponse::Process {
                     exit_code: 0,
                     stdout: b"fixture-process".to_vec(),
                     stderr: Vec::new(),
                     truncated: false,
+                    stdout_complete: true,
+                    stderr_complete: true,
+                    stdout_bytes: Some(b"fixture-process".len() as u64),
+                    stderr_bytes: Some(0),
+                    stdout_content_identity: Some(phenix_core::ArtifactRevision::from_content(
+                        b"fixture-process",
+                    )),
+                    stderr_content_identity: Some(phenix_core::ArtifactRevision::from_content(b"")),
+                    stdout_recovery: ProcessStreamRecovery::Inline,
+                    stderr_recovery: ProcessStreamRecovery::Inline,
                 },
                 other => return Err(format!("unexpected fixture environment command: {other:?}")),
             };
@@ -784,6 +849,38 @@ mod tests {
     }
 
     #[test]
+    fn process_model_view_collapses_only_with_exact_recovery() {
+        let large = vec![b'x'; MAX_PROCESS_MODEL_VIEW_BYTES + 11];
+        let reference = phenix_core::ContentReference {
+            digest: phenix_core::ArtifactRevision::from_content(&large),
+            media_type: "application/octet-stream".into(),
+            bytes: large.len(),
+            locator: phenix_core::ContentLocator::File {
+                path: "sha256/fixture".into(),
+            },
+        };
+        let (view, complete) = process_model_view(
+            large.clone(),
+            &ProcessStreamRecovery::Reference { reference },
+        );
+        assert_eq!(view.len(), MAX_PROCESS_MODEL_VIEW_BYTES);
+        assert!(!complete);
+
+        let (view, complete) = process_model_view(large.clone(), &ProcessStreamRecovery::Inline);
+        assert_eq!(view.len(), large.len());
+        assert!(complete);
+
+        let (view, complete) = process_model_view(
+            large.clone(),
+            &ProcessStreamRecovery::Unavailable {
+                reason: "fixture".into(),
+            },
+        );
+        assert_eq!(view.len(), large.len());
+        assert!(complete);
+    }
+
+    #[test]
     fn workspace_root_is_an_environment_namespace_path() {
         let environment_root = temp_workspace("environment-root");
         let workspace_root = environment_root.join("provider-only-workspace");
@@ -873,6 +970,27 @@ mod tests {
             WorkspaceResponse::Read { content, .. } if content == "virtual-content"
         ));
 
+        let recovery_reference = phenix_core::ContentReference::new(
+            b"fixture-recovered",
+            "application/x-phenix-fixture",
+            phenix_core::ContentLocator::Service {
+                service: "fixture.environment".into(),
+                resource: "process-output".into(),
+            },
+        );
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::ReadContentReference {
+                    reference: recovery_reference.clone(),
+                },
+                &authority(&[WORKSPACE_READ]),
+            )
+            .unwrap(),
+            WorkspaceResponse::ReferencedContent { content }
+                if content == b"fixture-recovered"
+        ));
+
         assert!(matches!(
             invoke(
                 &mut kernel,
@@ -887,16 +1005,29 @@ mod tests {
             WorkspaceResponse::Written { .. }
         ));
 
+        let shell = invoke(
+            &mut kernel,
+            WorkspaceCommand::Shell {
+                command: "printf shell".into(),
+            },
+            &authority(&[WORKSPACE_SHELL]),
+        )
+        .unwrap();
         assert!(matches!(
-            invoke(
-                &mut kernel,
-                WorkspaceCommand::Shell {
-                    command: "printf shell".into(),
-                },
-                &authority(&[WORKSPACE_SHELL]),
-            )
-            .unwrap(),
-            WorkspaceResponse::Process { exit_code: 0, .. }
+            shell,
+            WorkspaceResponse::Process {
+                exit_code: 0,
+                ref stdout_content_identity,
+                ref stderr_content_identity,
+                ref stdout_recovery,
+                ref stderr_recovery,
+                ..
+            } if stdout_content_identity.as_ref()
+                    == Some(&phenix_core::ArtifactRevision::from_content(b"fixture-process"))
+                && stderr_content_identity.as_ref()
+                    == Some(&phenix_core::ArtifactRevision::from_content(b""))
+                && stdout_recovery.as_ref() == &ProcessStreamRecovery::Inline
+                && stderr_recovery.as_ref() == &ProcessStreamRecovery::Inline
         ));
         assert!(matches!(
             invoke(
@@ -921,6 +1052,11 @@ mod tests {
             EnvironmentCommand::WriteFile { path, content, .. }
                 if path == "/phenix-fixture-environment-only/project/new.txt"
                     && content == b"new"
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::ReadContentReference { reference }
+                if reference == &recovery_reference
         )));
         assert!(commands.iter().any(|command| matches!(
             command,

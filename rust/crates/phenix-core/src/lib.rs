@@ -69,8 +69,9 @@ pub use agent::{
     ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelInferenceFailure,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
     ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SkillCommand,
-    SkillDefinition, SkillResponse, ToolCommand, ToolDefinition, ToolResponse, UsageQuantity,
-    CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE, SKILL_SERVICE, TOOL_SERVICE,
+    SkillDefinition, SkillResponse, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand,
+    ToolDefinition, ToolResponse, UsageQuantity, CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE,
+    SKILL_SERVICE, TOOL_SERVICE,
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;
