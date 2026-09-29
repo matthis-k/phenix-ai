@@ -1,6 +1,6 @@
 # Lazy tools and compact observations
 
-status: implementation-in-progress
+status: implemented
 
 Tracks #516 and the tool strategy in `token-efficiency.md`.
 
@@ -27,7 +27,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Define one typed tool observation with compact model view, exact source/artifact reference or explicit recovery failure, content identity, and invalidation metadata.
 - [x] Promote large raw outputs to artifacts before collapsing their model view.
 - [x] Reuse unchanged observations only when the tool declares safe invalidation semantics.
-- [ ] Run deterministic filtering/joining/aggregation outside the frontier-model context.
+- [x] Run deterministic filtering/joining/aggregation outside the frontier-model context. Ordinary tool executors/local programs own these transforms; the agent loop receives only their final typed observation/projection and does not route deterministic shaping through another model call.
 - [x] Keep tool call/result groups intact across pruning and compaction.
 
 ## Acceptance
