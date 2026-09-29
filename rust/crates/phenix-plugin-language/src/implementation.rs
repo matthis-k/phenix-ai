@@ -376,13 +376,7 @@ fn handle(
             validate_identity("logical code entity id", &entity_id)?;
             validate_identity("code entity revision", &revision)?;
             Ok(LanguageResponse::EntityBody {
-                view: read_entity_body(
-                    context,
-                    &repository_id,
-                    &entity_id,
-                    &revision,
-                    max_bytes,
-                )?,
+                view: read_entity_body(context, &repository_id, &entity_id, &revision, max_bytes)?,
             })
         }
         LanguageCommand::GetEntityFacet {
@@ -1113,7 +1107,9 @@ fn read_entity_range(
         version,
     } = response
     else {
-        return Err(format!("workspace returned a non-read response for {label}"));
+        return Err(format!(
+            "workspace returned a non-read response for {label}"
+        ));
     };
     if path != locator.document.path {
         return Err(format!(
@@ -2380,8 +2376,7 @@ mod tests {
                 max_bytes: 1024,
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected provider-backed semantic body");
         };
         assert_eq!(body.content, "{}");
