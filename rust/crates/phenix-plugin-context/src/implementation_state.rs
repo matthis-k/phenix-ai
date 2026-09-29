@@ -379,6 +379,10 @@ fn reduction_compaction_proposal(
     request: &ContextReducerRequest,
     proposal: &ContextReducerProposal,
 ) -> Result<CompactionProposal, String> {
+    if proposal.omitted_item_ids.is_empty() && proposal.summaries.is_empty() {
+        return Err("context reducer proposal makes no projection change".into());
+    }
+
     let projection = state.projection(&request.execution_id).ok_or_else(|| {
         format!(
             "context projection is not admitted: {}",
