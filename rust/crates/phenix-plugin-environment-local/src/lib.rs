@@ -771,14 +771,8 @@ impl LocalEnvironment {
                     .map_err(|error| format!("wait {program}: {error}"))?;
                 process.terminate_tree();
                 process.finish_readers();
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                ) = process.take_output()?;
+                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
+                    process.take_output()?;
                 Ok(EnvironmentResponse::Process {
                     exit_code: status.code().unwrap_or(-1),
                     stdout,
@@ -873,14 +867,8 @@ impl LocalEnvironment {
                     process.terminate_tree();
                     process.finish_readers();
                 }
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                ) = process.take_output()?;
+                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
+                    process.take_output()?;
                 Ok(EnvironmentResponse::ProcessOutput {
                     stdout,
                     stderr,
@@ -904,14 +892,8 @@ impl LocalEnvironment {
                     .wait()
                     .map_err(|error| format!("close environment process {handle}: {error}"))?;
                 process.finish_readers();
-                let (
-                    stdout,
-                    stderr,
-                    stdout_complete,
-                    stderr_complete,
-                    stdout_bytes,
-                    stderr_bytes,
-                ) = process.take_output()?;
+                let (stdout, stderr, stdout_complete, stderr_complete, stdout_bytes, stderr_bytes) =
+                    process.take_output()?;
                 Ok(EnvironmentResponse::ProcessClosed {
                     stdout,
                     stderr,
