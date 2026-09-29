@@ -855,4 +855,49 @@ mod code_entity_facet_resource_tests {
     fn non_code_resources_do_not_decode_as_code_facets() {
         assert!(CodeEntityFacetReference::from_resource("turn/1", "revision-1".into()).is_none());
     }
+
+    #[test]
+    fn structured_code_actions_do_not_expose_provider_transport_selection() {
+        let commands = [
+            LanguageCommand::ReadEntityBody {
+                repository_id: "repo".into(),
+                entity_id: "entity".into(),
+                revision: "rev-1".into(),
+                max_bytes: 4096,
+            },
+            LanguageCommand::ReadEntityRelations {
+                repository_id: "repo".into(),
+                entity_id: "entity".into(),
+                revision: "rev-1".into(),
+                kind: CodeEntityRelationKind::References,
+                max_items: 32,
+            },
+            LanguageCommand::ReadChangedNeighborhood {
+                repository_id: "repo".into(),
+                entity_id: "entity".into(),
+                from_revision: "rev-0".into(),
+                max_items: 32,
+            },
+            LanguageCommand::ReplaceEntityBody {
+                operation_id: "edit-1".into(),
+                repository_id: "repo".into(),
+                entity_id: "entity".into(),
+                revision: "rev-1".into(),
+                content: "{ 42 }".into(),
+            },
+            LanguageCommand::RemoveEntity {
+                operation_id: "edit-2".into(),
+                repository_id: "repo".into(),
+                entity_id: "entity".into(),
+                revision: "rev-1".into(),
+            },
+        ];
+
+        for command in commands {
+            let encoded = serde_json::to_string(&command).unwrap();
+            assert!(!encoded.contains("provider_id"));
+            assert!(!encoded.contains("provider_epoch"));
+            assert!(!encoded.contains("lsp"));
+        }
+    }
 }
