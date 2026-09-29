@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, CapabilityId, ContentLocator, ContentReference, PluginContext, PluginInstance,
-    PluginManifest, ResourceNamespace, ServiceId, TransactionOp,
+    ArtifactRevision, Authority, CapabilityId, ContentLocator, ContentReference, PluginContext,
+    PluginInstance, PluginManifest, ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
 use serde::{Deserialize, Serialize};
@@ -550,12 +550,7 @@ fn revalidation_key(record: &RevalidationRecord) -> Result<String, String> {
 }
 
 fn exact_content_identity(content: &[u8]) -> String {
-    let mut encoded = String::with_capacity(content.len() * 2);
-    for byte in content {
-        use std::fmt::Write as _;
-        write!(&mut encoded, "{byte:02x}").expect("writing to string cannot fail");
-    }
-    format!("exact:{}:{encoded}", content.len())
+    ArtifactRevision::from_content(content).to_string()
 }
 
 fn artifact_key(id: &str) -> String {
@@ -642,6 +637,39 @@ mod tests {
             .unwrap();
         let output: phenix_core::PhenixValue = serde_json::from_slice(&output).unwrap();
         output.project().unwrap()
+    }
+
+    #[test]
+    fn artifact_identity_is_bounded_independent_of_payload_size() {
+        let small = exact_content_identity(b"small");
+        let large = exact_content_identity(&vec![b'x'; 2 * 1024 * 1024]);
+
+        assert_eq!(small.len(), "sha256:".len() + 64);
+        assert_eq!(large.len(), "sha256:".len() + 64);
+        assert_ne!(small, large);
+    }
+
+    #[test]
+    fn stored_artifact_id_stays_bounded_for_large_payloads() {
+        let mut kernel = kernel();
+        let payload = vec![b'x'; 2 * 1024 * 1024];
+        let stored = invoke(
+            &mut kernel,
+            ArtifactCommand::Store {
+                content: payload.clone(),
+                provenance: provenance(),
+            },
+        );
+        let ArtifactResponse::Stored { artifact, .. } = stored else {
+            panic!("unexpected artifact response")
+        };
+
+        assert_eq!(artifact.content_identity.len(), "sha256:".len() + 64);
+        assert_eq!(artifact.id.len(), "artifact:".len() + "sha256:".len() + 64);
+        assert_eq!(
+            artifact.content_identity,
+            ArtifactRevision::from_content(&payload).to_string()
+        );
     }
 
     #[test]

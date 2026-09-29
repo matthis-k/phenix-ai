@@ -1941,6 +1941,7 @@ dependencies = [
  "phenix-sdk",
  "rustix",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
