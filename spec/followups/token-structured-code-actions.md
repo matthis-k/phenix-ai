@@ -12,6 +12,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 
 - [x] Added a bounded provider-neutral entity-source read pinned to logical entity/revision, exact workspace revision, and negotiated UTF-8/16/32 position encoding; stale source fails before content is returned.
 - [x] Declaration, name, and semantic body ranges stay distinct. Provider facts may supply an exact encoding-aware body range and `ReadEntityBody` reads only that range; document-symbol declarations do not fabricate body evidence.
+- [x] Provider source/name/body ranges are validated for ordering and containment before they become durable source locators.
 
 ## Required implementation
 
