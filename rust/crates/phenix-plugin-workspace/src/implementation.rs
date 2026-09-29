@@ -4,7 +4,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
     WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
     WORKSPACE_SERVICE,
 };
