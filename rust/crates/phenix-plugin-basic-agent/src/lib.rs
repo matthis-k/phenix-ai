@@ -178,6 +178,28 @@ mod tests {
         R::try_from(phenix_core::Project(&value)).unwrap()
     }
 
+    fn invoke_error<T>(
+        kernel: &mut Kernel,
+        component: ComponentManifest,
+        service: &phenix_core::ServiceId,
+        request: &T,
+    ) -> String
+    where
+        for<'value> PhenixValue: From<&'value T>,
+    {
+        let input = serde_json::to_vec(&PhenixValue::from(request)).unwrap();
+        kernel
+            .invoke_component(
+                &component.id,
+                service,
+                &input,
+                &authority(),
+                &component.owner,
+            )
+            .expect_err("request must fail")
+            .to_string()
+    }
+
     #[test]
     fn basic_components_are_independently_named_and_export_canonical_interfaces() {
         let manifests = [
@@ -243,6 +265,86 @@ mod tests {
             response.provider_metadata.get("implementation"),
             Some(&PhenixValue::String("deterministic-echo".to_owned()))
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn tool_catalog_revisions_and_cursors_fail_closed() {
+        let path = temp_db();
+        let mut kernel = kernel(&path);
+        for (id, description) in [("alpha", "Alpha tool"), ("beta", "Beta tool")] {
+            let _: ToolResponse = invoke(
+                &mut kernel,
+                basic_tools_component_manifest(),
+                &tool_service(),
+                &ToolCommand::Register {
+                    tool: ToolDefinition {
+                        id: CallableId::parse(id).unwrap(),
+                        description: description.into(),
+                        input_schema: PhenixSchema::Any,
+                        output_schema: PhenixSchema::Any,
+                        output_prefix: Vec::new().into(),
+                    },
+                },
+            );
+        }
+
+        let catalog: ToolResponse = invoke(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: String::new(),
+                cursor: None,
+                limit: 1,
+            },
+        );
+        let (catalog_revision, cursor) = match catalog {
+            ToolResponse::Catalog {
+                catalog_revision,
+                next_cursor: Some(cursor),
+                ..
+            } => (catalog_revision, cursor),
+            response => panic!("expected paginated tool catalog, got {response:?}"),
+        };
+
+        let cursor_error = invoke_error(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: "beta".into(),
+                cursor: Some(cursor),
+                limit: 1,
+            },
+        );
+        assert!(cursor_error.contains("different query"), "{cursor_error}");
+
+        let _: ToolResponse = invoke(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Register {
+                tool: ToolDefinition {
+                    id: CallableId::parse("gamma").unwrap(),
+                    description: "Gamma tool".into(),
+                    input_schema: PhenixSchema::Any,
+                    output_schema: PhenixSchema::Any,
+                    output_prefix: Vec::new().into(),
+                },
+            },
+        );
+        let revision_error = invoke_error(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::LoadSchemas {
+                ids: vec![CallableId::parse("alpha").unwrap()],
+                catalog_revision,
+            },
+        );
+        assert!(revision_error.contains("stale tool catalog revision"), "{revision_error}");
+
         let _ = fs::remove_file(path);
     }
 
