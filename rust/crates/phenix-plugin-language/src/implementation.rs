@@ -366,6 +366,25 @@ fn handle(
                 )?,
             })
         }
+        LanguageCommand::ReadEntityBody {
+            repository_id,
+            entity_id,
+            revision,
+            max_bytes,
+        } => {
+            validate_identity("code repository id", &repository_id)?;
+            validate_identity("logical code entity id", &entity_id)?;
+            validate_identity("code entity revision", &revision)?;
+            Ok(LanguageResponse::EntityBody {
+                view: read_entity_body(
+                    context,
+                    &repository_id,
+                    &entity_id,
+                    &revision,
+                    max_bytes,
+                )?,
+            })
+        }
         LanguageCommand::GetEntityFacet {
             repository_id,
             entity_id,
@@ -587,6 +606,7 @@ fn ingest_entity_fact(
         .as_deref()
         .ok_or_else(|| "provider fact requires an exact workspace source revision".to_owned())?;
     verify_workspace_document_revision(context, &document.path, expected_version)?;
+    let source = fact.source.clone();
 
     let revision = CodeEntityRevision {
         entity: fact.entity,
@@ -603,6 +623,33 @@ fn ingest_entity_fact(
     };
     validate_code_entity_revision(&revision)?;
     store_entity_revision(context, &revision)?;
+    if let Some(source) = source {
+        validate_code_source_range(&source.range, "provider source range")?;
+        validate_code_source_range(&source.selection_range, "provider selection range")?;
+        if !code_range_contains(&source.range, &source.selection_range) {
+            return Err("provider selection range must be inside its source range".into());
+        }
+        if let Some(body_range) = &source.body_range {
+            validate_code_source_range(body_range, "provider body range")?;
+            if !code_range_contains(&source.range, body_range) {
+                return Err("provider body range must be inside its source range".into());
+            }
+        }
+        store_entity_source_locator(
+            context,
+            &CodeEntitySourceLocator {
+                entity: revision.entity.clone(),
+                revision: revision.revision.clone(),
+                document: revision.document.clone(),
+                provider_id: revision.provider_id.clone(),
+                provider_epoch: revision.provider_epoch,
+                position_encoding: source.position_encoding,
+                range: source.range,
+                selection_range: source.selection_range,
+                body_range: source.body_range,
+            },
+        )?;
+    }
     Ok(revision)
 }
 
@@ -917,6 +964,7 @@ fn entity_source_locator(
         position_encoding,
         range: code_source_range(range),
         selection_range: code_source_range(selection_range),
+        body_range: None,
     }
 }
 
@@ -1000,21 +1048,50 @@ fn read_entity_source(
     revision: &str,
     max_bytes: u64,
 ) -> Result<Option<CodeEntitySourceView>, String> {
-    if max_bytes == 0 {
-        return Err("entity source read requires a non-zero byte bound".into());
-    }
     let Some(locator) = read_entity_source_locator(context, repository_id, entity_id, revision)?
     else {
         return Ok(None);
     };
+    let range = locator.range.clone();
+    read_entity_range(context, locator, range, max_bytes, "entity source")
+}
+
+fn read_entity_body(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    max_bytes: u64,
+) -> Result<Option<CodeEntitySourceView>, String> {
+    let Some(locator) = read_entity_source_locator(context, repository_id, entity_id, revision)?
+    else {
+        return Ok(None);
+    };
+    let range = locator
+        .body_range
+        .clone()
+        .ok_or_else(|| "code entity has no exact semantic body range".to_owned())?;
+    read_entity_range(context, locator, range, max_bytes, "entity body")
+}
+
+fn read_entity_range(
+    context: &LanguageContext<'_, '_, '_>,
+    locator: CodeEntitySourceLocator,
+    range: CodeSourceRange,
+    max_bytes: u64,
+    label: &str,
+) -> Result<Option<CodeEntitySourceView>, String> {
+    if max_bytes == 0 {
+        return Err(format!("{label} read requires a non-zero byte bound"));
+    }
     if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
-        return Err("entity source read requires workspace-backed provenance".into());
+        return Err(format!("{label} read requires workspace-backed provenance"));
     }
     let expected_version = locator
         .document
         .file_version
         .as_deref()
-        .ok_or_else(|| "entity source read requires an exact workspace revision".to_owned())?;
+        .ok_or_else(|| format!("{label} read requires an exact workspace revision"))?;
 
     let input = context
         .kernel
@@ -1036,25 +1113,25 @@ fn read_entity_source(
         version,
     } = response
     else {
-        return Err("workspace returned a non-read response for entity source".into());
+        return Err(format!("workspace returned a non-read response for {label}"));
     };
     if path != locator.document.path {
         return Err(format!(
-            "entity source path mismatch: expected {}, observed {path}",
+            "{label} path mismatch: expected {}, observed {path}",
             locator.document.path
         ));
     }
     let WorkspaceFileVersion::Present { content_hash } = version else {
-        return Err(format!("entity source path is absent: {path}"));
+        return Err(format!("{label} path is absent: {path}"));
     };
     if !workspace_revision_matches(&content_hash, expected_version) {
         return Err(format!(
-            "entity source revision is stale: expected {expected_version}, current {}",
+            "{label} revision is stale: expected {expected_version}, current {}",
             workspace_revision_label(&content_hash)
         ));
     }
 
-    let source = source_range_slice(&content, &locator.range, locator.position_encoding)?;
+    let source = source_range_slice(&content, &range, locator.position_encoding)?;
     let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
     let (content, complete) = bounded_utf8(source, max_bytes);
     Ok(Some(CodeEntitySourceView {
@@ -1062,10 +1139,26 @@ fn read_entity_source(
         revision: locator.revision,
         document: locator.document,
         position_encoding: locator.position_encoding,
-        range: locator.range,
+        range,
         content,
         complete,
     }))
+}
+
+fn validate_code_source_range(range: &CodeSourceRange, label: &str) -> Result<(), String> {
+    if code_position_key(&range.start) > code_position_key(&range.end) {
+        return Err(format!("{label} end precedes start"));
+    }
+    Ok(())
+}
+
+fn code_range_contains(outer: &CodeSourceRange, inner: &CodeSourceRange) -> bool {
+    code_position_key(&outer.start) <= code_position_key(&inner.start)
+        && code_position_key(&inner.end) <= code_position_key(&outer.end)
+}
+
+fn code_position_key(position: &CodeSourcePosition) -> (u32, u32) {
+    (position.line, position.character)
 }
 
 fn source_range_slice<'source>(
