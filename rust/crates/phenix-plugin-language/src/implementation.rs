@@ -1202,6 +1202,326 @@ fn read_entity_body(
     read_entity_range(context, locator, range, max_bytes, "entity body")
 }
 
+fn relation_operation(kind: CodeEntityRelationKind) -> LanguageOperationKind {
+    match kind {
+        CodeEntityRelationKind::Callers => LanguageOperationKind::CallHierarchy,
+        CodeEntityRelationKind::References => LanguageOperationKind::References,
+        CodeEntityRelationKind::Implementations => LanguageOperationKind::Implementations,
+    }
+}
+
+fn relation_kind_key(kind: CodeEntityRelationKind) -> &'static str {
+    match kind {
+        CodeEntityRelationKind::Callers => "callers",
+        CodeEntityRelationKind::References => "references",
+        CodeEntityRelationKind::Implementations => "implementations",
+    }
+}
+
+fn entity_relations_key(
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    kind: CodeEntityRelationKind,
+) -> String {
+    format!(
+        "entity/{repository_id}/{entity_id}/relations/{revision}/{}",
+        relation_kind_key(kind)
+    )
+}
+
+fn ingest_entity_relations(
+    context: &LanguageContext<'_, '_, '_>,
+    observation_id: &str,
+    fact_id: &str,
+) -> Result<CodeEntityRelations, String> {
+    let observation = read_observation(context, observation_id)?
+        .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
+    let payload = serde_json::Value::from_value(&observation.result.payload)
+        .map_err(|error| format!("provider relation payload is not JSON-compatible: {error}"))?;
+    let batch: CodeEntityProviderRelationFactBatch = serde_json::from_value(payload)
+        .map_err(|error| format!("provider relation payload is invalid: {error}"))?;
+    let fact = batch
+        .facts
+        .into_iter()
+        .find(|fact| fact.id == fact_id)
+        .ok_or_else(|| format!("provider relation fact not found in observation: {fact_id}"))?;
+
+    if observation.result.operation != relation_operation(fact.kind) {
+        return Err(format!(
+            "provider relation fact {:?} does not match observation operation {:?}",
+            fact.kind, observation.result.operation
+        ));
+    }
+    validate_identity("code repository id", &fact.entity.repository_id)?;
+    validate_identity("logical code entity id", &fact.entity.id)?;
+    validate_identity("code entity revision", &fact.revision)?;
+    let current = read_entity_revision(
+        context,
+        &fact.entity.repository_id,
+        &fact.entity.id,
+    )?
+    .ok_or_else(|| {
+        format!(
+            "unknown logical code entity: {}/{}",
+            fact.entity.repository_id, fact.entity.id
+        )
+    })?;
+    if current.revision != fact.revision {
+        return Err(format!(
+            "relation fact revision is stale: expected {}, current {}",
+            fact.revision, current.revision
+        ));
+    }
+    if current.provider_id != observation.provider_id
+        || current.provider_epoch != observation.provider_epoch
+    {
+        return Err("relation fact provider no longer owns the current entity revision".into());
+    }
+
+    let mut targets = fact.targets;
+    targets.sort_by(|left, right| {
+        left.entity
+            .repository_id
+            .cmp(&right.entity.repository_id)
+            .then_with(|| left.entity.id.cmp(&right.entity.id))
+            .then_with(|| left.revision.cmp(&right.revision))
+    });
+    targets.dedup();
+    for target in &targets {
+        validate_identity("relation target repository id", &target.entity.repository_id)?;
+        validate_identity("relation target entity id", &target.entity.id)?;
+        if let Some(revision) = &target.revision {
+            validate_identity("relation target revision", revision)?;
+        }
+    }
+
+    let relations = CodeEntityRelations {
+        entity: fact.entity,
+        revision: fact.revision,
+        kind: fact.kind,
+        targets,
+        complete: fact.complete,
+    };
+    let key = entity_relations_key(
+        &relations.entity.repository_id,
+        &relations.entity.id,
+        &relations.revision,
+        relations.kind,
+    );
+    let encoded = serde_json::to_vec(&relations).map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: context
+                        .kernel
+                        .read_durable(&language_namespace(), &key)
+                        .map_err(|error| error.to_string())?,
+                },
+                TransactionOp::Put { key, value: encoded },
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(relations)
+}
+
+fn read_entity_relations(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    kind: CodeEntityRelationKind,
+    max_items: u32,
+) -> Result<Option<CodeEntityRelations>, String> {
+    if max_items == 0 {
+        return Err("semantic relation read requires a non-zero item bound".into());
+    }
+    let key = entity_relations_key(repository_id, entity_id, revision, kind);
+    let Some(encoded) = context
+        .kernel
+        .read_durable(&language_namespace(), &key)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let mut relations: CodeEntityRelations =
+        serde_json::from_slice(&encoded).map_err(|error| error.to_string())?;
+    let limit = usize::try_from(max_items).unwrap_or(usize::MAX);
+    if relations.targets.len() > limit {
+        relations.targets.truncate(limit);
+        relations.complete = false;
+    }
+    Ok(Some(relations))
+}
+
+fn read_changed_neighborhood(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    from_revision: &str,
+    max_items: u32,
+) -> Result<Option<CodeChangedNeighborhood>, String> {
+    if max_items == 0 {
+        return Err("changed-neighborhood read requires a non-zero item bound".into());
+    }
+    let Some(previous) =
+        read_entity_revision_version(context, repository_id, entity_id, from_revision)?
+    else {
+        return Ok(None);
+    };
+    let Some(current) = read_entity_revision(context, repository_id, entity_id)? else {
+        return Ok(None);
+    };
+    let changes = CodeEntityFacetChanges::between(&previous.facets, &current.facets);
+    let mut remaining = usize::try_from(max_items).unwrap_or(usize::MAX);
+    let mut complete = true;
+    let mut relations = Vec::new();
+    for kind in [
+        CodeEntityRelationKind::Callers,
+        CodeEntityRelationKind::References,
+        CodeEntityRelationKind::Implementations,
+    ] {
+        if remaining == 0 {
+            complete = false;
+            break;
+        }
+        let bound = u32::try_from(remaining).unwrap_or(u32::MAX);
+        match read_entity_relations(
+            context,
+            repository_id,
+            entity_id,
+            &current.revision,
+            kind,
+            bound,
+        )? {
+            Some(value) => {
+                remaining = remaining.saturating_sub(value.targets.len());
+                complete &= value.complete;
+                relations.push(value);
+            }
+            None => complete = false,
+        }
+    }
+    Ok(Some(CodeChangedNeighborhood {
+        entity: current.entity,
+        from_revision: previous.revision,
+        current_revision: current.revision,
+        changes,
+        relations,
+        complete,
+    }))
+}
+
+fn edit_validation_key(
+    repository_id: &str,
+    entity_id: &str,
+    operation_id: &str,
+) -> String {
+    let operation = format!("{:x}", Sha256::digest(operation_id.as_bytes()));
+    format!("entity/{repository_id}/{entity_id}/edit-validation/{operation}")
+}
+
+fn ingest_edit_validation(
+    context: &LanguageContext<'_, '_, '_>,
+    observation_id: &str,
+    fact_id: &str,
+) -> Result<CodeEntityEditValidation, String> {
+    let observation = read_observation(context, observation_id)?
+        .ok_or_else(|| format!("unknown language observation: {observation_id}"))?;
+    if observation.result.operation != LanguageOperationKind::EditValidation {
+        return Err("edit validation ingestion requires an edit_validation observation".into());
+    }
+    let payload = serde_json::Value::from_value(&observation.result.payload)
+        .map_err(|error| format!("edit validation payload is not JSON-compatible: {error}"))?;
+    let batch: CodeEntityProviderEditValidationFactBatch = serde_json::from_value(payload)
+        .map_err(|error| format!("edit validation payload is invalid: {error}"))?;
+    let fact = batch
+        .facts
+        .into_iter()
+        .find(|fact| fact.id == fact_id)
+        .ok_or_else(|| format!("edit validation fact not found in observation: {fact_id}"))?;
+    if !fact.valid {
+        return Err("provider rejected semantic edit structure validation".into());
+    }
+    validate_identity("semantic edit operation id", &fact.operation_id)?;
+    validate_identity("code repository id", &fact.entity.repository_id)?;
+    validate_identity("logical code entity id", &fact.entity.id)?;
+    validate_identity("code entity revision", &fact.revision)?;
+    validate_identity("semantic edit intent identity", &fact.intent_identity)?;
+
+    let current = read_entity_revision(
+        context,
+        &fact.entity.repository_id,
+        &fact.entity.id,
+    )?
+    .ok_or_else(|| {
+        format!(
+            "unknown logical code entity: {}/{}",
+            fact.entity.repository_id, fact.entity.id
+        )
+    })?;
+    if current.revision != fact.revision {
+        return Err("edit validation targets a stale entity revision".into());
+    }
+    if current.provider_id != observation.provider_id
+        || current.provider_epoch != observation.provider_epoch
+    {
+        return Err("edit validation provider no longer owns the current entity revision".into());
+    }
+    let validation = CodeEntityEditValidation {
+        operation_id: fact.operation_id,
+        entity: fact.entity,
+        revision: fact.revision,
+        intent_identity: fact.intent_identity,
+        provider_id: observation.provider_id,
+        provider_epoch: observation.provider_epoch,
+    };
+    let key = edit_validation_key(
+        &validation.entity.repository_id,
+        &validation.entity.id,
+        &validation.operation_id,
+    );
+    let encoded = serde_json::to_vec(&validation).map_err(|error| error.to_string())?;
+    context
+        .kernel
+        .transact_durable(
+            &language_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: key.clone(),
+                    expected: context
+                        .kernel
+                        .read_durable(&language_namespace(), &key)
+                        .map_err(|error| error.to_string())?,
+                },
+                TransactionOp::Put { key, value: encoded },
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(validation)
+}
+
+fn read_edit_validation(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    operation_id: &str,
+) -> Result<Option<CodeEntityEditValidation>, String> {
+    context
+        .kernel
+        .read_durable(
+            &language_namespace(),
+            &edit_validation_key(repository_id, entity_id, operation_id),
+        )
+        .map_err(|error| error.to_string())?
+        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
 #[derive(Clone, Copy)]
 enum SemanticEditTarget {
     Body,
