@@ -4,9 +4,9 @@ use phenix_application_interface::{
     application_descriptor, ActivateSkill, AddClientTool, ApplicationTransport, Authenticate,
     Cancel, CloseSession, CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics,
     GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListObservables, ListSessions, ListSkills, Operation, Prompt,
-    RemoveClientTool, RenameSession, ResumeSession, SetInteractionHandlers, SubscribeObservable,
-    UnsubscribeObservable,
+    InvokeCapability, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
+    ListSkills, Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession,
+    SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable, UnsubscribeObservable,
 };
 use phenix_core::{ContractId, PhenixValue, ValueCodec};
 use std::sync::Arc;
@@ -36,6 +36,8 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
             Cancel,
             DiscoverAuthentication,
             Authenticate,
+            ListDefaultSelections,
+            SelectDefaultSelection,
             RenameSession,
             GetLineage,
             ListSkills,
@@ -126,8 +128,11 @@ fn extension_matches<O: Operation>(method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_application_interface::types::{Empty, SessionInfo, SessionRenameInput};
-    use phenix_core::SessionId;
+    use phenix_application_interface::types::{
+        Empty, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation, Selections,
+        SessionInfo, SessionRenameInput,
+    };
+    use phenix_core::{PluginId, RoutingProfileId, SessionId};
     use std::{cell::RefCell, future::ready, rc::Rc};
 
     type Calls = Rc<RefCell<Vec<(ContractId, PhenixValue)>>>;
@@ -232,6 +237,60 @@ mod tests {
         assert_eq!(
             calls.borrow().as_slice(),
             &[(contract(RenameSession::ID), input.to_value())]
+        );
+    }
+
+    fn default_selections(selected: &str) -> Selections {
+        Selections {
+            available: vec![SelectionInfo {
+                id: RoutingProfileId::parse("model.provider.model-a.deadbeef").unwrap(),
+                provider: PluginId::parse("provider").unwrap(),
+                provider_name: "Provider".to_owned(),
+                model: Some("model-a".to_owned()),
+                thinking: Some("high".to_owned()),
+                authenticated: true,
+                name: "Model A".to_owned(),
+                description: None,
+                presentation: SelectionPresentation::Model,
+            }],
+            selected: Some(RoutingProfileId::parse(selected).unwrap()),
+        }
+    }
+
+    #[tokio::test]
+    async fn default_selection_extensions_dispatch_application_operations() {
+        let output = default_selections("model.provider.model-a.deadbeef");
+        let extra = [
+            ListDefaultSelections::CAPABILITY,
+            SelectDefaultSelection::CAPABILITY,
+        ];
+
+        let (list, calls) = adapter(output.to_value(), &extra);
+        list.extension_request(request(
+            "phenix/selection-default-list@1",
+            Empty {}.to_value(),
+        ))
+        .await
+        .expect("default selection list dispatches");
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &[(contract(ListDefaultSelections::ID), Empty {}.to_value())]
+        );
+
+        let input = SelectionDefaultSelectInput {
+            selection_id: RoutingProfileId::parse("model.provider.model-a.deadbeef").unwrap(),
+        };
+        let (select, calls) = adapter(output.to_value(), &extra);
+        select
+            .extension_request(request(
+                "phenix/selection-default-select@1",
+                input.to_value(),
+            ))
+            .await
+            .expect("default selection update dispatches");
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &[(contract(SelectDefaultSelection::ID), input.to_value())]
         );
     }
 
