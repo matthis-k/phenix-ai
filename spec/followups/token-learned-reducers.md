@@ -19,6 +19,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Ordinary helper invocation responses expose the durable charged attempt ID, so reducer backends can return verifiable helper-attempt evidence instead of inventing an opaque accounting identifier.
 - [x] Context rejects reducer proposals unless the claimed helper attempt exists, belongs to the request execution and parent attempt, has a charged reservation, is an ordinary helper attempt, and settled successfully.
 - [x] Reducer proposals derive their causal reduction identity from that verified helper attempt. The evaluator fixture proves helper cost remains in total task cost while later reacquisition stays attributed to the same reduction.
+- [x] Stage measurements report input bytes presented after deterministic filtering, retained output bytes, and the marginal byte delta. Task success/cost remains the #599 decision metric.
 
 ## Required implementation
 
@@ -38,7 +39,7 @@ Phenix implements deterministic admission, compaction, provenance, and reacquisi
 - [x] Reducer input is self-contained and bounded; the backend does not need context/source-fetch authority to inspect eligible material.
 - [x] Added a separate zero-authority helper-backed reducer plugin. It imports only `phenix.invocation.helper@1`, rejects helper tool calls, and derives proposal recovery evidence from the authorized request rather than model output.
 - [x] Removed material stays exactly recoverable while retention requires it. Omission and derived summaries require exact context references, and compaction rejects reduced retained forms without recovery evidence.
-- [ ] Benchmarks report marginal savings after deterministic reductions, not standalone compression ratios.
+- [x] Benchmarks report marginal savings after deterministic reductions, not standalone compression ratios. `ContextReducerMeasurement` measures only the reducer-eligible post-filter input; paired #599 variants carry the task outcome/cost comparison.
 - [x] Quality regressions and retries count against the reducer. #599 derives success-normalized task cost from every distinct charged attempt, including failed/retry/helper work; reducer reacquisition remains causal metadata on that charged work.
 
 ## Ownership
