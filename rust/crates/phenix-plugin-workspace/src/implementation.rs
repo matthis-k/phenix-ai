@@ -5,9 +5,8 @@ use phenix_core::{
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWrittenFile,
-    WORKSPACE_SERVICE,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -527,10 +526,8 @@ fn process(
             stderr_recovery,
             ..
         } => {
-            let (stdout, stdout_view_complete) =
-                process_model_view(stdout, &stdout_recovery);
-            let (stderr, stderr_view_complete) =
-                process_model_view(stderr, &stderr_recovery);
+            let (stdout, stdout_view_complete) = process_model_view(stdout, &stdout_recovery);
+            let (stderr, stderr_view_complete) = process_model_view(stderr, &stderr_recovery);
             Ok(WorkspaceResponse::Process {
                 exit_code,
                 stdout,
@@ -551,10 +548,7 @@ fn process(
     }
 }
 
-fn process_model_view(
-    bytes: Vec<u8>,
-    recovery: &ProcessStreamRecovery,
-) -> (String, bool) {
+fn process_model_view(bytes: Vec<u8>, recovery: &ProcessStreamRecovery) -> (String, bool) {
     let may_collapse = matches!(recovery, ProcessStreamRecovery::Reference { .. });
     if !may_collapse || bytes.len() <= MAX_PROCESS_MODEL_VIEW_BYTES {
         return (String::from_utf8_lossy(&bytes).into_owned(), true);
