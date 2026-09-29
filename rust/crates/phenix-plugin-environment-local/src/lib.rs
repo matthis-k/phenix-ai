@@ -1105,10 +1105,8 @@ mod tests {
     #[test]
     fn truncated_stream_is_persisted_as_an_exact_reference() {
         let root = temp_root();
-        let environment = LocalEnvironment::new(
-            root.clone(),
-            EnvironmentFilesystemPolicy::Unrestricted,
-        );
+        let environment =
+            LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
         let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
         let mut capture = CaptureBuffer::default();
         capture.push(&full);
