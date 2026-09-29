@@ -1035,7 +1035,6 @@ mod tests {
     #[test]
     fn capture_buffer_reports_full_stream_size_when_view_is_truncated() {
         let mut capture = CaptureBuffer::default();
-        capture.push(&vec![b'x'; MAX_CAPTURE_BYTES + 17]);
         let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
         capture.push(&full);
         let (bytes, complete, total_bytes, content_identity) = capture.take();
