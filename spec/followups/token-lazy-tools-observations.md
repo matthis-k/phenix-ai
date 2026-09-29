@@ -14,6 +14,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Project environment-owned process completeness, full byte counts, content identities, and typed recovery state through the workspace response.
 - [x] Compute stdout/stderr SHA-256 identities incrementally at the environment process owner before bounded views discard bytes.
 - [x] Persist exact stdout/stderr artifacts at the environment process owner and project typed references or explicit recovery failure.
+- [x] Keep complete bounded process streams inline; create recovery artifacts only when the model view omits bytes.
 - [x] The tool service exposes bounded, revision-bound descriptor search with schema identities and selected schema loading; stale cursors and catalog revisions fail closed.
 - [x] Regression coverage rejects query-mismatched pagination cursors and schema loads against a superseded catalog revision.
 - [x] The agent loop accepts conflict-checked schema activations from an authorized tool executor and projects newly activated descriptors only into the following model turn, enabling portable deferred loading without replaying the session.
