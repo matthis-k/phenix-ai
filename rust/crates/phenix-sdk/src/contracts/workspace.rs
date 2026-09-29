@@ -77,6 +77,10 @@ pub enum WorkspaceCommand {
     },
 }
 
+const fn complete_capture() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum WorkspaceResponse {
@@ -102,5 +106,13 @@ pub enum WorkspaceResponse {
         exit_code: i32,
         stdout: String,
         stderr: String,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
     },
 }
