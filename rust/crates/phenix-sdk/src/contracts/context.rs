@@ -167,6 +167,10 @@ pub enum ContextCommand {
     RequestReduction {
         request: ContextReducerRequest,
     },
+    CommitReduction {
+        request: ContextReducerRequest,
+        proposal: ContextReducerProposal,
+    },
     EvaluateCompactionCost {
         request: CacheCompactionDecisionRequest,
     },
@@ -232,6 +236,11 @@ pub enum ContextResponse {
     ReductionProposed {
         proposal: ContextReducerProposal,
         measurement: ContextReducerMeasurement,
+    },
+    ReductionCommitted {
+        proposal: ContextReducerProposal,
+        measurement: ContextReducerMeasurement,
+        commit: CompactionCommit,
     },
     CompactionCostDecision {
         decision: CacheCompactionDecision,
