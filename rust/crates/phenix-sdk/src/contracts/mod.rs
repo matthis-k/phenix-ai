@@ -40,10 +40,10 @@ pub use context_compaction::{
     CacheCompactionCostError, CacheCompactionDecision, CacheCompactionDecisionBasis,
     CacheCompactionDecisionRequest, CacheCostScenario, CompactionCommit, CompactionProposal,
     CompactionValidationError, ContextCheckpoint as ProjectionCheckpoint, ContextReducerCommand,
-    ContextReducerInterface, ContextReducerMeasurement, ContextReducerProposal, ContextReducerRequest,
-    ContextReducerResponse, ContextReducerStage, DerivedReductionSummary, ProjectionRevision,
-    ReducerEligibleItem,
-    ReducerValidationError, RetentionTransition, ToolCallGroupReference, CONTEXT_REDUCER_SERVICE,
+    ContextReducerInterface, ContextReducerMeasurement, ContextReducerProposal,
+    ContextReducerRequest, ContextReducerResponse, ContextReducerStage, DerivedReductionSummary,
+    ProjectionRevision, ReducerEligibleItem, ReducerValidationError, RetentionTransition,
+    ToolCallGroupReference, CONTEXT_REDUCER_SERVICE,
 };
 pub use context_recovery_bootstrap::*;
 pub use delegation::*;
