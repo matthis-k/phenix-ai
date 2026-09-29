@@ -1,6 +1,6 @@
 # Structured semantic code actions
 
-status: implementation-in-progress
+status: implemented
 
 Tracks #516 slice 7. This is separate from stable code identity: identity answers what code entity is being addressed; structured actions define how agents read and modify it.
 
@@ -24,7 +24,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 - [x] Apply semantic writes through recoverable workspace commits and reject stale source revisions before mutation.
 - [x] Require declared syntax/structure validation for syntax-preserving edits; unsupported actions remain explicit textual operations.
 - [x] Keep textual file operations as an explicit fallback for unsupported semantic actions; unsupported entity edits fail before mutation and callers may then choose revision-checked Workspace writes.
-- [ ] Reuse language providers for facts; do not expose raw LSP transport.
+- [x] Reuse language providers for facts; do not expose raw LSP transport. Structured actions consume normalized provider facts/validation observations; action requests carry repository/entity/revision identities rather than provider or LSP transport selectors.
 - [x] Preserve exact diff/artifact evidence for applied edits.
 
 ## Acceptance
@@ -33,7 +33,7 @@ Phenix has file operations and language-intelligence reads, but no provider-neut
 - [x] Successful edits return the Workspace commit receipt with exact path plus pre/post content revisions; diff/artifact payload retention remains open.
 - [x] Unsupported semantic support fails closed; file operations remain a separate explicit fallback without semantic guarantees.
 - [x] Reads use bounded entity neighborhoods instead of whole files when supported.
-- [ ] Provider replacement does not change the public Phenix action contract.
+- [x] Provider replacement does not change the public Phenix action contract. Contract coverage asserts structured read/edit requests expose no provider identity, provider epoch, or LSP selector.
 
 ## Ownership
 
