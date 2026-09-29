@@ -13,7 +13,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Artifact content identities are bounded digest references independent of payload size.
 - [x] Project environment-owned process completeness, full byte counts, content identities, and typed recovery state through the workspace response.
 - [x] Compute stdout/stderr SHA-256 identities incrementally at the environment process owner before bounded views discard bytes.
-- [ ] Persist exact stdout/stderr artifacts at the environment process owner and project typed references or explicit recovery failure.
+- [x] Persist exact stdout/stderr artifacts at the environment process owner and project typed references or explicit recovery failure.
 - [x] The tool service exposes bounded, revision-bound descriptor search with schema identities and selected schema loading; stale cursors and catalog revisions fail closed.
 - [x] Regression coverage rejects query-mismatched pagination cursors and schema loads against a superseded catalog revision.
 - [x] The agent loop accepts conflict-checked schema activations from an authorized tool executor and projects newly activated descriptors only into the following model turn, enabling portable deferred loading without replaying the session.
@@ -25,7 +25,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 - [x] Load full schemas only for the selected task-relevant tool set.
 - [x] Preserve a deterministic eager fallback for providers without deferred tool support.
 - [x] Define one typed tool observation with compact model view, exact source/artifact reference or explicit recovery failure, content identity, and invalidation metadata.
-- [ ] Promote large raw outputs to artifacts before collapsing their model view.
+- [x] Promote large raw outputs to artifacts before collapsing their model view.
 - [ ] Reuse unchanged observations only when the tool declares safe invalidation semantics.
 - [ ] Run deterministic filtering/joining/aggregation outside the frontier-model context.
 - [ ] Keep tool call/result groups intact across pruning and compaction.
@@ -33,7 +33,7 @@ The runtime now has typed tool schemas/results, per-step tool budgets, structura
 ## Acceptance
 
 - [x] Inactive tool schemas do not enter a deferred-capable model request.
-- [ ] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
+- [x] Large Bash/test/compiler output can enter context as a bounded view plus recoverable exact reference.
 - [ ] Repeated unchanged observations avoid reinserting the full payload.
 - [ ] Volatile shell output is never reused merely because command text matches.
 - [ ] Disabling lazy/result reduction restores a bounded eager path or typed exhaustion.
