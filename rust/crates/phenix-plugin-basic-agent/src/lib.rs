@@ -66,8 +66,9 @@ mod tests {
     use phenix_core::{
         context_service, skill_service, tool_service, Authority, CallableId, ComponentInterface,
         ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
-        ContextScope, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixSchema, PhenixValue,
-        ResolvedHarness, ResolvedHarnessActivation, SkillCommand, SkillDefinition, SkillId,
+        ContextScope, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
+        PhenixSchema, PhenixValue, ResolvedHarness, ResolvedHarnessActivation, SkillCommand,
+        SkillDefinition, SkillId,
         SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
     };
     use phenix_sdk::{
@@ -188,16 +189,25 @@ mod tests {
         for<'value> PhenixValue: From<&'value T>,
     {
         let input = serde_json::to_vec(&PhenixValue::from(request)).unwrap();
-        kernel
-            .invoke_component(
-                &component.id,
-                service,
-                &input,
-                &authority(),
-                &component.owner,
-            )
-            .expect_err("request must fail")
-            .to_string()
+        match kernel.invoke_component(
+            &component.id,
+            service,
+            &input,
+            &authority(),
+            &component.owner,
+        ) {
+            Ok(output) => {
+                let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+                match InvocationOutcome::from_transport_value(value) {
+                    InvocationOutcome::DomainError(PhenixValue::String(message)) => message,
+                    InvocationOutcome::DomainError(error) => format!("{error:?}"),
+                    InvocationOutcome::Success(value) => {
+                        panic!("request must fail, got success: {value:?}")
+                    }
+                }
+            }
+            Err(error) => error.to_string(),
+        }
     }
 
     #[test]
