@@ -913,16 +913,29 @@ mod tests {
             WorkspaceResponse::Written { .. }
         ));
 
+        let shell = invoke(
+            &mut kernel,
+            WorkspaceCommand::Shell {
+                command: "printf shell".into(),
+            },
+            &authority(&[WORKSPACE_SHELL]),
+        )
+        .unwrap();
         assert!(matches!(
-            invoke(
-                &mut kernel,
-                WorkspaceCommand::Shell {
-                    command: "printf shell".into(),
-                },
-                &authority(&[WORKSPACE_SHELL]),
-            )
-            .unwrap(),
-            WorkspaceResponse::Process { exit_code: 0, .. }
+            shell,
+            WorkspaceResponse::Process {
+                exit_code: 0,
+                ref stdout_content_identity,
+                ref stderr_content_identity,
+                ref stdout_recovery,
+                ref stderr_recovery,
+                ..
+            } if stdout_content_identity.as_ref()
+                    == Some(&phenix_core::ArtifactRevision::from_content(b"fixture-process"))
+                && stderr_content_identity.as_ref()
+                    == Some(&phenix_core::ArtifactRevision::from_content(b""))
+                && stdout_recovery == &ProcessStreamRecovery::Inline
+                && stderr_recovery == &ProcessStreamRecovery::Inline
         ));
         assert!(matches!(
             invoke(
