@@ -214,6 +214,7 @@ pub enum ContextReducerStage {
 #[serde(deny_unknown_fields)]
 pub struct ReducerEligibleItem {
     pub item_id: String,
+    pub content: Bytes,
     pub recovery: Option<ExactContextReference>,
 }
 
@@ -227,7 +228,7 @@ pub struct ContextReducerRequest {
     pub capability_generation: String,
     pub stage: ContextReducerStage,
     pub query: String,
-    pub helper_reservation_id: String,
+    pub parent_attempt_id: String,
     pub max_output_bytes: u64,
     pub eligible: Vec<ReducerEligibleItem>,
 }
@@ -249,7 +250,6 @@ pub struct ContextReducerProposal {
     pub configuration_revision: String,
     pub authority_revision: String,
     pub capability_generation: String,
-    pub helper_reservation_id: String,
     pub stage: ContextReducerStage,
     pub helper_attempt_id: String,
     #[serde(default)]
@@ -299,7 +299,6 @@ pub enum ReducerValidationError {
     ConfigurationMismatch,
     AuthorityMismatch,
     CapabilityGenerationMismatch,
-    HelperReservationMismatch,
     StageMismatch,
     UnknownItem { item_id: String },
     DuplicateItem { item_id: String },
@@ -333,9 +332,6 @@ impl ContextReducerProposal {
         }
         if self.capability_generation != request.capability_generation {
             return Err(ReducerValidationError::CapabilityGenerationMismatch);
-        }
-        if self.helper_reservation_id != request.helper_reservation_id {
-            return Err(ReducerValidationError::HelperReservationMismatch);
         }
         if self.stage != request.stage {
             return Err(ReducerValidationError::StageMismatch);
@@ -654,10 +650,11 @@ mod tests {
             capability_generation: "capability-1".into(),
             stage: ContextReducerStage::HistorySummary,
             query: "current task".into(),
-            helper_reservation_id: "reservation-1".into(),
+            parent_attempt_id: "attempt-parent".into(),
             max_output_bytes: 1024,
             eligible: vec![ReducerEligibleItem {
                 item_id: "history-1".into(),
+                content: Bytes::from(b"history payload".to_vec()),
                 recovery: Some(exact("context:history-1")),
             }],
         }
@@ -682,7 +679,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: Vec::new(),
@@ -706,7 +702,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["history-1".into()],
@@ -721,11 +716,6 @@ mod tests {
             Err(ReducerValidationError::AuthorityMismatch)
         );
         proposal.authority_revision = request.authority_revision.clone();
-        proposal.helper_reservation_id = "reservation-other".into();
-        assert_eq!(
-            proposal.validate_against(&request, &request.expected_projection),
-            Err(ReducerValidationError::HelperReservationMismatch)
-        );
     }
 
     #[test]
@@ -737,7 +727,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["fabricated".into()],
@@ -767,7 +756,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["history-1".into()],
@@ -798,7 +786,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: vec!["history-1".into()],
@@ -825,7 +812,6 @@ mod tests {
             configuration_revision: request.configuration_revision.clone(),
             authority_revision: request.authority_revision.clone(),
             capability_generation: request.capability_generation.clone(),
-            helper_reservation_id: request.helper_reservation_id.clone(),
             stage: request.stage,
             helper_attempt_id: "attempt-1".into(),
             retained_item_ids: Vec::new(),
