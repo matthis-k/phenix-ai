@@ -4,11 +4,10 @@ use phenix_core::{
     ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
-    CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityFacet, CodeEntityFacetChanges,
-    CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityEditResult, CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator,
-    CodeEntitySourceView, CodeIdentityContinuityState, CodeIdentityContinuityStatus,
-    CodeIdentityRebuildCheckpoint,
+    CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditResult, CodeEntityFacet,
+    CodeEntityFacetChanges, CodeEntityLineage, CodeEntityLineageConfidence, CodeEntityLineageKind,
+    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
+    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
     CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
     DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
     LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
@@ -1119,11 +1118,9 @@ fn replace_entity_body(
     if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
         return Err("semantic body replacement requires workspace-backed provenance".into());
     }
-    let expected_revision = locator
-        .document
-        .file_version
-        .as_deref()
-        .ok_or_else(|| "semantic body replacement requires an exact workspace revision".to_owned())?;
+    let expected_revision = locator.document.file_version.as_deref().ok_or_else(|| {
+        "semantic body replacement requires an exact workspace revision".to_owned()
+    })?;
 
     let input = context
         .kernel
@@ -1215,11 +1212,9 @@ fn replace_entity_body(
         WorkspaceResponse::UnsupportedAtomicScope {
             requested,
             available,
-        } => {
-            return Err(format!(
-                "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
-            ))
-        }
+        } => return Err(format!(
+            "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
+        )),
         other => {
             return Err(format!(
                 "workspace returned an unexpected semantic edit response: {other:?}"
@@ -2561,8 +2556,7 @@ mod tests {
                 content: "{ 42 }".into(),
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected committed semantic body replacement");
         };
         assert_eq!(edit.entity, revision.entity);
