@@ -6,14 +6,13 @@ use phenix_core::{
 use phenix_sdk::{
     CodeEntityChangeEvent, CodeEntityChangePage, CodeEntityEditResult, CodeEntityFacet,
     CodeEntityFacetChanges, CodeEntityInsertPosition, CodeEntityLineage,
-    CodeEntityLineageConfidence, CodeEntityLineageKind,
-    CodeEntityProviderFactBatch, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
-    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
-    CodePositionEncoding, CodeSourcePosition, CodeSourceRange, DiagnosticsResult,
-    DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
-    LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceWrite, LANGUAGE_SERVICE,
-    WORKSPACE_SERVICE,
+    CodeEntityLineageConfidence, CodeEntityLineageKind, CodeEntityProviderFactBatch,
+    CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView, CodeIdentityContinuityState,
+    CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
+    CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
+    FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
+    LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand, WorkspaceFileVersion,
+    WorkspaceInterface, WorkspaceResponse, WorkspaceWrite, LANGUAGE_SERVICE, WORKSPACE_SERVICE,
 };
 use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
 use sha2::{Digest, Sha256};
@@ -1244,9 +1243,11 @@ fn edit_entity_source(
     if locator.document.provenance != DocumentProvenance::WorkspaceBacked {
         return Err("semantic edit requires workspace-backed provenance".into());
     }
-    let expected_revision = locator.document.file_version.as_deref().ok_or_else(|| {
-        "semantic edit requires an exact workspace revision".to_owned()
-    })?;
+    let expected_revision = locator
+        .document
+        .file_version
+        .as_deref()
+        .ok_or_else(|| "semantic edit requires an exact workspace revision".to_owned())?;
 
     let input = context
         .kernel
@@ -1338,9 +1339,11 @@ fn edit_entity_source(
         WorkspaceResponse::UnsupportedAtomicScope {
             requested,
             available,
-        } => return Err(format!(
+        } => {
+            return Err(format!(
             "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
-        )),
+        ))
+        }
         other => {
             return Err(format!(
                 "workspace returned an unexpected semantic edit response: {other:?}"
