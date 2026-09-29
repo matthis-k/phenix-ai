@@ -241,7 +241,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn compaction_proposal_commits_in_one_state_operation() {
         use phenix_core::{Bytes, ContextResourceId, ContextRevisionId};
@@ -281,9 +280,7 @@ mod tests {
 
         let expected_projection = projection.revision.clone();
         let mut service = ContextStateService::default();
-        service
-            .projections
-            .insert("execution-1".into(), projection);
+        service.projections.insert("execution-1".into(), projection);
 
         let commit = service
             .commit_compaction_proposal(CompactionProposal {

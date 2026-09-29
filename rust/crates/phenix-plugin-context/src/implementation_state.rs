@@ -13,20 +13,18 @@ use phenix_sdk::{
     assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
     context_service, derive_continuation_delta, project_continuation_import,
     select_continuation_export, AdmittedContextItem, AttemptOutcome, CachePlacement,
-    CompactionProposal, ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextDescriptor,
-    ContextInjection,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
-    ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
-    ContextReducerCommand, ContextReducerInterface, ContextReducerProposal, ContextReducerRequest,
-    ContextReducerResponse, ContextReducerStage, ContextResourceKind, ContextResourceRevision,
-    ContextResponse,
-    ContextRetention, ContextScope, ContextSource, ContinuationExportResult,
-    ContinuationImportRequest, ContinuationProjectionRequest, ExactContextReference,
-    ExecutionCommand, ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
-    ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
-    RetentionTransition, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
-    StepAttemptResponse, UsageAttemptKind, WorkerTaskState,
+    CompactionProposal, ContextAdmissionRequest, ContextCandidate, ContextCommand,
+    ContextDescriptor, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
+    ContextInterface, ContextInvocationMaterialization, ContextInvocationPreparation,
+    ContextProjectionForm, ContextReducerCommand, ContextReducerInterface, ContextReducerProposal,
+    ContextReducerRequest, ContextReducerResponse, ContextReducerStage, ContextResourceKind,
+    ContextResourceRevision, ContextResponse, ContextRetention, ContextScope, ContextSource,
+    ContinuationExportResult, ContinuationImportRequest, ContinuationProjectionRequest,
+    ExactContextReference, ExecutionCommand, ExecutionContextProjection, ExecutionInterface,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    ExecutionResponse, ExecutionState, ProjectedContextEntry, ProjectionCheckpoint,
+    ProjectionRevision, RepositoryContextSource, RetentionTransition, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptPhase, StepAttemptResponse, UsageAttemptKind, WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -381,9 +379,12 @@ fn reduction_compaction_proposal(
     request: &ContextReducerRequest,
     proposal: &ContextReducerProposal,
 ) -> Result<CompactionProposal, String> {
-    let projection = state
-        .projection(&request.execution_id)
-        .ok_or_else(|| format!("context projection is not admitted: {}", request.execution_id))?;
+    let projection = state.projection(&request.execution_id).ok_or_else(|| {
+        format!(
+            "context projection is not admitted: {}",
+            request.execution_id
+        )
+    })?;
     if projection.revision != request.expected_projection {
         return Err(format!(
             "context reducer commit is stale: expected {:?}, actual {:?}",
