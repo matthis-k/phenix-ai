@@ -1,7 +1,7 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
     CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
-    ContextReducerProposal, ContextReducerRequest, ContinuationExportResult,
+    ContextReducerMeasurement, ContextReducerProposal, ContextReducerRequest, ContinuationExportResult,
     ContinuationImportProjection, ContinuationImportRequest, ContinuationProjectionRequest,
     ProjectionRevision,
 };
@@ -231,6 +231,7 @@ pub enum ContextResponse {
     },
     ReductionProposed {
         proposal: ContextReducerProposal,
+        measurement: ContextReducerMeasurement,
     },
     CompactionCostDecision {
         decision: CacheCompactionDecision,
