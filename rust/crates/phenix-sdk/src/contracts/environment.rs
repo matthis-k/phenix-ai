@@ -67,6 +67,9 @@ pub enum EnvironmentCommand {
     ReadDir {
         path: String,
     },
+    ReadContentReference {
+        reference: ContentReference,
+    },
     Exec {
         program: String,
         arguments: Vec<String>,
@@ -122,6 +125,9 @@ pub enum EnvironmentResponse {
     Written,
     Directory {
         entries: Vec<EnvironmentDirEntry>,
+    },
+    ReferencedContent {
+        content: Option<Vec<u8>>,
     },
     Process {
         exit_code: i32,
