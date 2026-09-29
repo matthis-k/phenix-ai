@@ -1109,7 +1109,7 @@ mod tests {
     #[test]
     fn truncated_stream_is_persisted_as_an_exact_reference() {
         let root = temp_root();
-        let environment =
+        let mut environment =
             LocalEnvironment::new(root.clone(), EnvironmentFilesystemPolicy::Unrestricted);
         let full = vec![b'x'; MAX_CAPTURE_BYTES + 17];
         let mut capture = CaptureBuffer::default();
@@ -1127,6 +1127,16 @@ mod tests {
             .unwrap()
             .expect("persisted stream remains recoverable");
         assert_eq!(recovered, full);
+        assert!(matches!(
+            environment
+                .handle(EnvironmentCommand::ReadContentReference {
+                    reference: reference.clone(),
+                })
+                .unwrap(),
+            EnvironmentResponse::ReferencedContent {
+                content: Some(content),
+            } if content == full
+        ));
         let _ = fs::remove_dir_all(root);
     }
 
