@@ -137,6 +137,23 @@ fn handle(
             expected_version,
         } => write(context, path, content, expected_version),
         WorkspaceCommand::WriteBatch { writes } => write_batch(context, writes),
+        WorkspaceCommand::ReadContentReference { reference } => {
+            require(context, WORKSPACE_READ)?;
+            match environment(
+                context,
+                EnvironmentCommand::ReadContentReference { reference },
+            )? {
+                EnvironmentResponse::ReferencedContent {
+                    content: Some(content),
+                } => Ok(WorkspaceResponse::ReferencedContent { content }),
+                EnvironmentResponse::ReferencedContent { content: None } => {
+                    Err("workspace content reference is unavailable".into())
+                }
+                other => Err(format!(
+                    "environment returned unexpected content-reference response: {other:?}"
+                )),
+            }
+        }
         WorkspaceCommand::Search {
             needle,
             path,
