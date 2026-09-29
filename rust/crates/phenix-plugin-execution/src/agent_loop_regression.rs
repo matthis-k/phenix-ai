@@ -115,6 +115,15 @@ impl PluginInstance for InvocationProvider {
             return Err("execution back-edge returned a non-agent-list response".into());
         }
 
+        if request.continuation.is_empty()
+            && request
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "fixture.loaded")
+        {
+            return Err("inactive tool schema entered the initial model request".into());
+        }
+
         let tool_calls = if let Some(tool) = request.tools.first() {
             match tool.id.as_str() {
                 "fixture.many" if request.continuation.is_empty() => (0..11)
