@@ -8,6 +8,7 @@ use phenix_core::{
 use phenix_sdk::{
     environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
     EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
+    ProcessStreamRecovery,
 };
 use sha2::{Digest, Sha256};
 use rustix::{
@@ -141,6 +142,16 @@ type CapturedProcessOutput = (
     ArtifactRevision,
     ArtifactRevision,
 );
+
+fn stream_recovery(complete: bool) -> ProcessStreamRecovery {
+    if complete {
+        ProcessStreamRecovery::Inline
+    } else {
+        ProcessStreamRecovery::Unavailable {
+            reason: "local environment retains only the bounded process-output view".into(),
+        }
+    }
+}
 
 struct PersistentProcess {
     child: Child,
@@ -812,6 +823,8 @@ impl LocalEnvironment {
                     stderr_bytes: Some(stderr_bytes),
                     stdout_content_identity: Some(stdout_content_identity),
                     stderr_content_identity: Some(stderr_content_identity),
+                    stdout_recovery: stream_recovery(stdout_complete),
+                    stderr_recovery: stream_recovery(stderr_complete),
                 })
             }
             EnvironmentCommand::OpenProcess {
@@ -918,6 +931,8 @@ impl LocalEnvironment {
                     stderr_bytes: Some(stderr_bytes),
                     stdout_content_identity: Some(stdout_content_identity),
                     stderr_content_identity: Some(stderr_content_identity),
+                    stdout_recovery: stream_recovery(stdout_complete),
+                    stderr_recovery: stream_recovery(stderr_complete),
                 })
             }
             EnvironmentCommand::CloseProcess { handle } => {
@@ -953,6 +968,8 @@ impl LocalEnvironment {
                     stderr_bytes: Some(stderr_bytes),
                     stdout_content_identity: Some(stdout_content_identity),
                     stderr_content_identity: Some(stderr_content_identity),
+                    stdout_recovery: stream_recovery(stdout_complete),
+                    stderr_recovery: stream_recovery(stderr_complete),
                 })
             }
         }
