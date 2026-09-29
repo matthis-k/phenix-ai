@@ -1,4 +1,7 @@
-use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
+use super::environment::ProcessStreamRecovery;
+use phenix_core::{
+    ArtifactRevision, ComponentInterface, ContentReference, InterfaceId, InterfaceSchema,
+};
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +67,9 @@ pub enum WorkspaceCommand {
     WriteBatch {
         writes: Vec<WorkspaceWrite>,
     },
+    ReadContentReference {
+        reference: ContentReference,
+    },
     Search {
         needle: String,
         path: Option<String>,
@@ -75,6 +81,10 @@ pub enum WorkspaceCommand {
     Git {
         arguments: Vec<String>,
     },
+}
+
+const fn complete_capture() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
@@ -95,6 +105,9 @@ pub enum WorkspaceResponse {
     VersionConflict {
         conflicts: Vec<WorkspaceVersionConflict>,
     },
+    ReferencedContent {
+        content: Vec<u8>,
+    },
     Search {
         matches: Vec<WorkspaceSearchMatch>,
     },
@@ -102,5 +115,19 @@ pub enum WorkspaceResponse {
         exit_code: i32,
         stdout: String,
         stderr: String,
+        #[serde(default = "complete_capture")]
+        stdout_complete: bool,
+        #[serde(default = "complete_capture")]
+        stderr_complete: bool,
+        #[serde(default)]
+        stdout_bytes: Option<u64>,
+        #[serde(default)]
+        stderr_bytes: Option<u64>,
+        #[serde(default)]
+        stdout_content_identity: Option<ArtifactRevision>,
+        #[serde(default)]
+        stderr_content_identity: Option<ArtifactRevision>,
+        stdout_recovery: Box<ProcessStreamRecovery>,
+        stderr_recovery: Box<ProcessStreamRecovery>,
     },
 }

@@ -66,9 +66,9 @@ mod tests {
     use phenix_core::{
         context_service, skill_service, tool_service, Authority, CallableId, ComponentInterface,
         ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
-        ContextScope, Kernel, KernelConfig, LocalPersistence, ModelId, PhenixSchema, PhenixValue,
-        ResolvedHarness, ResolvedHarnessActivation, SkillCommand, SkillDefinition, SkillId,
-        SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
+        ContextScope, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
+        PhenixSchema, PhenixValue, ResolvedHarness, ResolvedHarnessActivation, SkillCommand,
+        SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
     };
     use phenix_sdk::{
         model_inference_service, ModelInferenceInterface, ModelInferenceRequest,
@@ -178,6 +178,37 @@ mod tests {
         R::try_from(phenix_core::Project(&value)).unwrap()
     }
 
+    fn invoke_error<T>(
+        kernel: &mut Kernel,
+        component: ComponentManifest,
+        service: &phenix_core::ServiceId,
+        request: &T,
+    ) -> String
+    where
+        for<'value> PhenixValue: From<&'value T>,
+    {
+        let input = serde_json::to_vec(&PhenixValue::from(request)).unwrap();
+        match kernel.invoke_component(
+            &component.id,
+            service,
+            &input,
+            &authority(),
+            &component.owner,
+        ) {
+            Ok(output) => {
+                let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+                match InvocationOutcome::from_transport_value(value) {
+                    InvocationOutcome::DomainError(PhenixValue::String(message)) => message,
+                    InvocationOutcome::DomainError(error) => format!("{error:?}"),
+                    InvocationOutcome::Success(value) => {
+                        panic!("request must fail, got success: {value:?}")
+                    }
+                }
+            }
+            Err(error) => error.to_string(),
+        }
+    }
+
     #[test]
     fn basic_components_are_independently_named_and_export_canonical_interfaces() {
         let manifests = [
@@ -247,6 +278,89 @@ mod tests {
     }
 
     #[test]
+    fn tool_catalog_revisions_and_cursors_fail_closed() {
+        let path = temp_db();
+        let mut kernel = kernel(&path);
+        for (id, description) in [("alpha", "Alpha tool"), ("beta", "Beta tool")] {
+            let _: ToolResponse = invoke(
+                &mut kernel,
+                basic_tools_component_manifest(),
+                &tool_service(),
+                &ToolCommand::Register {
+                    tool: ToolDefinition {
+                        id: CallableId::parse(id).unwrap(),
+                        description: description.into(),
+                        input_schema: PhenixSchema::Any,
+                        output_schema: PhenixSchema::Any,
+                        output_prefix: Vec::new().into(),
+                    },
+                },
+            );
+        }
+
+        let catalog: ToolResponse = invoke(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: String::new(),
+                cursor: None,
+                limit: 1,
+            },
+        );
+        let (catalog_revision, cursor) = match catalog {
+            ToolResponse::Catalog {
+                catalog_revision,
+                next_cursor: Some(cursor),
+                ..
+            } => (catalog_revision, cursor),
+            response => panic!("expected paginated tool catalog, got {response:?}"),
+        };
+
+        let cursor_error = invoke_error(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: "beta".into(),
+                cursor: Some(cursor),
+                limit: 1,
+            },
+        );
+        assert!(cursor_error.contains("different query"), "{cursor_error}");
+
+        let _: ToolResponse = invoke(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Register {
+                tool: ToolDefinition {
+                    id: CallableId::parse("gamma").unwrap(),
+                    description: "Gamma tool".into(),
+                    input_schema: PhenixSchema::Any,
+                    output_schema: PhenixSchema::Any,
+                    output_prefix: Vec::new().into(),
+                },
+            },
+        );
+        let revision_error = invoke_error(
+            &mut kernel,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::LoadSchemas {
+                ids: vec![CallableId::parse("alpha").unwrap()],
+                catalog_revision,
+            },
+        );
+        assert!(
+            revision_error.contains("stale tool catalog revision"),
+            "{revision_error}"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn basic_tool_skill_and_context_state_survives_restart() {
         let path = temp_db();
         {
@@ -258,6 +372,7 @@ mod tests {
                 &ToolCommand::Register {
                     tool: ToolDefinition {
                         id: CallableId::parse("echo").unwrap(),
+                        description: "Echo input bytes".into(),
                         input_schema: PhenixSchema::Any,
                         output_schema: PhenixSchema::Any,
                         output_prefix: b"tool:".to_vec().into(),
@@ -291,6 +406,46 @@ mod tests {
         }
 
         let mut restored = kernel(&path);
+        let catalog: ToolResponse = invoke(
+            &mut restored,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::Search {
+                query: "echo".into(),
+                cursor: None,
+                limit: 10,
+            },
+        );
+        let catalog_revision = match catalog {
+            ToolResponse::Catalog {
+                descriptors,
+                next_cursor,
+                catalog_revision,
+            } => {
+                assert_eq!(descriptors.len(), 1);
+                assert_eq!(descriptors[0].id.as_str(), "echo");
+                assert_eq!(descriptors[0].description, "Echo input bytes");
+                assert!(next_cursor.is_none());
+                assert_eq!(descriptors[0].catalog_revision, catalog_revision);
+                catalog_revision
+            }
+            response => panic!("unexpected tool catalog response: {response:?}"),
+        };
+        let schemas: ToolResponse = invoke(
+            &mut restored,
+            basic_tools_component_manifest(),
+            &tool_service(),
+            &ToolCommand::LoadSchemas {
+                ids: vec![CallableId::parse("echo").unwrap()],
+                catalog_revision,
+            },
+        );
+        assert!(matches!(
+            schemas,
+            ToolResponse::Schemas { tools, .. }
+                if tools.len() == 1 && tools[0].id.as_str() == "echo"
+        ));
+
         let tool: ToolResponse = invoke(
             &mut restored,
             basic_tools_component_manifest(),

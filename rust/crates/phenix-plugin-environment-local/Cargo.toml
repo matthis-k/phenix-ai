@@ -12,3 +12,4 @@ phenix-core = { path = "../phenix-core" }
 phenix-sdk = { path = "../phenix-sdk" }
 rustix.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
