@@ -325,9 +325,7 @@ enum DecisionAction {
 mod tests {
     use super::*;
     use phenix_core::{ContextResourceId, ContextRevisionId};
-    use phenix_sdk::{
-        ContextReducerStage, ExactContextReference, ProjectionRevision, ReducerEligibleItem,
-    };
+    use phenix_sdk::{ExactContextReference, ProjectionRevision, ReducerEligibleItem};
 
     fn request() -> ContextReducerRequest {
         ContextReducerRequest {
