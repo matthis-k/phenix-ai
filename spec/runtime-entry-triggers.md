@@ -1,6 +1,6 @@
 # Runtime entry triggers
 
-Status: partial
+status: partial
 
 ## Status
 
