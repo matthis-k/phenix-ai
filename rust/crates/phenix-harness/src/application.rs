@@ -58,7 +58,8 @@ use phenix_sdk::{
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
     OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger,
-    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
+    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -81,6 +82,14 @@ const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
 const APPLICATION_SHELL_TOOL_SERVICE: &str = "phenix.application-agent-tools.shell@1";
+const APPLICATION_WORKSPACE_READ_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.workspace-read@1";
+const APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.workspace-search@1";
+const APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.workspace-write@1";
+const APPLICATION_WORKSPACE_GIT_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.workspace-git@1";
 const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
@@ -88,7 +97,35 @@ struct ApplicationShellToolRequest {
     command: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceReadToolRequest {
+    path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceSearchToolRequest {
+    needle: String,
+    path: Option<String>,
+    case_sensitive: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceWriteToolRequest {
+    path: String,
+    content: String,
+    expected_version: WorkspaceFileVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceGitToolRequest {
+    arguments: Vec<String>,
+}
+
 struct ApplicationShellToolInterface;
+struct ApplicationWorkspaceReadToolInterface;
+struct ApplicationWorkspaceSearchToolInterface;
+struct ApplicationWorkspaceWriteToolInterface;
+struct ApplicationWorkspaceGitToolInterface;
 
 impl ComponentInterface for ApplicationShellToolInterface {
     fn interface_id() -> InterfaceId {
@@ -101,23 +138,122 @@ impl ComponentInterface for ApplicationShellToolInterface {
     }
 }
 
+macro_rules! workspace_tool_interface {
+    ($interface:ty, $service:expr, $request:ty) => {
+        impl ComponentInterface for $interface {
+            fn interface_id() -> InterfaceId {
+                InterfaceId::parse($service).expect("static workspace tool interface id is valid")
+            }
+
+            fn schema() -> InterfaceSchema {
+                InterfaceSchema::of::<$request, WorkspaceResponse>()
+            }
+        }
+    };
+}
+
+workspace_tool_interface!(
+    ApplicationWorkspaceReadToolInterface,
+    APPLICATION_WORKSPACE_READ_TOOL_SERVICE,
+    ApplicationWorkspaceReadToolRequest
+);
+workspace_tool_interface!(
+    ApplicationWorkspaceSearchToolInterface,
+    APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE,
+    ApplicationWorkspaceSearchToolRequest
+);
+workspace_tool_interface!(
+    ApplicationWorkspaceWriteToolInterface,
+    APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE,
+    ApplicationWorkspaceWriteToolRequest
+);
+workspace_tool_interface!(
+    ApplicationWorkspaceGitToolInterface,
+    APPLICATION_WORKSPACE_GIT_TOOL_SERVICE,
+    ApplicationWorkspaceGitToolRequest
+);
+
+fn workspace_capability(value: &str) -> Authority {
+    Authority::new([CapabilityId::parse(value).expect("static workspace capability is valid")])
+}
+
+fn application_workspace_authority() -> Authority {
+    Authority::new(
+        ["workspace.read", "workspace.write", "workspace.shell", "workspace.git"]
+            .into_iter()
+            .map(|value| {
+                CapabilityId::parse(value).expect("static workspace capability is valid")
+            }),
+    )
+}
+
 fn application_shell_authority() -> Authority {
-    Authority::new([
-        CapabilityId::parse("workspace.shell").expect("static workspace shell capability is valid")
-    ])
+    workspace_capability("workspace.shell")
+}
+
+fn application_workspace_read_authority() -> Authority {
+    workspace_capability("workspace.read")
+}
+
+fn application_workspace_write_authority() -> Authority {
+    workspace_capability("workspace.write")
+}
+
+fn application_workspace_git_authority() -> Authority {
+    workspace_capability("workspace.git")
+}
+
+fn application_workspace_tool_trigger(
+    interface: InterfaceId,
+    callable_id: &str,
+    description: &str,
+    required_authority: Authority,
+) -> ComponentEntryTrigger {
+    ComponentEntryTrigger {
+        component: application_agent_tool_component_id(),
+        interface,
+        trigger: EntryTriggerKind::ToolCall {
+            callable_id: CallableId::parse(callable_id).expect("static workspace tool id is valid"),
+            description: description.to_owned(),
+        },
+        required_authority,
+    }
 }
 
 #[must_use]
-pub(crate) fn application_shell_tool_trigger() -> ComponentEntryTrigger {
-    ComponentEntryTrigger {
-        component: application_agent_tool_component_id(),
-        interface: ApplicationShellToolInterface::interface_id(),
-        trigger: EntryTriggerKind::ToolCall {
-            callable_id: CallableId::parse("bash").expect("static bash callable id is valid"),
-            description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
-        },
-        required_authority: application_shell_authority(),
-    }
+pub(crate) fn application_workspace_tool_triggers() -> Vec<ComponentEntryTrigger> {
+    vec![
+        application_workspace_tool_trigger(
+            ApplicationShellToolInterface::interface_id(),
+            "bash",
+            "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.",
+            application_shell_authority(),
+        ),
+        application_workspace_tool_trigger(
+            ApplicationWorkspaceReadToolInterface::interface_id(),
+            "workspace.read",
+            "Read one UTF-8 text file by workspace-relative path and return its exact content version.",
+            application_workspace_read_authority(),
+        ),
+        application_workspace_tool_trigger(
+            ApplicationWorkspaceSearchToolInterface::interface_id(),
+            "workspace.search",
+            "Search workspace text files for a string, optionally below a relative path.",
+            application_workspace_read_authority(),
+        ),
+        application_workspace_tool_trigger(
+            ApplicationWorkspaceWriteToolInterface::interface_id(),
+            "workspace.write",
+            "Write one UTF-8 text file against an exact observed workspace file version.",
+            application_workspace_write_authority(),
+        ),
+        application_workspace_tool_trigger(
+            ApplicationWorkspaceGitToolInterface::interface_id(),
+            "workspace.git",
+            "Run Git with explicit arguments in the configured workspace.",
+            application_workspace_git_authority(),
+        ),
+    ]
 }
 
 #[must_use]
@@ -2032,7 +2168,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: WorkspaceInterface::interface_id(),
                 schema: WorkspaceInterface::schema(),
                 required: false,
-                authority: application_shell_authority(),
+                authority: application_workspace_authority(),
             },
             ComponentImport {
                 interface: ExecutionInspectionInterface::interface_id(),
@@ -2048,6 +2184,30 @@ pub(crate) fn application_agent_tool_component_manifest(
                 schema: ApplicationShellToolInterface::schema(),
                 priority: 100,
                 required_authority: application_shell_authority(),
+            },
+            ComponentExport {
+                interface: ApplicationWorkspaceReadToolInterface::interface_id(),
+                schema: ApplicationWorkspaceReadToolInterface::schema(),
+                priority: 100,
+                required_authority: application_workspace_read_authority(),
+            },
+            ComponentExport {
+                interface: ApplicationWorkspaceSearchToolInterface::interface_id(),
+                schema: ApplicationWorkspaceSearchToolInterface::schema(),
+                priority: 100,
+                required_authority: application_workspace_read_authority(),
+            },
+            ComponentExport {
+                interface: ApplicationWorkspaceWriteToolInterface::interface_id(),
+                schema: ApplicationWorkspaceWriteToolInterface::schema(),
+                priority: 100,
+                required_authority: application_workspace_write_authority(),
+            },
+            ComponentExport {
+                interface: ApplicationWorkspaceGitToolInterface::interface_id(),
+                schema: ApplicationWorkspaceGitToolInterface::schema(),
+                priority: 100,
+                required_authority: application_workspace_git_authority(),
             },
             ComponentExport {
                 interface: AgentLoopControlInterface::interface_id(),
@@ -2151,6 +2311,78 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                 .kernel
                 .encode_value(&response)
                 .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_WORKSPACE_READ_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationWorkspaceReadToolRequest>(
+                    &ApplicationWorkspaceReadToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Read {
+                    path: request.path,
+                })
+                .map_err(|error| error.to_string())?;
+            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationWorkspaceSearchToolRequest>(
+                    &ApplicationWorkspaceSearchToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Search {
+                    needle: request.needle,
+                    path: request.path,
+                    case_sensitive: request.case_sensitive,
+                })
+                .map_err(|error| error.to_string())?;
+            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationWorkspaceWriteToolRequest>(
+                    &ApplicationWorkspaceWriteToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Write {
+                    path: request.path,
+                    content: request.content,
+                    expected_version: request.expected_version,
+                })
+                .map_err(|error| error.to_string())?;
+            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_WORKSPACE_GIT_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationWorkspaceGitToolRequest>(
+                    &ApplicationWorkspaceGitToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Git {
+                    arguments: request.arguments,
+                })
+                .map_err(|error| error.to_string())?;
+            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
         }
         if service == &agent_loop_control_service() {
             let request = context
