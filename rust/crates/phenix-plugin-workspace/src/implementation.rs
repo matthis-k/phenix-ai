@@ -7,9 +7,8 @@ use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
     WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
-    WorkspaceInterface,
-    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
-    WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
+    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
