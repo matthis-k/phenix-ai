@@ -6,7 +6,8 @@ use phenix_core::{
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
-    WorkspaceCommittedFile, WorkspaceEntry, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
+    WorkspaceInterface,
     WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
     WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
@@ -674,11 +675,10 @@ fn list_path(
         entries.push(WorkspaceEntry {
             path: relative.to_string_lossy().into_owned(),
             kind: match kind {
-                EnvironmentFileKind::File => "file",
-                EnvironmentFileKind::Directory => "directory",
-                EnvironmentFileKind::Other => "other",
-            }
-            .to_owned(),
+                EnvironmentFileKind::File => WorkspaceEntryKind::File,
+                EnvironmentFileKind::Directory => WorkspaceEntryKind::Directory,
+                EnvironmentFileKind::Other => WorkspaceEntryKind::Other,
+            },
         });
     }
     if kind != EnvironmentFileKind::Directory {
@@ -710,11 +710,10 @@ fn list_path(
             entries.push(WorkspaceEntry {
                 path: relative.to_string_lossy().into_owned(),
                 kind: match child.kind {
-                    EnvironmentFileKind::File => "file",
-                    EnvironmentFileKind::Directory => "directory",
-                    EnvironmentFileKind::Other => "other",
-                }
-                .to_owned(),
+                    EnvironmentFileKind::File => WorkspaceEntryKind::File,
+                    EnvironmentFileKind::Directory => WorkspaceEntryKind::Directory,
+                    EnvironmentFileKind::Other => WorkspaceEntryKind::Other,
+                },
             });
         }
     }
