@@ -971,6 +971,7 @@ fn validate_entry_triggers(
         if !authority_ceiling.permits_all(&trigger.required_authority)
             || !component.maximum_authority.permits_all(&trigger.required_authority)
             || !component.maximum_authority.permits_all(&export.required_authority)
+            || !trigger.required_authority.permits_all(&export.required_authority)
         {
             return Err(ResolvedHarnessError::EntryTriggerAuthorityDenied {
                 component: trigger.component.clone(),
