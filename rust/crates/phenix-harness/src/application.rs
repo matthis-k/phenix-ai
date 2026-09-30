@@ -872,11 +872,7 @@ impl ApplicationWorker {
             .filter(|path| {
                 matches!(
                     path.rsplit('/').next().unwrap_or(path.as_str()),
-                    "AGENTS.md"
-                        | "AGENTS.override.md"
-                        | "CONTRIBUTING.md"
-                        | "DEVELOPMENT.md"
-                        | "SKILL.md"
+                    "AGENTS.md" | "AGENTS.override.md" | "CONTRIBUTING.md" | "DEVELOPMENT.md"
                 )
             })
             .collect::<Vec<_>>();
@@ -939,22 +935,11 @@ impl ApplicationWorker {
         }
 
         let workspace_id = workspace_context_id(&session.working_directory);
-        let sources = self
-            .workspace_context_sources()?
-            .into_iter()
-            .filter(|source| {
-                let file = source
-                    .path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(source.path.as_str());
-                if file == "SKILL.md" {
-                    skills_auto
-                } else {
-                    context_auto
-                }
-            })
-            .collect::<Vec<_>>();
+        let sources = if context_auto {
+            self.workspace_context_sources()?
+        } else {
+            Vec::new()
+        };
         let mut descriptors = if sources.is_empty() {
             Vec::new()
         } else {
