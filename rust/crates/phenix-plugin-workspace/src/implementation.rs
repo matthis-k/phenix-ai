@@ -6,8 +6,9 @@ use phenix_core::{
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
-    WorkspaceCommittedFile, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity,
+    WorkspaceCommittedFile, WorkspaceEntry, WorkspaceFileVersion, WorkspaceInterface,
+    WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
+    WorkspaceWriteAtomicity,
     WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use serde::{Deserialize, Serialize};
@@ -225,6 +226,7 @@ fn handle(
             path,
             case_sensitive,
         } => search(context, needle, path, case_sensitive),
+        WorkspaceCommand::List { path, recursive } => list(context, path, recursive),
         WorkspaceCommand::Shell { command } => {
             if command.trim().is_empty() {
                 return Err("shell command must not be empty".into());
@@ -617,6 +619,98 @@ fn write_resolved(
             "write {path}: environment returned unexpected response {other:?}"
         )),
     }
+}
+
+fn list(
+    context: &WorkspaceContext<'_, '_, '_>,
+    path: Option<String>,
+    recursive: bool,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_READ)?;
+    let relative = path.unwrap_or_else(|| ".".into());
+    let root = resolve(context, &relative)?;
+    let mut entries = Vec::new();
+    list_path(context, context.plugin.state, &root, recursive, true, &mut entries)?;
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(WorkspaceResponse::List { entries })
+}
+
+fn list_path(
+    context: &WorkspaceContext<'_, '_, '_>,
+    workspace_root: &Path,
+    path: &Path,
+    recursive: bool,
+    is_root: bool,
+    entries: &mut Vec<WorkspaceEntry>,
+) -> Result<(), String> {
+    if path.file_name().is_some_and(|name| name == ".git") {
+        return Ok(());
+    }
+    let kind = match environment(
+        context,
+        EnvironmentCommand::Stat {
+            path: environment_path(path),
+        },
+    )? {
+        EnvironmentResponse::Metadata { kind } => kind,
+        other => {
+            return Err(format!(
+                "list {}: environment returned unexpected response {other:?}",
+                path.display()
+            ))
+        }
+    };
+    let Some(kind) = kind else {
+        return Ok(());
+    };
+    if !is_root {
+        let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+        entries.push(WorkspaceEntry {
+            path: relative.to_string_lossy().into_owned(),
+            kind: match kind {
+                EnvironmentFileKind::File => "file",
+                EnvironmentFileKind::Directory => "directory",
+                EnvironmentFileKind::Other => "other",
+            }
+            .to_owned(),
+        });
+    }
+    if kind != EnvironmentFileKind::Directory {
+        return Ok(());
+    }
+    let response = environment(
+        context,
+        EnvironmentCommand::ReadDir {
+            path: environment_path(path),
+        },
+    )?;
+    let EnvironmentResponse::Directory { entries: children } = response else {
+        return Err(format!(
+            "list {}: environment returned non-directory response",
+            path.display()
+        ));
+    };
+    for child in children {
+        if child.kind == EnvironmentFileKind::Other {
+            continue;
+        }
+        let child_path = workspace_directory_child(workspace_root, path, &child.path)?;
+        if recursive {
+            list_path(context, workspace_root, &child_path, true, false, entries)?;
+        } else {
+            let relative = child_path.strip_prefix(workspace_root).unwrap_or(&child_path);
+            entries.push(WorkspaceEntry {
+                path: relative.to_string_lossy().into_owned(),
+                kind: match child.kind {
+                    EnvironmentFileKind::File => "file",
+                    EnvironmentFileKind::Directory => "directory",
+                    EnvironmentFileKind::Other => "other",
+                }
+                .to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn search(
