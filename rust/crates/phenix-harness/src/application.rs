@@ -3393,6 +3393,45 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
         })
         .collect();
 
+    let triggers = context
+        .kernel
+        .entry_triggers()
+        .iter()
+        .map(|trigger| {
+            let (kind, callable) = match &trigger.trigger {
+                EntryTriggerKind::ToolCall { callable_id, .. } => (
+                    "tool_call".to_owned(),
+                    Some(PhenixValue::String(callable_id.to_string())),
+                ),
+            };
+            let mut value = BTreeMap::from([
+                (
+                    "component".to_owned(),
+                    PhenixValue::String(trigger.component.to_string()),
+                ),
+                (
+                    "interface".to_owned(),
+                    PhenixValue::String(trigger.interface.to_string()),
+                ),
+                ("kind".to_owned(), PhenixValue::String(kind)),
+                (
+                    "required_authority".to_owned(),
+                    PhenixValue::List(
+                        trigger
+                            .required_authority
+                            .capabilities()
+                            .map(|capability| PhenixValue::String(capability.to_string()))
+                            .collect(),
+                    ),
+                ),
+            ]);
+            if let Some(callable) = callable {
+                value.insert("callable".to_owned(), callable);
+            }
+            PhenixValue::Map(value)
+        })
+        .collect();
+
     let generation = context
         .call
         .graph_generation
@@ -3401,6 +3440,7 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
     PhenixValue::Map(BTreeMap::from([
         ("generation".to_owned(), PhenixValue::String(generation)),
         ("components".to_owned(), PhenixValue::List(components)),
+        ("entry_triggers".to_owned(), PhenixValue::List(triggers)),
     ]))
 }
 
