@@ -27,8 +27,9 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
-    ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
-    ContractId, HasPhenixSchema, Key, LocalPersistence, ModelToolCall, ModelToolDescriptor,
+    ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId, InterfaceSchema,
+    Key, LocalPersistence, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
     PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
@@ -79,7 +80,44 @@ pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
 const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
+const APPLICATION_SHELL_TOOL_SERVICE: &str = "phenix.application-agent-tools.shell@1";
 const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
+struct ApplicationShellToolRequest {
+    command: String,
+}
+
+struct ApplicationShellToolInterface;
+
+impl ComponentInterface for ApplicationShellToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_SHELL_TOOL_SERVICE)
+            .expect("static application shell tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<ApplicationShellToolRequest, WorkspaceResponse>()
+    }
+}
+
+fn application_shell_authority() -> Authority {
+    Authority::new([CapabilityId::parse("workspace.shell")
+        .expect("static workspace shell capability is valid")])
+}
+
+#[must_use]
+pub(crate) fn application_shell_tool_trigger() -> ComponentEntryTrigger {
+    ComponentEntryTrigger {
+        component: application_agent_tool_component_id(),
+        interface: ApplicationShellToolInterface::interface_id(),
+        trigger: EntryTriggerKind::ToolCall {
+            callable_id: CallableId::parse("bash").expect("static bash callable id is valid"),
+            description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
+        },
+        required_authority: application_shell_authority(),
+    }
+}
 
 #[must_use]
 pub fn session_projection_value_id() -> ValueId {
@@ -1902,6 +1940,7 @@ struct ApplicationAgentToolRun {
     execution_id: String,
     permission_handler: Option<PermissionHandlerRef>,
     tools: Vec<ModelToolDescriptor>,
+    runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
     cancellation: Arc<AtomicBool>,
     progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
 }
@@ -1992,7 +2031,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: WorkspaceInterface::interface_id(),
                 schema: WorkspaceInterface::schema(),
                 required: false,
-                authority: maximum_authority.clone(),
+                authority: application_shell_authority(),
             },
             ComponentImport {
                 interface: ExecutionInspectionInterface::interface_id(),
@@ -2003,6 +2042,12 @@ pub(crate) fn application_agent_tool_component_manifest(
             },
         ],
         exports: vec![
+            ComponentExport {
+                interface: ApplicationShellToolInterface::interface_id(),
+                schema: ApplicationShellToolInterface::schema(),
+                priority: 100,
+                required_authority: application_shell_authority(),
+            },
             ComponentExport {
                 interface: AgentLoopControlInterface::interface_id(),
                 schema: AgentLoopControlInterface::schema(),
@@ -2071,6 +2116,29 @@ impl PluginInstance for ApplicationAgentToolPlugin {
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
         let context = application_agent_tool_context(host);
+        if service.as_str() == APPLICATION_SHELL_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationShellToolRequest>(
+                    &ApplicationShellToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            if request.command.trim().is_empty() {
+                return Err("bash tool command must be a non-empty string".into());
+            }
+            let response = context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Shell {
+                    command: request.command,
+                })
+                .map_err(|error| error.to_string())?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
         if service == &agent_loop_control_service() {
             let request = context
                 .kernel
@@ -2163,8 +2231,8 @@ fn execute_application_agent_tool(
             });
         }
     };
-    let change = if dispatch_call.callable_id.as_str() == "bash" {
-        execute_runtime_model_tool_call(&context.sdk.workspace, &dispatch_call)
+    let change = if let Some(trigger) = run.runtime_entry_triggers.get(&dispatch_call.callable_id) {
+        execute_runtime_entry_trigger(context, trigger, &dispatch_call)
     } else if dispatch_call.callable_id.as_str() == "phenix.inspect" {
         execute_runtime_inspect_tool_call(context, &run, &dispatch_call)
     } else {
@@ -2365,13 +2433,24 @@ fn start_prompt(
             return;
         }
     };
-    let tools = match application_model_tool_surface(service, &request.session_id) {
-        Ok(tools) => tools,
+    let tool_surface = {
+        let harness = worker.harness.lock();
+        application_model_tool_surface(
+            service,
+            &request.session_id,
+            harness.resolved_harness(),
+            &worker.authority,
+        )
+    };
+    let tool_surface = match tool_surface {
+        Ok(surface) => surface,
         Err(error) => {
             invocation.respond(Err(error));
             return;
         }
     };
+    let tools = tool_surface.tools;
+    let runtime_entry_triggers = tool_surface.runtime_entry_triggers;
     let prompt = match worker.prompt(request.clone()) {
         Ok(prompt) => prompt,
         Err(error) => {
@@ -2422,6 +2501,7 @@ fn start_prompt(
                     execution_id: runtime_execution_id,
                     input: model_input,
                     tools,
+                    runtime_entry_triggers,
                     permission_handler,
                     progress_sender,
                 },
@@ -2686,6 +2766,7 @@ struct AgentExecutionContext {
     execution_id: String,
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
+    runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
     permission_handler: Option<PermissionHandlerRef>,
     progress_sender: mpsc::Sender<ExecutionWorkerEvent>,
 }
@@ -2702,6 +2783,7 @@ fn run_agent_execution(
         execution_id,
         input,
         tools,
+        runtime_entry_triggers,
         permission_handler,
         progress_sender,
     } = context;
@@ -2726,6 +2808,7 @@ fn run_agent_execution(
             execution_id: execution_id.clone(),
             permission_handler,
             tools: tools.clone(),
+            runtime_entry_triggers,
             cancellation: Arc::clone(&cancellation),
             progress_sender,
         },
@@ -2906,68 +2989,123 @@ fn normalize_model_tool_table(
     Ok(PhenixValue::Table(normalized))
 }
 
+struct ApplicationModelToolSurface {
+    tools: Vec<ModelToolDescriptor>,
+    runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
+}
+
 fn application_model_tool_surface(
     service: &SdkApplicationService,
     session_id: &SessionId,
-) -> Result<Vec<ModelToolDescriptor>, ApplicationError> {
-    model_tool_surface(service, session_id, runtime_model_tools())
+    resolved: &phenix_core::ResolvedHarness,
+    authority: &Authority,
+) -> Result<ApplicationModelToolSurface, ApplicationError> {
+    let mut runtime_entry_triggers = BTreeMap::new();
+    let mut graph_tools = Vec::new();
+
+    for trigger in resolved.entry_triggers() {
+        if !authority.permits_all(&trigger.required_authority) {
+            continue;
+        }
+        let EntryTriggerKind::ToolCall {
+            callable_id,
+            description,
+        } = &trigger.trigger;
+        let component = resolved
+            .components()
+            .iter()
+            .find(|component| component.id == trigger.component)
+            .ok_or_else(|| ApplicationError::Failed {
+                message: format!(
+                    "resolved entry trigger targets missing component {}",
+                    trigger.component
+                ),
+            })?;
+        let export = component
+            .exports
+            .iter()
+            .find(|export| export.interface == trigger.interface)
+            .ok_or_else(|| ApplicationError::Failed {
+                message: format!(
+                    "resolved entry trigger targets missing export {}:{}",
+                    trigger.component, trigger.interface
+                ),
+            })?;
+        if !authority.permits_all(&export.required_authority) {
+            continue;
+        }
+
+        graph_tools.push(ModelToolDescriptor {
+            id: callable_id.clone(),
+            description: description.clone(),
+            input_schema: export.schema.request().clone(),
+            output_schema: export.schema.response().clone(),
+        });
+        if runtime_entry_triggers
+            .insert(callable_id.clone(), trigger.clone())
+            .is_some()
+        {
+            return Err(ApplicationError::Conflict {
+                message: format!("duplicate runtime entry trigger {callable_id}"),
+            });
+        }
+    }
+
+    graph_tools.extend(host_model_tools());
+    let tools = model_tool_surface(service, session_id, graph_tools)?;
+    Ok(ApplicationModelToolSurface {
+        tools,
+        runtime_entry_triggers,
+    })
 }
 
-fn runtime_model_tools() -> Vec<ModelToolDescriptor> {
-    vec![
-        ModelToolDescriptor {
-            id: CallableId::parse("bash").expect("static bash callable id is valid"),
-            description: "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.".to_owned(),
-            input_schema: PhenixSchema::Table(BTreeMap::from([(
-                Key::parse("command").expect("static bash field is valid"),
-                PhenixSchema::String,
-            )])),
-            output_schema: <WorkspaceResponse as ValueCodec>::phenix_type(),
-        },
-        ModelToolDescriptor {
-            id: CallableId::parse("phenix.inspect")
-                .expect("static inspection callable id is valid"),
-            description: "Read canonical Phenix runtime state for debugging. Queries: graph, execution, dag, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
-            input_schema: PhenixSchema::Table(BTreeMap::from([(
-                Key::parse("query").expect("static inspection field is valid"),
-                PhenixSchema::String,
-            )])),
-            output_schema: PhenixSchema::Any,
-        },
-    ]
+fn host_model_tools() -> Vec<ModelToolDescriptor> {
+    vec![ModelToolDescriptor {
+        id: CallableId::parse("phenix.inspect")
+            .expect("static inspection callable id is valid"),
+        description: "Read canonical Phenix runtime state for debugging. Queries: graph, execution, dag, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
+        input_schema: PhenixSchema::Table(BTreeMap::from([(
+            Key::parse("query").expect("static inspection field is valid"),
+            PhenixSchema::String,
+        )])),
+        output_schema: PhenixSchema::Any,
+    }]
 }
-
-fn execute_runtime_model_tool_call(
-    workspace: &SdkClient<'_, '_, WorkspaceInterface>,
+fn execute_runtime_entry_trigger(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    trigger: &ComponentEntryTrigger,
     call: &ModelToolCall,
 ) -> ExecutionChange {
     let result = (|| -> Result<PhenixValue, ApplicationError> {
-        let PhenixValue::Table(fields) = &call.input else {
-            return Err(ApplicationError::InvalidInput {
-                message: "bash tool input must be an object with a command field".to_owned(),
-            });
-        };
-        let command = match fields.get("command") {
-            Some(PhenixValue::String(command)) if !command.trim().is_empty() => command.clone(),
-            Some(_) => {
-                return Err(ApplicationError::InvalidInput {
-                    message: "bash tool command must be a non-empty string".to_owned(),
-                })
+        let component = context
+            .kernel
+            .component_graph()
+            .component(&trigger.component)
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: trigger.component.to_string(),
+            })?;
+        let service = ServiceId::parse(trigger.interface.as_str()).map_err(|error| {
+            ApplicationError::Failed {
+                message: format!("entry trigger interface is not a valid service id: {error}"),
             }
-            None => {
-                return Err(ApplicationError::InvalidInput {
-                    message: "bash tool input is missing command".to_owned(),
-                })
-            }
-        };
-        let response = workspace
-            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Shell {
-                command,
-            })
+        })?;
+        let input = serde_json::to_vec(&call.input).map_err(|error| ApplicationError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        let output = context
+            .kernel
+            .invoke_service_abi(
+                &service,
+                &input,
+                &trigger.required_authority,
+                Some(&component.owning_plugin),
+            )
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
-        Ok(response.to_value())
+        serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
     })();
 
     match result {
@@ -2981,7 +3119,6 @@ fn execute_runtime_model_tool_call(
         },
     }
 }
-
 fn execute_runtime_inspect_tool_call(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
@@ -3507,6 +3644,7 @@ mod tests {
                     execution_id: execution_id.clone(),
                     permission_handler: None,
                     tools: tools.clone(),
+                    runtime_entry_triggers: BTreeMap::new(),
                     cancellation: Arc::clone(&cancellation),
                     progress_sender,
                 },
