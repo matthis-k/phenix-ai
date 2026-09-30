@@ -1,5 +1,6 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentManifest, ConfigContribution, DurableSchemaRegistration,
+    Authority, CapabilityId, ComponentEntryTrigger, ComponentManifest, ConfigContribution,
+    DurableSchemaRegistration,
     GraphGenerationId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution,
     PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
     ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
@@ -416,7 +417,9 @@ impl HarnessBuilder {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
-            builder.add_entry_trigger(application::application_shell_tool_trigger());
+            if enabled.contains("phenix.workspace") {
+                builder.add_entry_trigger(application::application_shell_tool_trigger());
+            }
         }
         Ok(builder)
     }
