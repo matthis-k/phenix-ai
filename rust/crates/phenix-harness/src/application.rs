@@ -1036,10 +1036,14 @@ impl ApplicationWorker {
             return Ok(false);
         };
         let content = String::from_utf8_lossy(resource.content.as_ref()).to_lowercase();
-        Ok(content
-            .lines()
-            .take_while(|line| *line != "---" || line.trim().is_empty())
-            .any(|line| line.starts_with("description:") && line.contains("must always apply")))
+        let mut lines = content.lines();
+        if lines.next().is_none_or(|line| line.trim() != "---") {
+            return Ok(false);
+        }
+        Ok(lines
+            .take_while(|line| line.trim() != "---")
+            .any(|line| line.trim_start().starts_with("description:")
+                && line.contains("must always apply")))
     }
 
     fn create_session(
