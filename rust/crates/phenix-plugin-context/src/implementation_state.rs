@@ -492,7 +492,7 @@ fn discover_repository(
             ContextResourceKind::ProjectInstruction => "project-instruction",
             ContextResourceKind::ProjectDocument => "project-document",
             ContextResourceKind::Skill => "skill",
-            ContextResourceKind::External => unreachable!(),
+            ContextResourceKind::Metadata | ContextResourceKind::External => unreachable!(),
         };
         let resource_id =
             ContextResourceId::parse(format!("{prefix}:{workspace_id}:{}", source.path))
@@ -925,6 +925,7 @@ fn context_candidate(section: PromptSection) -> ContextCandidate {
         section.kind,
         PromptSectionKind::HarnessIdentity
             | PromptSectionKind::ProjectInstruction
+            | PromptSectionKind::Metadata
             | PromptSectionKind::Skill
     );
     let cache = if mandatory {
