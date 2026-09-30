@@ -1,5 +1,6 @@
 use crate::{
-    Authority, ComponentGraphError, ComponentId, ComponentManifest, ComponentRuntimeMetadata,
+    Authority, ComponentEntryTrigger, ComponentGraphError, ComponentId, ComponentManifest,
+    ComponentRuntimeMetadata,
     ConfigurationFrontendMetadata, GraphGenerationId, InterfaceId, LayerPolicy, PluginExecution,
     PluginManifest, PluginPackageMetadata, ResolvedComponentGraph, ResolvedCompositionMetadata,
     ResolvedConfigContributions, ResolvedHarness, ResolvedListener, ServiceId,
@@ -12,6 +13,7 @@ pub struct ResolvedHarnessInspection {
     generation: GraphGenerationId,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
     resources: Vec<SkillResourceMetadata>,
     component_graph: ResolvedComponentGraph,
     configuration: ResolvedConfigContributions,
@@ -33,6 +35,7 @@ impl ResolvedHarnessInspection {
             generation: resolved.generation().clone(),
             plugins: resolved.plugins().to_vec(),
             components: resolved.components().to_vec(),
+            entry_triggers: resolved.entry_triggers().to_vec(),
             resources: resolved.resources().to_vec(),
             component_graph: resolved.component_graph().clone(),
             configuration: resolved.configuration().clone(),
@@ -67,6 +70,10 @@ impl ResolvedHarnessInspection {
 
     pub fn components(&self) -> &[ComponentManifest] {
         &self.components
+    }
+
+    pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
+        &self.entry_triggers
     }
 
     pub fn resources(&self) -> &[SkillResourceMetadata] {
