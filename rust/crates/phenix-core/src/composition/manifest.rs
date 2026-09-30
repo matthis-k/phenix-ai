@@ -1,7 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentId, EventFailurePolicy, EventTypeId, InterfaceId,
-    InterfaceSchema, PhenixSchema, PhenixValue, PluginId, ResourceNamespace, RuntimeId, ServiceId,
-    SubscriptionId,
+    ArtifactRevision, Authority, CallableId, ComponentId, EventFailurePolicy, EventTypeId,
+    InterfaceId, InterfaceSchema, PhenixSchema, PhenixValue, PluginId, ResourceNamespace,
+    RuntimeId, ServiceId, SubscriptionId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,6 +52,24 @@ pub struct ComponentExport {
     #[serde(default)]
     pub schema: InterfaceSchema,
     pub priority: i32,
+    pub required_authority: Authority,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EntryTriggerKind {
+    ToolCall {
+        callable_id: CallableId,
+        description: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ComponentEntryTrigger {
+    pub component: ComponentId,
+    pub interface: InterfaceId,
+    pub trigger: EntryTriggerKind,
+    #[serde(default)]
     pub required_authority: Authority,
 }
 

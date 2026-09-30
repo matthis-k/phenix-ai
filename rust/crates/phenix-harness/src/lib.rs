@@ -1,8 +1,8 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentManifest, ConfigContribution, DurableSchemaRegistration,
-    GraphGenerationId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
-    ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
+    Authority, CapabilityId, ComponentEntryTrigger, ComponentManifest, ConfigContribution,
+    DurableSchemaRegistration, GraphGenerationId, Kernel, KernelError, LayerPolicy,
+    PersistenceBackend, PluginExecution, PluginId, PluginInstance, PluginManifest, ResolvedHarness,
+    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
@@ -125,6 +125,7 @@ pub struct HarnessBuilder {
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     components: Vec<ComponentManifest>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
     application_agent_tools: application::ApplicationAgentToolRegistry,
@@ -212,6 +213,7 @@ impl HarnessBuilder {
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
+        builder.add_entry_trigger(application::application_shell_tool_trigger());
         Ok(builder)
     }
 
@@ -414,6 +416,9 @@ impl HarnessBuilder {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
+            if enabled.contains("phenix.workspace") {
+                builder.add_entry_trigger(application::application_shell_tool_trigger());
+            }
         }
         Ok(builder)
     }
@@ -444,6 +449,10 @@ impl HarnessBuilder {
 
     pub fn add_component(&mut self, manifest: ComponentManifest) {
         self.components.push(manifest);
+    }
+
+    pub fn add_entry_trigger(&mut self, trigger: ComponentEntryTrigger) {
+        self.entry_triggers.push(trigger);
     }
 
     pub fn add_config_contribution(&mut self, contribution: ConfigContribution) {
@@ -503,14 +512,16 @@ impl HarnessBuilder {
             .manifests
             .iter()
             .any(|manifest| manifest.id == debug_id);
-        let resolved = ResolvedHarness::resolve_with_durable_schemas_and_layer_policies(
-            self.manifests.clone(),
-            self.components,
-            self.durable_schemas,
-            self.contributions,
-            self.layer_policies,
-            &self.component_authority,
-        )?;
+        let resolved =
+            ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+                self.manifests.clone(),
+                self.components,
+                self.durable_schemas,
+                self.entry_triggers,
+                self.contributions,
+                self.layer_policies,
+                &self.component_authority,
+            )?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());

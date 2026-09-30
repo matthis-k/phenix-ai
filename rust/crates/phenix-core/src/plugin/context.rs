@@ -78,6 +78,11 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         self.host.component_graph()
     }
 
+    /// Read entry triggers from the resolved generation pinned to this call.
+    pub fn entry_triggers(&self) -> &[crate::ComponentEntryTrigger] {
+        self.host.entry_triggers()
+    }
+
     #[doc(hidden)]
     pub fn record_runtime_trace(&self, event: crate::RuntimeTraceEvent) {
         self.host.record_runtime_trace(event);
@@ -93,6 +98,19 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
     ) -> Result<Vec<u8>, KernelError> {
         self.host
             .invoke_service_abi(service, input, requested_authority, binding)
+    }
+
+    #[doc(hidden)]
+    pub fn invoke_component_abi(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        requested_authority: &Authority,
+        binding: &PluginId,
+    ) -> Result<Vec<u8>, KernelError> {
+        self.host
+            .invoke_component_abi(component, service, input, requested_authority, binding)
     }
 
     pub fn continue_service(

@@ -15,6 +15,10 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.component_graph()
     }
 
+    pub fn entry_triggers(&self) -> &[crate::ComponentEntryTrigger] {
+        self.scope.generation.entry_triggers()
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }
@@ -150,6 +154,59 @@ impl<'a> PluginHost<'a> {
             TransactionContext::coordinated_by(self.plugin),
         );
         invoke_service_with(self.runtime, service, input, binding, scope)
+    }
+
+    #[doc(hidden)]
+    pub fn invoke_component_abi(
+        &self,
+        component: &ComponentId,
+        service: &ServiceId,
+        input: &[u8],
+        requested_authority: &Authority,
+        binding: &PluginId,
+    ) -> Result<Vec<u8>, KernelError> {
+        let resolved = self
+            .scope
+            .generation
+            .component_graph()
+            .component(component)
+            .ok_or_else(|| crate::ComponentGraphError::UnknownComponent(component.clone()))?;
+        if &resolved.owning_plugin != binding {
+            return Err(KernelError::HostOperationDenied {
+                plugin: self.plugin.clone(),
+                operation: format!(
+                    "component {component} is owned by {} rather than {binding}",
+                    resolved.owning_plugin
+                ),
+            });
+        }
+
+        let service_plan = self.scope.generation.dispatch_topology().service(service);
+        let layer_plan = service_plan.map_or(&[][..], |plan| plan.layers.as_slice());
+        let policy_identity = service_plan.map_or_else(
+            || self.scope.generation.config().policy_identity(),
+            |plan| plan.policy_identity,
+        );
+        let delegated_authority = self.scope.authority.attenuate(requested_authority);
+        let scope = self.scope.delegated(
+            delegated_authority,
+            TransactionContext::coordinated_by(self.plugin),
+        );
+        invoke_component_service_with(
+            self.runtime,
+            ComponentInvocationPlan {
+                service,
+                layers: layer_plan,
+                policy_identity,
+            },
+            ComponentDispatchTarget {
+                component,
+                binding,
+                provider_provenance: None,
+            },
+            input,
+            scope,
+        )
     }
 
     pub fn continue_service(
