@@ -705,6 +705,17 @@ impl ResolvedHarness {
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components = components;
         components.sort_by(|left, right| left.id.cmp(&right.id));
+        let component_ids = components
+            .iter()
+            .map(|component| component.id.clone())
+            .collect::<BTreeSet<_>>();
+        let entry_triggers = self
+            .entry_triggers
+            .iter()
+            .filter(|trigger| component_ids.contains(&trigger.component))
+            .cloned()
+            .collect::<Vec<_>>();
+        validate_entry_triggers(&components, &entry_triggers, authority_ceiling)?;
         let mut kernel_config = KernelConfig::new(plugins.clone())?;
         for (service, layers) in &self.layer_policies {
             kernel_config = kernel_config.with_layer_policy(service.clone(), layers.clone())?;
@@ -720,6 +731,7 @@ impl ResolvedHarness {
         let generation = SemanticGeneration {
             plugins: &plugins,
             components: &components,
+            entry_triggers: &entry_triggers,
             durable_schemas: durable_schema_payload(&durable_schemas),
             resources: self.resources(),
             configuration: self.configuration.semantic_payload(),
@@ -734,9 +746,11 @@ impl ResolvedHarness {
                 kernel_config,
                 component_graph,
                 self.resources().to_vec(),
+                entry_triggers.clone(),
             ),
             plugins,
             components,
+            entry_triggers,
             durable_schemas,
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
