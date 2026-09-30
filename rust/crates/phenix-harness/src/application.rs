@@ -61,7 +61,7 @@ use phenix_sdk::{
     ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelResponse, ModelTarget,
     OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
     OptionValue, RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile,
-    WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
+    WorkspaceCommand, WorkspaceEntryKind, WorkspaceInterface, WorkspaceResponse,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -867,7 +867,7 @@ impl ApplicationWorker {
         };
         let mut paths = entries
             .into_iter()
-            .filter(|entry| entry.kind == "file")
+            .filter(|entry| entry.kind == WorkspaceEntryKind::File)
             .map(|entry| entry.path)
             .filter(|path| {
                 matches!(
