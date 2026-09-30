@@ -3898,9 +3898,18 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0].id.as_str(), "bash");
-        assert_eq!(tools[1].id.as_str(), "phenix.inspect");
+        assert_eq!(tools.len(), 6);
+        assert_eq!(
+            tools.iter().map(|tool| tool.id.as_str()).collect::<Vec<_>>(),
+            vec![
+                "bash",
+                "phenix.inspect",
+                "workspace.git",
+                "workspace.read",
+                "workspace.search",
+                "workspace.write",
+            ]
+        );
         assert_eq!(
             tools[0].input_schema,
             PhenixSchema::Table(BTreeMap::from([(
@@ -3919,9 +3928,22 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 2);
-        assert_eq!(report.tools[0].id, "bash");
-        assert_eq!(report.tools[1].id, "phenix.inspect");
+        assert_eq!(report.tools.len(), 6);
+        assert_eq!(
+            report
+                .tools
+                .iter()
+                .map(|tool| tool.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "bash",
+                "phenix.inspect",
+                "workspace.git",
+                "workspace.read",
+                "workspace.search",
+                "workspace.write",
+            ]
+        );
         assert_eq!(report.request, "show available capabilities");
 
         let execution_id = "execution-1".to_owned();
