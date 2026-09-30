@@ -180,7 +180,7 @@ pub use phenix_plugin_step_runner::{
 pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
     workspace_manifest, workspace_service, WorkspaceCapabilities, WorkspaceCommand,
-    WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceFileVersion,
+    WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
     WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
     WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
