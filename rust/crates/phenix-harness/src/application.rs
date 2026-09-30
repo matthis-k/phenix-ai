@@ -33,7 +33,7 @@ use phenix_core::{
     ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
@@ -2104,13 +2104,25 @@ struct ApplicationAgentToolPlugin {
     registry: ApplicationAgentToolRegistry,
 }
 
+struct ApplicationAgentToolInvocation {
+    registry: ApplicationAgentToolRegistry,
+}
+
 impl PluginInstance for ApplicationAgentToolPlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         Ok(())
     }
 
+    fn shared_invocation(&self) -> Option<Arc<dyn SharedPluginInvocation>> {
+        Some(Arc::new(ApplicationAgentToolInvocation {
+            registry: self.registry.clone(),
+        }))
+    }
+}
+
+impl SharedPluginInvocation for ApplicationAgentToolInvocation {
     fn invoke(
-        &mut self,
+        &self,
         service: &ServiceId,
         input: &[u8],
         host: &PluginHost<'_>,
