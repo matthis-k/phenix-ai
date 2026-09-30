@@ -3094,11 +3094,12 @@ fn execute_runtime_entry_trigger(
         })?;
         let output = context
             .kernel
-            .invoke_service_abi(
+            .invoke_component_abi(
+                &trigger.component,
                 &service,
                 &input,
                 &trigger.required_authority,
-                Some(&component.owning_plugin),
+                &component.owning_plugin,
             )
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
