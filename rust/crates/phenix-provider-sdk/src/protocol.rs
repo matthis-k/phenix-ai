@@ -327,10 +327,61 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, ProviderError> {
     Ok(schema)
 }
 
+const OPENAI_TOOL_NAME_PREFIX: &str = "phx1_";
+
+fn openai_tool_name(id: &CallableId) -> String {
+    let mut name = String::with_capacity(OPENAI_TOOL_NAME_PREFIX.len() + id.as_str().len());
+    name.push_str(OPENAI_TOOL_NAME_PREFIX);
+    for byte in id.as_str().bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' => name.push(char::from(byte)),
+            b'_' => name.push_str("_u"),
+            b'.' => name.push_str("_d"),
+            b'/' => name.push_str("_s"),
+            b':' => name.push_str("_c"),
+            b'@' => name.push_str("_a"),
+            _ => unreachable!("CallableId validation rejects unsupported bytes"),
+        }
+    }
+    name
+}
+
+fn parse_openai_callable_id(name: &str) -> Result<CallableId, ProviderError> {
+    let Some(encoded) = name.strip_prefix(OPENAI_TOOL_NAME_PREFIX) else {
+        return parse_callable_id(name);
+    };
+    let mut id = String::with_capacity(encoded.len());
+    let mut bytes = encoded.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'_' {
+            id.push(char::from(byte));
+            continue;
+        }
+        let escape = bytes.next().ok_or_else(|| ProviderError::Protocol {
+            message: format!("provider returned malformed encoded OpenAI tool name {name:?}"),
+        })?;
+        id.push(match escape {
+            b'u' => '_',
+            b'd' => '.',
+            b's' => '/',
+            b'c' => ':',
+            b'a' => '@',
+            _ => {
+                return Err(ProviderError::Protocol {
+                    message: format!(
+                        "provider returned malformed encoded OpenAI tool name {name:?}"
+                    ),
+                });
+            }
+        });
+    }
+    parse_callable_id(&id)
+}
+
 fn openai_tool(tool: &ModelToolDescriptor) -> Result<Value, ProviderError> {
     Ok(serde_json::json!({
         "type": "function",
-        "name": tool.id.as_str(),
+        "name": openai_tool_name(&tool.id),
         "description": tool.description,
         "parameters": json_schema(&tool.input_schema)?,
     }))
@@ -340,7 +391,7 @@ fn openai_chat_tool(tool: &ModelToolDescriptor) -> Result<Value, ProviderError> 
     Ok(serde_json::json!({
         "type": "function",
         "function": {
-            "name": tool.id.as_str(),
+            "name": openai_tool_name(&tool.id),
             "description": tool.description,
             "parameters": json_schema(&tool.input_schema)?,
         },
@@ -775,7 +826,7 @@ fn openai_responses_request(
                 input.push(serde_json::json!({
                     "type": "function_call",
                     "call_id": call.call_id,
-                    "name": call.callable_id.as_str(),
+                    "name": openai_tool_name(&call.callable_id),
                     "arguments": tool_arguments(call)?,
                 }));
             }
@@ -817,7 +868,7 @@ fn openai_chat_request(
                     "id": call.call_id,
                     "type": "function",
                     "function": {
-                        "name": call.callable_id.as_str(),
+                        "name": openai_tool_name(&call.callable_id),
                         "arguments": tool_arguments(call)?,
                     },
                 }))
@@ -1113,7 +1164,7 @@ fn openai_responses_response(
                 })?;
             Ok(ModelToolCall {
                 call_id: call_id.to_owned(),
-                callable_id: parse_callable_id(name)?,
+                callable_id: parse_openai_callable_id(name)?,
                 input: parse_arguments(arguments, "OpenAI responses")?,
             })
         })
@@ -1187,7 +1238,7 @@ fn openai_chat_response(
                 })?;
             Ok(ModelToolCall {
                 call_id: call_id.to_owned(),
-                callable_id: parse_callable_id(name)?,
+                callable_id: parse_openai_callable_id(name)?,
                 input: parse_arguments(arguments, "OpenAI chat")?,
             })
         })
@@ -1817,7 +1868,7 @@ mod tests {
             .unwrap();
         let responses: Value = serde_json::from_slice(&responses.body).unwrap();
         assert_eq!(responses["tools"][0]["type"], "function");
-        assert_eq!(responses["tools"][0]["name"], "fixture.echo");
+        assert_eq!(responses["tools"][0]["name"], "phx1_fixture_decho");
         assert_eq!(
             responses["tools"][0]["parameters"]["properties"]["value"]["type"],
             "string"
@@ -1828,7 +1879,7 @@ mod tests {
             .unwrap();
         let chat: Value = serde_json::from_slice(&chat.body).unwrap();
         assert_eq!(chat["tools"][0]["type"], "function");
-        assert_eq!(chat["tools"][0]["function"]["name"], "fixture.echo");
+        assert_eq!(chat["tools"][0]["function"]["name"], "phx1_fixture_decho");
 
         let anthropic = Protocol::AnthropicMessages
             .encode(&endpoint, &request_with_tool())
@@ -1836,6 +1887,28 @@ mod tests {
         let anthropic: Value = serde_json::from_slice(&anthropic.body).unwrap();
         assert_eq!(anthropic["tools"][0]["name"], "fixture.echo");
         assert_eq!(anthropic["tools"][0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn openai_tool_names_round_trip_provider_safe_callable_ids() {
+        for id in [
+            "workspace.shell",
+            "workspace/read",
+            "provider:model@1",
+            "already_safe",
+            "contains-hyphen",
+        ] {
+            let id = CallableId::parse(id).unwrap();
+            let wire = openai_tool_name(&id);
+            assert!(wire
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+            assert_eq!(parse_openai_callable_id(&wire).unwrap(), id);
+        }
+        assert_ne!(
+            openai_tool_name(&CallableId::parse("workspace.shell").unwrap()),
+            openai_tool_name(&CallableId::parse("workspace_shell").unwrap())
+        );
     }
 
     #[test]
@@ -1848,7 +1921,7 @@ mod tests {
                     "output":[{
                         "type":"function_call",
                         "call_id":"call-responses",
-                        "name":"fixture.echo",
+                        "name":"phx1_fixture_decho",
                         "arguments":"{\"value\":\"responses\"}"
                     }]
                 }),
@@ -1876,7 +1949,7 @@ mod tests {
                             "id":"call-chat",
                             "type":"function",
                             "function":{
-                                "name":"fixture.echo",
+                                "name":"phx1_fixture_decho",
                                 "arguments":"{\"value\":\"chat\"}"
                             }
                         }]
