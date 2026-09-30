@@ -89,7 +89,8 @@ pub use composition::component::{
 pub use composition::component_invocation::ComponentInvocationError;
 pub use composition::inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
 pub use composition::manifest::{
-    ComponentExport, ComponentImport, ComponentListener, ComponentManifest, ListenerProjection,
+    ComponentEntryTrigger, ComponentExport, ComponentImport, ComponentListener, ComponentManifest,
+    EntryTriggerKind, ListenerProjection,
     PluginArtifact, PluginExecution, PluginManifest, ServiceContribution, ServiceRole,
 };
 pub use composition::provider_resolution::{
