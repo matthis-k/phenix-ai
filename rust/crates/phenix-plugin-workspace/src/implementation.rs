@@ -1818,6 +1818,40 @@ mod tests {
     }
 
     #[test]
+    fn list_is_deterministic_recursive_and_excludes_git_metadata() {
+        let root = temp_workspace("workspace-list");
+        fs::create_dir_all(root.join("src/nested")).unwrap();
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        fs::write(root.join("AGENTS.md"), "root rules\n").unwrap();
+        fs::write(root.join("src/nested/SKILL.md"), "skill\n").unwrap();
+        fs::write(root.join(".git/objects/ignored"), "ignored\n").unwrap();
+
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::List {
+                path: None,
+                recursive: true,
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+        let WorkspaceResponse::List { entries } = response else {
+            panic!("unexpected response: {response:?}");
+        };
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec!["AGENTS.md", "src", "src/nested", "src/nested/SKILL.md"]
+        );
+        assert!(!paths.iter().any(|path| path.starts_with(".git")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn search_is_deterministic_and_read_authority_cannot_write() {
         let root = temp_workspace("workspace-search");
         fs::create_dir_all(root.join("src")).unwrap();
