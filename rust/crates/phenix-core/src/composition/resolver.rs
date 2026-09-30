@@ -1,5 +1,6 @@
 use crate::{
-    Authority, BackendFeature, CapabilityId, ComponentGraphError, ComponentManifest,
+    Authority, BackendFeature, CapabilityId, ComponentEntryTrigger, ComponentGraphError,
+    ComponentManifest, EntryTriggerKind,
     CompositionMetadataError, ConfigContribution, ConfigMergeError, ConfigurationFrontendId,
     ConfigurationFrontendMetadata, DurableSchemaRegistration, FrontendConfigContribution,
     FrontendConfigError, GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy,
@@ -34,6 +35,7 @@ pub struct RuntimeGeneration {
     component_graph: ResolvedComponentGraph,
     dispatch_topology: ResolvedDispatchTopology,
     resources: Vec<SkillResourceMetadata>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
 }
 
 impl RuntimeGeneration {
@@ -45,6 +47,7 @@ impl RuntimeGeneration {
             component_graph: ResolvedComponentGraph::empty(),
             dispatch_topology,
             resources: Vec::new(),
+            entry_triggers: Vec::new(),
         }
     }
 
@@ -70,6 +73,7 @@ impl RuntimeGeneration {
         config: KernelConfig,
         component_graph: ResolvedComponentGraph,
         resources: Vec<SkillResourceMetadata>,
+        entry_triggers: Vec<ComponentEntryTrigger>,
     ) -> Self {
         let dispatch_topology = config
             .resolved_dispatch_topology()
@@ -80,6 +84,7 @@ impl RuntimeGeneration {
             component_graph,
             dispatch_topology,
             resources,
+            entry_triggers,
         }
     }
 
@@ -114,6 +119,11 @@ impl RuntimeGeneration {
     #[must_use]
     pub fn resources(&self) -> &[SkillResourceMetadata] {
         &self.resources
+    }
+
+    #[must_use]
+    pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
+        &self.entry_triggers
     }
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
@@ -172,6 +182,15 @@ pub enum ResolvedHarnessError {
         resource: String,
         capability: CapabilityId,
     },
+    MissingEntryTriggerTarget {
+        component: crate::ComponentId,
+        interface: InterfaceId,
+    },
+    EntryTriggerAuthorityDenied {
+        component: crate::ComponentId,
+        interface: InterfaceId,
+    },
+    DuplicateToolCallTrigger(crate::CallableId),
     DuplicateLayerPolicy {
         service: ServiceId,
         plugin: PluginId,
@@ -248,6 +267,15 @@ impl Display for ResolvedHarnessError {
                 f,
                 "resource {resource} requires denied capability {capability}"
             ),
+            Self::MissingEntryTriggerTarget { component, interface } => {
+                write!(f, "entry trigger targets missing export {component}:{interface}")
+            }
+            Self::EntryTriggerAuthorityDenied { component, interface } => {
+                write!(f, "entry trigger authority exceeds runtime/component authority for {component}:{interface}")
+            }
+            Self::DuplicateToolCallTrigger(callable) => {
+                write!(f, "duplicate tool-call trigger id: {callable}")
+            }
             Self::DuplicateLayerPolicy { service, plugin } => {
                 write!(
                     f,
@@ -289,6 +317,7 @@ pub struct ResolvedHarness {
     runtime: RuntimeGeneration,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
@@ -299,6 +328,7 @@ pub struct ResolvedHarness {
 struct ResolutionInputs {
     durable_schemas: Vec<DurableSchemaRegistration>,
     resources: Vec<SkillResourceMetadata>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
     contributions: Vec<ConfigContribution>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
@@ -308,6 +338,7 @@ impl ResolutionInputs {
     fn new(
         durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
         resources: impl IntoIterator<Item = SkillResourceMetadata>,
+        entry_triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         provider_policy: ProviderCompositionPolicy,
@@ -315,6 +346,7 @@ impl ResolutionInputs {
         Self {
             durable_schemas: durable_schemas.into_iter().collect(),
             resources: resources.into_iter().collect(),
+            entry_triggers: entry_triggers.into_iter().collect(),
             contributions: contributions.into_iter().collect(),
             layer_policies,
             provider_policy,
@@ -333,6 +365,7 @@ impl ResolvedHarness {
             plugin_manifests,
             component_manifests,
             ResolutionInputs::new(
+                [],
                 [],
                 [],
                 contributions,
@@ -356,6 +389,7 @@ impl ResolvedHarness {
             ResolutionInputs::new(
                 durable_schemas,
                 [],
+                [],
                 contributions,
                 BTreeMap::new(),
                 ProviderCompositionPolicy::default(),
@@ -374,7 +408,7 @@ impl ResolvedHarness {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
-            ResolutionInputs::new([], [], contributions, BTreeMap::new(), provider_policy),
+            ResolutionInputs::new([], [], [], contributions, BTreeMap::new(), provider_policy),
             authority_ceiling,
         )
     }
@@ -392,6 +426,7 @@ impl ResolvedHarness {
             ResolutionInputs::new(
                 [],
                 resources,
+                [],
                 contributions,
                 BTreeMap::new(),
                 ProviderCompositionPolicy::default(),
@@ -411,6 +446,7 @@ impl ResolvedHarness {
             plugin_manifests,
             component_manifests,
             ResolutionInputs::new(
+                [],
                 [],
                 [],
                 contributions,
@@ -435,6 +471,31 @@ impl ResolvedHarness {
             ResolutionInputs::new(
                 durable_schemas,
                 [],
+                [],
+                contributions,
+                layer_policies,
+                ProviderCompositionPolicy::default(),
+            ),
+            authority_ceiling,
+        )
+    }
+
+    pub fn resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+        plugin_manifests: impl IntoIterator<Item = PluginManifest>,
+        component_manifests: impl IntoIterator<Item = ComponentManifest>,
+        durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
+        entry_triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
+        contributions: impl IntoIterator<Item = ConfigContribution>,
+        layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
+        authority_ceiling: &Authority,
+    ) -> Result<Self, ResolvedHarnessError> {
+        Self::resolve_with_inputs(
+            plugin_manifests,
+            component_manifests,
+            ResolutionInputs::new(
+                durable_schemas,
+                [],
+                entry_triggers,
                 contributions,
                 layer_policies,
                 ProviderCompositionPolicy::default(),
@@ -457,6 +518,7 @@ impl ResolvedHarness {
             ResolutionInputs::new(
                 [],
                 resources,
+                [],
                 contributions,
                 layer_policies,
                 ProviderCompositionPolicy::default(),
@@ -475,6 +537,9 @@ impl ResolvedHarness {
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components: Vec<_> = component_manifests.into_iter().collect();
         components.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut entry_triggers = inputs.entry_triggers;
+        entry_triggers.sort_by(entry_trigger_order);
+        validate_entry_triggers(&components, &entry_triggers, authority_ceiling)?;
         let resources = resolve_resources(inputs.resources, &components, authority_ceiling)?;
         validate_layer_policies(&plugins, &inputs.layer_policies, authority_ceiling)?;
         for layers in inputs.layer_policies.values_mut() {
@@ -501,6 +566,7 @@ impl ResolvedHarness {
         let generation = SemanticGeneration {
             plugins: &plugins,
             components: &components,
+            entry_triggers: &entry_triggers,
             durable_schemas: durable_schema_payload(&durable_schemas),
             resources: &resources,
             configuration: configuration.semantic_payload(),
@@ -516,9 +582,11 @@ impl ResolvedHarness {
                 kernel_config,
                 component_graph,
                 resources,
+                entry_triggers.clone(),
             ),
             plugins,
             components,
+            entry_triggers,
             durable_schemas,
             configuration,
             layer_policies: inputs.layer_policies,
@@ -580,6 +648,10 @@ impl ResolvedHarness {
 
     pub fn components(&self) -> &[ComponentManifest] {
         &self.components
+    }
+
+    pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
+        &self.entry_triggers
     }
 
     pub fn durable_schemas(&self) -> &[DurableSchemaRegistration] {
@@ -677,6 +749,7 @@ impl ResolvedHarness {
 struct SemanticGeneration<'a> {
     plugins: &'a [PluginManifest],
     components: &'a [ComponentManifest],
+    entry_triggers: &'a [ComponentEntryTrigger],
     durable_schemas: serde_json::Value,
     resources: &'a [SkillResourceMetadata],
     configuration: serde_json::Value,
@@ -856,6 +929,64 @@ fn layer_policy_payload(
             })
             .collect(),
     )
+}
+
+fn entry_trigger_order(left: &ComponentEntryTrigger, right: &ComponentEntryTrigger) -> std::cmp::Ordering {
+    left.component
+        .cmp(&right.component)
+        .then_with(|| left.interface.cmp(&right.interface))
+        .then_with(|| match (&left.trigger, &right.trigger) {
+            (
+                EntryTriggerKind::ToolCall { callable_id: left, .. },
+                EntryTriggerKind::ToolCall { callable_id: right, .. },
+            ) => left.cmp(right),
+        })
+}
+
+fn validate_entry_triggers(
+    components: &[ComponentManifest],
+    triggers: &[ComponentEntryTrigger],
+    authority_ceiling: &Authority,
+) -> Result<(), ResolvedHarnessError> {
+    let mut tool_ids = BTreeSet::new();
+    for trigger in triggers {
+        let Some(component) = components.iter().find(|component| component.id == trigger.component)
+        else {
+            return Err(ResolvedHarnessError::MissingEntryTriggerTarget {
+                component: trigger.component.clone(),
+                interface: trigger.interface.clone(),
+            });
+        };
+        let Some(export) = component
+            .exports
+            .iter()
+            .find(|export| export.interface == trigger.interface)
+        else {
+            return Err(ResolvedHarnessError::MissingEntryTriggerTarget {
+                component: trigger.component.clone(),
+                interface: trigger.interface.clone(),
+            });
+        };
+        if !authority_ceiling.permits_all(&trigger.required_authority)
+            || !component.maximum_authority.permits_all(&trigger.required_authority)
+            || !component.maximum_authority.permits_all(&export.required_authority)
+        {
+            return Err(ResolvedHarnessError::EntryTriggerAuthorityDenied {
+                component: trigger.component.clone(),
+                interface: trigger.interface.clone(),
+            });
+        }
+        match &trigger.trigger {
+            EntryTriggerKind::ToolCall { callable_id, .. } => {
+                if !tool_ids.insert(callable_id.clone()) {
+                    return Err(ResolvedHarnessError::DuplicateToolCallTrigger(
+                        callable_id.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_layer_policies(
