@@ -1747,3 +1747,111 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod entry_trigger_tests {
+    use super::*;
+    use crate::{CallableId, ComponentExport, ComponentId, InterfaceSchema, PluginExecution};
+
+    fn plugin() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.trigger").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: Vec::new(),
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::new([
+                CapabilityId::parse("workspace.shell").unwrap(),
+            ]),
+        }
+    }
+
+    fn component() -> ComponentManifest {
+        let authority = Authority::new([CapabilityId::parse("workspace.shell").unwrap()]);
+        ComponentManifest {
+            id: ComponentId::parse("fixture.trigger.component").unwrap(),
+            owner: plugin().id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: InterfaceId::parse("fixture.trigger.shell@1").unwrap(),
+                schema: InterfaceSchema::of::<String, String>(),
+                priority: 100,
+                required_authority: authority.clone(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: authority,
+        }
+    }
+
+    fn trigger(id: &str) -> ComponentEntryTrigger {
+        ComponentEntryTrigger {
+            component: ComponentId::parse("fixture.trigger.component").unwrap(),
+            interface: InterfaceId::parse("fixture.trigger.shell@1").unwrap(),
+            trigger: EntryTriggerKind::ToolCall {
+                callable_id: CallableId::parse(id).unwrap(),
+                description: "fixture".into(),
+            },
+            required_authority: Authority::new([
+                CapabilityId::parse("workspace.shell").unwrap(),
+            ]),
+        }
+    }
+
+    fn resolve(
+        triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
+    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
+        ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+            [plugin()],
+            [component()],
+            [],
+            triggers,
+            [],
+            BTreeMap::new(),
+            &Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+        )
+    }
+
+    #[test]
+    fn entry_trigger_is_part_of_resolved_generation() {
+        let first = resolve([trigger("bash")]).unwrap();
+        let second = resolve([]).unwrap();
+
+        assert_eq!(first.entry_triggers(), &[trigger("bash")]);
+        assert_ne!(first.generation(), second.generation());
+    }
+
+    #[test]
+    fn duplicate_tool_call_ids_fail_resolution() {
+        let mut second = trigger("bash");
+        second.component = ComponentId::parse("fixture.trigger.component").unwrap();
+
+        assert!(matches!(
+            resolve([trigger("bash"), second]),
+            Err(ResolvedHarnessError::DuplicateToolCallTrigger(id)) if id.as_str() == "bash"
+        ));
+    }
+
+    #[test]
+    fn trigger_must_target_a_resolved_export() {
+        let mut missing = trigger("bash");
+        missing.interface = InterfaceId::parse("fixture.trigger.missing@1").unwrap();
+
+        assert!(matches!(
+            resolve([missing]),
+            Err(ResolvedHarnessError::MissingEntryTriggerTarget { .. })
+        ));
+    }
+
+    #[test]
+    fn trigger_authority_must_cover_target_export() {
+        let mut underpowered = trigger("bash");
+        underpowered.required_authority = Authority::default();
+
+        assert!(matches!(
+            resolve([underpowered]),
+            Err(ResolvedHarnessError::EntryTriggerAuthorityDenied { .. })
+        ));
+    }
+}
