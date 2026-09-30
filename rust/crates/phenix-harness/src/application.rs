@@ -33,7 +33,8 @@ use phenix_core::{
     ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, ValueCodec, ValueId,
+    ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
