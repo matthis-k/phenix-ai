@@ -125,6 +125,7 @@ pub struct HarnessBuilder {
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     components: Vec<ComponentManifest>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
     application_agent_tools: application::ApplicationAgentToolRegistry,
@@ -212,6 +213,7 @@ impl HarnessBuilder {
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
+        builder.add_entry_trigger(application::application_shell_tool_trigger());
         Ok(builder)
     }
 
@@ -414,6 +416,7 @@ impl HarnessBuilder {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
+            builder.add_entry_trigger(application::application_shell_tool_trigger());
         }
         Ok(builder)
     }
@@ -444,6 +447,10 @@ impl HarnessBuilder {
 
     pub fn add_component(&mut self, manifest: ComponentManifest) {
         self.components.push(manifest);
+    }
+
+    pub fn add_entry_trigger(&mut self, trigger: ComponentEntryTrigger) {
+        self.entry_triggers.push(trigger);
     }
 
     pub fn add_config_contribution(&mut self, contribution: ConfigContribution) {
@@ -503,10 +510,11 @@ impl HarnessBuilder {
             .manifests
             .iter()
             .any(|manifest| manifest.id == debug_id);
-        let resolved = ResolvedHarness::resolve_with_durable_schemas_and_layer_policies(
+        let resolved = ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
             self.manifests.clone(),
             self.components,
             self.durable_schemas,
+            self.entry_triggers,
             self.contributions,
             self.layer_policies,
             &self.component_authority,
