@@ -1,12 +1,11 @@
 use crate::{
     Authority, BackendFeature, CapabilityId, ComponentEntryTrigger, ComponentGraphError,
-    ComponentManifest, EntryTriggerKind,
-    CompositionMetadataError, ConfigContribution, ConfigMergeError, ConfigurationFrontendId,
-    ConfigurationFrontendMetadata, DurableSchemaRegistration, FrontendConfigContribution,
-    FrontendConfigError, GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy,
-    PluginId, PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph,
-    ResolvedConfigContributions, ResolvedDispatchTopology, ResourceNamespace, ServiceId,
-    ServiceRole, SkillResourceMetadata,
+    ComponentManifest, CompositionMetadataError, ConfigContribution, ConfigMergeError,
+    ConfigurationFrontendId, ConfigurationFrontendMetadata, DurableSchemaRegistration,
+    EntryTriggerKind, FrontendConfigContribution, FrontendConfigError, GraphGenerationId,
+    InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId, PluginManifest,
+    ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
+    ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -946,14 +945,21 @@ fn layer_policy_payload(
     )
 }
 
-fn entry_trigger_order(left: &ComponentEntryTrigger, right: &ComponentEntryTrigger) -> std::cmp::Ordering {
+fn entry_trigger_order(
+    left: &ComponentEntryTrigger,
+    right: &ComponentEntryTrigger,
+) -> std::cmp::Ordering {
     left.component
         .cmp(&right.component)
         .then_with(|| left.interface.cmp(&right.interface))
         .then_with(|| match (&left.trigger, &right.trigger) {
             (
-                EntryTriggerKind::ToolCall { callable_id: left, .. },
-                EntryTriggerKind::ToolCall { callable_id: right, .. },
+                EntryTriggerKind::ToolCall {
+                    callable_id: left, ..
+                },
+                EntryTriggerKind::ToolCall {
+                    callable_id: right, ..
+                },
             ) => left.cmp(right),
         })
 }
@@ -965,7 +971,9 @@ fn validate_entry_triggers(
 ) -> Result<(), ResolvedHarnessError> {
     let mut tool_ids = BTreeSet::new();
     for trigger in triggers {
-        let Some(component) = components.iter().find(|component| component.id == trigger.component)
+        let Some(component) = components
+            .iter()
+            .find(|component| component.id == trigger.component)
         else {
             return Err(ResolvedHarnessError::MissingEntryTriggerTarget {
                 component: trigger.component.clone(),
@@ -983,9 +991,15 @@ fn validate_entry_triggers(
             });
         };
         if !authority_ceiling.permits_all(&trigger.required_authority)
-            || !component.maximum_authority.permits_all(&trigger.required_authority)
-            || !component.maximum_authority.permits_all(&export.required_authority)
-            || !trigger.required_authority.permits_all(&export.required_authority)
+            || !component
+                .maximum_authority
+                .permits_all(&trigger.required_authority)
+            || !component
+                .maximum_authority
+                .permits_all(&export.required_authority)
+            || !trigger
+                .required_authority
+                .permits_all(&export.required_authority)
         {
             return Err(ResolvedHarnessError::EntryTriggerAuthorityDenied {
                 component: trigger.component.clone(),
@@ -1748,7 +1762,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod entry_trigger_tests {
     use super::*;
@@ -1762,9 +1775,7 @@ mod entry_trigger_tests {
             dependencies: Vec::new(),
             services: Vec::new(),
             resource_namespaces: Vec::new(),
-            maximum_authority: Authority::new([
-                CapabilityId::parse("workspace.shell").unwrap(),
-            ]),
+            maximum_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
         }
     }
 
@@ -1793,9 +1804,7 @@ mod entry_trigger_tests {
                 callable_id: CallableId::parse(id).unwrap(),
                 description: "fixture".into(),
             },
-            required_authority: Authority::new([
-                CapabilityId::parse("workspace.shell").unwrap(),
-            ]),
+            required_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
         }
     }
 

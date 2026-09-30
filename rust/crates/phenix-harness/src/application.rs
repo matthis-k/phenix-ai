@@ -29,12 +29,11 @@ use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId, InterfaceSchema,
-    Key, LocalPersistence, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, ObservableError, ObservableRegistration, ObservableStore, PhenixContract,
-    PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
-    SnapshotPolicy, ValueCodec, ValueId, ValuePath,
+    Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError,
+    ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    SharedCapabilityRegistry, SnapshotPolicy, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
@@ -102,8 +101,9 @@ impl ComponentInterface for ApplicationShellToolInterface {
 }
 
 fn application_shell_authority() -> Authority {
-    Authority::new([CapabilityId::parse("workspace.shell")
-        .expect("static workspace shell capability is valid")])
+    Authority::new([
+        CapabilityId::parse("workspace.shell").expect("static workspace shell capability is valid")
+    ])
 }
 
 #[must_use]
@@ -3089,9 +3089,10 @@ fn execute_runtime_entry_trigger(
                 message: format!("entry trigger interface is not a valid service id: {error}"),
             }
         })?;
-        let input = serde_json::to_vec(&call.input).map_err(|error| ApplicationError::InvalidInput {
-            message: error.to_string(),
-        })?;
+        let input =
+            serde_json::to_vec(&call.input).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_string(),
+            })?;
         let output = context
             .kernel
             .invoke_component_abi(

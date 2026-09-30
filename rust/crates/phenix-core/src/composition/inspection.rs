@@ -1,10 +1,9 @@
 use crate::{
     Authority, ComponentEntryTrigger, ComponentGraphError, ComponentId, ComponentManifest,
-    ComponentRuntimeMetadata,
-    ConfigurationFrontendMetadata, GraphGenerationId, InterfaceId, LayerPolicy, PluginExecution,
-    PluginManifest, PluginPackageMetadata, ResolvedComponentGraph, ResolvedCompositionMetadata,
-    ResolvedConfigContributions, ResolvedHarness, ResolvedListener, ServiceId,
-    SkillResourceMetadata,
+    ComponentRuntimeMetadata, ConfigurationFrontendMetadata, GraphGenerationId, InterfaceId,
+    LayerPolicy, PluginExecution, PluginManifest, PluginPackageMetadata, ResolvedComponentGraph,
+    ResolvedCompositionMetadata, ResolvedConfigContributions, ResolvedHarness, ResolvedListener,
+    ServiceId, SkillResourceMetadata,
 };
 use std::collections::BTreeMap;
 

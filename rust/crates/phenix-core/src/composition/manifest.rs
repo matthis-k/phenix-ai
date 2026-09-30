@@ -1,7 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, CallableId, ComponentId, EventFailurePolicy, EventTypeId, InterfaceId,
-    InterfaceSchema, PhenixSchema, PhenixValue, PluginId, ResourceNamespace, RuntimeId, ServiceId,
-    SubscriptionId,
+    ArtifactRevision, Authority, CallableId, ComponentId, EventFailurePolicy, EventTypeId,
+    InterfaceId, InterfaceSchema, PhenixSchema, PhenixValue, PluginId, ResourceNamespace,
+    RuntimeId, ServiceId, SubscriptionId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

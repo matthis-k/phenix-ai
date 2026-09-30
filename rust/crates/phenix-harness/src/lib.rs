@@ -1,9 +1,8 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentEntryTrigger, ComponentManifest, ConfigContribution,
-    DurableSchemaRegistration,
-    GraphGenerationId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
-    ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
+    DurableSchemaRegistration, GraphGenerationId, Kernel, KernelError, LayerPolicy,
+    PersistenceBackend, PluginExecution, PluginId, PluginInstance, PluginManifest, ResolvedHarness,
+    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
@@ -513,15 +512,16 @@ impl HarnessBuilder {
             .manifests
             .iter()
             .any(|manifest| manifest.id == debug_id);
-        let resolved = ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
-            self.manifests.clone(),
-            self.components,
-            self.durable_schemas,
-            self.entry_triggers,
-            self.contributions,
-            self.layer_policies,
-            &self.component_authority,
-        )?;
+        let resolved =
+            ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+                self.manifests.clone(),
+                self.components,
+                self.durable_schemas,
+                self.entry_triggers,
+                self.contributions,
+                self.layer_policies,
+                &self.component_authority,
+            )?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());

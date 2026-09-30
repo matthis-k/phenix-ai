@@ -109,13 +109,8 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         requested_authority: &Authority,
         binding: &PluginId,
     ) -> Result<Vec<u8>, KernelError> {
-        self.host.invoke_component_abi(
-            component,
-            service,
-            input,
-            requested_authority,
-            binding,
-        )
+        self.host
+            .invoke_component_abi(component, service, input, requested_authority, binding)
     }
 
     pub fn continue_service(
