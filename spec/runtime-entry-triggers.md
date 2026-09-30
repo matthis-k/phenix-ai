@@ -1,8 +1,10 @@
 # Runtime entry triggers
 
+Status: partial
+
 ## Status
 
-Proposed architecture contract for graph-owned execution ingress.
+Partially implemented architecture contract for graph-owned execution ingress.
 
 This document separates three concepts:
 
