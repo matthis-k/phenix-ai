@@ -54,14 +54,14 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, workspace_service, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
-    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
-    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RepositoryContextSource,
-    RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceInterface,
-    WorkspaceResponse,
+    options_service, workspace_service, ContextCommand, ContextDescriptor,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelResponse, ModelTarget,
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
+    OptionValue, RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile,
+    WorkspaceCommand, WorkspaceInterface, WorkspaceResponse,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -834,13 +834,11 @@ impl ApplicationWorker {
                         }
                     })?,
                 ),
-                agent: Some(
-                    OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| {
-                        ApplicationError::InvalidInput {
-                            message: error.to_owned(),
-                        }
-                    })?,
-                ),
+                agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                    |error| ApplicationError::InvalidInput {
+                        message: error.to_owned(),
+                    },
+                )?),
             },
         })?;
         let OptionResponse::Value { option } = response else {
@@ -857,12 +855,12 @@ impl ApplicationWorker {
     }
 
     fn workspace_context_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let WorkspaceResponse::List { entries } = self.invoke_workspace_command(
-            WorkspaceCommand::List {
+        let WorkspaceResponse::List { entries } =
+            self.invoke_workspace_command(WorkspaceCommand::List {
                 path: None,
                 recursive: true,
-            },
-        )? else {
+            })?
+        else {
             return Err(ApplicationError::InvalidResponse {
                 message: "workspace list returned a non-list response".into(),
             });
@@ -888,9 +886,9 @@ impl ApplicationWorker {
         paths
             .into_iter()
             .map(|path| {
-                let WorkspaceResponse::Read { content, .. } = self.invoke_workspace_command(
-                    WorkspaceCommand::Read { path: path.clone() },
-                )? else {
+                let WorkspaceResponse::Read { content, .. } =
+                    self.invoke_workspace_command(WorkspaceCommand::Read { path: path.clone() })?
+                else {
                     return Err(ApplicationError::InvalidResponse {
                         message: format!("workspace read returned a non-read response for {path}"),
                     });
@@ -945,7 +943,11 @@ impl ApplicationWorker {
             .workspace_context_sources()?
             .into_iter()
             .filter(|source| {
-                let file = source.path.rsplit('/').next().unwrap_or(source.path.as_str());
+                let file = source
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(source.path.as_str());
                 if file == "SKILL.md" {
                     skills_auto
                 } else {
@@ -1021,10 +1023,7 @@ impl ApplicationWorker {
         Ok(())
     }
 
-    fn skill_is_mandatory(
-        &self,
-        descriptor: &ContextDescriptor,
-    ) -> Result<bool, ApplicationError> {
+    fn skill_is_mandatory(&self, descriptor: &ContextDescriptor) -> Result<bool, ApplicationError> {
         let response = self.invoke_context_command(ContextCommand::Get {
             resource_id: descriptor.resource_id.clone(),
             revision: descriptor.revision.clone(),
@@ -1040,10 +1039,9 @@ impl ApplicationWorker {
         if lines.next().is_none_or(|line| line.trim() != "---") {
             return Ok(false);
         }
-        Ok(lines
-            .take_while(|line| line.trim() != "---")
-            .any(|line| line.trim_start().starts_with("description:")
-                && line.contains("must always apply")))
+        Ok(lines.take_while(|line| line.trim() != "---").any(|line| {
+            line.trim_start().starts_with("description:") && line.contains("must always apply")
+        }))
     }
 
     fn create_session(
@@ -1130,10 +1128,9 @@ impl ApplicationWorker {
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
         let execution_id = self.allocate_root_execution()?;
-        if let Err(error) = self.prepare_execution_context(
-            &application_session_info(&session)?,
-            &execution_id,
-        ) {
+        if let Err(error) =
+            self.prepare_execution_context(&application_session_info(&session)?, &execution_id)
+        {
             let _ = self.finish_root_execution(&execution_id, false);
             return Err(error);
         }

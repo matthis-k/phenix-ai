@@ -181,8 +181,8 @@ pub use phenix_plugin_workspace::{
     workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
     workspace_manifest, workspace_service, WorkspaceCapabilities, WorkspaceCommand,
     WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
-    WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
+    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 pub use phenix_sdk::{
     context_service, execution_inspection_service, execution_service, step_runner_service,

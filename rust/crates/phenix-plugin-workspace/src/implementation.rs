@@ -8,8 +8,7 @@ use phenix_sdk::{
     ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
     WorkspaceCommittedFile, WorkspaceEntry, WorkspaceFileVersion, WorkspaceInterface,
     WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite,
-    WorkspaceWriteAtomicity,
-    WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -630,7 +629,14 @@ fn list(
     let relative = path.unwrap_or_else(|| ".".into());
     let root = resolve(context, &relative)?;
     let mut entries = Vec::new();
-    list_path(context, context.plugin.state, &root, recursive, true, &mut entries)?;
+    list_path(
+        context,
+        context.plugin.state,
+        &root,
+        recursive,
+        true,
+        &mut entries,
+    )?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(WorkspaceResponse::List { entries })
 }
@@ -698,7 +704,9 @@ fn list_path(
         if recursive {
             list_path(context, workspace_root, &child_path, true, false, entries)?;
         } else {
-            let relative = child_path.strip_prefix(workspace_root).unwrap_or(&child_path);
+            let relative = child_path
+                .strip_prefix(workspace_root)
+                .unwrap_or(&child_path);
             entries.push(WorkspaceEntry {
                 path: relative.to_string_lossy().into_owned(),
                 kind: match child.kind {
