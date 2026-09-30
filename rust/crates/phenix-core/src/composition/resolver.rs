@@ -65,6 +65,7 @@ impl RuntimeGeneration {
             component_graph,
             dispatch_topology,
             resources: Vec::new(),
+            entry_triggers: Vec::new(),
         }
     }
 
