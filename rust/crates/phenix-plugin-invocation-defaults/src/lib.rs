@@ -207,10 +207,7 @@ impl PluginInstance for InvocationDefaultsPlugin {
 fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
     let policy = RecoveryClassifierPolicy::default();
     if request.prompt.len() > policy.max_prompt_bytes as usize {
-        return Err(format!(
-            "recovery prompt exceeds {} bytes",
-            policy.max_prompt_bytes
-        ));
+        return Ok(ContextRecoveryDecision::Sufficient);
     }
     if request.state.anchors.len() > policy.max_anchors as usize {
         return Err(format!(
@@ -432,6 +429,24 @@ mod tests {
             ContextRecoveryDecision::Missing { needs }
                 if matches!(&needs[..], [ContextNeed::Task { query }] if query == "work on prs")
         ));
+    }
+
+    #[test]
+    fn oversized_recovery_prompt_skips_recovery_without_failing_turn() {
+        let policy = RecoveryClassifierPolicy::default();
+        let decision = assess_recovery(&ContextRecoveryRequest {
+            profile_id: RoutingProfileId::parse("default").unwrap(),
+            prompt: "x".repeat(policy.max_prompt_bytes as usize + 1),
+            state: ContextRecoveryState {
+                anchors: Vec::new(),
+                has_durable_session_history: false,
+                has_explicit_resource: false,
+            },
+            at: 1,
+        })
+        .unwrap();
+
+        assert_eq!(decision, ContextRecoveryDecision::Sufficient);
     }
 
     #[test]
