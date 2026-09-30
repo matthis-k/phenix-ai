@@ -3112,7 +3112,7 @@ fn execute_runtime_entry_trigger(
                 &trigger.component,
                 &service,
                 &input,
-                &trigger.required_authority,
+                context.call.authority,
                 &component.owning_plugin,
             )
             .map_err(|error| ApplicationError::Failed {
