@@ -15,6 +15,10 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.component_graph()
     }
 
+    pub fn entry_triggers(&self) -> &[crate::ComponentEntryTrigger] {
+        self.scope.generation.entry_triggers()
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }
