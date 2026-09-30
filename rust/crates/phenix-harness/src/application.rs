@@ -83,7 +83,7 @@ const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
 const APPLICATION_SHELL_TOOL_SERVICE: &str = "phenix.application-agent-tools.shell@1";
 const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
 
-#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationShellToolRequest {
     command: String,
 }
@@ -3600,7 +3600,17 @@ mod tests {
         )
         .unwrap();
         let session_id = SessionId::parse("session-1").unwrap();
-        let tools = application_model_tool_surface(&service, &session_id).unwrap();
+        let surface = {
+            let harness = worker.harness.lock();
+            application_model_tool_surface(
+                &service,
+                &session_id,
+                harness.resolved_harness(),
+                &worker.authority,
+            )
+            .unwrap()
+        };
+        let tools = surface.tools.clone();
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].id.as_str(), "bash");
         assert_eq!(tools[1].id.as_str(), "phenix.inspect");
@@ -3644,7 +3654,7 @@ mod tests {
                     execution_id: execution_id.clone(),
                     permission_handler: None,
                     tools: tools.clone(),
-                    runtime_entry_triggers: BTreeMap::new(),
+                    runtime_entry_triggers: surface.runtime_entry_triggers.clone(),
                     cancellation: Arc::clone(&cancellation),
                     progress_sender,
                 },
