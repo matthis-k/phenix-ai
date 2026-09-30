@@ -374,6 +374,7 @@ pub enum SkillResponse {
 #[serde(rename_all = "snake_case")]
 pub enum ContextResourceKind {
     ProjectInstruction,
+    Metadata,
     ProjectDocument,
     Skill,
     External,
