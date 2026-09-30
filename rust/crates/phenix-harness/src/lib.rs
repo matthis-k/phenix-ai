@@ -213,7 +213,9 @@ impl HarnessBuilder {
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
-        builder.add_entry_trigger(application::application_shell_tool_trigger());
+        for trigger in application::application_workspace_tool_triggers() {
+            builder.add_entry_trigger(trigger);
+        }
         Ok(builder)
     }
 
@@ -417,7 +419,9 @@ impl HarnessBuilder {
                 authority,
             ));
             if enabled.contains("phenix.workspace") {
-                builder.add_entry_trigger(application::application_shell_tool_trigger());
+                for trigger in application::application_workspace_tool_triggers() {
+                    builder.add_entry_trigger(trigger);
+                }
             }
         }
         Ok(builder)
