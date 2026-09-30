@@ -179,11 +179,14 @@ fn workspace_capability(value: &str) -> Authority {
 
 fn application_workspace_authority() -> Authority {
     Authority::new(
-        ["workspace.read", "workspace.write", "workspace.shell", "workspace.git"]
-            .into_iter()
-            .map(|value| {
-                CapabilityId::parse(value).expect("static workspace capability is valid")
-            }),
+        [
+            "workspace.read",
+            "workspace.write",
+            "workspace.shell",
+            "workspace.git",
+        ]
+        .into_iter()
+        .map(|value| CapabilityId::parse(value).expect("static workspace capability is valid")),
     )
 }
 
@@ -2327,7 +2330,10 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     path: request.path,
                 })
                 .map_err(|error| error.to_string())?;
-            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE {
             let request = context
@@ -2340,13 +2346,18 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             let response = context
                 .sdk
                 .workspace
-                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Search {
-                    needle: request.needle,
-                    path: request.path,
-                    case_sensitive: request.case_sensitive,
-                })
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(
+                    &WorkspaceCommand::Search {
+                        needle: request.needle,
+                        path: request.path,
+                        case_sensitive: request.case_sensitive,
+                    },
+                )
                 .map_err(|error| error.to_string())?;
-            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE {
             let request = context
@@ -2365,7 +2376,10 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     expected_version: request.expected_version,
                 })
                 .map_err(|error| error.to_string())?;
-            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_WORKSPACE_GIT_TOOL_SERVICE {
             let request = context
@@ -2382,7 +2396,10 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     arguments: request.arguments,
                 })
                 .map_err(|error| error.to_string())?;
-            return context.kernel.encode_value(&response).map_err(|error| error.to_string());
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
         }
         if service == &agent_loop_control_service() {
             let request = context
@@ -3900,7 +3917,10 @@ mod tests {
         let tools = surface.tools.clone();
         assert_eq!(tools.len(), 6);
         assert_eq!(
-            tools.iter().map(|tool| tool.id.as_str()).collect::<Vec<_>>(),
+            tools
+                .iter()
+                .map(|tool| tool.id.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "bash",
                 "phenix.inspect",
