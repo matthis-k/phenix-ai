@@ -69,10 +69,18 @@ pub struct WorkspaceSearchMatch {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceEntryKind {
+    File,
+    Directory,
+    Other,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 pub struct WorkspaceEntry {
     pub path: String,
-    pub kind: String,
+    pub kind: WorkspaceEntryKind,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
