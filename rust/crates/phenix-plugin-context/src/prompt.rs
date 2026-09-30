@@ -23,6 +23,7 @@ pub enum PromptSectionRole {
 pub enum PromptSectionKind {
     HarnessIdentity,
     ProjectInstruction,
+    Metadata,
     Skill,
     ProjectDocument,
     External,
@@ -86,6 +87,10 @@ fn section(entry: &ProjectedContextEntry) -> PromptSection {
             PromptSectionRole::Instruction,
             PromptSectionKind::ProjectInstruction,
         ),
+        ContextResourceKind::Metadata => (
+            PromptSectionRole::Instruction,
+            PromptSectionKind::Metadata,
+        ),
         ContextResourceKind::Skill => (PromptSectionRole::Instruction, PromptSectionKind::Skill),
         ContextResourceKind::ProjectDocument => (
             PromptSectionRole::Context,
@@ -105,9 +110,10 @@ fn section(entry: &ProjectedContextEntry) -> PromptSection {
 fn section_rank(kind: &ContextResourceKind) -> u8 {
     match kind {
         ContextResourceKind::ProjectInstruction => 0,
-        ContextResourceKind::Skill => 1,
-        ContextResourceKind::ProjectDocument => 2,
-        ContextResourceKind::External => 3,
+        ContextResourceKind::Metadata => 1,
+        ContextResourceKind::Skill => 2,
+        ContextResourceKind::ProjectDocument => 3,
+        ContextResourceKind::External => 4,
     }
 }
 
