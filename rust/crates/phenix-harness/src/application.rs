@@ -39,13 +39,13 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
-    workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
-    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
-    SDK_PLUGIN,
+    workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
+    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
