@@ -3022,7 +3022,14 @@ async fn serve_application_worker_with_execution_capacity(
                     continue;
                 };
                 if should_defer_application_invocation(&active, &invocation) {
-                    deferred.push_back(invocation);
+                    if deferred.len() >= APPLICATION_INVOCATION_CAPACITY {
+                        invocation.respond(Err(ApplicationError::Conflict {
+                            message: "application invocation queue is full while an execution owns the runtime"
+                                .to_owned(),
+                        }));
+                    } else {
+                        deferred.push_back(invocation);
+                    }
                     continue;
                 }
                 dispatch_application_invocation(
