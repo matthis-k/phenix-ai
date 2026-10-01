@@ -1,6 +1,7 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
     CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
+    ContextReducerMeasurement, ContextReducerProposal, ContextReducerRequest,
     ContinuationExportResult, ContinuationImportProjection, ContinuationImportRequest,
     ContinuationProjectionRequest, ProjectionRevision,
 };
@@ -163,6 +164,13 @@ pub enum ContextCommand {
     Admit {
         request: ContextAdmissionRequest,
     },
+    RequestReduction {
+        request: ContextReducerRequest,
+    },
+    CommitReduction {
+        request: ContextReducerRequest,
+        proposal: ContextReducerProposal,
+    },
     EvaluateCompactionCost {
         request: CacheCompactionDecisionRequest,
     },
@@ -224,6 +232,15 @@ pub enum ContextResponse {
     Admission {
         result: ContextAdmissionResult,
         projection: ProjectionRevision,
+    },
+    ReductionProposed {
+        proposal: ContextReducerProposal,
+        measurement: ContextReducerMeasurement,
+    },
+    ReductionCommitted {
+        proposal: ContextReducerProposal,
+        measurement: ContextReducerMeasurement,
+        commit: CompactionCommit,
     },
     CompactionCostDecision {
         decision: CacheCompactionDecision,

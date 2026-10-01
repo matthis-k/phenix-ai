@@ -8,6 +8,7 @@ pub use phenix_sdk::{
 };
 
 mod component;
+mod helper_reducer;
 #[allow(clippy::too_many_arguments)]
 mod implementation_state;
 mod materialization;
@@ -16,7 +17,8 @@ mod prompt;
 mod state_service;
 
 pub use component::*;
-pub use implementation_state::context_factory;
+pub use helper_reducer::*;
+pub use implementation_state::{context_factory, context_factory_with_reducer_stages};
 pub use prompt::{
     assemble_prompt, PromptAssembly, PromptSection, PromptSectionKind, PromptSectionRole,
     PHENIX_HARNESS_IDENTITY,
