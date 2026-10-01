@@ -44,8 +44,8 @@ use phenix_plugin_catalog::{
     AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
     AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
     ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, SDK_PLUGIN,
+    SessionInterface, SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord,
+    SessionResponse, SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
@@ -2406,7 +2406,7 @@ struct ActiveExecution {
 struct ExecutionProgress {
     session_id: SessionId,
     execution_id: String,
-    change: ExecutionChange,
+    update: SessionUpdate,
 }
 
 struct ExecutionCompletion {
@@ -2527,6 +2527,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 authority: Authority::new([CapabilityId::parse("kernel.persistence.read")
                     .expect("static persistence read capability is valid")]),
             },
+            ComponentImport {
+                interface: SessionInterface::interface_id(),
+                schema: SessionInterface::schema(),
+                required: true,
+                authority: Authority::default(),
+            },
         ],
         exports: vec![
             ComponentExport {
@@ -2592,6 +2598,7 @@ pub(crate) fn application_agent_tool_factory(
 struct ApplicationAgentToolSdk<'host, 'runtime> {
     workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInspectionInterface>,
+    sessions: SdkClient<'host, 'runtime, SessionInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -2605,6 +2612,7 @@ fn application_agent_tool_context<'host, 'runtime>(
         ApplicationAgentToolSdk {
             workspace: SdkClient::new(host, application_agent_tool_component_id()),
             execution: SdkClient::new(host, application_agent_tool_component_id()),
+            sessions: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -2788,7 +2796,7 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let response = record_application_agent_progress(&self.registry, record)?;
+            let response = record_application_agent_progress(&context, &self.registry, record)?;
             return context
                 .kernel
                 .encode_value(&response)
@@ -2893,6 +2901,7 @@ fn execute_application_agent_tool(
 }
 
 fn record_application_agent_progress(
+    context: &ApplicationAgentToolContext<'_, '_>,
     registry: &ApplicationAgentToolRegistry,
     record: AgentLoopProgressRecord,
 ) -> Result<AgentLoopProgressResponse, String> {
@@ -2932,11 +2941,28 @@ fn record_application_agent_progress(
         }
     };
 
+    let response: SessionResponse = context
+        .sdk
+        .sessions
+        .invoke_projected(&SessionCommand::AppendJournal {
+            id: run.session_id.clone(),
+            entry: session_change_journal(&SessionChange::Execution {
+                execution_id: record.execution_id.clone(),
+                update: change,
+            }),
+        })
+        .map_err(|error| format!("failed to persist agent progress: {error}"))?;
+    let SessionResponse::JournalAppended { entry } = response else {
+        return Err("session service returned a non-journal progress response".into());
+    };
+    let update = session_update_from_journal(&run.session_id, entry)
+        .map_err(|error| format!("failed to project persisted agent progress: {error:?}"))?;
+
     run.progress_sender
         .blocking_send(ExecutionWorkerEvent::Progress(ExecutionProgress {
             session_id: run.session_id,
             execution_id: record.execution_id,
-            change,
+            update,
         }))
         .map_err(|_| "application execution progress channel disconnected".to_owned())?;
 
@@ -3182,16 +3208,42 @@ fn handle_execution_progress(
     if execution.execution_id != progress.execution_id {
         return;
     }
-    if let Err(error) = worker.append_execution_change(
-        &progress.session_id,
-        &progress.execution_id,
-        progress.change,
-    ) {
+
+    let result = (|| {
+        let projection = worker
+            .projection
+            .state()
+            .sessions
+            .get(progress.session_id.as_str())
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: format!("session {}", progress.session_id),
+            })?;
+        let expected = projection
+            .through_sequence
+            .checked_add(1)
+            .ok_or_else(|| ApplicationError::Conflict {
+                message: "session progress sequence overflowed".to_owned(),
+            })?;
+        if progress.update.sequence != expected {
+            return Err(ApplicationError::Conflict {
+                message: format!(
+                    "persisted agent progress is not contiguous: expected {expected}, got {}",
+                    progress.update.sequence
+                ),
+            });
+        }
+        worker
+            .projection
+            .apply_update(progress.update.clone())
+            .map_err(application_projection_error)?;
+        worker.emit_session_update(progress.update)
+    })();
+
+    if let Err(error) = result {
         let Some(execution) = active.remove(&key) else {
             return;
         };
         execution.cancellation.store(true, Ordering::Release);
-        let _ = worker.finish_root_execution(&execution.execution_id, false);
         execution.prompt.respond(Err(error));
     }
 }
