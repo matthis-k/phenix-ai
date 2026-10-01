@@ -113,7 +113,7 @@ struct ApplicationWorkspaceSearchToolRequest {
 struct ApplicationWorkspaceWriteToolRequest {
     path: String,
     content: String,
-    expected_version: WorkspaceFileVersion,
+    expected_content_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
@@ -247,7 +247,7 @@ pub(crate) fn application_workspace_tool_triggers() -> Vec<ComponentEntryTrigger
         application_workspace_tool_trigger(
             ApplicationWorkspaceWriteToolInterface::interface_id(),
             "workspace.write",
-            "Write one UTF-8 text file against an exact observed workspace file version.",
+            "Write one UTF-8 text file. Pass the exact observed content hash, or null only when the file was observed absent.",
             application_workspace_write_authority(),
         ),
         application_workspace_tool_trigger(
@@ -2367,13 +2367,17 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
+            let expected_version = match request.expected_content_hash {
+                Some(content_hash) => WorkspaceFileVersion::Present { content_hash },
+                None => WorkspaceFileVersion::Absent,
+            };
             let response = context
                 .sdk
                 .workspace
                 .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::Write {
                     path: request.path,
                     content: request.content,
-                    expected_version: request.expected_version,
+                    expected_version,
                 })
                 .map_err(|error| error.to_string())?;
             return context
