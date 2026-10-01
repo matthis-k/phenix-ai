@@ -4329,6 +4329,7 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        sync::{Condvar, Mutex as StdMutex},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -4382,6 +4383,92 @@ mod tests {
             }],
             resource_namespaces: Vec::new(),
             maximum_authority: Authority::default(),
+        }
+    }
+
+    struct CancellationGate {
+        state: StdMutex<(bool, bool)>,
+        changed: Condvar,
+    }
+
+    impl CancellationGate {
+        fn new() -> Self {
+            Self {
+                state: StdMutex::new((false, false)),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn start_and_wait_for_release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.0 = true;
+            self.changed.notify_all();
+            while !state.1 {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+
+        fn wait_until_started(&self) {
+            let mut state = self.state.lock().unwrap();
+            while !state.0 {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+
+        fn release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn cancellation_gate_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.cancellation-gate-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct CancellationGateModel {
+        gate: Arc<CancellationGate>,
+    }
+
+    impl PluginInstance for CancellationGateModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!("unsupported cancellation fixture service: {service}"));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let _request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            self.gate.start_and_wait_for_release();
+            let response = ModelInferenceResponse {
+                output: Bytes::new(b"completed after cancellation gate".to_vec()),
+                provider_metadata: BTreeMap::new(),
+                usage: Default::default(),
+                tool_calls: Vec::new(),
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
         }
     }
 
@@ -4452,6 +4539,57 @@ mod tests {
             };
             serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
         }
+    }
+
+    fn configure_fixture_routing(
+        worker: &mut ApplicationWorker,
+        provider: &str,
+        model: &str,
+        profile: &str,
+    ) {
+        let target = ModelTarget {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            model: ModelId::parse(model).unwrap(),
+            options: BTreeMap::new(),
+        };
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse(profile).unwrap(),
+            default_target: target.clone(),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        worker
+            .invoke_model_command(ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            })
+            .unwrap();
+        worker
+            .invoke_model_command(ModelCommand::PublishCapabilities {
+                capabilities: EffectiveModelCapabilities {
+                    target,
+                    generation: CapabilityGenerationId::parse(format!(
+                        "fixture-generation-{model}"
+                    ))
+                    .unwrap(),
+                    context: ContextControl::ReplaceableTurns,
+                    capacity: CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 128_000,
+                            max_output_tokens: Some(16_000),
+                        },
+                    },
+                    cache: Default::default(),
+                    optional: BTreeSet::new(),
+                },
+            })
+            .unwrap();
+        worker
+            .invoke_option_command(OptionCommand::Set {
+                key: model_default_option(),
+                scope: OptionScope::Global,
+                value: OptionValue::String(profile.id.to_string()),
+            })
+            .unwrap();
     }
 
     #[test]
@@ -4575,8 +4713,139 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_remains_live_while_agent_execution_owns_the_harness_lock() {
+        let gate = Arc::new(CancellationGate::new());
+        let model_gate = Arc::clone(&gate);
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(cancellation_gate_model_manifest(), move || {
+                Box::new(CancellationGateModel {
+                    gate: Arc::clone(&model_gate),
+                })
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.cancellation-gate-model",
+            "fixture-cancellation",
+            "cancellation-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.cancellation-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-cancellation-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-cancellation-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker,
+            service,
+            receiver,
+            2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prompt_transport = transport.clone();
+        let prompt_session = created.session_id.clone();
+        let prompt_task = tokio::spawn(async move {
+            invoke_transport_operation::<Prompt>(
+                &prompt_transport,
+                PromptInput {
+                    session_id: prompt_session,
+                    content: vec![Content::Text {
+                        text: "wait until I cancel".into(),
+                    }],
+                },
+            )
+            .await
+        });
+
+        let wait_gate = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || wait_gate.wait_until_started())
+            .await
+            .unwrap();
+
+        let cancellation = tokio::time::timeout(
+            Duration::from_secs(2),
+            invoke_transport_operation::<Cancel>(
+                &transport,
+                ApplicationSessionInput {
+                    session_id: created.session_id.clone(),
+                },
+            ),
+        )
+        .await;
+        gate.release();
+        cancellation
+            .expect("cancel must not wait for the harness mutex held by the agent")
+            .unwrap();
+
+        let prompt = tokio::time::timeout(Duration::from_secs(5), prompt_task)
+            .await
+            .expect("cancelled prompt must complete")
+            .unwrap()
+            .unwrap();
+        assert_eq!(prompt.stop_reason, StopReason::Cancelled);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Cancelled,
+                    },
+                    ..
+                }
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn post_tool_progress_does_not_block_the_follow_up_model_turn() {
-        let provider = PluginId::parse("fixture.tool-continuation-model").unwrap();
         let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(continuation_model_manifest(), || {
@@ -4586,48 +4855,12 @@ mod tests {
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
         let mut worker = ApplicationWorker::new(harness).unwrap();
-
-        let target = ModelTarget {
-            provider_plugin: provider,
-            model: ModelId::parse("fixture-continuation").unwrap(),
-            options: BTreeMap::new(),
-        };
-        let profile = RoutingProfile {
-            id: RoutingProfileId::parse("continuation-regression").unwrap(),
-            default_target: target.clone(),
-            fallback_targets: Vec::new(),
-            callable_targets: BTreeMap::new(),
-        };
-        worker
-            .invoke_model_command(ModelCommand::RegisterProfile {
-                profile: profile.clone(),
-            })
-            .unwrap();
-        worker
-            .invoke_model_command(ModelCommand::PublishCapabilities {
-                capabilities: EffectiveModelCapabilities {
-                    target,
-                    generation: CapabilityGenerationId::parse("continuation-fixture-generation")
-                        .unwrap(),
-                    context: ContextControl::ReplaceableTurns,
-                    capacity: CapacityKnowledge::Known {
-                        limits: ModelLimits {
-                            context_window_tokens: 128_000,
-                            max_output_tokens: Some(16_000),
-                        },
-                    },
-                    cache: Default::default(),
-                    optional: BTreeSet::new(),
-                },
-            })
-            .unwrap();
-        worker
-            .invoke_option_command(OptionCommand::Set {
-                key: model_default_option(),
-                scope: OptionScope::Global,
-                value: OptionValue::String(profile.id.to_string()),
-            })
-            .unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.tool-continuation-model",
+            "fixture-continuation",
+            "continuation-regression",
+        );
 
         let sdk = {
             let harness = worker.harness.lock();
