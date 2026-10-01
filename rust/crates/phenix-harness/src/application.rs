@@ -37,8 +37,9 @@ use phenix_core::{
     ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
+    agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
+    agent_loop_service, agent_tool_execution_service, execution_review_service, sdk_contribution,
+    session_service,
     workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
     AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
     AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
@@ -2474,7 +2475,9 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
             .expect("static application agent tool plugin id is valid"),
         version: 1,
         execution: PluginExecution::Embedded,
-        dependencies: Vec::new(),
+        dependencies: vec![
+            PluginId::parse("phenix.sessions").expect("static session plugin id is valid"),
+        ],
         services: vec![
             ServiceContribution {
                 role: ServiceRole::Terminal,
@@ -2492,7 +2495,7 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
                 role: ServiceRole::Terminal,
                 service: agent_loop_progress_service(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: agent_loop_progress_authority(),
             },
         ],
         resource_namespaces: Vec::new(),
@@ -2532,7 +2535,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: SessionInterface::interface_id(),
                 schema: SessionInterface::schema(),
                 required: true,
-                authority: Authority::default(),
+                authority: agent_loop_progress_authority(),
             },
         ],
         exports: vec![
@@ -2582,7 +2585,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: AgentLoopProgressInterface::interface_id(),
                 schema: AgentLoopProgressInterface::schema(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: agent_loop_progress_authority(),
             },
         ],
         maximum_authority,
