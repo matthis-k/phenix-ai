@@ -2,7 +2,7 @@ use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
     ArtifactRevision, Authority, Bytes, CapabilityGenerationId, ContextResourceId, Kernel,
     KernelConfig, LocalPersistence, ModelId, PhenixValue, PluginId, PluginState, Project,
-    ResolvedHarness, ResolvedHarnessActivation,
+    ResolvedHarness, ResolvedHarnessActivation, RuntimeTraceBuffer, RuntimeTraceEvent,
 };
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
@@ -24,6 +24,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::PathBuf,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -653,4 +654,60 @@ mod injection_invalidation {
         assert!(error.contains("UnknownPreparedCheckpoint"));
         let _ = fs::remove_file(path);
     }
+}
+
+
+#[test]
+fn repository_discovery_trace_distinguishes_zero_results_from_no_execution() {
+    let path = temp_db("repository-discovery-trace");
+    let mut kernel = kernel(&path);
+    let traces = Arc::new(RuntimeTraceBuffer::default());
+    kernel.set_runtime_trace_sink(traces.clone());
+
+    let response = invoke(
+        &mut kernel,
+        ContextCommand::DiscoverRepository {
+            workspace_id: "workspace-1".into(),
+            sources: Vec::new(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        response,
+        ContextResponse::Discovered { descriptors } if descriptors.is_empty()
+    ));
+
+    let events = traces.snapshot();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeTraceEvent::PolicyStage {
+            policy,
+            stage,
+            outcome,
+            subject: Some(subject),
+            reason: Some(reason),
+            ..
+        } if policy == "phenix.context"
+            && stage == "repository_discovery"
+            && outcome == "started"
+            && subject == "workspace-1"
+            && reason == "sources=0"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeTraceEvent::PolicyStage {
+            policy,
+            stage,
+            outcome,
+            subject: Some(subject),
+            reason: Some(reason),
+            ..
+        } if policy == "phenix.context"
+            && stage == "repository_discovery"
+            && outcome == "completed"
+            && subject == "workspace-1"
+            && reason == "resources=0"
+    )));
+
+    let _ = fs::remove_file(path);
 }
