@@ -4462,7 +4462,9 @@ mod tests {
             _host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
             if service != &model_inference_service() {
-                return Err(format!("unsupported cancellation fixture service: {service}"));
+                return Err(format!(
+                    "unsupported cancellation fixture service: {service}"
+                ));
             }
             let value: PhenixValue =
                 serde_json::from_slice(input).map_err(|error| error.to_string())?;
@@ -4769,10 +4771,7 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker,
-            service,
-            receiver,
-            2,
+            worker, service, receiver, 2,
         ));
         let created = invoke_transport_operation::<CreateSession>(
             &transport,
