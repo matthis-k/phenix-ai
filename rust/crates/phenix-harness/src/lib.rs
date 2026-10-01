@@ -272,26 +272,27 @@ impl HarnessBuilder {
         // Explicit selection is exact. Only declared manifest dependencies may expand it.
         let mut enabled = enabled.clone();
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
-        let expand_dependencies =
-            |enabled: &mut BTreeSet<String>, pending: &mut Vec<String>| -> Result<(), String> {
-                while let Some(plugin) = pending.pop() {
-                    let manifest = available
-                        .get(&plugin)
-                        .expect("validated selected plugin exists in first-party catalog");
-                    for dependency in &manifest.dependencies {
-                        let dependency = dependency.as_str().to_owned();
-                        if !available.contains_key(&dependency) {
-                            return Err(format!(
-                                "first-party plugin {plugin} depends on unavailable first-party plugin {dependency}"
-                            ));
-                        }
-                        if enabled.insert(dependency.clone()) {
-                            pending.push(dependency);
-                        }
+        let expand_dependencies = |enabled: &mut BTreeSet<String>,
+                                   pending: &mut Vec<String>|
+         -> Result<(), String> {
+            while let Some(plugin) = pending.pop() {
+                let manifest = available
+                    .get(&plugin)
+                    .expect("validated selected plugin exists in first-party catalog");
+                for dependency in &manifest.dependencies {
+                    let dependency = dependency.as_str().to_owned();
+                    if !available.contains_key(&dependency) {
+                        return Err(format!(
+                            "first-party plugin {plugin} depends on unavailable first-party plugin {dependency}"
+                        ));
+                    }
+                    if enabled.insert(dependency.clone()) {
+                        pending.push(dependency);
                     }
                 }
-                Ok(())
-            };
+            }
+            Ok(())
+        };
         expand_dependencies(&mut enabled, &mut pending)?;
 
         if enabled.contains(AGENT_LOOP_PLUGIN) {
