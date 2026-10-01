@@ -36,6 +36,11 @@ impl<'a> PluginHost<'a> {
         trace::record_runtime_trace(self.runtime.trace_sink, event);
     }
 
+    #[doc(hidden)]
+    pub fn runtime_trace(&self) -> Vec<RuntimeTraceEvent> {
+        self.runtime.trace_sink.snapshot()
+    }
+
     pub fn invoke_import<I: ComponentInterface>(
         &self,
         component: &ComponentId,

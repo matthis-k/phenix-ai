@@ -3676,7 +3676,7 @@ fn host_model_tools() -> Vec<ModelToolDescriptor> {
     vec![ModelToolDescriptor {
         id: CallableId::parse("phenix.inspect")
             .expect("static inspection callable id is valid"),
-        description: "Read canonical Phenix runtime state for debugging. Queries: graph, execution, dag, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
+        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution, dag, trace, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
         input_schema: PhenixSchema::Table(BTreeMap::from([(
             Key::parse("query").expect("static inspection field is valid"),
             PhenixSchema::String,
@@ -3804,11 +3804,22 @@ fn inspect_runtime(
             inspect_execution_dag(context, &run.execution_id)
         }
         "graph" => Ok(inspect_component_graph(context)),
+        "trace" => {
+            require_runtime_inspection_read(context.call.authority)?;
+            inspect_runtime_trace(context)
+        }
         "help" => Ok(PhenixValue::List(
-            ["graph", "execution", "dag", "values", "value <value-id>"]
-                .into_iter()
-                .map(|query| PhenixValue::String(query.to_owned()))
-                .collect(),
+            [
+                "graph",
+                "execution",
+                "dag",
+                "trace",
+                "values",
+                "value <value-id>",
+            ]
+            .into_iter()
+            .map(|query| PhenixValue::String(query.to_owned()))
+            .collect(),
         )),
         _ => {
             if let Some(id) = query.strip_prefix("value ").map(str::trim) {
@@ -3825,6 +3836,19 @@ fn inspect_runtime(
             })
         }
     }
+}
+
+fn inspect_runtime_trace(
+    context: &ApplicationAgentToolContext<'_, '_>,
+) -> Result<PhenixValue, ApplicationError> {
+    let encoded = serde_json::to_vec(&context.kernel.runtime_trace()).map_err(|error| {
+        ApplicationError::Failed {
+            message: format!("failed to encode runtime trace: {error}"),
+        }
+    })?;
+    serde_json::from_slice(&encoded).map_err(|error| ApplicationError::InvalidResponse {
+        message: format!("failed to decode runtime trace value: {error}"),
+    })
 }
 
 fn inspect_execution(

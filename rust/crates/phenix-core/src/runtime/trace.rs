@@ -53,6 +53,14 @@ pub enum RuntimeTraceEvent {
 /// Core isolates sink panics at the call site so diagnostics cannot change execution outcomes.
 pub trait RuntimeTraceSink: Send + Sync {
     fn record(&self, event: RuntimeTraceEvent);
+
+    /// Return metadata-only diagnostics retained by this sink, when supported.
+    ///
+    /// Streaming sinks may return an empty snapshot. An empty snapshot therefore does not prove
+    /// that no diagnostics were emitted.
+    fn snapshot(&self) -> Vec<RuntimeTraceEvent> {
+        Vec::new()
+    }
 }
 
 pub struct RuntimeTraceBuffer {
@@ -95,6 +103,10 @@ impl Default for RuntimeTraceBuffer {
 }
 
 impl RuntimeTraceSink for RuntimeTraceBuffer {
+    fn snapshot(&self) -> Vec<RuntimeTraceEvent> {
+        RuntimeTraceBuffer::snapshot(self)
+    }
+
     fn record(&self, event: RuntimeTraceEvent) {
         let mut events = self.events.lock();
         if events.len() == self.capacity.get() {
