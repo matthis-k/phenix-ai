@@ -1,6 +1,6 @@
 use crate::resource_transaction::ExecutionResourceState;
 use phenix_core::{
-    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance,
+    ComponentInterface, DurableSchema, KernelError, PluginContext, PluginHost, PluginInstance,
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
@@ -11,6 +11,7 @@ use phenix_sdk::{
 const EXECUTION_RESOURCE_NAMESPACE: &str = "phenix.execution.resources.state";
 pub(crate) const RESOURCE_STATE_KEY: &str = "state";
 const MAX_RESOURCE_STATE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESOURCE_STATE_CONFLICT_RETRIES: usize = 8;
 
 type ResourceContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
@@ -60,14 +61,14 @@ impl PluginInstance for ExecutionResourcePlugin {
                 input,
             )
             .map_err(|error| error.to_string())?;
-        let old = context
-            .kernel
-            .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
-            .map_err(|error| error.to_string())?;
-        let state = restore(old.as_deref())?;
         let response = if is_mutation(&command) {
-            mutate(&context, old, state, command)?
+            mutate(&context, command)?
         } else {
+            let snapshot = context
+                .kernel
+                .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
+                .map_err(|error| error.to_string())?;
+            let state = restore(snapshot.as_deref())?;
             read(&state, command)?
         };
         context
@@ -125,8 +126,44 @@ fn read(
 
 fn mutate(
     context: &ResourceContext<'_, '_>,
-    old: Option<Vec<u8>>,
-    mut next: ExecutionResourceState,
+    command: ExecutionResourceCommand,
+) -> Result<ExecutionResourceResponse, String> {
+    for conflict_retry in 0..=MAX_RESOURCE_STATE_CONFLICT_RETRIES {
+        let old = context
+            .kernel
+            .read_durable(&execution_resource_namespace(), RESOURCE_STATE_KEY)
+            .map_err(|error| error.to_string())?;
+        let mut next = restore(old.as_deref())?;
+        let response = apply_mutation(&mut next, command.clone())?;
+        let encoded = encode_state(&next)?;
+        match context.kernel.transact_durable(
+            &execution_resource_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: RESOURCE_STATE_KEY.into(),
+                    expected: old,
+                },
+                TransactionOp::Put {
+                    key: RESOURCE_STATE_KEY.into(),
+                    value: encoded,
+                },
+            ],
+        ) {
+            Ok(()) => return Ok(response),
+            Err(error)
+                if conflict_retry < MAX_RESOURCE_STATE_CONFLICT_RETRIES
+                    && is_resource_state_conflict(&error) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    unreachable!("resource-state conflict retry loop always returns")
+}
+
+fn apply_mutation(
+    next: &mut ExecutionResourceState,
     command: ExecutionResourceCommand,
 ) -> Result<ExecutionResourceResponse, String> {
     let response = match command {
@@ -224,24 +261,20 @@ fn mutate(
             return Err("read-only execution resource command reached mutation path".into())
         }
     };
-    let encoded = encode_state(&next)?;
-    context
-        .kernel
-        .transact_durable(
-            &execution_resource_namespace(),
-            &[
-                TransactionOp::AssertValue {
-                    key: RESOURCE_STATE_KEY.into(),
-                    expected: old,
-                },
-                TransactionOp::Put {
-                    key: RESOURCE_STATE_KEY.into(),
-                    value: encoded,
-                },
-            ],
-        )
-        .map_err(|error| error.to_string())?;
     Ok(response)
+}
+
+fn is_resource_state_conflict(error: &KernelError) -> bool {
+    matches!(
+        error,
+        KernelError::Persistence { message, .. }
+            if message
+                == &format!(
+                    "transaction assertion failed for {}/{}",
+                    execution_resource_namespace(),
+                    RESOURCE_STATE_KEY
+                )
+    )
 }
 
 pub(crate) fn encode_state(state: &ExecutionResourceState) -> Result<Vec<u8>, String> {
