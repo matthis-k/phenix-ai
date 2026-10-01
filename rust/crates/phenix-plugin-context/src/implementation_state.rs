@@ -359,8 +359,10 @@ fn context_response_summary(response: &ContextResponse) -> Option<String> {
             checkpoint_id, projection.revision, projection.cache_epoch
         )),
         ContextResponse::CompactionCommitted { commit } => Some(format!(
-            "checkpoint={}",
-            commit.checkpoint_id
+            "checkpoint={} projection={}:{}",
+            commit.proposal.checkpoint.checkpoint_id,
+            commit.committed_projection.revision,
+            commit.committed_projection.cache_epoch
         )),
         _ => None,
     }
