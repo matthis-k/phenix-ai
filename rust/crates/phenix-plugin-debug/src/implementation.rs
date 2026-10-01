@@ -112,6 +112,10 @@ pub struct DebugRuntimeTraceSink {
 }
 
 impl RuntimeTraceSink for DebugRuntimeTraceSink {
+    fn snapshot(&self) -> Vec<RuntimeTraceEvent> {
+        self.retained.snapshot()
+    }
+
     fn record(&self, trace: RuntimeTraceEvent) {
         self.retained.record(trace.clone());
         record_trace_detail(
