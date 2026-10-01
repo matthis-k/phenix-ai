@@ -4244,15 +4244,11 @@ mod tests {
         ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
         ListSessions, Prompt, RenameSession, ResumeSession,
     };
-    use phenix_core::{
-        Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress,
-    };
+    use phenix_core::{Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress};
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
-    use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits,
-    };
+    use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits};
     use std::{
         fs,
         path::PathBuf,
@@ -4326,7 +4322,9 @@ mod tests {
             _host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
             if service != &model_inference_service() {
-                return Err(format!("unsupported continuation fixture service: {service}"));
+                return Err(format!(
+                    "unsupported continuation fixture service: {service}"
+                ));
             }
             let value: PhenixValue =
                 serde_json::from_slice(input).map_err(|error| error.to_string())?;
@@ -4444,7 +4442,9 @@ mod tests {
         let provider = PluginId::parse("fixture.tool-continuation-model").unwrap();
         let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
         builder
-            .add_embedded(continuation_model_manifest(), || Box::new(ToolContinuationModel))
+            .add_embedded(continuation_model_manifest(), || {
+                Box::new(ToolContinuationModel)
+            })
             .unwrap();
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
