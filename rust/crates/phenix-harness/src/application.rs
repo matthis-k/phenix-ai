@@ -1036,10 +1036,16 @@ impl ApplicationWorker {
     }
 
     fn packaged_skill_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let Some(root) = env::var_os("PHENIX_SKILL_PATH") else {
+        let root = env::var_os("PHENIX_SKILL_PATH")
+            .map(PathBuf::from)
+            .or_else(|| {
+                env::var_os("PHENIX_DEFAULT_CONFIG_DIR")
+                    .map(PathBuf::from)
+                    .map(|root| root.join("skills"))
+            });
+        let Some(root) = root else {
             return Ok(Vec::new());
         };
-        let root = PathBuf::from(root);
         let mut skill_files = Vec::new();
         collect_skill_files(&root, &root, &mut skill_files).map_err(|error| {
             ApplicationError::Failed {
