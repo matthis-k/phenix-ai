@@ -3229,34 +3229,7 @@ fn handle_execution_progress(
         return;
     }
 
-    let result = (|| {
-        let projection = worker
-            .projection
-            .state()
-            .sessions
-            .get(progress.session_id.as_str())
-            .ok_or_else(|| ApplicationError::NotFound {
-                resource: format!("session {}", progress.session_id),
-            })?;
-        let expected = projection.through_sequence.checked_add(1).ok_or_else(|| {
-            ApplicationError::Conflict {
-                message: "session progress sequence overflowed".to_owned(),
-            }
-        })?;
-        if progress.update.sequence != expected {
-            return Err(ApplicationError::Conflict {
-                message: format!(
-                    "persisted agent progress is not contiguous: expected {expected}, got {}",
-                    progress.update.sequence
-                ),
-            });
-        }
-        worker
-            .projection
-            .apply_update(progress.update.clone())
-            .map_err(application_projection_error)?;
-        worker.emit_session_update(progress.update)
-    })();
+    let result = project_persisted_agent_progress(worker, progress.update);
 
     if let Err(error) = result {
         let Some(execution) = active.get_mut(&key) else {
@@ -3265,6 +3238,62 @@ fn handle_execution_progress(
         execution.cancellation.store(true, Ordering::Release);
         execution.progress_error.get_or_insert(error);
     }
+}
+
+fn project_persisted_agent_progress(
+    worker: &mut ApplicationWorker,
+    update: SessionUpdate,
+) -> Result<(), ApplicationError> {
+    let projection = worker
+        .projection
+        .state()
+        .sessions
+        .get(update.session_id.as_str())
+        .ok_or_else(|| ApplicationError::NotFound {
+            resource: format!("session {}", update.session_id),
+        })?;
+
+    if update.sequence <= projection.through_sequence {
+        let existing = projection
+            .updates
+            .iter()
+            .find(|existing| existing.sequence == update.sequence);
+        return match existing {
+            Some(existing) if existing == &update => Ok(()),
+            Some(_) => Err(ApplicationError::Conflict {
+                message: format!(
+                    "persisted agent progress at sequence {} conflicts with the projected session update",
+                    update.sequence
+                ),
+            }),
+            None => Err(ApplicationError::Conflict {
+                message: format!(
+                    "persisted agent progress at sequence {} is behind the projection watermark {} but is missing from projected history",
+                    update.sequence, projection.through_sequence
+                ),
+            }),
+        };
+    }
+
+    let expected = projection.through_sequence.checked_add(1).ok_or_else(|| {
+        ApplicationError::Conflict {
+            message: "session progress sequence overflowed".to_owned(),
+        }
+    })?;
+    if update.sequence != expected {
+        return Err(ApplicationError::Conflict {
+            message: format!(
+                "persisted agent progress is not contiguous: expected {expected}, got {}",
+                update.sequence
+            ),
+        });
+    }
+
+    worker
+        .projection
+        .apply_update(update.clone())
+        .map_err(application_projection_error)?;
+    worker.emit_session_update(update)
 }
 
 fn finish_prompt(
@@ -4435,6 +4464,68 @@ mod tests {
             model: phenix_core::ModelId::parse(model).unwrap(),
             options: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn already_projected_persisted_progress_is_idempotent_after_projection_repair() {
+        let (sender, mut events) = mpsc::channel(4);
+        let mut worker = application_worker().with_event_sender(sender);
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let execution_id = "execution-race".to_owned();
+        let progress_change = SessionChange::Execution {
+            execution_id: execution_id.clone(),
+            update: ExecutionChange::Progress {
+                message: "persisted before worker projection".into(),
+                fraction: Some(0.5),
+            },
+        };
+
+        let persisted = worker
+            .invoke_session(SessionCommand::AppendJournal {
+                id: created.session_id.clone(),
+                entry: session_change_journal(&progress_change),
+            })
+            .unwrap();
+        let SessionResponse::JournalAppended { entry } = persisted else {
+            panic!("fixture progress append must return its journal entry");
+        };
+        let progress_update =
+            session_update_from_journal(&created.session_id, entry).unwrap();
+
+        let session = worker
+            .session_record(&created.session_id)
+            .unwrap()
+            .unwrap();
+        worker
+            .append_session_change(
+                &session,
+                SessionChange::Renamed {
+                    title: "after-progress".into(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            worker.projection().state().sessions[created.session_id.as_str()].through_sequence,
+            2
+        );
+        let rename_event = events.try_recv().expect("rename event after projection repair");
+        let rename_update =
+            SessionUpdate::from_value(&rename_event.payload).expect("session update payload");
+        assert_eq!(rename_update.sequence, 2);
+
+        project_persisted_agent_progress(&mut worker, progress_update).unwrap();
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
