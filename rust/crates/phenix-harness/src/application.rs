@@ -3275,11 +3275,13 @@ fn project_persisted_agent_progress(
         };
     }
 
-    let expected = projection.through_sequence.checked_add(1).ok_or_else(|| {
-        ApplicationError::Conflict {
-            message: "session progress sequence overflowed".to_owned(),
-        }
-    })?;
+    let expected =
+        projection
+            .through_sequence
+            .checked_add(1)
+            .ok_or_else(|| ApplicationError::Conflict {
+                message: "session progress sequence overflowed".to_owned(),
+            })?;
     if update.sequence != expected {
         return Err(ApplicationError::Conflict {
             message: format!(
@@ -4496,13 +4498,9 @@ mod tests {
         let SessionResponse::JournalAppended { entry } = persisted else {
             panic!("fixture progress append must return its journal entry");
         };
-        let progress_update =
-            session_update_from_journal(&created.session_id, entry).unwrap();
+        let progress_update = session_update_from_journal(&created.session_id, entry).unwrap();
 
-        let session = worker
-            .session_record(&created.session_id)
-            .unwrap()
-            .unwrap();
+        let session = worker.session_record(&created.session_id).unwrap().unwrap();
         worker
             .append_session_change(
                 &session,
@@ -4516,7 +4514,9 @@ mod tests {
             worker.projection().state().sessions[created.session_id.as_str()].through_sequence,
             2
         );
-        let rename_event = events.try_recv().expect("rename event after projection repair");
+        let rename_event = events
+            .try_recv()
+            .expect("rename event after projection repair");
         let rename_update =
             SessionUpdate::from_value(&rename_event.payload).expect("session update payload");
         assert_eq!(rename_update.sequence, 2);
