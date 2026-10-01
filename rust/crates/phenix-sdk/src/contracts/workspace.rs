@@ -71,6 +71,20 @@ pub struct WorkspaceSearchMatch {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(rename_all = "snake_case")]
+pub enum WorkspaceEntryKind {
+    File,
+    Directory,
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceEntry {
+    pub path: String,
+    pub kind: WorkspaceEntryKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkspaceWriteAtomicity {
     PreconditionCheckedSequential,
     CrashRecoverable,
@@ -110,6 +124,10 @@ pub enum WorkspaceCommand {
         needle: String,
         path: Option<String>,
         case_sensitive: bool,
+    },
+    List {
+        path: Option<String>,
+        recursive: bool,
     },
     Shell {
         command: String,
@@ -156,6 +174,9 @@ pub enum WorkspaceResponse {
     },
     Search {
         matches: Vec<WorkspaceSearchMatch>,
+    },
+    List {
+        entries: Vec<WorkspaceEntry>,
     },
     Process {
         exit_code: i32,

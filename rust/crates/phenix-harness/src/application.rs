@@ -39,13 +39,13 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
-    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
-    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
-    SDK_PLUGIN,
+    workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
+    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
@@ -53,13 +53,15 @@ use phenix_provider_sdk::{
     ProviderModelsResponse,
 };
 use phenix_sdk::{
-    execution_resource_service, execution_service, model_routing_service, options_service,
+    context_service, execution_resource_service, execution_service, model_routing_service,
+    options_service, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
     ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RootBudgetLedger,
-    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface,
-    WorkspaceResponse,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RepositoryContextSource,
+    RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -899,6 +901,272 @@ impl ApplicationWorker {
         })
     }
 
+    fn invoke_context_command(
+        &self,
+        command: ContextCommand,
+    ) -> Result<ContextResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&context_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        ContextResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
+    }
+
+    fn invoke_workspace_command(
+        &self,
+        command: WorkspaceCommand,
+    ) -> Result<WorkspaceResponse, ApplicationError> {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output = self
+            .harness
+            .lock()
+            .invoke(&workspace_service(), &input, &self.authority, None)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        WorkspaceResponse::try_from(Project(&output)).map_err(|error| {
+            ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            }
+        })
+    }
+
+    fn resolve_bool_option(
+        &self,
+        session_id: &SessionId,
+        key: &str,
+    ) -> Result<bool, ApplicationError> {
+        let response = self.invoke_option_command(OptionCommand::Resolve {
+            key: OptionKey::parse(key).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            })?,
+            context: OptionContext {
+                session: Some(
+                    OptionSubjectId::parse(session_id.as_str().to_owned()).map_err(|error| {
+                        ApplicationError::InvalidInput {
+                            message: error.to_owned(),
+                        }
+                    })?,
+                ),
+                agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                    |error| ApplicationError::InvalidInput {
+                        message: error.to_owned(),
+                    },
+                )?),
+            },
+        })?;
+        let OptionResponse::Value { option } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} returned a non-value response"),
+            });
+        };
+        match option.value {
+            OptionValue::Bool(value) => Ok(value),
+            other => Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} must be boolean, got {other:?}"),
+            }),
+        }
+    }
+
+    fn workspace_context_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
+        let WorkspaceResponse::List { entries } =
+            self.invoke_workspace_command(WorkspaceCommand::List {
+                path: None,
+                recursive: true,
+            })?
+        else {
+            return Err(ApplicationError::InvalidResponse {
+                message: "workspace list returned a non-list response".into(),
+            });
+        };
+        let mut paths = entries
+            .into_iter()
+            .filter(|entry| entry.kind == WorkspaceEntryKind::File)
+            .map(|entry| entry.path)
+            .filter(|path| {
+                matches!(
+                    path.rsplit('/').next().unwrap_or(path.as_str()),
+                    "AGENTS.md" | "AGENTS.override.md" | "CONTRIBUTING.md" | "DEVELOPMENT.md"
+                )
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+
+        paths
+            .into_iter()
+            .map(|path| {
+                let WorkspaceResponse::Read { content, .. } =
+                    self.invoke_workspace_command(WorkspaceCommand::Read { path: path.clone() })?
+                else {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: format!("workspace read returned a non-read response for {path}"),
+                    });
+                };
+                Ok(RepositoryContextSource {
+                    path,
+                    content: content.into_bytes().into(),
+                })
+            })
+            .collect()
+    }
+
+    fn packaged_skill_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
+        let Some(root) = env::var_os("PHENIX_SKILL_PATH") else {
+            return Ok(Vec::new());
+        };
+        let root = PathBuf::from(root);
+        let mut skill_files = Vec::new();
+        collect_skill_files(&root, &root, &mut skill_files).map_err(|error| {
+            ApplicationError::Failed {
+                message: format!("skill discovery failed: {error}"),
+            }
+        })?;
+        skill_files.sort();
+        skill_files
+            .into_iter()
+            .map(|(path, source)| {
+                let content = fs::read(&path).map_err(|error| ApplicationError::Failed {
+                    message: format!("cannot read packaged skill {}: {error}", path.display()),
+                })?;
+                Ok(RepositoryContextSource {
+                    path: source,
+                    content: content.into(),
+                })
+            })
+            .collect()
+    }
+
+    fn prepare_execution_context(
+        &self,
+        session: &SessionInfo,
+        execution_id: &str,
+    ) -> Result<(), ApplicationError> {
+        let context_auto = self.resolve_bool_option(&session.session_id, "context.auto_load")?;
+        let skills_auto = self.resolve_bool_option(&session.session_id, "skills.auto_load")?;
+        if !context_auto && !skills_auto {
+            return Ok(());
+        }
+
+        let workspace_id = workspace_context_id(&session.working_directory);
+        let sources = if context_auto {
+            self.workspace_context_sources()?
+        } else {
+            Vec::new()
+        };
+        let mut descriptors = if sources.is_empty() {
+            Vec::new()
+        } else {
+            match self.invoke_context_command(ContextCommand::DiscoverRepository {
+                workspace_id,
+                sources,
+            })? {
+                ContextResponse::Discovered { descriptors } => descriptors,
+                _ => {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: "repository context discovery returned an unexpected response"
+                            .into(),
+                    })
+                }
+            }
+        };
+
+        if skills_auto {
+            let packaged = self.packaged_skill_sources()?;
+            if !packaged.is_empty() {
+                let ContextResponse::Discovered {
+                    descriptors: packaged_descriptors,
+                } = self.invoke_context_command(ContextCommand::DiscoverRepository {
+                    workspace_id: "harness".into(),
+                    sources: packaged,
+                })?
+                else {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: "packaged skill discovery returned an unexpected response".into(),
+                    });
+                };
+                descriptors.extend(packaged_descriptors);
+            }
+        }
+
+        descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
+        for descriptor in descriptors {
+            let mandatory_project_instruction = context_auto
+                && descriptor.kind == ContextResourceKind::ProjectInstruction
+                && descriptor.scope == ContextScope::Workspace;
+            let mandatory_skill = skills_auto
+                && descriptor.kind == ContextResourceKind::Skill
+                && self.skill_is_mandatory(&descriptor)?;
+            if !mandatory_project_instruction && !mandatory_skill {
+                continue;
+            }
+            let response = self.invoke_context_command(ContextCommand::Load {
+                execution_id: execution_id.to_owned(),
+                resource_id: descriptor.resource_id,
+                revision: descriptor.revision,
+                requester: ContextInjectionRequester::ContextPolicy,
+                lifetime: ContextInjectionLifetime::Execution,
+                reason: if mandatory_skill {
+                    "auto-load mandatory skill"
+                } else {
+                    "auto-load workspace project instruction"
+                }
+                .into(),
+            })?;
+            if !matches!(response, ContextResponse::Loaded { .. }) {
+                return Err(ApplicationError::InvalidResponse {
+                    message: "context load returned an unexpected response".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn skill_is_mandatory(&self, descriptor: &ContextDescriptor) -> Result<bool, ApplicationError> {
+        let response = self.invoke_context_command(ContextCommand::Get {
+            resource_id: descriptor.resource_id.clone(),
+            revision: descriptor.revision.clone(),
+        })?;
+        let ContextResponse::Resource {
+            resource: Some(resource),
+        } = response
+        else {
+            return Ok(false);
+        };
+        let content = String::from_utf8_lossy(resource.content.as_ref()).to_lowercase();
+        let mut lines = content.lines();
+        if lines.next().is_none_or(|line| line.trim() != "---") {
+            return Ok(false);
+        }
+        Ok(lines.take_while(|line| line.trim() != "---").any(|line| {
+            line.trim_start().starts_with("description:") && line.contains("must always apply")
+        }))
+    }
+
     fn create_session(
         &mut self,
         request: SessionCreateInput,
@@ -983,6 +1251,12 @@ impl ApplicationWorker {
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
         let session = self.require_open_application_session(&request.session_id)?;
         let execution_id = self.allocate_root_execution()?;
+        if let Err(error) =
+            self.prepare_execution_context(&application_session_info(&session)?, &execution_id)
+        {
+            let _ = self.finish_root_execution(&execution_id, false);
+            return Err(error);
+        }
         if let Err(error) = self.append_session_change(
             &session,
             SessionChange::Message {
@@ -1859,6 +2133,45 @@ fn decode<T: ValueCodec>(value: PhenixValue) -> Result<T, ApplicationError> {
     T::from_value(&value).map_err(|error| ApplicationError::InvalidInput {
         message: error.to_string(),
     })
+}
+
+// Keep repository context identity stable across sessions that use the same workspace.
+fn workspace_context_id(working_directory: &str) -> String {
+    let digest = Sha256::digest(working_directory.as_bytes());
+    let suffix = digest
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("workspace-{suffix}")
+}
+
+fn collect_skill_files(
+    root: &Path,
+    current: &Path,
+    output: &mut Vec<(PathBuf, String)>,
+) -> Result<(), std::io::Error> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_skill_files(root, &path, output)?;
+            continue;
+        }
+        if !file_type.is_file() || entry.file_name() != "SKILL.md" {
+            continue;
+        }
+        let source = format!(
+            "skills/{}",
+            path.strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+        output.push((path, source));
+    }
+    Ok(())
 }
 
 fn application_session_info(session: &SessionRecord) -> Result<SessionInfo, ApplicationError> {
