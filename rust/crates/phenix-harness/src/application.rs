@@ -1036,10 +1036,13 @@ impl ApplicationWorker {
     }
 
     fn packaged_skill_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let Some(root) = env::var_os("PHENIX_SKILL_PATH") else {
+        let root = packaged_skill_root(
+            env::var_os("PHENIX_SKILL_PATH").map(PathBuf::from),
+            env::var_os("PHENIX_DEFAULT_CONFIG_DIR").map(PathBuf::from),
+        );
+        let Some(root) = root else {
             return Ok(Vec::new());
         };
-        let root = PathBuf::from(root);
         let mut skill_files = Vec::new();
         collect_skill_files(&root, &root, &mut skill_files).map_err(|error| {
             ApplicationError::Failed {
@@ -2133,6 +2136,37 @@ fn decode<T: ValueCodec>(value: PhenixValue) -> Result<T, ApplicationError> {
     T::from_value(&value).map_err(|error| ApplicationError::InvalidInput {
         message: error.to_string(),
     })
+}
+
+fn packaged_skill_root(
+    explicit: Option<PathBuf>,
+    default_config_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    explicit.or_else(|| default_config_dir.map(|root| root.join("skills")))
+}
+
+#[cfg(test)]
+mod packaged_skill_root_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_skill_path_overrides_default_config_directory() {
+        assert_eq!(
+            packaged_skill_root(
+                Some(PathBuf::from("/custom/skills")),
+                Some(PathBuf::from("/packaged/phenix")),
+            ),
+            Some(PathBuf::from("/custom/skills")),
+        );
+    }
+
+    #[test]
+    fn default_config_directory_supplies_packaged_skills() {
+        assert_eq!(
+            packaged_skill_root(None, Some(PathBuf::from("/packaged/phenix"))),
+            Some(PathBuf::from("/packaged/phenix/skills")),
+        );
+    }
 }
 
 // Keep repository context identity stable across sessions that use the same workspace.
