@@ -1997,6 +1997,7 @@ fn decode<T: ValueCodec>(value: PhenixValue) -> Result<T, ApplicationError> {
     })
 }
 
+// Keep repository context identity stable across sessions that use the same workspace.
 fn workspace_context_id(working_directory: &str) -> String {
     let digest = Sha256::digest(working_directory.as_bytes());
     let suffix = digest
