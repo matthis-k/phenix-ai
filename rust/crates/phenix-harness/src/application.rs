@@ -2974,12 +2974,27 @@ fn record_application_agent_progress(
 }
 
 async fn serve_application_worker(
+    worker: ApplicationWorker,
+    service: SdkApplicationService,
+    receiver: mpsc::Receiver<ApplicationInvocation>,
+) {
+    serve_application_worker_with_execution_capacity(
+        worker,
+        service,
+        receiver,
+        APPLICATION_EXECUTION_CAPACITY,
+    )
+    .await;
+}
+
+async fn serve_application_worker_with_execution_capacity(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
+    execution_capacity: usize,
 ) {
     let (execution_sender, mut execution_events) =
-        mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        mpsc::channel::<ExecutionWorkerEvent>(execution_capacity);
     let mut active = BTreeMap::<String, ActiveExecution>::new();
     let mut input_closed = false;
 
@@ -4226,14 +4241,22 @@ mod tests {
     use super::*;
     use phenix_application_interface::{
         types::{Content, Empty},
-        Cancel, CloseSession, CreateSession, DiscoverAuthentication, ListSessions, Prompt,
-        RenameSession, ResumeSession,
+        ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
+        ListSessions, Prompt, RenameSession, ResumeSession,
     };
-    use phenix_core::{Bytes, LocalPersistence, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_core::{
+        Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress,
+    };
+    use phenix_plugin_catalog::{
+        model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
+    };
+    use phenix_sdk::{
+        CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits,
+    };
     use std::{
         fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     fn session(id: &str, title: Option<&str>) -> SessionInfo {
@@ -4258,6 +4281,102 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
+    }
+
+    async fn invoke_transport_operation<O: Operation>(
+        transport: &ChannelTransport,
+        input: O::Input,
+    ) -> Result<O::Output, ApplicationError> {
+        let value = transport
+            .invoke(&ContractId::parse(O::ID).unwrap(), input.to_value())
+            .await?;
+        O::Output::from_value(&value).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn continuation_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.tool-continuation-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct ToolContinuationModel;
+
+    impl PluginInstance for ToolContinuationModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!("unsupported continuation fixture service: {service}"));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+
+            let response = match request.continuation.as_slice() {
+                [] => {
+                    if !request.tools.iter().any(|tool| tool.id.as_str() == "bash") {
+                        return Err("continuation fixture did not receive the Bash tool".into());
+                    }
+                    ModelInferenceResponse {
+                        output: Bytes::new(b"run two tools".to_vec()),
+                        provider_metadata: BTreeMap::new(),
+                        usage: Default::default(),
+                        tool_calls: (0..2)
+                            .map(|index| ModelToolCall {
+                                call_id: format!("continuation-call-{index}"),
+                                callable_id: CallableId::parse("bash").unwrap(),
+                                input: PhenixValue::Map(BTreeMap::from([(
+                                    "command".to_owned(),
+                                    PhenixValue::String("printf continuation".into()),
+                                )])),
+                            })
+                            .collect(),
+                    }
+                }
+                [turn] => {
+                    if turn.tool_calls.len() != 2 || turn.tool_results.len() != 2 {
+                        return Err("continuation fixture did not receive both tool results".into());
+                    }
+                    if turn.tool_results.iter().any(|result| result.is_error) {
+                        return Err("continuation fixture received a failed tool result".into());
+                    }
+                    ModelInferenceResponse {
+                        output: Bytes::new(b"continued after tool progress".to_vec()),
+                        provider_metadata: BTreeMap::new(),
+                        usage: Default::default(),
+                        tool_calls: Vec::new(),
+                    }
+                }
+                turns => {
+                    return Err(format!(
+                        "continuation fixture received {} continuation turns",
+                        turns.len()
+                    ));
+                }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
     }
 
     #[test]
@@ -4318,6 +4437,159 @@ mod tests {
             model: phenix_core::ModelId::parse(model).unwrap(),
             options: BTreeMap::new(),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_tool_progress_does_not_block_the_follow_up_model_turn() {
+        let provider = PluginId::parse("fixture.tool-continuation-model").unwrap();
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(continuation_model_manifest(), || Box::new(ToolContinuationModel))
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+
+        let target = ModelTarget {
+            provider_plugin: provider,
+            model: ModelId::parse("fixture-continuation").unwrap(),
+            options: BTreeMap::new(),
+        };
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse("continuation-regression").unwrap(),
+            default_target: target.clone(),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        worker
+            .invoke_model_command(ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            })
+            .unwrap();
+        worker
+            .invoke_model_command(ModelCommand::PublishCapabilities {
+                capabilities: EffectiveModelCapabilities {
+                    target,
+                    generation: CapabilityGenerationId::parse("continuation-fixture-generation")
+                        .unwrap(),
+                    context: ContextControl::ReplaceableTurns,
+                    capacity: CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 128_000,
+                            max_output_tokens: Some(16_000),
+                        },
+                    },
+                    cache: Default::default(),
+                    optional: BTreeSet::new(),
+                },
+            })
+            .unwrap();
+        worker
+            .invoke_option_command(OptionCommand::Set {
+                key: model_default_option(),
+                scope: OptionScope::Global,
+                value: OptionValue::String(profile.id.to_string()),
+            })
+            .unwrap();
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.continuation-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-continuation-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-continuation-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 2,
+        ));
+
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prompt = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "exercise tool continuation".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("tool progress must not deadlock the application worker")
+        .unwrap();
+        assert_eq!(prompt.stop_reason, StopReason::EndTurn);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        let tool_calls = resumed
+            .updates
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::ToolCall { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        let tool_results = resumed
+            .updates
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::ToolResult { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(tool_calls, 2);
+        assert_eq!(tool_results, 2);
+
+        drop(transport);
+        worker_task.await.unwrap();
     }
 
     #[test]
