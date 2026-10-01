@@ -2400,6 +2400,7 @@ pub async fn serve_configured_application(
 struct ActiveExecution {
     execution_id: String,
     cancellation: Arc<AtomicBool>,
+    progress_error: Option<ApplicationError>,
     prompt: ApplicationInvocation,
 }
 
@@ -3114,6 +3115,7 @@ fn start_prompt(
         ActiveExecution {
             execution_id: prompt.execution_id.clone(),
             cancellation: Arc::clone(&cancellation),
+            progress_error: None,
             prompt: invocation,
         },
     );
@@ -3240,11 +3242,11 @@ fn handle_execution_progress(
     })();
 
     if let Err(error) = result {
-        let Some(execution) = active.remove(&key) else {
+        let Some(execution) = active.get_mut(&key) else {
             return;
         };
         execution.cancellation.store(true, Ordering::Release);
-        execution.prompt.respond(Err(error));
+        execution.progress_error.get_or_insert(error);
     }
 }
 
@@ -3261,6 +3263,20 @@ fn finish_prompt(
         execution.prompt.respond(Err(ApplicationError::Conflict {
             message: "execution completion identity changed while the prompt was active".to_owned(),
         }));
+        return;
+    }
+    if let Some(error) = execution.progress_error {
+        let _ = worker.finish_root_execution(&completion.execution_id, false);
+        let _ = worker.append_execution_change(
+            &completion.session_id,
+            &completion.execution_id,
+            ExecutionChange::State {
+                state: ExecutionState::Failed {
+                    error: error.clone(),
+                },
+            },
+        );
+        execution.prompt.respond(Err(error));
         return;
     }
     if execution.cancellation.load(Ordering::Acquire) {
