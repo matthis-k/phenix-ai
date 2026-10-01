@@ -7,7 +7,8 @@ use crate::{
 use phenix_core::{
     Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
     DurableSchema, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
+    PluginManifest, ResourceNamespace, RuntimeTraceEvent, SdkClient, ServiceContribution,
+    ServiceId, TransactionOp,
 };
 use phenix_sdk::{
     assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
@@ -126,11 +127,242 @@ impl PluginInstance for ContextPlugin {
             .kernel
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
-        let response = handle(&context, &mut self.state, command)?;
+        let trace = context_command_trace(&command);
+        context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+            policy: "phenix.context".into(),
+            stage: trace.stage.clone(),
+            outcome: "started".into(),
+            subject: trace.subject.clone(),
+            revision: trace.revision.clone(),
+            reason: trace.reason.clone(),
+        });
+        let response = match handle(&context, &mut self.state, command) {
+            Ok(response) => {
+                context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+                    policy: "phenix.context".into(),
+                    stage: trace.stage,
+                    outcome: "completed".into(),
+                    subject: trace.subject,
+                    revision: trace.revision,
+                    reason: context_response_summary(&response).or(trace.reason),
+                });
+                response
+            }
+            Err(error) => {
+                context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+                    policy: "phenix.context".into(),
+                    stage: trace.stage,
+                    outcome: "failed".into(),
+                    subject: trace.subject,
+                    revision: trace.revision,
+                    reason: Some(error.clone()),
+                });
+                return Err(error);
+            }
+        };
         context
             .kernel
             .encode_value(&response)
             .map_err(|error| error.to_string())
+    }
+}
+
+
+struct ContextCommandTrace {
+    stage: String,
+    subject: Option<String>,
+    revision: Option<String>,
+    reason: Option<String>,
+}
+
+fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
+    let (stage, subject, revision, reason) = match command {
+        ContextCommand::Register { resource_id, .. } => (
+            "resource_registration",
+            Some(resource_id.to_string()),
+            None,
+            None,
+        ),
+        ContextCommand::Get { resource_id, revision } => (
+            "resource_lookup",
+            Some(resource_id.to_string()),
+            Some(revision.to_string()),
+            None,
+        ),
+        ContextCommand::List => ("resource_list", None, None, None),
+        ContextCommand::DiscoverRepository { workspace_id, sources } => (
+            "repository_discovery",
+            Some(workspace_id.clone()),
+            None,
+            Some(format!("sources={}", sources.len())),
+        ),
+        ContextCommand::Load {
+            execution_id,
+            resource_id,
+            revision,
+            ..
+        } => (
+            "resource_load",
+            Some(execution_id.clone()),
+            Some(revision.to_string()),
+            Some(format!("resource={resource_id}")),
+        ),
+        ContextCommand::LoadDelegatedResult { task_id } => (
+            "delegated_result_load",
+            Some(task_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::AdmitDelegatedResult { task_id } => (
+            "delegated_result_admission",
+            Some(task_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::LoadOnce {
+            execution_id,
+            resource_id,
+            revision,
+            ..
+        } => (
+            "resource_load_once",
+            Some(execution_id.clone()),
+            Some(revision.to_string()),
+            Some(format!("resource={resource_id}")),
+        ),
+        ContextCommand::Project { execution_id } => (
+            "context_projection",
+            Some(execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::PrepareInvocation { execution_id, .. } => (
+            "invocation_preparation",
+            Some(execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::MaterializeInvocation {
+            execution_id,
+            expected_projection,
+            ..
+        } => (
+            "invocation_materialization",
+            Some(execution_id.clone()),
+            Some(format!(
+                "{}:{}",
+                expected_projection.revision, expected_projection.cache_epoch
+            )),
+            None,
+        ),
+        ContextCommand::GetProjectionState { execution_id } => (
+            "projection_state",
+            Some(execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::Admit { request } => (
+            "context_admission",
+            Some(request.execution_id.clone()),
+            None,
+            Some(format!("candidates={}", request.candidates.len())),
+        ),
+        ContextCommand::EvaluateCompactionCost { .. } => (
+            "compaction_cost_evaluation",
+            None,
+            None,
+            None,
+        ),
+        ContextCommand::PrepareCompaction { proposal } => (
+            "compaction_prepare",
+            Some(proposal.execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::CommitCompaction { execution_id, checkpoint_id } => (
+            "compaction_commit",
+            Some(execution_id.clone()),
+            None,
+            Some(format!("checkpoint={checkpoint_id}")),
+        ),
+        ContextCommand::InvalidateProjection { execution_id } => (
+            "projection_invalidation",
+            Some(execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::ExportContinuation { request } => (
+            "continuation_export",
+            Some(request.export.execution_id.clone()),
+            None,
+            None,
+        ),
+        ContextCommand::ProjectContinuationImport { request } => (
+            "continuation_import_projection",
+            Some(request.execution_id.clone()),
+            None,
+            None,
+        ),
+    };
+    ContextCommandTrace {
+        stage: stage.into(),
+        subject,
+        revision,
+        reason,
+    }
+}
+
+fn context_response_summary(response: &ContextResponse) -> Option<String> {
+    match response {
+        ContextResponse::Registered { resource } => Some(format!(
+            "resource={} revision={}",
+            resource.descriptor.resource_id, resource.descriptor.revision
+        )),
+        ContextResponse::Resources { descriptors }
+        | ContextResponse::Discovered { descriptors } => {
+            Some(format!("resources={}", descriptors.len()))
+        }
+        ContextResponse::Loaded { injection, .. } => Some(format!(
+            "resource={} revision={}",
+            injection.source.resource_id, injection.source.revision
+        )),
+        ContextResponse::Projection { projection } => {
+            Some(format!("entries={}", projection.entries.len()))
+        }
+        ContextResponse::InvocationPrepared { preparation } => Some(format!(
+            "candidates={} request_input_tokens={} projection={}:{}",
+            preparation.candidates.len(),
+            preparation.request_input_tokens,
+            preparation.projection.revision,
+            preparation.projection.cache_epoch
+        )),
+        ContextResponse::InvocationMaterialized { materialization } => Some(format!(
+            "projection={}:{} cache_prefix_bytes={}",
+            materialization.projection.revision,
+            materialization.projection.cache_epoch,
+            materialization.cache_prefix_bytes
+        )),
+        ContextResponse::ProjectionState { projection }
+        | ContextResponse::ProjectionInvalidated { projection } => Some(format!(
+            "projection={}:{}",
+            projection.revision, projection.cache_epoch
+        )),
+        ContextResponse::Admission { result, projection } => Some(format!(
+            "result={result:?} projection={}:{}",
+            projection.revision, projection.cache_epoch
+        )),
+        ContextResponse::CompactionPrepared {
+            checkpoint_id,
+            projection,
+        } => Some(format!(
+            "checkpoint={} projection={}:{}",
+            checkpoint_id, projection.revision, projection.cache_epoch
+        )),
+        ContextResponse::CompactionCommitted { commit } => Some(format!(
+            "checkpoint={}",
+            commit.checkpoint_id
+        )),
+        _ => None,
     }
 }
 
