@@ -82,9 +82,7 @@ impl PersistenceBackend for FailFirstTransaction {
         &mut self,
         transactions: &[NamespaceTransaction],
     ) -> Result<(), PersistenceError> {
-        if (!self.multi_only || transactions.len() > 1)
-            && self.fail.swap(false, Ordering::SeqCst)
-        {
+        if (!self.multi_only || transactions.len() > 1) && self.fail.swap(false, Ordering::SeqCst) {
             return Err(PersistenceError::AssertionFailed {
                 namespace: transactions[0].namespace.clone(),
                 key: "state".into(),
