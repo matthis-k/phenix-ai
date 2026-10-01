@@ -39,14 +39,13 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
-    workspace_service,
-    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand, SessionJournalDraft,
-    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
-    SDK_PLUGIN,
+    workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
+    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
@@ -55,14 +54,14 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, ContextCommand, ContextDescriptor,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
-    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
-    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
-    ExecutionResourceResponse, ExecutionResponse, ModelCommand, ModelResponse, ModelTarget,
-    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope, OptionSubjectId,
-    OptionValue, RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile,
-    WorkspaceCommand, WorkspaceEntryKind, WorkspaceInterface, WorkspaceResponse,
+    options_service, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
+    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RepositoryContextSource,
+    RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind,
+    WorkspaceInterface, WorkspaceResponse,
 };
 use sha2::{Digest, Sha256};
 use std::{
