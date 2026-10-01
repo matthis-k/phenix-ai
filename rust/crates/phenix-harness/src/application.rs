@@ -66,7 +66,7 @@ use phenix_sdk::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env, fs,
     path::{Path, PathBuf},
     sync::{
@@ -2996,11 +2996,24 @@ async fn serve_application_worker_with_execution_capacity(
     let (execution_sender, mut execution_events) =
         mpsc::channel::<ExecutionWorkerEvent>(execution_capacity);
     let mut active = BTreeMap::<String, ActiveExecution>::new();
+    let mut deferred = VecDeque::<ApplicationInvocation>::new();
     let mut input_closed = false;
 
     loop {
-        if input_closed && active.is_empty() {
+        if input_closed && active.is_empty() && deferred.is_empty() {
             break;
+        }
+        if active.is_empty() {
+            if let Some(invocation) = deferred.pop_front() {
+                dispatch_application_invocation(
+                    &mut worker,
+                    &service,
+                    &execution_sender,
+                    &mut active,
+                    invocation,
+                );
+                continue;
+            }
         }
         tokio::select! {
             invocation = receiver.recv(), if !input_closed => {
@@ -3008,24 +3021,17 @@ async fn serve_application_worker_with_execution_capacity(
                     input_closed = true;
                     continue;
                 };
-                if invocation.operation.as_str() == Prompt::ID {
-                    start_prompt(&mut worker, &service, &execution_sender, &mut active, invocation);
+                if should_defer_application_invocation(&active, &invocation) {
+                    deferred.push_back(invocation);
                     continue;
                 }
-                if invocation.operation.as_str() == Cancel::ID {
-                    cancel_prompt(&mut worker, &mut active, invocation);
-                    continue;
-                }
-                let operation = invocation.operation.clone();
-                let input = invocation.input.clone();
-                let result = if is_sdk_operation(&operation) {
-                    service.invoke(&operation, input)
-                } else {
-                    worker.invoke_with_client_callables(&operation, input, |callable, schema| {
-                        service.admit_current_client_callable(callable, schema)
-                    })
-                };
-                invocation.respond(result);
+                dispatch_application_invocation(
+                    &mut worker,
+                    &service,
+                    &execution_sender,
+                    &mut active,
+                    invocation,
+                );
             }
             event = execution_events.recv(), if !active.is_empty() => {
                 if let Some(event) = event {
@@ -3050,6 +3056,51 @@ async fn serve_application_worker_with_execution_capacity(
     }
     worker.clear_interaction_handlers();
     service.retire_client();
+}
+
+fn should_defer_application_invocation(
+    active: &BTreeMap<String, ActiveExecution>,
+    invocation: &ApplicationInvocation,
+) -> bool {
+    if active.is_empty() || is_sdk_operation(&invocation.operation) {
+        return false;
+    }
+
+    match invocation.operation.as_str() {
+        Cancel::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
+            .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
+        Prompt::ID => decode::<PromptInput>(invocation.input.clone())
+            .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
+        _ => true,
+    }
+}
+
+fn dispatch_application_invocation(
+    worker: &mut ApplicationWorker,
+    service: &SdkApplicationService,
+    execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
+    active: &mut BTreeMap<String, ActiveExecution>,
+    invocation: ApplicationInvocation,
+) {
+    if invocation.operation.as_str() == Prompt::ID {
+        start_prompt(worker, service, execution_sender, active, invocation);
+        return;
+    }
+    if invocation.operation.as_str() == Cancel::ID {
+        cancel_prompt(worker, active, invocation);
+        return;
+    }
+
+    let operation = invocation.operation.clone();
+    let input = invocation.input.clone();
+    let result = if is_sdk_operation(&operation) {
+        service.invoke(&operation, input)
+    } else {
+        worker.invoke_with_client_callables(&operation, input, |callable, schema| {
+            service.admit_current_client_callable(callable, schema)
+        })
+    };
+    invocation.respond(result);
 }
 
 fn start_prompt(
@@ -3194,26 +3245,13 @@ fn cancel_prompt(
             return;
         }
     };
-    let acknowledgement = worker.cancel(request.clone());
-    if acknowledgement.is_ok() {
-        if let Some(execution) = active.remove(request.session_id.as_str()) {
-            execution.cancellation.store(true, Ordering::Release);
-            let _ = worker.finish_root_execution(&execution.execution_id, false);
-            let _ = worker.append_execution_change(
-                &request.session_id,
-                &execution.execution_id,
-                ExecutionChange::State {
-                    state: ExecutionState::Cancelled,
-                },
-            );
-            execution.prompt.respond(Ok(PromptResult {
-                execution_id: execution.execution_id,
-                stop_reason: StopReason::Cancelled,
-            }
-            .to_value()));
-        }
+    if let Some(execution) = active.get(request.session_id.as_str()) {
+        execution.cancellation.store(true, Ordering::Release);
+        invocation.respond(Ok(Acknowledged {}.to_value()));
+        return;
     }
-    invocation.respond(acknowledgement.map(|value| value.to_value()));
+
+    invocation.respond(worker.cancel(request).map(|value| value.to_value()));
 }
 
 fn handle_execution_progress(
@@ -3328,6 +3366,14 @@ fn finish_prompt(
         return;
     }
     if execution.cancellation.load(Ordering::Acquire) {
+        let _ = worker.finish_root_execution(&completion.execution_id, false);
+        let _ = worker.append_execution_change(
+            &completion.session_id,
+            &completion.execution_id,
+            ExecutionChange::State {
+                state: ExecutionState::Cancelled,
+            },
+        );
         execution.prompt.respond(Ok(PromptResult {
             execution_id: completion.execution_id,
             stop_reason: StopReason::Cancelled,
