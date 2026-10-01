@@ -1,5 +1,5 @@
 use phenix_core::{
-    ComponentInterface, DurableSchema, PluginContext, PluginHost, PluginInstance,
+    ComponentInterface, DurableSchema, KernelError, PluginContext, PluginHost, PluginInstance,
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 const ATTEMPT_NAMESPACE: &str = "phenix.execution.attempts.state";
 pub(crate) const ATTEMPT_STATE_KEY: &str = "state";
 const MAX_ATTEMPT_STATE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ATTEMPT_STATE_CONFLICT_RETRIES: usize = 8;
 
 type AttemptContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
@@ -330,18 +331,18 @@ impl PluginInstance for AttemptPlugin {
             .kernel
             .decode_projected::<StepAttemptCommand>(&StepAttemptInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
-        let old = context
-            .kernel
-            .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
-            .map_err(|error| error.to_string())?;
-        let ledger = restore(old.as_deref())?;
         let response = if matches!(
             &command,
             StepAttemptCommand::Get { .. } | StepAttemptCommand::ListRoot { .. }
         ) {
+            let snapshot = context
+                .kernel
+                .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
+                .map_err(|error| error.to_string())?;
+            let ledger = restore(snapshot.as_deref())?;
             read(&ledger, command)?
         } else {
-            mutate(&context, old, ledger, command)?
+            mutate(&context, command)?
         };
         context
             .kernel
@@ -367,8 +368,44 @@ fn read(
 
 fn mutate(
     context: &AttemptContext<'_, '_>,
-    old: Option<Vec<u8>>,
-    mut next: AttemptLedger,
+    command: StepAttemptCommand,
+) -> Result<StepAttemptResponse, String> {
+    for conflict_retry in 0..=MAX_ATTEMPT_STATE_CONFLICT_RETRIES {
+        let old = context
+            .kernel
+            .read_durable(&attempt_namespace(), ATTEMPT_STATE_KEY)
+            .map_err(|error| error.to_string())?;
+        let mut next = restore(old.as_deref())?;
+        let response = apply_mutation(&mut next, command.clone())?;
+        let encoded = encode_ledger(&next)?;
+        match context.kernel.transact_durable(
+            &attempt_namespace(),
+            &[
+                TransactionOp::AssertValue {
+                    key: ATTEMPT_STATE_KEY.into(),
+                    expected: old,
+                },
+                TransactionOp::Put {
+                    key: ATTEMPT_STATE_KEY.into(),
+                    value: encoded,
+                },
+            ],
+        ) {
+            Ok(()) => return Ok(response),
+            Err(error)
+                if conflict_retry < MAX_ATTEMPT_STATE_CONFLICT_RETRIES
+                    && is_attempt_state_conflict(&error) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    unreachable!("attempt-state conflict retry loop always returns")
+}
+
+fn apply_mutation(
+    next: &mut AttemptLedger,
     command: StepAttemptCommand,
 ) -> Result<StepAttemptResponse, String> {
     let response = match command {
@@ -468,24 +505,20 @@ fn mutate(
             return Err("read-only step attempt command reached mutation path".into())
         }
     };
-    let encoded = encode_ledger(&next)?;
-    context
-        .kernel
-        .transact_durable(
-            &attempt_namespace(),
-            &[
-                TransactionOp::AssertValue {
-                    key: ATTEMPT_STATE_KEY.into(),
-                    expected: old,
-                },
-                TransactionOp::Put {
-                    key: ATTEMPT_STATE_KEY.into(),
-                    value: encoded,
-                },
-            ],
-        )
-        .map_err(|error| error.to_string())?;
     Ok(response)
+}
+
+fn is_attempt_state_conflict(error: &KernelError) -> bool {
+    matches!(
+        error,
+        KernelError::Persistence { message, .. }
+            if message
+                == &format!(
+                    "transaction assertion failed for {}/{}",
+                    attempt_namespace(),
+                    ATTEMPT_STATE_KEY
+                )
+    )
 }
 
 pub(crate) fn encode_ledger(ledger: &AttemptLedger) -> Result<Vec<u8>, String> {
