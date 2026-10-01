@@ -4426,43 +4426,65 @@ mod tests {
             )])),
         };
 
-        record_application_agent_progress(
-            &adapter,
-            AgentLoopProgressRecord {
-                execution_id: execution_id.clone(),
-                session_id: Some(session_id.clone()),
-                progress: AgentLoopProgress::ToolCall { call: call.clone() },
-            },
-        )
-        .unwrap();
+        let progress_record = AgentLoopProgressRecord {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            progress: AgentLoopProgress::ToolCall { call: call.clone() },
+        };
+        let progress_output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_loop_progress_service(),
+                &serde_json::to_vec(&PhenixValue::from(&progress_record)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
+        let progress_value: PhenixValue = serde_json::from_slice(&progress_output).unwrap();
+        assert_eq!(
+            AgentLoopProgressResponse::try_from(Project(&progress_value)).unwrap(),
+            AgentLoopProgressResponse::Recorded
+        );
         let progress = progress_receiver.try_recv().expect("tool progress event");
         let ExecutionWorkerEvent::Progress(progress) = progress else {
             panic!("agent loop progress must stay on the ordered application worker channel");
         };
         assert_eq!(progress.session_id, session_id);
         assert_eq!(progress.execution_id, execution_id);
-        let ExecutionChange::ToolCall {
-            call_id,
-            callable_id,
-            input,
-        } = progress.change
+        let SessionChange::Execution {
+            execution_id: update_execution_id,
+            update:
+                ExecutionChange::ToolCall {
+                    call_id,
+                    callable_id,
+                    input,
+                },
+        } = progress.update.update
         else {
             panic!("tool call progress must retain its application execution shape");
         };
+        assert_eq!(update_execution_id, execution_id);
         assert_eq!(call_id, call.call_id);
         assert_eq!(callable_id, call.callable_id);
         assert_eq!(input, call.input);
 
         cancellation.store(true, Ordering::Release);
-        record_application_agent_progress(
-            &adapter,
-            AgentLoopProgressRecord {
-                execution_id: execution_id.clone(),
-                session_id: Some(session_id.clone()),
-                progress: AgentLoopProgress::ToolCall { call: call.clone() },
-            },
-        )
-        .unwrap();
+        let cancelled_progress = AgentLoopProgressRecord {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            progress: AgentLoopProgress::ToolCall { call: call.clone() },
+        };
+        worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_loop_progress_service(),
+                &serde_json::to_vec(&PhenixValue::from(&cancelled_progress)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
         assert!(matches!(
             progress_receiver.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
