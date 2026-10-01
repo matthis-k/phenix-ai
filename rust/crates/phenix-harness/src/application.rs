@@ -39,6 +39,7 @@ use phenix_core::{
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
+    workspace_service,
     AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
     AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
@@ -54,7 +55,7 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, workspace_service, ContextCommand, ContextDescriptor,
+    options_service, ContextCommand, ContextDescriptor,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
     ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
     ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
@@ -2023,11 +2024,14 @@ fn collect_skill_files(
         if !file_type.is_file() || entry.file_name() != "SKILL.md" {
             continue;
         }
-        let relative = path.strip_prefix(root).unwrap_or(&path);
-        output.push((
-            path,
-            format!("skills/{}", relative.to_string_lossy().replace('\\', "/")),
-        ));
+        let source = format!(
+            "skills/{}",
+            path.strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+        output.push((path, source));
     }
     Ok(())
 }
