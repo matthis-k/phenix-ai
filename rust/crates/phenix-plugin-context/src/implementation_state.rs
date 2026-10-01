@@ -128,35 +128,41 @@ impl PluginInstance for ContextPlugin {
             .decode_projected::<ContextCommand>(&ContextInterface::interface_id(), input)
             .map_err(|error| error.to_string())?;
         let trace = context_command_trace(&command);
-        context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
-            policy: "phenix.context".into(),
-            stage: trace.stage.clone(),
-            outcome: "started".into(),
-            subject: trace.subject.clone(),
-            revision: trace.revision.clone(),
-            reason: trace.reason.clone(),
-        });
+        context
+            .kernel
+            .record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+                policy: "phenix.context".into(),
+                stage: trace.stage.clone(),
+                outcome: "started".into(),
+                subject: trace.subject.clone(),
+                revision: trace.revision.clone(),
+                reason: trace.reason.clone(),
+            });
         let response = match handle(&context, &mut self.state, command) {
             Ok(response) => {
-                context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
-                    policy: "phenix.context".into(),
-                    stage: trace.stage,
-                    outcome: "completed".into(),
-                    subject: trace.subject,
-                    revision: trace.revision,
-                    reason: context_response_summary(&response).or(trace.reason),
-                });
+                context
+                    .kernel
+                    .record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+                        policy: "phenix.context".into(),
+                        stage: trace.stage,
+                        outcome: "completed".into(),
+                        subject: trace.subject,
+                        revision: trace.revision,
+                        reason: context_response_summary(&response).or(trace.reason),
+                    });
                 response
             }
             Err(error) => {
-                context.kernel.record_runtime_trace(RuntimeTraceEvent::PolicyStage {
-                    policy: "phenix.context".into(),
-                    stage: trace.stage,
-                    outcome: "failed".into(),
-                    subject: trace.subject,
-                    revision: trace.revision,
-                    reason: Some(error.clone()),
-                });
+                context
+                    .kernel
+                    .record_runtime_trace(RuntimeTraceEvent::PolicyStage {
+                        policy: "phenix.context".into(),
+                        stage: trace.stage,
+                        outcome: "failed".into(),
+                        subject: trace.subject,
+                        revision: trace.revision,
+                        reason: Some(error.clone()),
+                    });
                 return Err(error);
             }
         };
@@ -166,7 +172,6 @@ impl PluginInstance for ContextPlugin {
             .map_err(|error| error.to_string())
     }
 }
-
 
 struct ContextCommandTrace {
     stage: String,
@@ -183,14 +188,20 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
             None,
             None,
         ),
-        ContextCommand::Get { resource_id, revision } => (
+        ContextCommand::Get {
+            resource_id,
+            revision,
+        } => (
             "resource_lookup",
             Some(resource_id.to_string()),
             Some(revision.to_string()),
             None,
         ),
         ContextCommand::List => ("resource_list", None, None, None),
-        ContextCommand::DiscoverRepository { workspace_id, sources } => (
+        ContextCommand::DiscoverRepository {
+            workspace_id,
+            sources,
+        } => (
             "repository_discovery",
             Some(workspace_id.clone()),
             None,
@@ -207,12 +218,9 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
             Some(revision.to_string()),
             Some(format!("resource={resource_id}")),
         ),
-        ContextCommand::LoadDelegatedResult { task_id } => (
-            "delegated_result_load",
-            Some(task_id.clone()),
-            None,
-            None,
-        ),
+        ContextCommand::LoadDelegatedResult { task_id } => {
+            ("delegated_result_load", Some(task_id.clone()), None, None)
+        }
         ContextCommand::AdmitDelegatedResult { task_id } => (
             "delegated_result_admission",
             Some(task_id.clone()),
@@ -230,12 +238,9 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
             Some(revision.to_string()),
             Some(format!("resource={resource_id}")),
         ),
-        ContextCommand::Project { execution_id } => (
-            "context_projection",
-            Some(execution_id.clone()),
-            None,
-            None,
-        ),
+        ContextCommand::Project { execution_id } => {
+            ("context_projection", Some(execution_id.clone()), None, None)
+        }
         ContextCommand::PrepareInvocation { execution_id, .. } => (
             "invocation_preparation",
             Some(execution_id.clone()),
@@ -255,31 +260,28 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
             )),
             None,
         ),
-        ContextCommand::GetProjectionState { execution_id } => (
-            "projection_state",
-            Some(execution_id.clone()),
-            None,
-            None,
-        ),
+        ContextCommand::GetProjectionState { execution_id } => {
+            ("projection_state", Some(execution_id.clone()), None, None)
+        }
         ContextCommand::Admit { request } => (
             "context_admission",
             Some(request.execution_id.clone()),
             None,
             Some(format!("candidates={}", request.candidates.len())),
         ),
-        ContextCommand::EvaluateCompactionCost { .. } => (
-            "compaction_cost_evaluation",
-            None,
-            None,
-            None,
-        ),
+        ContextCommand::EvaluateCompactionCost { .. } => {
+            ("compaction_cost_evaluation", None, None, None)
+        }
         ContextCommand::PrepareCompaction { proposal } => (
             "compaction_prepare",
             Some(proposal.execution_id.clone()),
             None,
             None,
         ),
-        ContextCommand::CommitCompaction { execution_id, checkpoint_id } => (
+        ContextCommand::CommitCompaction {
+            execution_id,
+            checkpoint_id,
+        } => (
             "compaction_commit",
             Some(execution_id.clone()),
             None,

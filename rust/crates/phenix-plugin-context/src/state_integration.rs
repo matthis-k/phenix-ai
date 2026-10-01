@@ -656,7 +656,6 @@ mod injection_invalidation {
     }
 }
 
-
 #[test]
 fn repository_discovery_trace_distinguishes_zero_results_from_no_execution() {
     let path = temp_db("repository-discovery-trace");

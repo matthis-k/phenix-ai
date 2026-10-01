@@ -3809,10 +3809,17 @@ fn inspect_runtime(
             inspect_runtime_trace(context)
         }
         "help" => Ok(PhenixValue::List(
-            ["graph", "execution", "dag", "trace", "values", "value <value-id>"]
-                .into_iter()
-                .map(|query| PhenixValue::String(query.to_owned()))
-                .collect(),
+            [
+                "graph",
+                "execution",
+                "dag",
+                "trace",
+                "values",
+                "value <value-id>",
+            ]
+            .into_iter()
+            .map(|query| PhenixValue::String(query.to_owned()))
+            .collect(),
         )),
         _ => {
             if let Some(id) = query.strip_prefix("value ").map(str::trim) {
