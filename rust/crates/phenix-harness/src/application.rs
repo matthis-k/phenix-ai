@@ -3220,12 +3220,11 @@ fn handle_execution_progress(
             .ok_or_else(|| ApplicationError::NotFound {
                 resource: format!("session {}", progress.session_id),
             })?;
-        let expected = projection
-            .through_sequence
-            .checked_add(1)
-            .ok_or_else(|| ApplicationError::Conflict {
+        let expected = projection.through_sequence.checked_add(1).ok_or_else(|| {
+            ApplicationError::Conflict {
                 message: "session progress sequence overflowed".to_owned(),
-            })?;
+            }
+        })?;
         if progress.update.sequence != expected {
             return Err(ApplicationError::Conflict {
                 message: format!(
