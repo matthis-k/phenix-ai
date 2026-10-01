@@ -106,8 +106,7 @@ fn handle_once(
             host.transact_owned_durable_many(&[
                 (&resource_namespace, resource_operations.as_slice()),
                 (&attempt_namespace, attempt_operations.as_slice()),
-            ])
-            ?;
+            ])?;
 
             Ok(StepTransactionResponse::Settled { ledger, attempt })
         }
@@ -134,14 +133,12 @@ fn handle_once(
                 host.transact_owned_durable_many(&[
                     (&resource_namespace, resource_operations.as_slice()),
                     (&attempt_namespace, attempt_operations.as_slice()),
-                ])
-                ?;
+                ])?;
                 Some(ledger)
             } else {
                 context
                     .kernel
-                    .transact_durable(&attempt_namespace, &attempt_operations)
-                    ?;
+                    .transact_durable(&attempt_namespace, &attempt_operations)?;
                 None
             };
 
