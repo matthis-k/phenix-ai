@@ -45,6 +45,7 @@ Baseline queries:
 | `graph` | graph generation, resolved components, imports, selected providers, effective import authority |
 | `execution` | current root execution record |
 | `dag` | current root execution plus descendant executions and worker tasks |
+| `trace` | retained metadata-only runtime diagnostics from the configured trace sink; an empty result does not prove that no event occurred |
 | `values` | all values in the application ObservableStore with owner, schema, version, snapshot policy, and current value |
 | `value <value-id>` | one observable root value with owner, schema, version, snapshot policy, and current value |
 | `help` | supported queries |
@@ -123,13 +124,13 @@ content/reference id
 
 Large payloads stay behind content references.
 
-An agent can use logs to find the relevant identity, then use `phenix.inspect` to inspect current state.
+An agent can use logs to find the relevant identity, then use `phenix.inspect` to inspect current state. When the configured runtime trace sink retains an in-process snapshot, `phenix.inspect trace` exposes that bounded metadata-only diagnostic window directly; it remains historical evidence rather than canonical state.
 
 ## Security
 
 Inspection obeys the caller's generation, authority, and runtime boundary.
 
-State-bearing queries (`execution`, `dag`, `values`, and `value <id>`) require the caller to hold `kernel.persistence.read`. Graph and help queries do not grant access to runtime values or services.
+State-bearing and retained-diagnostic queries (`execution`, `dag`, `trace`, `values`, and `value <id>`) require the caller to hold `kernel.persistence.read`. Graph and help queries do not grant access to runtime values or services.
 
 Inspection never returns secret values merely because a secret provider exists. Secret-bearing plugins expose redacted descriptors or explicit safe inspection values.
 
