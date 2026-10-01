@@ -4322,7 +4322,16 @@ mod tests {
 
     #[test]
     fn default_runtime_exposes_backend_neutral_bash_tool() {
-        let worker = application_worker();
+        let mut worker = application_worker();
+        let session_id = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap()
+        .session_id;
         let sdk = {
             let harness = worker.harness.lock();
             harness
@@ -4348,7 +4357,6 @@ mod tests {
             ),
         )
         .unwrap();
-        let session_id = SessionId::parse("session-1").unwrap();
         let surface = {
             let harness = worker.harness.lock();
             application_model_tool_surface(
