@@ -142,6 +142,8 @@
             test -f ${supportedPhenix}/share/phenix/skills/write/SKILL.md
             test -f ${supportedPhenix}/share/phenix/skills/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
+            grep -F 'PHENIX_SKILL_PATH' ${self.packages.${system}.phenix-acp}/bin/phenix-acp >/dev/null
+            grep -F ${pkgs.lib.escapeShellArg "${phenixHarnessResources}/share/phenix/skills"} ${self.packages.${system}.phenix-acp}/bin/phenix-acp >/dev/null
 
             touch "$out"
           '';
