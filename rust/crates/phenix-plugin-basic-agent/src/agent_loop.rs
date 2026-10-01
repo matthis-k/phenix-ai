@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
+    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
@@ -247,6 +247,16 @@ pub fn agent_loop_control_service() -> ServiceId {
 }
 
 #[must_use]
+pub fn agent_loop_progress_authority() -> Authority {
+    Authority::new([
+        CapabilityId::parse("kernel.persistence.read")
+            .expect("static persistence read capability is valid"),
+        CapabilityId::parse("kernel.persistence.write")
+            .expect("static persistence write capability is valid"),
+    ])
+}
+
+#[must_use]
 pub fn agent_loop_manifest(maximum_authority: Authority) -> PluginManifest {
     PluginManifest {
         id: PluginId::parse(AGENT_LOOP_PLUGIN).expect("static agent loop plugin id is valid"),
@@ -293,7 +303,7 @@ pub fn agent_loop_component_manifest(maximum_authority: Authority) -> ComponentM
                 interface: AgentLoopProgressInterface::interface_id(),
                 schema: AgentLoopProgressInterface::schema(),
                 required: true,
-                authority: Authority::default(),
+                authority: agent_loop_progress_authority(),
             },
         ],
         exports: vec![ComponentExport {
@@ -636,6 +646,18 @@ mod tests {
             component.imports[2].authority.permits(&shell),
             "agent-loop tool calls must carry the authority granted to the agent loop"
         );
+    }
+
+    #[test]
+    fn progress_import_carries_only_durable_journal_authority() {
+        let shell = CapabilityId::parse("workspace.shell").unwrap();
+        let read = CapabilityId::parse("kernel.persistence.read").unwrap();
+        let write = CapabilityId::parse("kernel.persistence.write").unwrap();
+        let component = agent_loop_component_manifest(Authority::new([shell.clone()]));
+
+        assert!(component.imports[3].authority.permits(&read));
+        assert!(component.imports[3].authority.permits(&write));
+        assert!(!component.imports[3].authority.permits(&shell));
     }
 
     #[test]

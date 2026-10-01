@@ -37,15 +37,16 @@ use phenix_core::{
     ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_control_service, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, execution_review_service, sdk_contribution, session_service,
-    workspace_service, AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest,
-    AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface,
-    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
-    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
-    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SessionCommand,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, SDK_PLUGIN,
+    agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
+    agent_loop_service, agent_tool_execution_service, execution_review_service, sdk_contribution,
+    session_service, workspace_service, AgentLoopCommand, AgentLoopControlInterface,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
+    AgentLoopResponse, AgentToolExecutionInterface, AgentToolExecutionRequest,
+    AgentToolExecutionResponse, ExecutionReviewCommand, ExecutionReviewResponse,
+    OptionStartupPrecedence, SessionCommand, SessionInterface, SessionJournalDraft,
+    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
+    SDK_PLUGIN,
 };
 use phenix_provider_sdk::{
     auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
@@ -65,7 +66,7 @@ use phenix_sdk::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env, fs,
     path::{Path, PathBuf},
     sync::{
@@ -2400,13 +2401,14 @@ pub async fn serve_configured_application(
 struct ActiveExecution {
     execution_id: String,
     cancellation: Arc<AtomicBool>,
+    progress_error: Option<ApplicationError>,
     prompt: ApplicationInvocation,
 }
 
 struct ExecutionProgress {
     session_id: SessionId,
     execution_id: String,
-    change: ExecutionChange,
+    update: SessionUpdate,
 }
 
 struct ExecutionCompletion {
@@ -2473,7 +2475,9 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
             .expect("static application agent tool plugin id is valid"),
         version: 1,
         execution: PluginExecution::Embedded,
-        dependencies: Vec::new(),
+        dependencies: vec![
+            PluginId::parse("phenix.sessions").expect("static session plugin id is valid")
+        ],
         services: vec![
             ServiceContribution {
                 role: ServiceRole::Terminal,
@@ -2491,7 +2495,7 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
                 role: ServiceRole::Terminal,
                 service: agent_loop_progress_service(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: agent_loop_progress_authority(),
             },
         ],
         resource_namespaces: Vec::new(),
@@ -2526,6 +2530,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required: false,
                 authority: Authority::new([CapabilityId::parse("kernel.persistence.read")
                     .expect("static persistence read capability is valid")]),
+            },
+            ComponentImport {
+                interface: SessionInterface::interface_id(),
+                schema: SessionInterface::schema(),
+                required: true,
+                authority: agent_loop_progress_authority(),
             },
         ],
         exports: vec![
@@ -2575,7 +2585,7 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: AgentLoopProgressInterface::interface_id(),
                 schema: AgentLoopProgressInterface::schema(),
                 priority: 100,
-                required_authority: Authority::default(),
+                required_authority: agent_loop_progress_authority(),
             },
         ],
         maximum_authority,
@@ -2592,6 +2602,7 @@ pub(crate) fn application_agent_tool_factory(
 struct ApplicationAgentToolSdk<'host, 'runtime> {
     workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInspectionInterface>,
+    sessions: SdkClient<'host, 'runtime, SessionInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -2605,6 +2616,7 @@ fn application_agent_tool_context<'host, 'runtime>(
         ApplicationAgentToolSdk {
             workspace: SdkClient::new(host, application_agent_tool_component_id()),
             execution: SdkClient::new(host, application_agent_tool_component_id()),
+            sessions: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -2788,7 +2800,7 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let response = record_application_agent_progress(&self.registry, record)?;
+            let response = record_application_agent_progress(&context, &self.registry, record)?;
             return context
                 .kernel
                 .encode_value(&response)
@@ -2893,6 +2905,7 @@ fn execute_application_agent_tool(
 }
 
 fn record_application_agent_progress(
+    context: &ApplicationAgentToolContext<'_, '_>,
     registry: &ApplicationAgentToolRegistry,
     record: AgentLoopProgressRecord,
 ) -> Result<AgentLoopProgressResponse, String> {
@@ -2932,11 +2945,28 @@ fn record_application_agent_progress(
         }
     };
 
+    let response: SessionResponse = context
+        .sdk
+        .sessions
+        .invoke_projected(&SessionCommand::AppendJournal {
+            id: run.session_id.clone(),
+            entry: session_change_journal(&SessionChange::Execution {
+                execution_id: record.execution_id.clone(),
+                update: change,
+            }),
+        })
+        .map_err(|error| format!("failed to persist agent progress: {error}"))?;
+    let SessionResponse::JournalAppended { entry } = response else {
+        return Err("session service returned a non-journal progress response".into());
+    };
+    let update = session_update_from_journal(&run.session_id, entry)
+        .map_err(|error| format!("failed to project persisted agent progress: {error:?}"))?;
+
     run.progress_sender
         .blocking_send(ExecutionWorkerEvent::Progress(ExecutionProgress {
             session_id: run.session_id,
             execution_id: record.execution_id,
-            change,
+            update,
         }))
         .map_err(|_| "application execution progress channel disconnected".to_owned())?;
 
@@ -2944,18 +2974,46 @@ fn record_application_agent_progress(
 }
 
 async fn serve_application_worker(
+    worker: ApplicationWorker,
+    service: SdkApplicationService,
+    receiver: mpsc::Receiver<ApplicationInvocation>,
+) {
+    serve_application_worker_with_execution_capacity(
+        worker,
+        service,
+        receiver,
+        APPLICATION_EXECUTION_CAPACITY,
+    )
+    .await;
+}
+
+async fn serve_application_worker_with_execution_capacity(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
+    execution_capacity: usize,
 ) {
     let (execution_sender, mut execution_events) =
-        mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        mpsc::channel::<ExecutionWorkerEvent>(execution_capacity);
     let mut active = BTreeMap::<String, ActiveExecution>::new();
+    let mut deferred = VecDeque::<ApplicationInvocation>::new();
     let mut input_closed = false;
 
     loop {
-        if input_closed && active.is_empty() {
+        if input_closed && active.is_empty() && deferred.is_empty() {
             break;
+        }
+        if active.is_empty() {
+            if let Some(invocation) = deferred.pop_front() {
+                dispatch_application_invocation(
+                    &mut worker,
+                    &service,
+                    &execution_sender,
+                    &mut active,
+                    invocation,
+                );
+                continue;
+            }
         }
         tokio::select! {
             invocation = receiver.recv(), if !input_closed => {
@@ -2963,24 +3021,24 @@ async fn serve_application_worker(
                     input_closed = true;
                     continue;
                 };
-                if invocation.operation.as_str() == Prompt::ID {
-                    start_prompt(&mut worker, &service, &execution_sender, &mut active, invocation);
+                if should_defer_application_invocation(&active, &invocation) {
+                    if deferred.len() >= APPLICATION_INVOCATION_CAPACITY {
+                        invocation.respond(Err(ApplicationError::Conflict {
+                            message: "application invocation queue is full while an execution owns the runtime"
+                                .to_owned(),
+                        }));
+                    } else {
+                        deferred.push_back(invocation);
+                    }
                     continue;
                 }
-                if invocation.operation.as_str() == Cancel::ID {
-                    cancel_prompt(&mut worker, &mut active, invocation);
-                    continue;
-                }
-                let operation = invocation.operation.clone();
-                let input = invocation.input.clone();
-                let result = if is_sdk_operation(&operation) {
-                    service.invoke(&operation, input)
-                } else {
-                    worker.invoke_with_client_callables(&operation, input, |callable, schema| {
-                        service.admit_current_client_callable(callable, schema)
-                    })
-                };
-                invocation.respond(result);
+                dispatch_application_invocation(
+                    &mut worker,
+                    &service,
+                    &execution_sender,
+                    &mut active,
+                    invocation,
+                );
             }
             event = execution_events.recv(), if !active.is_empty() => {
                 if let Some(event) = event {
@@ -3005,6 +3063,51 @@ async fn serve_application_worker(
     }
     worker.clear_interaction_handlers();
     service.retire_client();
+}
+
+fn should_defer_application_invocation(
+    active: &BTreeMap<String, ActiveExecution>,
+    invocation: &ApplicationInvocation,
+) -> bool {
+    if active.is_empty() || is_sdk_operation(&invocation.operation) {
+        return false;
+    }
+
+    match invocation.operation.as_str() {
+        Cancel::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
+            .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
+        Prompt::ID => decode::<PromptInput>(invocation.input.clone())
+            .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
+        _ => true,
+    }
+}
+
+fn dispatch_application_invocation(
+    worker: &mut ApplicationWorker,
+    service: &SdkApplicationService,
+    execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
+    active: &mut BTreeMap<String, ActiveExecution>,
+    invocation: ApplicationInvocation,
+) {
+    if invocation.operation.as_str() == Prompt::ID {
+        start_prompt(worker, service, execution_sender, active, invocation);
+        return;
+    }
+    if invocation.operation.as_str() == Cancel::ID {
+        cancel_prompt(worker, active, invocation);
+        return;
+    }
+
+    let operation = invocation.operation.clone();
+    let input = invocation.input.clone();
+    let result = if is_sdk_operation(&operation) {
+        service.invoke(&operation, input)
+    } else {
+        worker.invoke_with_client_callables(&operation, input, |callable, schema| {
+            service.admit_current_client_callable(callable, schema)
+        })
+    };
+    invocation.respond(result);
 }
 
 fn start_prompt(
@@ -3088,6 +3191,7 @@ fn start_prompt(
         ActiveExecution {
             execution_id: prompt.execution_id.clone(),
             cancellation: Arc::clone(&cancellation),
+            progress_error: None,
             prompt: invocation,
         },
     );
@@ -3148,26 +3252,13 @@ fn cancel_prompt(
             return;
         }
     };
-    let acknowledgement = worker.cancel(request.clone());
-    if acknowledgement.is_ok() {
-        if let Some(execution) = active.remove(request.session_id.as_str()) {
-            execution.cancellation.store(true, Ordering::Release);
-            let _ = worker.finish_root_execution(&execution.execution_id, false);
-            let _ = worker.append_execution_change(
-                &request.session_id,
-                &execution.execution_id,
-                ExecutionChange::State {
-                    state: ExecutionState::Cancelled,
-                },
-            );
-            execution.prompt.respond(Ok(PromptResult {
-                execution_id: execution.execution_id,
-                stop_reason: StopReason::Cancelled,
-            }
-            .to_value()));
-        }
+    if let Some(execution) = active.get(request.session_id.as_str()) {
+        execution.cancellation.store(true, Ordering::Release);
+        invocation.respond(Ok(Acknowledged {}.to_value()));
+        return;
     }
-    invocation.respond(acknowledgement.map(|value| value.to_value()));
+
+    invocation.respond(worker.cancel(request).map(|value| value.to_value()));
 }
 
 fn handle_execution_progress(
@@ -3182,18 +3273,74 @@ fn handle_execution_progress(
     if execution.execution_id != progress.execution_id {
         return;
     }
-    if let Err(error) = worker.append_execution_change(
-        &progress.session_id,
-        &progress.execution_id,
-        progress.change,
-    ) {
-        let Some(execution) = active.remove(&key) else {
+
+    let result = project_persisted_agent_progress(worker, progress.update);
+
+    if let Err(error) = result {
+        let Some(execution) = active.get_mut(&key) else {
             return;
         };
         execution.cancellation.store(true, Ordering::Release);
-        let _ = worker.finish_root_execution(&execution.execution_id, false);
-        execution.prompt.respond(Err(error));
+        execution.progress_error.get_or_insert(error);
     }
+}
+
+fn project_persisted_agent_progress(
+    worker: &mut ApplicationWorker,
+    update: SessionUpdate,
+) -> Result<(), ApplicationError> {
+    let projection = worker
+        .projection
+        .state()
+        .sessions
+        .get(update.session_id.as_str())
+        .ok_or_else(|| ApplicationError::NotFound {
+            resource: format!("session {}", update.session_id),
+        })?;
+
+    if update.sequence <= projection.through_sequence {
+        let existing = projection
+            .updates
+            .iter()
+            .find(|existing| existing.sequence == update.sequence);
+        return match existing {
+            Some(existing) if existing == &update => Ok(()),
+            Some(_) => Err(ApplicationError::Conflict {
+                message: format!(
+                    "persisted agent progress at sequence {} conflicts with the projected session update",
+                    update.sequence
+                ),
+            }),
+            None => Err(ApplicationError::Conflict {
+                message: format!(
+                    "persisted agent progress at sequence {} is behind the projection watermark {} but is missing from projected history",
+                    update.sequence, projection.through_sequence
+                ),
+            }),
+        };
+    }
+
+    let expected =
+        projection
+            .through_sequence
+            .checked_add(1)
+            .ok_or_else(|| ApplicationError::Conflict {
+                message: "session progress sequence overflowed".to_owned(),
+            })?;
+    if update.sequence != expected {
+        return Err(ApplicationError::Conflict {
+            message: format!(
+                "persisted agent progress is not contiguous: expected {expected}, got {}",
+                update.sequence
+            ),
+        });
+    }
+
+    worker
+        .projection
+        .apply_update(update.clone())
+        .map_err(application_projection_error)?;
+    worker.emit_session_update(update)
 }
 
 fn finish_prompt(
@@ -3211,7 +3358,29 @@ fn finish_prompt(
         }));
         return;
     }
+    if let Some(error) = execution.progress_error {
+        let _ = worker.finish_root_execution(&completion.execution_id, false);
+        let _ = worker.append_execution_change(
+            &completion.session_id,
+            &completion.execution_id,
+            ExecutionChange::State {
+                state: ExecutionState::Failed {
+                    error: error.clone(),
+                },
+            },
+        );
+        execution.prompt.respond(Err(error));
+        return;
+    }
     if execution.cancellation.load(Ordering::Acquire) {
+        let _ = worker.finish_root_execution(&completion.execution_id, false);
+        let _ = worker.append_execution_change(
+            &completion.session_id,
+            &completion.execution_id,
+            ExecutionChange::State {
+                state: ExecutionState::Cancelled,
+            },
+        );
         execution.prompt.respond(Ok(PromptResult {
             execution_id: completion.execution_id,
             stop_reason: StopReason::Cancelled,
@@ -4156,14 +4325,19 @@ mod tests {
     use super::*;
     use phenix_application_interface::{
         types::{Content, Empty},
-        Cancel, CloseSession, CreateSession, DiscoverAuthentication, ListSessions, Prompt,
-        RenameSession, ResumeSession,
+        ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
+        ListSessions, Prompt, RenameSession, ResumeSession,
     };
-    use phenix_core::{Bytes, LocalPersistence, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_core::{Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_plugin_catalog::{
+        model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
+    };
+    use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits};
     use std::{
         fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{Condvar, Mutex as StdMutex},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     fn session(id: &str, title: Option<&str>) -> SessionInfo {
@@ -4188,6 +4362,243 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
+    }
+
+    async fn invoke_transport_operation<O: Operation>(
+        transport: &ChannelTransport,
+        input: O::Input,
+    ) -> Result<O::Output, ApplicationError> {
+        let value = transport
+            .invoke(&ContractId::parse(O::ID).unwrap(), input.to_value())
+            .await?;
+        O::Output::from_value(&value).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn continuation_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.tool-continuation-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct CancellationGate {
+        state: StdMutex<(bool, bool)>,
+        changed: Condvar,
+    }
+
+    impl CancellationGate {
+        fn new() -> Self {
+            Self {
+                state: StdMutex::new((false, false)),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn start_and_wait_for_release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.0 = true;
+            self.changed.notify_all();
+            while !state.1 {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+
+        fn wait_until_started(&self) {
+            let mut state = self.state.lock().unwrap();
+            while !state.0 {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+
+        fn release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn cancellation_gate_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.cancellation-gate-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct CancellationGateModel {
+        gate: Arc<CancellationGate>,
+    }
+
+    impl PluginInstance for CancellationGateModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!(
+                    "unsupported cancellation fixture service: {service}"
+                ));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let _request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            self.gate.start_and_wait_for_release();
+            let response = ModelInferenceResponse {
+                output: Bytes::new(b"completed after cancellation gate".to_vec()),
+                provider_metadata: BTreeMap::new(),
+                usage: Default::default(),
+                tool_calls: Vec::new(),
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    struct ToolContinuationModel;
+
+    impl PluginInstance for ToolContinuationModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!(
+                    "unsupported continuation fixture service: {service}"
+                ));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+
+            let response = match request.continuation.as_slice() {
+                [] => {
+                    if !request.tools.iter().any(|tool| tool.id.as_str() == "bash") {
+                        return Err("continuation fixture did not receive the Bash tool".into());
+                    }
+                    ModelInferenceResponse {
+                        output: Bytes::new(b"run two tools".to_vec()),
+                        provider_metadata: BTreeMap::new(),
+                        usage: Default::default(),
+                        tool_calls: (0..2)
+                            .map(|index| ModelToolCall {
+                                call_id: format!("continuation-call-{index}"),
+                                callable_id: CallableId::parse("bash").unwrap(),
+                                input: PhenixValue::Map(BTreeMap::from([(
+                                    "command".to_owned(),
+                                    PhenixValue::String("printf continuation".into()),
+                                )])),
+                            })
+                            .collect(),
+                    }
+                }
+                [turn] => {
+                    if turn.tool_calls.len() != 2 || turn.tool_results.len() != 2 {
+                        return Err("continuation fixture did not receive both tool results".into());
+                    }
+                    if turn.tool_results.iter().any(|result| result.is_error) {
+                        return Err("continuation fixture received a failed tool result".into());
+                    }
+                    ModelInferenceResponse {
+                        output: Bytes::new(b"continued after tool progress".to_vec()),
+                        provider_metadata: BTreeMap::new(),
+                        usage: Default::default(),
+                        tool_calls: Vec::new(),
+                    }
+                }
+                turns => {
+                    return Err(format!(
+                        "continuation fixture received {} continuation turns",
+                        turns.len()
+                    ));
+                }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    fn configure_fixture_routing(
+        worker: &mut ApplicationWorker,
+        provider: &str,
+        model: &str,
+        profile: &str,
+    ) {
+        let target = ModelTarget {
+            provider_plugin: PluginId::parse(provider).unwrap(),
+            model: ModelId::parse(model).unwrap(),
+            options: BTreeMap::new(),
+        };
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse(profile).unwrap(),
+            default_target: target.clone(),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        worker
+            .invoke_model_command(ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            })
+            .unwrap();
+        worker
+            .invoke_model_command(ModelCommand::PublishCapabilities {
+                capabilities: EffectiveModelCapabilities {
+                    target,
+                    generation: CapabilityGenerationId::parse(format!(
+                        "fixture-generation-{model}"
+                    ))
+                    .unwrap(),
+                    context: ContextControl::ReplaceableTurns,
+                    capacity: CapacityKnowledge::Known {
+                        limits: ModelLimits {
+                            context_window_tokens: 128_000,
+                            max_output_tokens: Some(16_000),
+                        },
+                    },
+                    cache: Default::default(),
+                    optional: BTreeSet::new(),
+                },
+            })
+            .unwrap();
+        worker
+            .invoke_option_command(OptionCommand::Set {
+                key: model_default_option(),
+                scope: OptionScope::Global,
+                value: OptionValue::String(profile.id.to_string()),
+            })
+            .unwrap();
     }
 
     #[test]
@@ -4251,8 +4662,324 @@ mod tests {
     }
 
     #[test]
+    fn already_projected_persisted_progress_is_idempotent_after_projection_repair() {
+        let (sender, mut events) = mpsc::channel(4);
+        let mut worker = application_worker().with_event_sender(sender);
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap();
+        let execution_id = "execution-race".to_owned();
+        let progress_change = SessionChange::Execution {
+            execution_id: execution_id.clone(),
+            update: ExecutionChange::Progress {
+                message: "persisted before worker projection".into(),
+                fraction: Some(0.5),
+            },
+        };
+
+        let persisted = worker
+            .invoke_session(SessionCommand::AppendJournal {
+                id: created.session_id.clone(),
+                entry: session_change_journal(&progress_change),
+            })
+            .unwrap();
+        let SessionResponse::JournalAppended { entry } = persisted else {
+            panic!("fixture progress append must return its journal entry");
+        };
+        let progress_update = session_update_from_journal(&created.session_id, entry).unwrap();
+
+        let session = worker.session_record(&created.session_id).unwrap().unwrap();
+        worker
+            .append_session_change(
+                &session,
+                SessionChange::Renamed {
+                    title: "after-progress".into(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            worker.projection().state().sessions[created.session_id.as_str()].through_sequence,
+            2
+        );
+        let rename_event = events
+            .try_recv()
+            .expect("rename event after projection repair");
+        let rename_update =
+            SessionUpdate::from_value(&rename_event.payload).expect("session update payload");
+        assert_eq!(rename_update.sequence, 2);
+
+        project_persisted_agent_progress(&mut worker, progress_update).unwrap();
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_remains_live_while_agent_execution_owns_the_harness_lock() {
+        let gate = Arc::new(CancellationGate::new());
+        let model_gate = Arc::clone(&gate);
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(cancellation_gate_model_manifest(), move || {
+                Box::new(CancellationGateModel {
+                    gate: Arc::clone(&model_gate),
+                })
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.cancellation-gate-model",
+            "fixture-cancellation",
+            "cancellation-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.cancellation-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-cancellation-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-cancellation-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prompt_transport = transport.clone();
+        let prompt_session = created.session_id.clone();
+        let prompt_task = tokio::spawn(async move {
+            invoke_transport_operation::<Prompt>(
+                &prompt_transport,
+                PromptInput {
+                    session_id: prompt_session,
+                    content: vec![Content::Text {
+                        text: "wait until I cancel".into(),
+                    }],
+                },
+            )
+            .await
+        });
+
+        let wait_gate = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || wait_gate.wait_until_started())
+            .await
+            .unwrap();
+
+        let cancellation = tokio::time::timeout(
+            Duration::from_secs(2),
+            invoke_transport_operation::<Cancel>(
+                &transport,
+                ApplicationSessionInput {
+                    session_id: created.session_id.clone(),
+                },
+            ),
+        )
+        .await;
+        gate.release();
+        cancellation
+            .expect("cancel must not wait for the harness mutex held by the agent")
+            .unwrap();
+
+        let prompt = tokio::time::timeout(Duration::from_secs(5), prompt_task)
+            .await
+            .expect("cancelled prompt must complete")
+            .unwrap()
+            .unwrap();
+        assert_eq!(prompt.stop_reason, StopReason::Cancelled);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Cancelled,
+                    },
+                    ..
+                }
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_tool_progress_does_not_block_the_follow_up_model_turn() {
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(continuation_model_manifest(), || {
+                Box::new(ToolContinuationModel)
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.tool-continuation-model",
+            "fixture-continuation",
+            "continuation-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.continuation-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-continuation-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-continuation-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 2,
+        ));
+
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prompt = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "exercise tool continuation".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("tool progress must not deadlock the application worker")
+        .unwrap();
+        assert_eq!(prompt.stop_reason, StopReason::EndTurn);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        let tool_calls = resumed
+            .updates
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::ToolCall { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        let tool_results = resumed
+            .updates
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::ToolResult { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(tool_calls, 2);
+        assert_eq!(tool_results, 2);
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
+
+    #[test]
     fn default_runtime_exposes_backend_neutral_bash_tool() {
-        let worker = application_worker();
+        let mut worker = application_worker();
+        let session_id = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .unwrap()
+        .session_id;
         let sdk = {
             let harness = worker.harness.lock();
             harness
@@ -4278,7 +5005,6 @@ mod tests {
             ),
         )
         .unwrap();
-        let session_id = SessionId::parse("session-1").unwrap();
         let surface = {
             let harness = worker.harness.lock();
             application_model_tool_surface(
@@ -4374,43 +5100,65 @@ mod tests {
             )])),
         };
 
-        record_application_agent_progress(
-            &adapter,
-            AgentLoopProgressRecord {
-                execution_id: execution_id.clone(),
-                session_id: Some(session_id.clone()),
-                progress: AgentLoopProgress::ToolCall { call: call.clone() },
-            },
-        )
-        .unwrap();
+        let progress_record = AgentLoopProgressRecord {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            progress: AgentLoopProgress::ToolCall { call: call.clone() },
+        };
+        let progress_output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_loop_progress_service(),
+                &serde_json::to_vec(&PhenixValue::from(&progress_record)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
+        let progress_value: PhenixValue = serde_json::from_slice(&progress_output).unwrap();
+        assert_eq!(
+            AgentLoopProgressResponse::try_from(Project(&progress_value)).unwrap(),
+            AgentLoopProgressResponse::Recorded
+        );
         let progress = progress_receiver.try_recv().expect("tool progress event");
         let ExecutionWorkerEvent::Progress(progress) = progress else {
             panic!("agent loop progress must stay on the ordered application worker channel");
         };
         assert_eq!(progress.session_id, session_id);
         assert_eq!(progress.execution_id, execution_id);
-        let ExecutionChange::ToolCall {
-            call_id,
-            callable_id,
-            input,
-        } = progress.change
+        let SessionChange::Execution {
+            execution_id: update_execution_id,
+            update:
+                ExecutionChange::ToolCall {
+                    call_id,
+                    callable_id,
+                    input,
+                },
+        } = progress.update.update
         else {
             panic!("tool call progress must retain its application execution shape");
         };
+        assert_eq!(update_execution_id, execution_id);
         assert_eq!(call_id, call.call_id);
         assert_eq!(callable_id, call.callable_id);
         assert_eq!(input, call.input);
 
         cancellation.store(true, Ordering::Release);
-        record_application_agent_progress(
-            &adapter,
-            AgentLoopProgressRecord {
-                execution_id: execution_id.clone(),
-                session_id: Some(session_id.clone()),
-                progress: AgentLoopProgress::ToolCall { call: call.clone() },
-            },
-        )
-        .unwrap();
+        let cancelled_progress = AgentLoopProgressRecord {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            progress: AgentLoopProgress::ToolCall { call: call.clone() },
+        };
+        worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_loop_progress_service(),
+                &serde_json::to_vec(&PhenixValue::from(&cancelled_progress)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
         assert!(matches!(
             progress_receiver.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
