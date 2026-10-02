@@ -5370,6 +5370,94 @@ mod tests {
             .iter()
             .any(|revision| revision.symbol.as_deref() == Some("outer::inner")));
 
+        let outer = revisions
+            .iter()
+            .find(|revision| revision.symbol.as_deref() == Some("outer"))
+            .expect("outer symbol revision");
+        let inner = revisions
+            .iter()
+            .find(|revision| revision.symbol.as_deref() == Some("outer::inner"))
+            .expect("inner symbol revision");
+
+        let LanguageResponse::EntityRelations {
+            relations: Some(root_containment),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntityRelations {
+                repository_id: outer.entity.repository_id.clone(),
+                entity_id: outer.entity.id.clone(),
+                revision: outer.revision.clone(),
+                kind: CodeEntityRelationKind::Contains,
+                max_items: 4,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected root containment fact");
+        };
+        assert!(root_containment.complete);
+        assert!(root_containment.targets.is_empty());
+
+        let LanguageResponse::EntityRelations {
+            relations: Some(child_containment),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntityRelations {
+                repository_id: inner.entity.repository_id.clone(),
+                entity_id: inner.entity.id.clone(),
+                revision: inner.revision.clone(),
+                kind: CodeEntityRelationKind::Contains,
+                max_items: 4,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected child containment fact");
+        };
+        assert!(child_containment.complete);
+        assert_eq!(
+            child_containment.targets,
+            vec![CodeEntityRelationTarget {
+                entity: outer.entity.clone(),
+                revision: Some(outer.revision.clone()),
+            }]
+        );
+
+        let LanguageResponse::Query {
+            result: containment_query,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: outer.entity.clone(),
+                        revision: Some(outer.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeRelationKind::Contains],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 1,
+                    }),
+                    projection: CodeQueryProjection::Structural,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 4,
+                        max_relations: 4,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected containment graph query");
+        };
+        assert!(containment_query.coverage.complete);
+        assert_eq!(containment_query.relations.len(), 1);
+        assert_eq!(containment_query.relations[0].source, outer.entity);
+        assert_eq!(containment_query.relations[0].target.entity, inner.entity);
+
         let LanguageResponse::EntityRevisions {
             revisions: repeated,
         } = invoke(
@@ -5637,7 +5725,7 @@ mod tests {
         .unwrap() else {
             panic!("expected entity change page");
         };
-        assert_eq!(page.events.len(), 2);
+        assert_eq!(page.events.len(), 4);
 
         fs::write(
             root.join("src/lib.rs"),
