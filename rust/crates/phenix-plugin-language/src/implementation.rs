@@ -45,6 +45,18 @@ struct DerivedOutgoingRelationIndex {
     pointers: Vec<DerivedOutgoingRelationPointer>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct DerivedRepositoryEntityPointer {
+    entity: LogicalCodeEntity,
+    revision: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct DerivedRepositoryEntityIndex {
+    repository_sequence: u64,
+    entities: Vec<DerivedRepositoryEntityPointer>,
+}
+
 #[derive(Default)]
 struct LanguageState {
     providers: BTreeMap<String, LanguageProviderEpoch>,
@@ -1234,6 +1246,10 @@ fn relation_kind_key(kind: CodeEntityRelationKind) -> &'static str {
     }
 }
 
+fn repository_entity_index_key(repository_id: &str) -> String {
+    format!("index/repository/{repository_id}/entities")
+}
+
 fn outgoing_relation_index_key(
     repository_id: &str,
     entity_id: &str,
@@ -1793,10 +1809,94 @@ fn query_repository_entities(
     context: &LanguageContext<'_, '_, '_>,
     repository_id: &str,
 ) -> Result<Vec<CodeEntityRevision>, String> {
+    let sequence_key = entity_change_sequence_key(repository_id);
+    let sequence_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &sequence_key)
+        .map_err(|error| error.to_string())?;
+    let repository_sequence = sequence_bytes
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let index_key = repository_entity_index_key(repository_id);
+    let existing_index = context
+        .kernel
+        .read_durable(&language_namespace(), &index_key)
+        .map_err(|error| error.to_string())?;
+
+    let index = match existing_index
+        .as_deref()
+        .map(|bytes| {
+            serde_json::from_slice::<DerivedRepositoryEntityIndex>(bytes)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?
+    {
+        Some(index) if index.repository_sequence == repository_sequence => index,
+        _ => {
+            let index = build_repository_entity_index(
+                context,
+                repository_id,
+                repository_sequence,
+            )?;
+            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+            context
+                .kernel
+                .transact_durable(
+                    &language_namespace(),
+                    &[
+                        TransactionOp::AssertValue {
+                            key: sequence_key,
+                            expected: sequence_bytes,
+                        },
+                        TransactionOp::AssertValue {
+                            key: index_key.clone(),
+                            expected: existing_index,
+                        },
+                        TransactionOp::Put {
+                            key: index_key,
+                            value: encoded,
+                        },
+                    ],
+                )
+                .map_err(|error| {
+                    format!("code query repository changed while building entity index: {error}")
+                })?;
+            index
+        }
+    };
+
+    let mut entities = Vec::with_capacity(index.entities.len());
+    for pointer in index.entities {
+        let Some(revision) = read_entity_revision_version(
+            context,
+            &pointer.entity.repository_id,
+            &pointer.entity.id,
+            &pointer.revision,
+        )? else {
+            return Err(format!(
+                "derived repository index references missing entity revision: {}/{}@{}",
+                pointer.entity.repository_id, pointer.entity.id, pointer.revision
+            ));
+        };
+        entities.push(revision);
+    }
+    Ok(entities)
+}
+
+fn build_repository_entity_index(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    repository_sequence: u64,
+) -> Result<DerivedRepositoryEntityIndex, String> {
     let mut entity_ids = BTreeSet::new();
     let mut after_sequence = 0_u64;
     loop {
         let page = read_entity_changes(context, repository_id, after_sequence, 100)?;
+        if page.current_sequence != repository_sequence {
+            return Err("code query repository changed while rebuilding entity index".into());
+        }
         for event in page.events {
             entity_ids.insert(event.entity.id);
         }
@@ -1812,16 +1912,25 @@ fn query_repository_entities(
     let mut entities = Vec::with_capacity(entity_ids.len());
     for entity_id in entity_ids {
         if let Some(revision) = read_entity_revision(context, repository_id, &entity_id)? {
-            entities.push(revision);
+            entities.push(DerivedRepositoryEntityPointer {
+                entity: revision.entity,
+                revision: revision.revision,
+            });
         }
     }
     entities.sort_by(|left, right| {
         left.entity
-            .id
-            .cmp(&right.entity.id)
+            .repository_id
+            .cmp(&right.entity.repository_id)
+            .then_with(|| left.entity.id.cmp(&right.entity.id))
             .then_with(|| left.revision.cmp(&right.revision))
     });
-    Ok(entities)
+    entities.dedup();
+
+    Ok(DerivedRepositoryEntityIndex {
+        repository_sequence,
+        entities,
+    })
 }
 
 fn project_query_entity(
