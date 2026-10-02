@@ -48,14 +48,14 @@ pub struct RecoveryClassifierPolicy {
 impl Default for RecoveryClassifierPolicy {
     fn default() -> Self {
         Self {
-            max_prompt_bytes: 4_096,
-            max_anchors: 32,
-            max_needs: 4,
-            max_need_query_bytes: 512,
-            max_attempts: 1,
-            max_output_tokens: 512,
-            classifier_timeout_ms: 10_000,
-            total_timeout_ms: 30_000,
+            max_prompt_bytes: u32::MAX,
+            max_anchors: u32::MAX,
+            max_needs: u32::MAX,
+            max_need_query_bytes: u32::MAX,
+            max_attempts: u32::MAX,
+            max_output_tokens: u64::MAX,
+            classifier_timeout_ms: u64::MAX,
+            total_timeout_ms: u64::MAX,
         }
     }
 }
