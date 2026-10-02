@@ -471,14 +471,21 @@ fn run(
             );
             return Ok(AgentLoopResponse::Cancelled { usage });
         }
-        let control: AgentLoopControlResponse = context
-            .sdk
-            .control
-            .invoke_projected(&AgentLoopControlRequest {
-                execution_id: execution_id.clone(),
-                session_id: session_id.clone(),
-            })
-            .map_err(|error| error.to_string())?;
+        let control: AgentLoopControlResponse =
+            match context
+                .sdk
+                .control
+                .invoke_projected(&AgentLoopControlRequest {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                }) {
+                Ok(control) => control,
+                Err(error) => {
+                    let reason = error.to_string();
+                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                    return Err(reason);
+                }
+            };
         if matches!(control, AgentLoopControlResponse::Cancelled) {
             emit_agent_diagnostic(
                 context,
@@ -505,7 +512,7 @@ fn run(
             },
         );
 
-        let response = context
+        let response = match context
             .sdk
             .invocation
             .invoke_projected(&DefaultInvocationCommand::Invoke {
@@ -518,8 +525,14 @@ fn run(
                     tools: tools.clone(),
                     continuation: continuation.clone(),
                 },
-            })
-            .map_err(|error| error.to_string())?;
+            }) {
+            Ok(response) => response,
+            Err(error) => {
+                let reason = error.to_string();
+                emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                return Err(reason);
+            }
+        };
         usage.model_calls = usage
             .model_calls
             .checked_add(1)
@@ -588,15 +601,21 @@ fn run(
                 },
             )?;
 
-            let response: AgentToolExecutionResponse = context
+            let response: AgentToolExecutionResponse = match context
                 .sdk
                 .tools
                 .invoke_projected(&AgentToolExecutionRequest {
                     execution_id: execution_id.clone(),
                     session_id: session_id.clone(),
                     call: call.clone(),
-                })
-                .map_err(|error| error.to_string())?;
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    let reason = error.to_string();
+                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                    return Err(reason);
+                }
+            };
 
             let (mut result, activated_tools, observation) = match response {
                 AgentToolExecutionResponse::Completed {
@@ -719,6 +738,25 @@ fn activate_tools(
     }
     active.extend(additions);
     Ok(())
+}
+
+fn emit_run_failed(
+    context: &AgentLoopContext<'_, '_>,
+    execution_id: &str,
+    session_id: &Option<SessionId>,
+    usage: &AgentLoopUsage,
+    reason: &str,
+) {
+    emit_agent_diagnostic(
+        context,
+        AgentDiagnosticEvent::RunFailed {
+            execution_id: execution_id.to_owned(),
+            session_id: session_id.clone(),
+            reason: reason.to_owned(),
+            model_calls: usage.model_calls,
+            tool_calls: usage.tool_calls,
+        },
+    );
 }
 
 fn emit_agent_diagnostic(context: &AgentLoopContext<'_, '_>, diagnostic: AgentDiagnosticEvent) {
