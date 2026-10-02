@@ -582,6 +582,8 @@ pub enum CodeRelationKind {
 #[serde(tag = "selection", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CodeQuerySelection {
     Entities,
+    Source,
+    Body,
     Relations {
         #[serde(default)]
         kinds: Vec<CodeRelationKind>,
@@ -673,6 +675,8 @@ pub struct CodeQueryResult {
     pub entities: Vec<CodeQueryEntity>,
     #[serde(default)]
     pub relations: Vec<CodeQueryRelation>,
+    #[serde(default)]
+    pub sources: Vec<CodeEntitySourceView>,
     pub coverage: CodeQueryCoverage,
 }
 
