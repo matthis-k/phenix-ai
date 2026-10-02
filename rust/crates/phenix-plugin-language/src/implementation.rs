@@ -524,8 +524,8 @@ fn handle(
             if let CodeEntityFacet::Relation { name } = &facet {
                 validate_identity("relation facet", name)?;
             }
-            let reference = read_entity_revision(context, &repository_id, &entity_id)?
-                .and_then(|revision| revision.facet_reference(facet));
+            let reference =
+                read_entity_facet_reference(context, &repository_id, &entity_id, facet)?;
             Ok(LanguageResponse::EntityFacet { reference })
         }
         LanguageCommand::GetEntityFacetChanges {
@@ -1925,6 +1925,47 @@ fn canonical_relations_from_stored(
 fn relation_set_revision(relations: &CodeEntityRelations) -> Result<String, String> {
     let encoded = serde_json::to_string(relations).map_err(|error| error.to_string())?;
     Ok(digest_identity("code-relation-set", &[encoded]))
+}
+
+fn read_entity_facet_reference(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    entity_id: &str,
+    facet: CodeEntityFacet,
+) -> Result<Option<phenix_sdk::CodeEntityFacetReference>, String> {
+    let Some(revision) = read_entity_revision(context, repository_id, entity_id)? else {
+        return Ok(None);
+    };
+
+    if let CodeEntityFacet::Relation { name } = &facet {
+        if let Some(kind) = stored_relation_kind_from_facet(name) {
+            if let Some(relations) = read_entity_relations(
+                context,
+                repository_id,
+                entity_id,
+                &revision.revision,
+                kind,
+                u32::MAX,
+            )? {
+                return Ok(Some(phenix_sdk::CodeEntityFacetReference {
+                    entity: revision.entity,
+                    facet,
+                    revision: relation_set_revision(&relations)?,
+                }));
+            }
+        }
+    }
+
+    Ok(revision.facet_reference(facet))
+}
+
+fn stored_relation_kind_from_facet(name: &str) -> Option<CodeEntityRelationKind> {
+    match name {
+        "callers" => Some(CodeEntityRelationKind::Callers),
+        "references" => Some(CodeEntityRelationKind::References),
+        "implementations" => Some(CodeEntityRelationKind::Implementations),
+        _ => None,
+    }
 }
 
 fn query_incoming_relations(
