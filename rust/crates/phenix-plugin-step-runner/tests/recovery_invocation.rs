@@ -432,7 +432,7 @@ fn params() -> InvocationParams {
         route_policy: RouteSelectionPolicy {
             revision: "recovery-route-policy".into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 2,
+            max_candidate_attempts: Some(2),
         },
     }
 }
