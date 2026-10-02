@@ -972,6 +972,30 @@ mod code_entity_facet_resource_tests {
     #[test]
     fn structured_code_actions_do_not_expose_provider_transport_selection() {
         let commands = [
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: LogicalCodeEntity {
+                            id: "entity".into(),
+                            repository_id: "repo".into(),
+                        },
+                        revision: Some("rev-1".into()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeEntityRelationKind::References],
+                    },
+                    traversal: Some(CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 2,
+                    }),
+                    projection: CodeQueryProjection::Structural,
+                    budget: CodeQueryBudget {
+                        max_entities: 32,
+                        max_relations: 64,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
             LanguageCommand::ReadEntityBody {
                 repository_id: "repo".into(),
                 entity_id: "entity".into(),
