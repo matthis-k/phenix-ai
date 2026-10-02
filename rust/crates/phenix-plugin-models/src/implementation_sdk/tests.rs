@@ -454,7 +454,7 @@ mod smart_selection {
                 policy: RouteSelectionPolicy {
                     revision: "route-policy-1".into(),
                     estimates: RoutingEstimateMode::Ignore,
-                    max_candidate_attempts: 2,
+                    max_candidate_attempts: Some(2),
                 },
             },
         )
