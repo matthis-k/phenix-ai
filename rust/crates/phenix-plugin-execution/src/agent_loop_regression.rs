@@ -425,13 +425,13 @@ fn tool_adapter_component() -> ComponentManifest {
 fn fixture_policy() -> UsagePolicy {
     UsagePolicy {
         revision: "policy-1".into(),
-        max_fresh_input_tokens: 100,
-        max_output_tokens: 100,
+        max_fresh_input_tokens: Some(100),
+        max_output_tokens: Some(100),
         max_cost_microunits: None,
-        max_retries: 0,
-        max_tool_result_bytes: 1024,
-        max_tool_schemas: 8,
-        max_skills: 0,
+        max_retries: Some(0),
+        max_tool_result_bytes: Some(1024),
+        max_tool_schemas: Some(8),
+        max_skills: Some(0),
         require_known_capacity: false,
         delegation: DelegationResourcePolicy::default(),
     }
