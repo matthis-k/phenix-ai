@@ -489,6 +489,7 @@ pub struct ApplicationWorker {
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
+    log_reader: Result<StructuredLogReader, String>,
 }
 
 impl ApplicationWorker {
@@ -502,6 +503,7 @@ impl ApplicationWorker {
                 elicitation: None,
             },
             event_sender: None,
+            log_reader: configured_log_reader(),
         })
     }
 
@@ -606,17 +608,12 @@ impl ApplicationWorker {
         }
     }
 
-    fn log_reader(&self) -> Result<StructuredLogReader, ApplicationError> {
-        let sink = if let Some(spec) =
-            env::var_os("PHENIX_DEBUG_LOG").filter(|value| !value.as_os_str().is_empty())
-        {
-            LogSink::parse(&spec.to_string_lossy())
-        } else {
-            LogSink::from_env().map(|sink| sink.unwrap_or_else(LogSink::default_local))
-        }
-        .map_err(|message| ApplicationError::Failed { message })?;
-        StructuredLogReader::configured(sink)
-            .map_err(|message| ApplicationError::Failed { message })
+    fn log_reader(&self) -> Result<&StructuredLogReader, ApplicationError> {
+        self.log_reader
+            .as_ref()
+            .map_err(|message| ApplicationError::Failed {
+                message: message.clone(),
+            })
     }
 
     fn query_logs(&self, request: LogQueryInput) -> Result<LogPage, ApplicationError> {
@@ -2061,6 +2058,17 @@ impl ApplicationWorker {
             }
         })
     }
+}
+
+fn configured_log_reader() -> Result<StructuredLogReader, String> {
+    let sink = if let Some(spec) =
+        env::var_os("PHENIX_DEBUG_LOG").filter(|value| !value.as_os_str().is_empty())
+    {
+        LogSink::parse(&spec.to_string_lossy())
+    } else {
+        LogSink::from_env().map(|sink| sink.unwrap_or_else(LogSink::default_local))
+    }?;
+    StructuredLogReader::configured(sink)
 }
 
 fn log_record_matches(
