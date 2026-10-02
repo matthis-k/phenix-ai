@@ -17,7 +17,7 @@ use phenix_plugin_basic_agent::{
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
     AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
-    AgentToolExecutionResponse, DEFAULT_MAX_MODEL_TURNS, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    AgentToolExecutionResponse, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -138,6 +138,12 @@ impl PluginInstance for InvocationProvider {
                     callable_id: tool.id.clone(),
                     input: PhenixValue::String("fixture-input".into()),
                 }],
+                "fixture.long" if self.calls <= 20 => vec![ModelToolCall {
+                    call_id: format!("fixture-call-{}", self.calls),
+                    callable_id: tool.id.clone(),
+                    input: PhenixValue::String("fixture-input".into()),
+                }],
+                "fixture.long" => Vec::new(),
                 _ if request.continuation.is_empty() => vec![ModelToolCall {
                     call_id: "fixture-call-1".into(),
                     callable_id: tool.id.clone(),
@@ -684,12 +690,12 @@ fn eleven_calls_fail_before_any_tool_executes() {
 }
 
 #[test]
-fn seventeenth_model_turn_fails_at_loop_boundary() {
+fn default_agent_loop_runs_past_sixteen_model_turns_until_completion() {
     let (mut kernel, agent_loop, executions, _) = kernel(true);
     let output = invoke_agent_loop(
         &mut kernel,
         &agent_loop,
-        command(vec![descriptor("fixture.loop")]),
+        command(vec![descriptor("fixture.long")]),
     )
     .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
@@ -697,17 +703,15 @@ fn seventeenth_model_turn_fails_at_loop_boundary() {
 
     assert_eq!(
         response,
-        AgentLoopResponse::Failed {
-            failure: AgentLoopFailure::ModelTurnLimitExceeded {
-                limit: DEFAULT_MAX_MODEL_TURNS,
-            },
+        AgentLoopResponse::Completed {
+            output: Bytes::new(b"provider-output-2".to_vec()),
             usage: AgentLoopUsage {
-                model_calls: DEFAULT_MAX_MODEL_TURNS,
-                tool_calls: DEFAULT_MAX_MODEL_TURNS,
+                model_calls: 21,
+                tool_calls: 20,
             },
         }
     );
-    assert_eq!(executions.load(Ordering::SeqCst), DEFAULT_MAX_MODEL_TURNS);
+    assert_eq!(executions.load(Ordering::SeqCst), 20);
 }
 
 #[test]
