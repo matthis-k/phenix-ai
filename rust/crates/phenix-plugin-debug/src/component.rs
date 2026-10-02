@@ -5,8 +5,9 @@ use phenix_core::{
     InterfaceSchema, ListenerProjection, PhenixSchema, PhenixValue, SubscriptionId,
 };
 use phenix_sdk::{
-    model_diagnostic_event_type, ContextInterface, FrontendInterface, JobInterface,
-    ModelRoutingInterface, PlanningInterface, SessionInterface, MODEL_DIAGNOSTIC_EVENT_VERSION,
+    agent_diagnostic_event_type, model_diagnostic_event_type, ContextInterface, FrontendInterface,
+    JobInterface, ModelRoutingInterface, PlanningInterface, SessionInterface,
+    AGENT_DIAGNOSTIC_EVENT_VERSION, MODEL_DIAGNOSTIC_EVENT_VERSION,
 };
 
 pub struct DebugInterface;
@@ -75,18 +76,32 @@ fn optional_import<Request: HasPhenixSchema>(
 pub fn debug_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let authority = debug_manifest(maximum_authority).maximum_authority;
     ComponentManifest {
-        listeners: vec![ComponentListener {
-            id: SubscriptionId::parse("phenix.debug/listener/model-diagnostic")
-                .expect("static model diagnostic listener id is valid"),
-            event: model_diagnostic_event_type(),
-            event_version: MODEL_DIAGNOSTIC_EVENT_VERSION,
-            method: "model_diagnostic".into(),
-            payload_schema: PhenixSchema::Any,
-            projection: ListenerProjection::Exact,
-            dependencies: Vec::new(),
-            failure_policy: EventFailurePolicy::Warn,
-            required_authority: Authority::default(),
-        }],
+        listeners: vec![
+            ComponentListener {
+                id: SubscriptionId::parse("phenix.debug/listener/model-diagnostic")
+                    .expect("static model diagnostic listener id is valid"),
+                event: model_diagnostic_event_type(),
+                event_version: MODEL_DIAGNOSTIC_EVENT_VERSION,
+                method: "model_diagnostic".into(),
+                payload_schema: PhenixSchema::Any,
+                projection: ListenerProjection::Exact,
+                dependencies: Vec::new(),
+                failure_policy: EventFailurePolicy::Warn,
+                required_authority: Authority::default(),
+            },
+            ComponentListener {
+                id: SubscriptionId::parse("phenix.debug/listener/agent-diagnostic")
+                    .expect("static agent diagnostic listener id is valid"),
+                event: agent_diagnostic_event_type(),
+                event_version: AGENT_DIAGNOSTIC_EVENT_VERSION,
+                method: "agent_diagnostic".into(),
+                payload_schema: PhenixSchema::Any,
+                projection: ListenerProjection::Exact,
+                dependencies: Vec::new(),
+                failure_policy: EventFailurePolicy::Warn,
+                required_authority: Authority::default(),
+            },
+        ],
         id: debug_component_id(),
         owner: crate::Plugin::plugin_id(),
         imports: vec![
@@ -135,12 +150,18 @@ mod tests {
             .unwrap()
             .is_none());
         let manifest = debug_component_manifest(authority);
-        assert_eq!(manifest.listeners.len(), 1);
+        assert_eq!(manifest.listeners.len(), 2);
         let model_listener = manifest
             .listeners
             .iter()
             .find(|listener| listener.event == model_diagnostic_event_type())
             .expect("model diagnostic listener");
         assert_eq!(model_listener.failure_policy, EventFailurePolicy::Warn);
+        let agent_listener = manifest
+            .listeners
+            .iter()
+            .find(|listener| listener.event == agent_diagnostic_event_type())
+            .expect("agent diagnostic listener");
+        assert_eq!(agent_listener.failure_policy, EventFailurePolicy::Warn);
     }
 }
