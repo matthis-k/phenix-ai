@@ -613,7 +613,9 @@ impl ApplicationWorker {
         {
             LogSink::parse(&spec.to_string_lossy())
         } else {
-            LogSink::from_env()?.ok_or_else(|| "no local Phenix log sink is configured".to_owned())
+            LogSink::from_env().and_then(|sink| {
+                sink.ok_or_else(|| "no local Phenix log sink is configured".to_owned())
+            })
         }
         .map_err(|message| ApplicationError::Failed { message })?;
         StructuredLogReader::configured(sink)
