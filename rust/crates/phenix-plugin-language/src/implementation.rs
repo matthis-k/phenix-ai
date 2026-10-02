@@ -33,6 +33,7 @@ const WORKSPACE_WRITE: &str = "workspace.write";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct DerivedOutgoingRelationPointer {
+    source_revision: Option<String>,
     target: LogicalCodeEntity,
     target_revision: String,
     stored_kind: CodeEntityRelationKind,
@@ -42,7 +43,7 @@ struct DerivedOutgoingRelationPointer {
 struct DerivedOutgoingRelationIndex {
     repository_sequence: u64,
     complete: bool,
-    pointers: Vec<DerivedOutgoingRelationPointer>,
+    pointers_by_source: BTreeMap<String, Vec<DerivedOutgoingRelationPointer>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1250,18 +1251,13 @@ fn repository_entity_index_key(repository_id: &str) -> String {
     format!("index/repository/{repository_id}/entities")
 }
 
-fn outgoing_relation_index_key(
-    repository_id: &str,
-    entity_id: &str,
-    revision: &str,
-    kind: CodeRelationKind,
-) -> String {
+fn outgoing_relation_index_key(repository_id: &str, kind: CodeRelationKind) -> String {
     let kind = match kind {
         CodeRelationKind::Calls => "calls",
         CodeRelationKind::References => "references",
         CodeRelationKind::Implements => "implements",
     };
-    format!("index/outgoing/{repository_id}/{entity_id}/{revision}/{kind}")
+    format!("index/outgoing/{repository_id}/{kind}")
 }
 
 fn entity_relations_key(
@@ -2263,12 +2259,7 @@ fn query_outgoing_relation_kind(
         .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
         .transpose()?
         .unwrap_or(0);
-    let index_key = outgoing_relation_index_key(
-        repository_id,
-        &source_revision.entity.id,
-        &source_revision.revision,
-        kind,
-    );
+    let index_key = outgoing_relation_index_key(repository_id, kind);
     let existing_index = context
         .kernel
         .read_durable(&language_namespace(), &index_key)
@@ -2287,7 +2278,6 @@ fn query_outgoing_relation_kind(
             let index = build_outgoing_relation_index(
                 context,
                 repository_id,
-                source_revision,
                 kind,
                 repository_entities,
                 repository_sequence,
@@ -2321,7 +2311,19 @@ fn query_outgoing_relation_kind(
 
     let mut complete = index.complete;
     let mut edges = Vec::new();
-    for pointer in index.pointers {
+    let pointers = index
+        .pointers_by_source
+        .get(&source_revision.entity.id)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for pointer in pointers {
+        if pointer
+            .source_revision
+            .as_deref()
+            .is_some_and(|revision| revision != source_revision.revision)
+        {
+            continue;
+        }
         let Some(relations) = read_entity_relations(
             context,
             &pointer.target.repository_id,
@@ -2329,8 +2331,7 @@ fn query_outgoing_relation_kind(
             &pointer.target_revision,
             pointer.stored_kind,
             u32::MAX,
-        )?
-        else {
+        )? else {
             complete = false;
             continue;
         };
@@ -2354,14 +2355,13 @@ fn query_outgoing_relation_kind(
 fn build_outgoing_relation_index(
     context: &LanguageContext<'_, '_, '_>,
     repository_id: &str,
-    source_revision: &CodeEntityRevision,
     kind: CodeRelationKind,
     repository_entities: &[CodeEntityRevision],
     repository_sequence: u64,
 ) -> Result<DerivedOutgoingRelationIndex, String> {
     let stored_kind = stored_relation_kind(kind);
     let mut complete = true;
-    let mut pointers = Vec::new();
+    let mut pointers_by_source = BTreeMap::<String, Vec<DerivedOutgoingRelationPointer>>::new();
 
     for target_revision in repository_entities {
         match read_entity_relations(
@@ -2374,38 +2374,41 @@ fn build_outgoing_relation_index(
         )? {
             Some(relations) => {
                 complete &= relations.complete;
-                let points_to_source = relations.targets.iter().any(|source| {
-                    source.entity == source_revision.entity
-                        && source
-                            .revision
-                            .as_deref()
-                            .is_none_or(|revision| revision == source_revision.revision)
-                });
-                if points_to_source {
-                    pointers.push(DerivedOutgoingRelationPointer {
-                        target: target_revision.entity.clone(),
-                        target_revision: target_revision.revision.clone(),
-                        stored_kind,
-                    });
+                for source in &relations.targets {
+                    if source.entity.repository_id != repository_id {
+                        continue;
+                    }
+                    pointers_by_source
+                        .entry(source.entity.id.clone())
+                        .or_default()
+                        .push(DerivedOutgoingRelationPointer {
+                            source_revision: source.revision.clone(),
+                            target: target_revision.entity.clone(),
+                            target_revision: target_revision.revision.clone(),
+                            stored_kind,
+                        });
                 }
             }
             None => complete = false,
         }
     }
 
-    pointers.sort_by(|left, right| {
-        left.target
-            .repository_id
-            .cmp(&right.target.repository_id)
-            .then_with(|| left.target.id.cmp(&right.target.id))
-            .then_with(|| left.target_revision.cmp(&right.target_revision))
-            .then_with(|| left.stored_kind.cmp(&right.stored_kind))
-    });
-    pointers.dedup();
+    for pointers in pointers_by_source.values_mut() {
+        pointers.sort_by(|left, right| {
+            left.source_revision
+                .cmp(&right.source_revision)
+                .then_with(|| left.target.repository_id.cmp(&right.target.repository_id))
+                .then_with(|| left.target.id.cmp(&right.target.id))
+                .then_with(|| left.target_revision.cmp(&right.target_revision))
+                .then_with(|| left.stored_kind.cmp(&right.stored_kind))
+        });
+        pointers.dedup();
+    }
+
     Ok(DerivedOutgoingRelationIndex {
         repository_sequence,
         complete,
-        pointers,
+        pointers_by_source,
     })
 }
 
