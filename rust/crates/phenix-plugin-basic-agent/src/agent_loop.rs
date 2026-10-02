@@ -17,7 +17,6 @@ pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
 pub const AGENT_TOOL_EXECUTION_SERVICE: &str = "phenix.agent-tool-execution@1";
 pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
 pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
-pub const DEFAULT_MAX_MODEL_TURNS: u32 = 16;
 pub const DEFAULT_MAX_TOOL_CALLS_PER_TURN: u32 = 10;
 pub const DEFAULT_MAX_TOOL_OBSERVATION_MODEL_BYTES: u64 = 64 * 1024;
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
@@ -75,7 +74,7 @@ impl ComponentInterface for AgentLoopProgressInterface {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentLoopPolicy {
-    max_model_turns: NonZeroU32,
+    max_model_turns: Option<NonZeroU32>,
     max_tool_calls_per_turn: NonZeroU32,
     result_reduction: bool,
 }
@@ -84,14 +83,14 @@ impl AgentLoopPolicy {
     #[must_use]
     pub const fn new(max_model_turns: NonZeroU32, max_tool_calls_per_turn: NonZeroU32) -> Self {
         Self {
-            max_model_turns,
+            max_model_turns: Some(max_model_turns),
             max_tool_calls_per_turn,
             result_reduction: true,
         }
     }
 
     #[must_use]
-    pub const fn max_model_turns(self) -> NonZeroU32 {
+    pub const fn max_model_turns(self) -> Option<NonZeroU32> {
         self.max_model_turns
     }
 
@@ -114,11 +113,12 @@ impl AgentLoopPolicy {
 
 impl Default for AgentLoopPolicy {
     fn default() -> Self {
-        Self::new(
-            NonZeroU32::new(DEFAULT_MAX_MODEL_TURNS).expect("default model-turn limit is non-zero"),
-            NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN)
+        Self {
+            max_model_turns: None,
+            max_tool_calls_per_turn: NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN)
                 .expect("default per-turn tool-call limit is non-zero"),
-        )
+            result_reduction: true,
+        }
     }
 }
 
@@ -429,7 +429,15 @@ fn run(
         tool_calls: 0,
     };
 
-    for _ in 0..policy.max_model_turns().get() {
+    loop {
+        if let Some(limit) = policy.max_model_turns() {
+            if usage.model_calls >= limit.get() {
+                return Ok(AgentLoopResponse::Failed {
+                    failure: AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() },
+                    usage,
+                });
+            }
+        }
         if context
             .kernel
             .cancellation_token()
@@ -564,13 +572,6 @@ fn run(
             tool_results,
         });
     }
-
-    Ok(AgentLoopResponse::Failed {
-        failure: AgentLoopFailure::ModelTurnLimitExceeded {
-            limit: policy.max_model_turns().get(),
-        },
-        usage,
-    })
 }
 
 fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
@@ -661,14 +662,21 @@ mod tests {
     }
 
     #[test]
-    fn default_progression_policy_preserves_existing_limits() {
+    fn default_progression_policy_has_no_model_turn_limit() {
         let policy = AgentLoopPolicy::default();
-        assert_eq!(policy.max_model_turns().get(), DEFAULT_MAX_MODEL_TURNS);
+        assert_eq!(policy.max_model_turns(), None);
         assert_eq!(
             policy.max_tool_calls_per_turn().get(),
             DEFAULT_MAX_TOOL_CALLS_PER_TURN
         );
-        assert_eq!(DEFAULT_MAX_MODEL_TURNS, 16);
         assert_eq!(DEFAULT_MAX_TOOL_CALLS_PER_TURN, 10);
+    }
+
+    #[test]
+    fn explicit_model_turn_limit_remains_available() {
+        let limit = NonZeroU32::new(16).unwrap();
+        let per_turn = NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN).unwrap();
+        let policy = AgentLoopPolicy::new(limit, per_turn);
+        assert_eq!(policy.max_model_turns(), Some(limit));
     }
 }
