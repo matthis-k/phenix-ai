@@ -14,7 +14,7 @@ use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, AgentLoopCommand, AgentLoopControlInterface,
-    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopProgress,
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
     AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
     AgentToolExecutionResponse,
