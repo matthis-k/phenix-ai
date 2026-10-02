@@ -634,15 +634,13 @@ impl ApplicationWorker {
             .clamp(1, MAX_LIMIT);
         let reader = self.log_reader()?;
         let mut records = Vec::new();
-        let mut next_cursor = None;
 
-        'scan: loop {
+        let next_cursor = 'scan: loop {
             let page = reader
                 .read_page(cursor, READ_BATCH)
                 .map_err(|message| ApplicationError::Failed { message })?;
             if page.records.is_empty() {
-                next_cursor = None;
-                break;
+                break 'scan None;
             }
 
             let page_has_more = page.next_cursor.is_some();
@@ -659,23 +657,16 @@ impl ApplicationWorker {
                 }
                 records.push(application_log_record(record_cursor, raw)?);
                 if records.len() == limit {
-                    next_cursor = (index + 1 < page_record_count || page_has_more)
+                    break 'scan (index + 1 < page_record_count || page_has_more)
                         .then(|| cursor.to_string());
-                    break 'scan;
                 }
             }
 
             match page.next_cursor {
-                Some(next) => {
-                    cursor = next;
-                    next_cursor = Some(cursor.to_string());
-                }
-                None => {
-                    next_cursor = None;
-                    break;
-                }
+                Some(next) => cursor = next,
+                None => break 'scan None,
             }
-        }
+        };
 
         Ok(LogPage {
             records,
