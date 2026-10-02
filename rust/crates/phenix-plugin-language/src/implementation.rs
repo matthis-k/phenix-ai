@@ -5016,6 +5016,46 @@ mod tests {
         assert_eq!(locator.selection_range.end.character, 12);
         assert!(locator.body_range.is_none());
 
+        let LanguageResponse::EntitySource {
+            view: Some(point_source),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntitySource {
+                repository_id: first.entity.repository_id.clone(),
+                entity_id: first.entity.id.clone(),
+                revision: first.revision.clone(),
+                max_bytes: 1024,
+            },
+        )
+        .unwrap() else {
+            panic!("expected point source read");
+        };
+        let LanguageResponse::Query {
+            result: source_query,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: first.entity.clone(),
+                        revision: Some(first.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Source,
+                    traversal: None,
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 1,
+                        max_relations: 0,
+                        max_bytes: 4 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap() else {
+            panic!("expected unified source query");
+        };
+        assert_eq!(source_query.sources, vec![point_source]);
+
         let LanguageResponse::Query {
             result: document_query,
         } = invoke(
@@ -5094,6 +5134,28 @@ mod tests {
             .expect("inner source location");
         assert_eq!(inner_source.range.start.character, 17);
         assert_eq!(inner_source.range.end.character, 30);
+
+        let query_body_error = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: first.entity.clone(),
+                        revision: Some(first.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Body,
+                    traversal: None,
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 1,
+                        max_relations: 0,
+                        max_bytes: 4 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap_err();
+        assert!(query_body_error.contains("no exact semantic body range"));
 
         let body_error = invoke(
             &mut kernel,
