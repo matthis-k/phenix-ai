@@ -4,7 +4,7 @@ use phenix_core::{
 };
 use phenix_sdk::{
     ContextCompactionInterface, ContextExpansionInterface, ContextInterface, ExecutionInterface,
-    ExecutionResourceInterface,
+    ExecutionResourceInterface, LanguageInterface,
 };
 
 const CONTEXT_COMPONENT: &str = "phenix.context";
@@ -46,6 +46,7 @@ pub fn context_component_manifest() -> ComponentManifest {
             },
             optional_import::<ContextCompactionInterface>(&authority),
             optional_import::<ContextExpansionInterface>(&authority),
+            optional_import::<LanguageInterface>(&phenix_core::Authority::default()),
         ],
         exports: vec![ComponentExport {
             interface: ContextInterface::interface_id(),
@@ -127,6 +128,10 @@ mod tests {
                 &context_component_id(),
                 &ContextExpansionInterface::interface_id()
             )
+            .unwrap()
+            .is_none());
+        assert!(graph
+            .import_handle(&context_component_id(), &LanguageInterface::interface_id())
             .unwrap()
             .is_none());
     }
