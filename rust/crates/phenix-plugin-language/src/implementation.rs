@@ -4298,8 +4298,7 @@ mod tests {
                 },
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected ranked unified code query result");
         };
 
