@@ -22,10 +22,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const INVOCATION_DEFAULTS_PLUGIN: &str = "phenix.harness.invocation-defaults";
 pub const INVOCATION_DEFAULTS_COMPONENT: &str = "phenix.harness.invocation-defaults";
 const ROUTING_PROFILE_OPTION: &str = "model.default";
-const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v1";
-const HELPER_POLICY_REVISION: &str = "harness.usage.helper.v1";
-const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v1";
-const HELPER_ROUTE_POLICY_REVISION: &str = "harness.routing.helper.v1";
+const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v2";
+const HELPER_POLICY_REVISION: &str = "harness.usage.helper.v2";
+const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v2";
+const HELPER_ROUTE_POLICY_REVISION: &str = "harness.routing.helper.v2";
 
 #[must_use]
 pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManifest {
@@ -267,7 +267,7 @@ fn resolve_defaults(
         &request.tools,
         DEFAULT_POLICY_REVISION,
         DEFAULT_ROUTE_POLICY_REVISION,
-        1,
+        u32::MAX,
     ))
 }
 
@@ -335,7 +335,7 @@ fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParam
         &request.tools,
         HELPER_POLICY_REVISION,
         HELPER_ROUTE_POLICY_REVISION,
-        0,
+        u32::MAX,
     )
 }
 
@@ -355,18 +355,18 @@ fn invocation_params(
         profile_id,
         policy: UsagePolicy {
             revision: policy_revision.into(),
-            max_fresh_input_tokens: 128 * 1024,
-            max_output_tokens: 16 * 1024,
+            max_fresh_input_tokens: u64::MAX,
+            max_output_tokens: u64::MAX,
             max_cost_microunits: None,
             max_retries,
-            max_tool_result_bytes: 1024 * 1024,
-            max_tool_schemas: 128,
-            max_skills: 64,
+            max_tool_result_bytes: u64::MAX,
+            max_tool_schemas: u32::MAX,
+            max_skills: u32::MAX,
             require_known_capacity: false,
             delegation: DelegationResourcePolicy::default(),
         },
         intent: InvocationIntent {
-            output_reserve_tokens: 8 * 1024,
+            output_reserve_tokens: 0,
             required_context_capabilities: BTreeSet::new(),
             required_capabilities: BTreeSet::new(),
             required_tools: BTreeSet::new(),
@@ -379,7 +379,7 @@ fn invocation_params(
         route_policy: RouteSelectionPolicy {
             revision: route_policy_revision.into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 8,
+            max_candidate_attempts: u32::MAX,
         },
     }
 }
@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn helper_defaults_preserve_pinned_profile_and_disable_retries() {
+    fn helper_defaults_preserve_pinned_profile_without_implicit_retry_cap() {
         let request = HelperInvocationRequest {
             execution_id: "execution-1".into(),
             parent_attempt_id: "attempt-1".into(),
@@ -485,6 +485,6 @@ mod tests {
         let params = resolve_helper_defaults(&request);
         assert_eq!(params.profile_id, request.profile_id);
         assert_eq!(params.policy.revision, HELPER_POLICY_REVISION);
-        assert_eq!(params.policy.max_retries, 0);
+        assert_eq!(params.policy.max_retries, u32::MAX);
     }
 }
