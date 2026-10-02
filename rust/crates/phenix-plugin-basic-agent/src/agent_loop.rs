@@ -11,15 +11,13 @@ use phenix_sdk::{
     AGENT_DIAGNOSTIC_EVENT_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, num::NonZeroU32};
+use std::{collections::BTreeMap, num::{NonZeroU32, NonZeroU64}};
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";
 pub const AGENT_TOOL_EXECUTION_SERVICE: &str = "phenix.agent-tool-execution@1";
 pub const AGENT_LOOP_PROGRESS_SERVICE: &str = "phenix.agent-loop-progress@1";
 pub const AGENT_LOOP_CONTROL_SERVICE: &str = "phenix.agent-loop-control@1";
-pub const DEFAULT_MAX_TOOL_CALLS_PER_TURN: u32 = 10;
-pub const DEFAULT_MAX_TOOL_OBSERVATION_MODEL_BYTES: u64 = 64 * 1024;
 const AGENT_LOOP_COMPONENT: &str = "phenix.agent-loop";
 
 pub struct AgentLoopInterface;
@@ -76,7 +74,8 @@ impl ComponentInterface for AgentLoopProgressInterface {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentLoopPolicy {
     max_model_turns: Option<NonZeroU32>,
-    max_tool_calls_per_turn: NonZeroU32,
+    max_tool_calls_per_turn: Option<NonZeroU32>,
+    max_tool_observation_model_bytes: Option<NonZeroU64>,
     result_reduction: bool,
 }
 
@@ -85,7 +84,8 @@ impl AgentLoopPolicy {
     pub const fn new(max_model_turns: NonZeroU32, max_tool_calls_per_turn: NonZeroU32) -> Self {
         Self {
             max_model_turns: Some(max_model_turns),
-            max_tool_calls_per_turn,
+            max_tool_calls_per_turn: Some(max_tool_calls_per_turn),
+            max_tool_observation_model_bytes: None,
             result_reduction: true,
         }
     }
@@ -96,8 +96,19 @@ impl AgentLoopPolicy {
     }
 
     #[must_use]
-    pub const fn max_tool_calls_per_turn(self) -> NonZeroU32 {
+    pub const fn max_tool_calls_per_turn(self) -> Option<NonZeroU32> {
         self.max_tool_calls_per_turn
+    }
+
+    #[must_use]
+    pub const fn max_tool_observation_model_bytes(self) -> Option<NonZeroU64> {
+        self.max_tool_observation_model_bytes
+    }
+
+    #[must_use]
+    pub const fn with_tool_observation_model_bytes(mut self, limit: NonZeroU64) -> Self {
+        self.max_tool_observation_model_bytes = Some(limit);
+        self
     }
 
     #[must_use]
@@ -116,8 +127,8 @@ impl Default for AgentLoopPolicy {
     fn default() -> Self {
         Self {
             max_model_turns: None,
-            max_tool_calls_per_turn: NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN)
-                .expect("default per-turn tool-call limit is non-zero"),
+            max_tool_calls_per_turn: None,
+            max_tool_observation_model_bytes: None,
             result_reduction: true,
         }
     }
@@ -575,20 +586,24 @@ fn run(
             return Ok(AgentLoopResponse::Completed { output, usage });
         }
 
-        let limit = policy.max_tool_calls_per_turn().get();
-        if actual > limit {
-            let failure = AgentLoopFailure::ToolCallLimitExceeded { limit, actual };
-            emit_agent_diagnostic(
-                context,
-                AgentDiagnosticEvent::RunFailed {
-                    execution_id: execution_id.clone(),
-                    session_id: session_id.clone(),
-                    reason: format!("{failure:?}"),
-                    model_calls: usage.model_calls,
-                    tool_calls: usage.tool_calls,
-                },
-            );
-            return Ok(AgentLoopResponse::Failed { failure, usage });
+        if let Some(limit) = policy.max_tool_calls_per_turn() {
+            if actual > limit.get() {
+                let failure = AgentLoopFailure::ToolCallLimitExceeded {
+                    limit: limit.get(),
+                    actual,
+                };
+                emit_agent_diagnostic(
+                    context,
+                    AgentDiagnosticEvent::RunFailed {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        reason: format!("{failure:?}"),
+                        model_calls: usage.model_calls,
+                        tool_calls: usage.tool_calls,
+                    },
+                );
+                return Ok(AgentLoopResponse::Failed { failure, usage });
+            }
         }
 
         let mut tool_results = Vec::with_capacity(tool_calls.len());
@@ -683,7 +698,9 @@ fn run(
                 let projection = observation
                     .project(
                         observations.get(&call.callable_id),
-                        DEFAULT_MAX_TOOL_OBSERVATION_MODEL_BYTES,
+                        policy
+                            .max_tool_observation_model_bytes()
+                            .map_or(u64::MAX, NonZeroU64::get),
                         policy.result_reduction(),
                     )
                     .map_err(|error| format!("tool observation projection failed: {error:?}"))?;
@@ -848,17 +865,14 @@ mod tests {
     fn default_progression_policy_has_no_model_turn_limit() {
         let policy = AgentLoopPolicy::default();
         assert_eq!(policy.max_model_turns(), None);
-        assert_eq!(
-            policy.max_tool_calls_per_turn().get(),
-            DEFAULT_MAX_TOOL_CALLS_PER_TURN
-        );
-        assert_eq!(DEFAULT_MAX_TOOL_CALLS_PER_TURN, 10);
+        assert_eq!(policy.max_tool_calls_per_turn(), None);
+        assert_eq!(policy.max_tool_observation_model_bytes(), None);
     }
 
     #[test]
     fn explicit_model_turn_limit_remains_available() {
         let limit = NonZeroU32::new(16).unwrap();
-        let per_turn = NonZeroU32::new(DEFAULT_MAX_TOOL_CALLS_PER_TURN).unwrap();
+        let per_turn = NonZeroU32::new(10).unwrap();
         let policy = AgentLoopPolicy::new(limit, per_turn);
         assert_eq!(policy.max_model_turns(), Some(limit));
     }
