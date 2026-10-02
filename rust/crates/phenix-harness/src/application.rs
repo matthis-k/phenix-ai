@@ -4523,6 +4523,7 @@ fn configured_capabilities() -> Vec<ContractId> {
         "client-tools",
         "interaction",
         "review",
+        "logs",
     ]
     .into_iter()
     .map(|name| {
