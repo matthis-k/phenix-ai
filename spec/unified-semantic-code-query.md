@@ -281,6 +281,17 @@ The index must never become the canonical owner of entities or relations.
 
 The first implementation should use the simplest deterministic index that prevents full relation scans for normal traversal. Do not add an external graph database.
 
+Cold and stale index behavior is explicit:
+
+- a missing repository-entity index rebuilds once from the canonical entity-change stream;
+- a stale repository-entity index advances from only the change events after its stored repository sequence;
+- a missing outgoing reverse index rebuilds once from current canonical relation facts;
+- a stale complete outgoing index refreshes only entities changed after its stored sequence;
+- a stale incomplete outgoing index rebuilds from canonical facts so newly complete provider evidence can restore complete coverage;
+- every rebuild or delta advance is pinned to one repository sequence and committed with compare-and-set checks against both the canonical sequence and the prior derived index.
+
+The worst cold path remains linear in persisted repository evidence. Normal post-build traversal does not rescan the whole repository after every semantic change. Derived indexes remain disposable and rebuildable.
+
 ## Revision semantics
 
 A query must not silently combine incompatible revisions.
@@ -371,7 +382,7 @@ This PR should establish:
 - compatibility with existing `LogicalCodeEntity` and relation persistence;
 - regression tests proving existing point reads and new graph reads observe the same facts.
 
-Richer containment extraction and cold-build behavior may follow in later commits on the same PR if they remain coherent. Context projection now consumes the unified query contract through the typed language binding. Budget truncation uses deterministic structural ranking by root, semantic hop distance, and canonical relation identity.
+Richer containment extraction may follow in later commits on the same PR if it remains coherent. Context projection now consumes the unified query contract through the typed language binding. Budget truncation uses deterministic structural ranking by root, semantic hop distance, and canonical relation identity. Derived indexes use one cold canonical rebuild and sequence-pinned delta catch-up after later changes.
 
 ## Acceptance
 
