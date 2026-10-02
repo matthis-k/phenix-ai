@@ -202,7 +202,8 @@ pub enum RoutingEstimateMode {
 pub struct RouteSelectionPolicy {
     pub revision: String,
     pub estimates: RoutingEstimateMode,
-    pub max_candidate_attempts: u32,
+    #[serde(default)]
+    pub max_candidate_attempts: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -279,14 +280,16 @@ pub fn select_route(
     }
 
     let eligible_count = u32::try_from(eligible.len()).unwrap_or(u32::MAX);
-    if eligible_count > policy.max_candidate_attempts {
-        eligible.sort_by_key(|candidate| candidate.ordinal);
-        eligible.truncate(policy.max_candidate_attempts as usize);
-        if eligible.is_empty() {
-            return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
-                eligible: eligible_count,
-                allowed: policy.max_candidate_attempts,
-            });
+    if let Some(limit) = policy.max_candidate_attempts {
+        if eligible_count > limit {
+            eligible.sort_by_key(|candidate| candidate.ordinal);
+            eligible.truncate(limit as usize);
+            if eligible.is_empty() {
+                return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
+                    eligible: eligible_count,
+                    allowed: limit,
+                });
+            }
         }
     }
 
@@ -533,7 +536,7 @@ mod tests {
             &RouteSelectionPolicy {
                 revision: "deterministic".into(),
                 estimates: RoutingEstimateMode::Ignore,
-                max_candidate_attempts: 8,
+                max_candidate_attempts: Some(8),
             },
         )
         .unwrap();
@@ -586,7 +589,7 @@ mod tests {
                 estimates: RoutingEstimateMode::PreferTrusted {
                     min_confidence_millis: 800,
                 },
-                max_candidate_attempts: 8,
+                max_candidate_attempts: Some(8),
             },
         )
         .unwrap();
