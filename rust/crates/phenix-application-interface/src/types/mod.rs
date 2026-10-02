@@ -1,7 +1,7 @@
 //! Application-owned payloads. Runtime service records and protocol envelopes stay at adapters.
 use phenix_core::{
-    CallableId, ContractId, InvocationFailure, InvocationFailureClass, ModelId, PhenixSchema,
-    PhenixValue, PluginId, RoutingProfileId, SessionId, SkillId,
+    Bytes, CallableId, ContentReference, ContractId, InvocationFailure, InvocationFailureClass,
+    ModelId, PhenixSchema, PhenixValue, PluginId, RoutingProfileId, SessionId, SkillId,
 };
 use phenix_sdk_macros::{PhenixContract, PhenixValue};
 
@@ -22,10 +22,12 @@ macro_rules! variants {
 
 mod discovery;
 mod interaction;
+mod log;
 mod observable;
 mod session;
 pub use discovery::*;
 pub use interaction::*;
+pub use log::*;
 pub use observable::*;
 pub use session::*;
 
