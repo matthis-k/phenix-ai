@@ -379,7 +379,7 @@ fn invocation_params(
         route_policy: RouteSelectionPolicy {
             revision: route_policy_revision.into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: u32::MAX,
+            max_candidate_attempts: None,
         },
     }
 }
