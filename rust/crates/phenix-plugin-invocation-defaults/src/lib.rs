@@ -392,6 +392,28 @@ mod tests {
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
 
     #[test]
+    fn default_invocation_policy_has_no_implicit_limits_or_deadline() {
+        let params = invocation_params(
+            RoutingProfileId::parse("default").unwrap(),
+            None,
+            &[],
+            DEFAULT_POLICY_REVISION,
+            DEFAULT_ROUTE_POLICY_REVISION,
+        );
+
+        assert_eq!(params.policy.max_fresh_input_tokens, None);
+        assert_eq!(params.policy.max_output_tokens, None);
+        assert_eq!(params.policy.max_cost_microunits, None);
+        assert_eq!(params.policy.max_retries, None);
+        assert_eq!(params.policy.max_tool_result_bytes, None);
+        assert_eq!(params.policy.max_tool_schemas, None);
+        assert_eq!(params.policy.max_skills, None);
+        assert_eq!(params.intent.output_reserve_tokens, 0);
+        assert_eq!(params.intent.deadline_at_ms, None);
+        assert_eq!(params.route_policy.max_candidate_attempts, None);
+    }
+
+    #[test]
     fn provider_exports_replaceable_interfaces() {
         let authority = Authority::default();
         let manifest = invocation_defaults_manifest(authority.clone());
