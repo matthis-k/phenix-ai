@@ -85,6 +85,18 @@ mod tests {
     }
 
     #[test]
+    fn context_language_import_is_optional_and_authority_free() {
+        let manifest = context_component_manifest();
+        let import = manifest
+            .imports
+            .iter()
+            .find(|import| import.interface == LanguageInterface::interface_id())
+            .expect("context declares language import");
+        assert!(!import.required);
+        assert_eq!(import.authority, Authority::default());
+    }
+
+    #[test]
     fn context_execution_import_binds_to_execution_component() {
         let graph = ResolvedComponentGraph::compile(
             [execution_manifest(authority()), context_manifest()],
