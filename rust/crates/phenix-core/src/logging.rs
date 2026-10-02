@@ -82,6 +82,28 @@ impl LogSink {
     }
 
     #[must_use]
+    pub fn default_local_directory() -> PathBuf {
+        if let Some(state_db) = env::var_os("PHENIX_STATE_DB") {
+            let state_db = PathBuf::from(state_db);
+            if let Some(parent) = state_db.parent() {
+                return parent.to_path_buf();
+            }
+        }
+        if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
+            return PathBuf::from(state_home).join("phenix");
+        }
+        if let Some(home) = env::var_os("HOME") {
+            return PathBuf::from(home).join(".local/state/phenix");
+        }
+        env::temp_dir().join("phenix")
+    }
+
+    #[must_use]
+    pub fn default_local() -> Self {
+        Self::Directory(Self::default_local_directory())
+    }
+
+    #[must_use]
     pub fn description(&self) -> String {
         match self {
             Self::Stderr => "stderr".into(),
