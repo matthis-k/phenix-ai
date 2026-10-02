@@ -180,6 +180,7 @@ mod tests {
 
     #[test]
     fn default_recovery_policy_has_no_implicit_limits_or_timeout() {
+        // Callers opt into finite recovery limits; the default does not invent them.
         let policy = RecoveryClassifierPolicy::default();
         assert_eq!(policy.max_prompt_bytes, None);
         assert_eq!(policy.max_anchors, None);
