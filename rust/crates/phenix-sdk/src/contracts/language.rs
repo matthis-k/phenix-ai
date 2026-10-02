@@ -486,6 +486,7 @@ pub enum CodeEntityRelationKind {
     Callers,
     References,
     Implementations,
+    Contains,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -535,6 +536,150 @@ pub struct CodeChangedNeighborhood {
     #[serde(default)]
     pub relations: Vec<CodeEntityRelations>,
     pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "anchor", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CodeQueryAnchor {
+    Position {
+        repository_id: String,
+        document: LanguageDocumentIdentity,
+        position: CodeSourcePosition,
+        position_encoding: CodePositionEncoding,
+    },
+    Entity {
+        entity: LogicalCodeEntity,
+        revision: Option<String>,
+    },
+    Document {
+        repository_id: String,
+        document: LanguageDocumentIdentity,
+    },
+    Repository {
+        repository_id: String,
+    },
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeRelationKind {
+    Calls,
+    References,
+    Implements,
+    Contains,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "selection", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CodeQuerySelection {
+    Entities,
+    Source,
+    Body,
+    Relations {
+        #[serde(default)]
+        kinds: Vec<CodeRelationKind>,
+    },
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeQueryDirection {
+    Outgoing,
+    Incoming,
+    Both,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryTraversal {
+    pub direction: CodeQueryDirection,
+    pub max_depth: u32,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeQueryProjection {
+    Identity,
+    Structural,
+    SourceLocations,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryBudget {
+    pub max_entities: u32,
+    pub max_relations: u32,
+    pub max_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQuery {
+    pub anchor: CodeQueryAnchor,
+    pub selection: CodeQuerySelection,
+    pub traversal: Option<CodeQueryTraversal>,
+    pub projection: CodeQueryProjection,
+    pub budget: CodeQueryBudget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryEntity {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub name: Option<String>,
+    pub document: Option<LanguageDocumentIdentity>,
+    pub symbol: Option<String>,
+    pub signature_identity: Option<String>,
+    pub source: Option<CodeEntitySourceLocator>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryRelation {
+    pub source: LogicalCodeEntity,
+    pub source_revision: Option<String>,
+    pub kind: CodeRelationKind,
+    pub relation_revision: String,
+    pub target: CodeEntityRelationTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryCoverage {
+    pub repository_sequence: u64,
+    pub complete: bool,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryResult {
+    pub repository_id: String,
+    #[serde(default)]
+    pub roots: Vec<CodeEntityRelationTarget>,
+    #[serde(default)]
+    pub entities: Vec<CodeQueryEntity>,
+    #[serde(default)]
+    pub relations: Vec<CodeQueryRelation>,
+    #[serde(default)]
+    pub sources: Vec<CodeEntitySourceView>,
+    pub coverage: CodeQueryCoverage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -611,6 +756,9 @@ pub enum CodeEntityInsertPosition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
+    Query {
+        query: CodeQuery,
+    },
     ActivateProvider {
         workspace_id: String,
         provider_id: String,
@@ -767,6 +915,9 @@ pub enum LanguageCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum LanguageResponse {
+    Query {
+        result: CodeQueryResult,
+    },
     Provider {
         epoch: Option<LanguageProviderEpoch>,
     },
@@ -859,6 +1010,30 @@ mod code_entity_facet_resource_tests {
     #[test]
     fn structured_code_actions_do_not_expose_provider_transport_selection() {
         let commands = [
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: LogicalCodeEntity {
+                            id: "entity".into(),
+                            repository_id: "repo".into(),
+                        },
+                        revision: Some("rev-1".into()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeRelationKind::References],
+                    },
+                    traversal: Some(CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 2,
+                    }),
+                    projection: CodeQueryProjection::Structural,
+                    budget: CodeQueryBudget {
+                        max_entities: 32,
+                        max_relations: 64,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
             LanguageCommand::ReadEntityBody {
                 repository_id: "repo".into(),
                 entity_id: "entity".into(),

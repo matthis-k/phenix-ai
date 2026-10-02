@@ -14,7 +14,7 @@ use phenix_sdk::{
     assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
     context_service, derive_continuation_delta, project_continuation_import,
     select_continuation_export, AdmittedContextItem, CachePlacement, ContextAdmissionRequest,
-    ContextCandidate, ContextCommand, ContextDescriptor, ContextInjection,
+    ContextCandidate, ContextCodeQueryRequest, ContextCommand, ContextDescriptor, ContextInjection,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
     ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
@@ -22,8 +22,8 @@ use phenix_sdk::{
     ContinuationProjectionRequest, ExactContextReference, ExecutionCommand,
     ExecutionContextProjection, ExecutionInterface, ExecutionResourceCommand,
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
-    ProjectedContextEntry, ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource,
-    WorkerTaskState,
+    LanguageCommand, LanguageInterface, LanguageResponse, ProjectedContextEntry,
+    ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource, WorkerTaskState,
 };
 use sha2::{Digest, Sha256};
 
@@ -37,6 +37,7 @@ const ALL_RESOURCES_KEY: &str = "resources/@all";
 struct ContextSdk<'host, 'runtime> {
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     resources: SdkClient<'host, 'runtime, ExecutionResourceInterface>,
+    language: SdkClient<'host, 'runtime, LanguageInterface>,
 }
 
 type ContextPluginContext<'host, 'runtime> =
@@ -50,6 +51,7 @@ fn context<'host, 'runtime>(
         ContextSdk {
             execution: SdkClient::new(host, context_component_id()),
             resources: SdkClient::new(host, context_component_id()),
+            language: SdkClient::new(host, context_component_id()),
         },
         (),
         (),
@@ -207,6 +209,12 @@ fn context_command_trace(command: &ContextCommand) -> ContextCommandTrace {
             None,
             Some(format!("sources={}", sources.len())),
         ),
+        ContextCommand::LoadCodeQuery { request } => (
+            "code_query_load",
+            Some(request.execution_id.clone()),
+            None,
+            Some(request.reason.clone()),
+        ),
         ContextCommand::Load {
             execution_id,
             resource_id,
@@ -328,6 +336,17 @@ fn context_response_summary(response: &ContextResponse) -> Option<String> {
             "resource={} revision={}",
             injection.source.resource_id, injection.source.revision
         )),
+        ContextResponse::CodeQueryLoaded {
+            injection, result, ..
+        } => Some(format!(
+            "resource={} revision={} repository={} entities={} relations={} truncated={}",
+            injection.source.resource_id,
+            injection.source.revision,
+            result.repository_id,
+            result.entities.len(),
+            result.relations.len(),
+            result.coverage.truncated
+        )),
         ContextResponse::Projection { projection } => {
             Some(format!("entries={}", projection.entries.len()))
         }
@@ -405,6 +424,7 @@ fn handle(
         } => Ok(ContextResponse::Discovered {
             descriptors: discover_repository(context, &workspace_id, sources)?,
         }),
+        ContextCommand::LoadCodeQuery { request } => load_code_query(context, state, request),
         ContextCommand::Load {
             execution_id,
             resource_id,
@@ -758,6 +778,62 @@ fn project_file_kind(path: &str) -> Option<ContextResourceKind> {
         "SKILL.md" => Some(ContextResourceKind::Skill),
         _ => None,
     }
+}
+
+fn load_code_query(
+    context: &ContextPluginContext<'_, '_>,
+    state: &mut ContextStateService,
+    request: ContextCodeQueryRequest,
+) -> Result<ContextResponse, String> {
+    require_active_execution(context, &request.execution_id)?;
+
+    let query = request.query;
+    let response: LanguageResponse = context
+        .sdk
+        .language
+        .invoke_projected(&LanguageCommand::Query {
+            query: query.clone(),
+        })
+        .map_err(|error| format!("semantic code query unavailable: {error}"))?;
+    let LanguageResponse::Query { result } = response else {
+        return Err(format!(
+            "semantic code query returned unexpected response: {response:?}"
+        ));
+    };
+
+    let content = serde_json::to_vec(&result).map_err(|error| error.to_string())?;
+    let identity_material = serde_json::to_vec(&(request.scope.clone(), query, &result))
+        .map_err(|error| error.to_string())?;
+    let identity = content_hash(&identity_material);
+    let resource_id = ContextResourceId::parse(format!("code-query:{}", identity.as_str()))
+        .map_err(str::to_owned)?;
+    let resource = register_resource(
+        context,
+        resource_id,
+        ContextResourceKind::External,
+        format!(
+            "language:code-query:{}@{}",
+            result.repository_id, result.coverage.repository_sequence
+        ),
+        request.scope,
+        Bytes::from(content),
+    )?;
+    let (injection, resource) = load_context(
+        context,
+        state,
+        request.execution_id,
+        resource.descriptor.resource_id.clone(),
+        resource.descriptor.revision.clone(),
+        request.requester,
+        request.lifetime,
+        request.reason,
+    )?;
+
+    Ok(ContextResponse::CodeQueryLoaded {
+        injection,
+        resource,
+        result,
+    })
 }
 
 fn load_delegated_result(

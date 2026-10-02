@@ -1,8 +1,8 @@
 use super::{
     context_admission::{ContextAdmissionRequest, ContextAdmissionResult, ContextCandidate},
-    CacheCompactionDecision, CacheCompactionDecisionRequest, CompactionCommit, CompactionProposal,
-    ContinuationExportResult, ContinuationImportProjection, ContinuationImportRequest,
-    ContinuationProjectionRequest, ProjectionRevision,
+    CacheCompactionDecision, CacheCompactionDecisionRequest, CodeQuery, CodeQueryResult,
+    CompactionCommit, CompactionProposal, ContinuationExportResult, ContinuationImportProjection,
+    ContinuationImportRequest, ContinuationProjectionRequest, ProjectionRevision,
 };
 use phenix_core::{
     Bytes, CallableId, ComponentInterface, ContextResourceId, ContextRevisionId, InterfaceId,
@@ -104,6 +104,17 @@ pub struct RepositoryContextSource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct ContextCodeQueryRequest {
+    pub execution_id: String,
+    pub scope: ContextScope,
+    pub query: CodeQuery,
+    pub requester: ContextInjectionRequester,
+    pub lifetime: ContextInjectionLifetime,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ContextCommand {
     Register {
@@ -121,6 +132,9 @@ pub enum ContextCommand {
     DiscoverRepository {
         workspace_id: String,
         sources: Vec<RepositoryContextSource>,
+    },
+    LoadCodeQuery {
+        request: ContextCodeQueryRequest,
     },
     Load {
         execution_id: String,
@@ -198,6 +212,11 @@ pub enum ContextResponse {
     },
     Discovered {
         descriptors: Vec<ContextDescriptor>,
+    },
+    CodeQueryLoaded {
+        injection: ContextInjection,
+        resource: ContextResourceRevision,
+        result: CodeQueryResult,
     },
     Loaded {
         injection: ContextInjection,

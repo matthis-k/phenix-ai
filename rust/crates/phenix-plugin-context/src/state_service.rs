@@ -118,6 +118,7 @@ impl ContextStateService {
             | ContextCommand::Get { .. }
             | ContextCommand::List
             | ContextCommand::DiscoverRepository { .. }
+            | ContextCommand::LoadCodeQuery { .. }
             | ContextCommand::Load { .. }
             | ContextCommand::LoadDelegatedResult { .. }
             | ContextCommand::AdmitDelegatedResult { .. }
