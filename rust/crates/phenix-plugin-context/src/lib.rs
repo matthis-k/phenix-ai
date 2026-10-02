@@ -2,8 +2,9 @@
 
 use phenix_core::{PluginId, PluginManifest};
 pub use phenix_sdk::{
-    ContextAdmissionRequest, ContextAdmissionResult, ContextCommand, ContextInjection,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextAdmissionRequest, ContextAdmissionResult, ContextCodeQueryRequest, ContextCommand,
+    ContextInjection, ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind,
+    ContextResponse,
     ContextScope, ExactContextReference, ExecutionContextProjection, ProjectedContextEntry,
 };
 
