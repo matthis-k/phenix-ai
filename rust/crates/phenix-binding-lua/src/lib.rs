@@ -45,7 +45,6 @@ use phenix_core::{
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
-    num::NonZeroUsize,
     path::PathBuf,
     rc::Rc,
     sync::{
