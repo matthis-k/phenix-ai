@@ -430,13 +430,13 @@ fn run(
     };
 
     loop {
-        if let Some(limit) = policy.max_model_turns()
-            && usage.model_calls >= limit.get()
-        {
-            return Ok(AgentLoopResponse::Failed {
-                failure: AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() },
-                usage,
-            });
+        if let Some(limit) = policy.max_model_turns() {
+            if usage.model_calls >= limit.get() {
+                return Ok(AgentLoopResponse::Failed {
+                    failure: AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() },
+                    usage,
+                });
+            }
         }
         if context
             .kernel
@@ -572,7 +572,6 @@ fn run(
             tool_results,
         });
     }
-
 }
 
 fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
