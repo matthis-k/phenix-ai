@@ -2420,7 +2420,6 @@ fn sort_query_relations(relations: &mut [CodeQueryRelation]) {
             .then_with(|| left.source.id.cmp(&right.source.id))
             .then_with(|| left.source_revision.cmp(&right.source_revision))
             .then_with(|| left.kind.cmp(&right.kind))
-            .then_with(|| left.relation_revision.cmp(&right.relation_revision))
             .then_with(|| {
                 left.target
                     .entity
@@ -2429,6 +2428,7 @@ fn sort_query_relations(relations: &mut [CodeQueryRelation]) {
             })
             .then_with(|| left.target.entity.id.cmp(&right.target.entity.id))
             .then_with(|| left.target.revision.cmp(&right.target.revision))
+            .then_with(|| left.relation_revision.cmp(&right.relation_revision))
     });
 }
 
@@ -4222,6 +4222,97 @@ mod tests {
             panic!("expected rebuilt unified query result");
         };
         assert_eq!(rebuilt, result);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unified_query_budget_ranks_shorter_hops_before_deeper_entities() {
+        let path = temp_db("unified-code-query-ranking");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        let root = query_revision("entity-root", "root");
+        let first = query_revision("entity-b", "b");
+        let second = query_revision("entity-c", "c");
+        let deeper = query_revision("entity-0-deep", "deep");
+        for revision in [&root, &first, &second, &deeper] {
+            record_query_revision(&mut kernel, revision);
+        }
+
+        ingest_query_relation(
+            &mut kernel,
+            &root,
+            CodeEntityRelationKind::References,
+            Vec::new(),
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &first,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: root.entity.clone(),
+                revision: Some(root.revision.clone()),
+            }],
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &second,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: root.entity.clone(),
+                revision: Some(root.revision.clone()),
+            }],
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &deeper,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: first.entity.clone(),
+                revision: Some(first.revision.clone()),
+            }],
+        );
+
+        let LanguageResponse::Query { result } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: root.entity.clone(),
+                        revision: Some(root.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeRelationKind::References],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 2,
+                    }),
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 3,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected ranked unified code query result");
+        };
+
+        assert_eq!(
+            result
+                .entities
+                .iter()
+                .map(|entity| entity.entity.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entity-root", "entity-b", "entity-c"]
+        );
+        assert!(result.coverage.truncated);
+        assert!(!result.coverage.complete);
 
         let _ = fs::remove_file(path);
     }
