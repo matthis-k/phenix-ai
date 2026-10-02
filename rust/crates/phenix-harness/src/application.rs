@@ -4583,6 +4583,75 @@ mod tests {
         ApplicationWorker::new(harness).unwrap()
     }
 
+    #[test]
+    fn application_log_operations_filter_and_expand_references() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-application-log-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let logger = phenix_core::StructuredLogger::new(LogSink::directory(&root))
+            .unwrap()
+            .with_detail_mode(phenix_core::LogDetailMode::Reference);
+        let detail = serde_json::json!({"body": "referenced"});
+        let reference = logger.store_json(&detail).unwrap();
+        logger
+            .record(
+                "runtime_trace",
+                serde_json::json!({
+                    "session_id": "session.keep",
+                    "execution_id": "execution.keep",
+                    "reference": reference.clone(),
+                }),
+            )
+            .unwrap();
+        logger
+            .record(
+                "runtime_trace",
+                serde_json::json!({
+                    "session_id": "session.other",
+                    "execution_id": "execution.other",
+                }),
+            )
+            .unwrap();
+
+        let mut worker = application_worker();
+        worker.log_reader =
+            Ok(StructuredLogReader::configured(LogSink::directory(&root)).unwrap());
+
+        let page = invoke_operation::<QueryLogs>(
+            &mut worker,
+            LogQueryInput {
+                cursor: None,
+                limit: Some(1),
+                session_id: Some(SessionId::parse("session.keep").unwrap()),
+                execution_id: Some("execution.keep".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].kind, "runtime_trace");
+        assert_eq!(page.next_cursor.as_deref(), Some("1"));
+
+        let expanded = invoke_operation::<ReadLogReference>(
+            &mut worker,
+            LogReferenceInput {
+                reference: reference.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(expanded.reference, reference);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(expanded.content.as_ref()).unwrap(),
+            detail
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     async fn invoke_transport_operation<O: Operation>(
         transport: &ChannelTransport,
         input: O::Input,
