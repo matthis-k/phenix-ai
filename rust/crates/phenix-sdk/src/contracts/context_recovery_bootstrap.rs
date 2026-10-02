@@ -35,27 +35,35 @@ pub fn recovery_cold_gate(state: &ContextRecoveryState) -> RecoveryColdGate {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryClassifierPolicy {
-    pub max_prompt_bytes: u32,
-    pub max_anchors: u32,
-    pub max_needs: u32,
-    pub max_need_query_bytes: u32,
-    pub max_attempts: u32,
-    pub max_output_tokens: u64,
-    pub classifier_timeout_ms: u64,
-    pub total_timeout_ms: u64,
+    #[serde(default)]
+    pub max_prompt_bytes: Option<u32>,
+    #[serde(default)]
+    pub max_anchors: Option<u32>,
+    #[serde(default)]
+    pub max_needs: Option<u32>,
+    #[serde(default)]
+    pub max_need_query_bytes: Option<u32>,
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub classifier_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub total_timeout_ms: Option<u64>,
 }
 
 impl Default for RecoveryClassifierPolicy {
     fn default() -> Self {
         Self {
-            max_prompt_bytes: u32::MAX,
-            max_anchors: u32::MAX,
-            max_needs: u32::MAX,
-            max_need_query_bytes: u32::MAX,
-            max_attempts: u32::MAX,
-            max_output_tokens: u64::MAX,
-            classifier_timeout_ms: u64::MAX,
-            total_timeout_ms: u64::MAX,
+            max_prompt_bytes: None,
+            max_anchors: None,
+            max_needs: None,
+            max_need_query_bytes: None,
+            max_attempts: None,
+            max_output_tokens: None,
+            classifier_timeout_ms: None,
+            total_timeout_ms: None,
         }
     }
 }
@@ -74,26 +82,40 @@ pub struct RecoveryBootstrapRequest {
 
 impl RecoveryBootstrapRequest {
     #[must_use]
-    pub fn effective_deadline_at_ms(&self) -> u64 {
-        let policy_deadline = self.now_ms.saturating_add(self.policy.total_timeout_ms);
-        self.caller_deadline_at_ms
-            .map_or(policy_deadline, |deadline| deadline.min(policy_deadline))
+    pub fn effective_deadline_at_ms(&self) -> Option<u64> {
+        let policy_deadline = self
+            .policy
+            .total_timeout_ms
+            .map(|timeout| self.now_ms.saturating_add(timeout));
+        match (self.caller_deadline_at_ms, policy_deadline) {
+            (Some(caller), Some(policy)) => Some(caller.min(policy)),
+            (Some(caller), None) => Some(caller),
+            (None, Some(policy)) => Some(policy),
+            (None, None) => None,
+        }
     }
 
     pub fn validate_input(&self) -> Result<(), RecoveryClassificationError> {
-        if self.prompt.len() > self.policy.max_prompt_bytes as usize {
-            return Err(RecoveryClassificationError::PromptEvidenceTooLarge {
-                requested: self.prompt.len() as u64,
-                allowed: self.policy.max_prompt_bytes as u64,
-            });
+        if let Some(limit) = self.policy.max_prompt_bytes {
+            if self.prompt.len() > limit as usize {
+                return Err(RecoveryClassificationError::PromptEvidenceTooLarge {
+                    requested: self.prompt.len() as u64,
+                    allowed: limit as u64,
+                });
+            }
         }
-        if self.state.anchors.len() > self.policy.max_anchors as usize {
-            return Err(RecoveryClassificationError::TooManyAnchors {
-                requested: self.state.anchors.len() as u32,
-                allowed: self.policy.max_anchors,
-            });
+        if let Some(limit) = self.policy.max_anchors {
+            if self.state.anchors.len() > limit as usize {
+                return Err(RecoveryClassificationError::TooManyAnchors {
+                    requested: self.state.anchors.len() as u32,
+                    allowed: limit,
+                });
+            }
         }
-        if self.now_ms >= self.effective_deadline_at_ms() {
+        if self
+            .effective_deadline_at_ms()
+            .is_some_and(|deadline| self.now_ms >= deadline)
+        {
             return Err(RecoveryClassificationError::DeadlineExceeded);
         }
         Ok(())
@@ -123,11 +145,13 @@ pub fn validate_recovery_decision(
     if needs.is_empty() {
         return Err(RecoveryClassificationError::MissingNeeds);
     }
-    if needs.len() > policy.max_needs as usize {
-        return Err(RecoveryClassificationError::TooManyNeeds {
-            requested: needs.len() as u32,
-            allowed: policy.max_needs,
-        });
+    if let Some(limit) = policy.max_needs {
+        if needs.len() > limit as usize {
+            return Err(RecoveryClassificationError::TooManyNeeds {
+                requested: needs.len() as u32,
+                allowed: limit,
+            });
+        }
     }
 
     let mut identities = BTreeSet::new();
@@ -136,11 +160,13 @@ pub fn validate_recovery_decision(
         if query.trim().is_empty() {
             return Err(RecoveryClassificationError::EmptyNeedQuery);
         }
-        if query.len() > policy.max_need_query_bytes as usize {
-            return Err(RecoveryClassificationError::NeedQueryTooLarge {
-                requested: query.len() as u64,
-                allowed: policy.max_need_query_bytes as u64,
-            });
+        if let Some(limit) = policy.max_need_query_bytes {
+            if query.len() > limit as usize {
+                return Err(RecoveryClassificationError::NeedQueryTooLarge {
+                    requested: query.len() as u64,
+                    allowed: limit as u64,
+                });
+            }
         }
         let identity = serde_json::to_string(need).expect("ContextNeed is serializable");
         if !identities.insert(identity) {
