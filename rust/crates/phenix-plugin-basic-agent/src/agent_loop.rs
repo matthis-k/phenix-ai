@@ -482,15 +482,6 @@ fn run(
                 Ok(control) => control,
                 Err(error) => {
                     let reason = error.to_string();
-                    emit_agent_diagnostic(
-                        context,
-                        AgentDiagnosticEvent::ModelTurnFailed {
-                            execution_id: execution_id.clone(),
-                            session_id: session_id.clone(),
-                            turn,
-                            reason: reason.clone(),
-                        },
-                    );
                     emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
                     return Err(reason);
                 }
@@ -539,6 +530,15 @@ fn run(
                 Ok(response) => response,
                 Err(error) => {
                     let reason = error.to_string();
+                    emit_agent_diagnostic(
+                        context,
+                        AgentDiagnosticEvent::ModelTurnFailed {
+                            execution_id: execution_id.clone(),
+                            session_id: session_id.clone(),
+                            turn,
+                            reason: reason.clone(),
+                        },
+                    );
                     emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
                     return Err(reason);
                 }
