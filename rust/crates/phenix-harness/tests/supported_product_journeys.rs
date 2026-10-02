@@ -564,7 +564,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                 route_policy: RouteSelectionPolicy {
                     revision: "fixture-route-policy".into(),
                     estimates: RoutingEstimateMode::Ignore,
-                    max_candidate_attempts: 2,
+                    max_candidate_attempts: Some(2),
                 },
             },
         },
@@ -775,7 +775,7 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                 route_policy: RouteSelectionPolicy {
                     revision: "introspection-route-policy".into(),
                     estimates: RoutingEstimateMode::Ignore,
-                    max_candidate_attempts: 2,
+                    max_candidate_attempts: Some(2),
                 },
             },
         },
