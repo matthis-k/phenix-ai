@@ -182,6 +182,13 @@ Existing `Callers`, `References`, and `Implementations` storage must migrate wit
 
 Reverse indexes are derived from canonical directed edges. Do not persist two independently authoritative directions.
 
+`Contains` is parent to child. Standard LSP `DocumentSymbol` nesting is explicit provider
+evidence for that edge. The normalizer records one complete incoming containment set for
+each normalized symbol: a root has no parent, and a nested symbol points to its explicit
+parent revision. Query traversal presents the canonical parent-to-child edge. Do not infer
+containment from overlapping source ranges. Other provider adapters may contribute the same
+relation only when their evidence proves the hierarchy.
+
 ### Traversal
 
 Traversal turns the same semantic query into a repository graph query.
@@ -382,7 +389,7 @@ This PR should establish:
 - compatibility with existing `LogicalCodeEntity` and relation persistence;
 - regression tests proving existing point reads and new graph reads observe the same facts.
 
-Richer containment extraction may follow in later commits on the same PR if it remains coherent. Context projection now consumes the unified query contract through the typed language binding. Budget truncation uses deterministic structural ranking by root, semantic hop distance, and canonical relation identity. Derived indexes use one cold canonical rebuild and sequence-pinned delta catch-up after later changes.
+Context projection now consumes the unified query contract through the typed language binding. Standard `DocumentSymbol` hierarchy is preserved as canonical `Contains` evidence without range inference. Budget truncation uses deterministic structural ranking by root, semantic hop distance, and canonical relation identity. Derived indexes use one cold canonical rebuild and sequence-pinned delta catch-up after later changes. Additional provider adapters may contribute containment through the same relation when they can prove it.
 
 ## Acceptance
 
@@ -400,7 +407,8 @@ Before merge, verify:
 - structural projection does not read source bodies;
 - existing semantic edits retain their revision guarantees;
 - existing callers/references/implementations behavior can be represented through the unified query;
-- repository traversal and point reads agree on entity/relation revisions.
+- repository traversal and point reads agree on entity/relation revisions;
+- explicit nested document symbols produce the same containment fact in point and graph reads.
 
 ## Non-goals
 
