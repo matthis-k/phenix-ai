@@ -83,9 +83,12 @@ The first version covers the application behavior required by an editor client:
 - skill discovery and activation;
 - callable discovery and invocation;
 - execution-tree and provenance inspection;
-- structured diagnostics.
+- structured diagnostics;
+- bounded log queries and verified log-reference reads.
 
 An operation may map to one runtime service or several runtime calls. The application contract does not expose the internal service topology.
+
+The optional `logs` capability keeps local diagnostic storage behind the application boundary. `log-query` returns bounded structured pages with opaque cursors. `log-reference-read` resolves a typed `ContentReference` and verifies its digest. Frontends do not parse log files or derive CAS object paths.
 
 ## ACP mapping
 
