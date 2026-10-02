@@ -1038,15 +1038,9 @@ fn parse_config(options: Table) -> LuaResult<StdioConfig> {
 fn connect(options: Table) -> LuaResult<Client> {
     let config = parse_config(options)?;
     let (commands, receiver) = mpsc::unbounded();
-    let (updates, update_receiver) = SessionUpdates::bounded(
-        NonZeroUsize::new(256).expect("static update queue capacity is non-zero"),
-    );
-    let (extension_updates, extension_update_receiver) = ExtensionUpdates::bounded(
-        NonZeroUsize::new(256).expect("static extension queue capacity is non-zero"),
-    );
-    let (callbacks, callback_receiver) = ExtensionCallbacks::bounded(
-        NonZeroUsize::new(256).expect("static callback queue capacity is non-zero"),
-    );
+    let (updates, update_receiver) = SessionUpdates::channel();
+    let (extension_updates, extension_update_receiver) = ExtensionUpdates::channel();
+    let (callbacks, callback_receiver) = ExtensionCallbacks::channel();
     let connection = NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed);
     let state = Arc::new(ClientState {
         commands,
