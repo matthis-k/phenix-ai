@@ -612,6 +612,7 @@ pub struct CodeQueryTraversal {
 pub enum CodeQueryProjection {
     Identity,
     Structural,
+    SourceLocations,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -641,6 +642,7 @@ pub struct CodeQueryEntity {
     pub document: Option<LanguageDocumentIdentity>,
     pub symbol: Option<String>,
     pub signature_identity: Option<String>,
+    pub source: Option<CodeEntitySourceLocator>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
