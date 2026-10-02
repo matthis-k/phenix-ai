@@ -121,8 +121,8 @@ pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
 pub use logging::{
-    LogDetailMode, LogSink, StructuredLogger, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV,
-    PHENIX_LOG_STORE_ENV,
+    LogDetailMode, LogSink, StructuredLogPage, StructuredLogReader, StructuredLogger,
+    PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV, PHENIX_LOG_STORE_ENV,
 };
 pub use metadata::composition::{
     CompatibilityMetadata, ComponentHostKind, ComponentRuntimeMetadata, ComponentStateClass,
