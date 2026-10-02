@@ -4273,6 +4273,84 @@ mod tests {
     }
 
     #[test]
+    fn repository_entity_index_invalidates_on_canonical_sequence_change() {
+        let path = temp_db("unified-code-query-repository-index");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        record_query_revision(&mut kernel, &query_revision("entity-a", "a"));
+        record_query_revision(&mut kernel, &query_revision("entity-b", "b"));
+
+        let query = || LanguageCommand::Query {
+            query: CodeQuery {
+                anchor: CodeQueryAnchor::Repository {
+                    repository_id: "repo-query".into(),
+                },
+                selection: CodeQuerySelection::Entities,
+                traversal: None,
+                projection: CodeQueryProjection::Identity,
+                budget: phenix_sdk::CodeQueryBudget {
+                    max_entities: 16,
+                    max_relations: 1,
+                    max_bytes: 16 * 1024,
+                },
+            },
+        };
+
+        let LanguageResponse::Query { result: first } =
+            invoke(&mut kernel, query()).unwrap()
+        else {
+            panic!("expected initial repository query result");
+        };
+        assert_eq!(first.coverage.repository_sequence, 2);
+        assert_eq!(
+            first
+                .entities
+                .iter()
+                .map(|entity| entity.entity.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entity-a", "entity-b"]
+        );
+
+        let index_bytes = kernel
+            .persistence()
+            .read(&language_namespace(), &repository_entity_index_key("repo-query"))
+            .unwrap()
+            .expect("derived repository entity index");
+        let index: DerivedRepositoryEntityIndex = serde_json::from_slice(&index_bytes).unwrap();
+        assert_eq!(index.repository_sequence, 2);
+
+        record_query_revision(&mut kernel, &query_revision("entity-c", "c"));
+
+        let LanguageResponse::Query { result: second } =
+            invoke(&mut kernel, query()).unwrap()
+        else {
+            panic!("expected refreshed repository query result");
+        };
+        assert_eq!(second.coverage.repository_sequence, 3);
+        assert_eq!(
+            second
+                .entities
+                .iter()
+                .map(|entity| entity.entity.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entity-a", "entity-b", "entity-c"]
+        );
+
+        let refreshed_bytes = kernel
+            .persistence()
+            .read(&language_namespace(), &repository_entity_index_key("repo-query"))
+            .unwrap()
+            .expect("refreshed derived repository entity index");
+        let refreshed: DerivedRepositoryEntityIndex =
+            serde_json::from_slice(&refreshed_bytes).unwrap();
+        assert_eq!(refreshed.repository_sequence, 3);
+        assert_eq!(refreshed.entities.len(), 3);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn providerless_fallback_reads_exact_workspace_revision_without_semantic_claims() {
         let path = temp_db("file-fallback");
         let root = std::env::temp_dir().join(format!(
