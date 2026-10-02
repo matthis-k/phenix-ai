@@ -60,8 +60,8 @@ pub use phenix_plugin_command_toolbelt::{
 pub use phenix_plugin_context::{
     context_component_id, context_component_manifest, context_factory, context_manifest,
     ContextCodeQueryRequest, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
-    ContextResourceKind,
-    ContextScope, ExactContextReference, ExecutionContextProjection, ProjectedContextEntry,
+    ContextResourceKind, ContextScope, ExactContextReference, ExecutionContextProjection,
+    ProjectedContextEntry,
 };
 pub use phenix_plugin_debug::{
     debug_component_id, debug_component_manifest, debug_factory, debug_manifest,

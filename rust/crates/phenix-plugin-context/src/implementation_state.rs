@@ -337,9 +337,7 @@ fn context_response_summary(response: &ContextResponse) -> Option<String> {
             injection.source.resource_id, injection.source.revision
         )),
         ContextResponse::CodeQueryLoaded {
-            injection,
-            result,
-            ..
+            injection, result, ..
         } => Some(format!(
             "resource={} revision={} repository={} entities={} relations={} truncated={}",
             injection.source.resource_id,
@@ -804,13 +802,11 @@ fn load_code_query(
     };
 
     let content = serde_json::to_vec(&result).map_err(|error| error.to_string())?;
-    let identity_material =
-        serde_json::to_vec(&(request.scope.clone(), query, &result))
-            .map_err(|error| error.to_string())?;
+    let identity_material = serde_json::to_vec(&(request.scope.clone(), query, &result))
+        .map_err(|error| error.to_string())?;
     let identity = content_hash(&identity_material);
-    let resource_id =
-        ContextResourceId::parse(format!("code-query:{}", identity.as_str()))
-            .map_err(str::to_owned)?;
+    let resource_id = ContextResourceId::parse(format!("code-query:{}", identity.as_str()))
+        .map_err(str::to_owned)?;
     let resource = register_resource(
         context,
         resource_id,
