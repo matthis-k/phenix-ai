@@ -540,9 +540,19 @@ pub struct CodeChangedNeighborhood {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "anchor", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CodeQueryAnchor {
+    Position {
+        repository_id: String,
+        document: LanguageDocumentIdentity,
+        position: CodeSourcePosition,
+        position_encoding: CodePositionEncoding,
+    },
     Entity {
         entity: LogicalCodeEntity,
         revision: Option<String>,
+    },
+    Document {
+        repository_id: String,
+        document: LanguageDocumentIdentity,
     },
     Repository {
         repository_id: String,
