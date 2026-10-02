@@ -352,7 +352,7 @@ fn request(max_input: u64) -> PlannedStepRequest {
         route_policy: RouteSelectionPolicy {
             revision: "route-policy-1".into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 4,
+            max_candidate_attempts: Some(4),
         },
         now_ms: 1_000,
     }
