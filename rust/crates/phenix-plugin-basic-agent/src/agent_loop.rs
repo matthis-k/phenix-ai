@@ -512,27 +512,28 @@ fn run(
             },
         );
 
-        let response = match context
-            .sdk
-            .invocation
-            .invoke_projected(&DefaultInvocationCommand::Invoke {
-                request: InvocationRequest {
-                    execution_id: execution_id.clone(),
-                    session_id: session_id.clone(),
-                    parent_attempt_id: parent_attempt_id.clone(),
-                    callable_id: callable_id.clone(),
-                    input: input.clone(),
-                    tools: tools.clone(),
-                    continuation: continuation.clone(),
-                },
-            }) {
-            Ok(response) => response,
-            Err(error) => {
-                let reason = error.to_string();
-                emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
-                return Err(reason);
-            }
-        };
+        let response =
+            match context
+                .sdk
+                .invocation
+                .invoke_projected(&DefaultInvocationCommand::Invoke {
+                    request: InvocationRequest {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        parent_attempt_id: parent_attempt_id.clone(),
+                        callable_id: callable_id.clone(),
+                        input: input.clone(),
+                        tools: tools.clone(),
+                        continuation: continuation.clone(),
+                    },
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    let reason = error.to_string();
+                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                    return Err(reason);
+                }
+            };
         usage.model_calls = usage
             .model_calls
             .checked_add(1)
@@ -601,21 +602,22 @@ fn run(
                 },
             )?;
 
-            let response: AgentToolExecutionResponse = match context
-                .sdk
-                .tools
-                .invoke_projected(&AgentToolExecutionRequest {
-                    execution_id: execution_id.clone(),
-                    session_id: session_id.clone(),
-                    call: call.clone(),
-                }) {
-                Ok(response) => response,
-                Err(error) => {
-                    let reason = error.to_string();
-                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
-                    return Err(reason);
-                }
-            };
+            let response: AgentToolExecutionResponse =
+                match context
+                    .sdk
+                    .tools
+                    .invoke_projected(&AgentToolExecutionRequest {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        call: call.clone(),
+                    }) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let reason = error.to_string();
+                        emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                        return Err(reason);
+                    }
+                };
 
             let (mut result, activated_tools, observation) = match response {
                 AgentToolExecutionResponse::Completed {
