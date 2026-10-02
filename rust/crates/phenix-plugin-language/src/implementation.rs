@@ -8,8 +8,9 @@ use phenix_sdk::{
     CodeEntityEditResult, CodeEntityEditValidation, CodeEntityFacet, CodeEntityFacetChanges,
     CodeEntityInsertPosition, CodeEntityLineage, CodeEntityLineageConfidence,
     CodeEntityLineageKind, CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
-    CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelations,
-    CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView, CodeIdentityContinuityState,
+    CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelationTarget,
+    CodeEntityRelations, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
+    CodeIdentityContinuityState,
     CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection,
     CodeQueryRelation, CodeQueryResult, CodeQuerySelection,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
@@ -1359,6 +1360,478 @@ fn read_entity_relations(
         relations.complete = false;
     }
     Ok(Some(relations))
+}
+
+
+fn execute_code_query(
+    context: &LanguageContext<'_, '_, '_>,
+    query: CodeQuery,
+) -> Result<CodeQueryResult, String> {
+    if query.budget.max_entities == 0 {
+        return Err("code query requires a non-zero entity budget".into());
+    }
+    if query.budget.max_relations == 0 {
+        return Err("code query requires a non-zero relation budget".into());
+    }
+    if query.budget.max_bytes == 0 {
+        return Err("code query requires a non-zero byte budget".into());
+    }
+
+    let CodeQuery {
+        anchor,
+        selection,
+        traversal,
+        projection,
+        budget,
+    } = query;
+
+    let (repository_id, roots, seeds) = match anchor {
+        CodeQueryAnchor::Entity { entity, revision } => {
+            validate_identity("code repository id", &entity.repository_id)?;
+            validate_identity("logical code entity id", &entity.id)?;
+            if let Some(revision) = revision.as_deref() {
+                validate_identity("code entity revision", revision)?;
+            }
+            let resolved = match revision {
+                Some(revision) => read_entity_revision_version(
+                    context,
+                    &entity.repository_id,
+                    &entity.id,
+                    &revision,
+                )?,
+                None => read_entity_revision(context, &entity.repository_id, &entity.id)?,
+            }
+            .ok_or_else(|| {
+                format!(
+                    "unknown logical code entity: {}/{}",
+                    entity.repository_id, entity.id
+                )
+            })?;
+            (
+                entity.repository_id.clone(),
+                vec![CodeEntityRelationTarget {
+                    entity,
+                    revision: Some(resolved.revision.clone()),
+                }],
+                vec![resolved],
+            )
+        }
+        CodeQueryAnchor::Repository { repository_id } => {
+            validate_identity("code repository id", &repository_id)?;
+            let entities = query_repository_entities(context, &repository_id)?;
+            (repository_id, Vec::new(), entities)
+        }
+    };
+
+    let repository_sequence = read_entity_change_sequence(context, &repository_id)?;
+    let mut result = CodeQueryResult {
+        repository_id: repository_id.clone(),
+        roots,
+        entities: Vec::new(),
+        relations: Vec::new(),
+        coverage: phenix_sdk::CodeQueryCoverage {
+            repository_sequence,
+            complete: true,
+            truncated: false,
+        },
+    };
+    if encoded_query_result_len(&result)? > budget.max_bytes {
+        return Err("code query byte budget is too small for result metadata".into());
+    }
+
+    let mut entity_keys = BTreeSet::new();
+    let mut relation_keys = BTreeSet::new();
+
+    match selection {
+        CodeQuerySelection::Entities => {
+            for revision in seeds {
+                if !try_push_query_entity(
+                    &mut result,
+                    &mut entity_keys,
+                    &revision,
+                    projection,
+                    &budget,
+                )? {
+                    result.coverage.truncated = true;
+                    result.coverage.complete = false;
+                    break;
+                }
+            }
+        }
+        CodeQuerySelection::Relations { kinds } => {
+            if kinds.is_empty() {
+                return Err("relation query requires at least one relation kind".into());
+            }
+            let mut kinds = kinds;
+            kinds.sort();
+            kinds.dedup();
+
+            let (direction, max_depth) = traversal
+                .as_ref()
+                .map(|value| (value.direction, value.max_depth))
+                .unwrap_or((CodeQueryDirection::Outgoing, 1));
+
+            let repository_entities = if matches!(
+                direction,
+                CodeQueryDirection::Incoming | CodeQueryDirection::Both
+            ) {
+                Some(query_repository_entities(context, &repository_id)?)
+            } else {
+                None
+            };
+
+            let mut queue = VecDeque::new();
+            let mut queued = BTreeSet::new();
+            for seed in seeds {
+                let key = (
+                    seed.entity.repository_id.clone(),
+                    seed.entity.id.clone(),
+                    seed.revision.clone(),
+                );
+                if queued.insert(key) {
+                    queue.push_back((seed, 0_u32));
+                }
+            }
+
+            while let Some((revision, depth)) = queue.pop_front() {
+                if !try_push_query_entity(
+                    &mut result,
+                    &mut entity_keys,
+                    &revision,
+                    projection,
+                    &budget,
+                )? {
+                    result.coverage.truncated = true;
+                    result.coverage.complete = false;
+                    break;
+                }
+                if depth >= max_depth {
+                    continue;
+                }
+
+                let mut edges = Vec::new();
+                if matches!(
+                    direction,
+                    CodeQueryDirection::Outgoing | CodeQueryDirection::Both
+                ) {
+                    let (mut outgoing, complete) =
+                        query_outgoing_relations(context, &revision, &kinds)?;
+                    result.coverage.complete &= complete;
+                    edges.append(&mut outgoing);
+                }
+                if matches!(
+                    direction,
+                    CodeQueryDirection::Incoming | CodeQueryDirection::Both
+                ) {
+                    let (mut incoming, complete) = query_incoming_relations(
+                        context,
+                        &repository_id,
+                        &revision,
+                        &kinds,
+                        repository_entities
+                            .as_deref()
+                            .expect("incoming query loaded repository entities"),
+                    )?;
+                    result.coverage.complete &= complete;
+                    edges.append(&mut incoming);
+                }
+                sort_query_relations(&mut edges);
+                edges.dedup();
+
+                for edge in edges {
+                    if !try_push_query_relation(
+                        &mut result,
+                        &mut relation_keys,
+                        &edge,
+                        &budget,
+                    )? {
+                        result.coverage.truncated = true;
+                        result.coverage.complete = false;
+                        break;
+                    }
+
+                    let next = if edge.source == revision.entity {
+                        edge.target.clone()
+                    } else {
+                        CodeEntityRelationTarget {
+                            entity: edge.source.clone(),
+                            revision: Some(edge.source_revision.clone()),
+                        }
+                    };
+                    if next.entity.repository_id != repository_id {
+                        continue;
+                    }
+                    let Some(next_revision) = resolve_query_target(context, &next)? else {
+                        result.coverage.complete = false;
+                        continue;
+                    };
+                    let next_key = (
+                        next_revision.entity.repository_id.clone(),
+                        next_revision.entity.id.clone(),
+                        next_revision.revision.clone(),
+                    );
+                    if queued.insert(next_key) {
+                        queue.push_back((next_revision, depth.saturating_add(1)));
+                    }
+                }
+                if result.coverage.truncated {
+                    break;
+                }
+            }
+        }
+    }
+
+    if read_entity_change_sequence(context, &repository_id)? != repository_sequence {
+        return Err("code query repository changed while the query was running".into());
+    }
+
+    Ok(result)
+}
+
+fn query_repository_entities(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+) -> Result<Vec<CodeEntityRevision>, String> {
+    let mut entity_ids = BTreeSet::new();
+    let mut after_sequence = 0_u64;
+    loop {
+        let page = read_entity_changes(context, repository_id, after_sequence, 100)?;
+        for event in page.events {
+            entity_ids.insert(event.entity.id);
+        }
+        if page.caught_up {
+            break;
+        }
+        if page.next_after_sequence == after_sequence {
+            return Err("code entity change stream did not advance".into());
+        }
+        after_sequence = page.next_after_sequence;
+    }
+
+    let mut entities = Vec::with_capacity(entity_ids.len());
+    for entity_id in entity_ids {
+        if let Some(revision) = read_entity_revision(context, repository_id, &entity_id)? {
+            entities.push(revision);
+        }
+    }
+    entities.sort_by(|left, right| {
+        left.entity
+            .id
+            .cmp(&right.entity.id)
+            .then_with(|| left.revision.cmp(&right.revision))
+    });
+    Ok(entities)
+}
+
+fn project_query_entity(
+    revision: &CodeEntityRevision,
+    projection: CodeQueryProjection,
+) -> CodeQueryEntity {
+    match projection {
+        CodeQueryProjection::Identity => CodeQueryEntity {
+            entity: revision.entity.clone(),
+            revision: revision.revision.clone(),
+            name: None,
+            document: None,
+            symbol: None,
+            signature_identity: None,
+        },
+        CodeQueryProjection::Structural => CodeQueryEntity {
+            entity: revision.entity.clone(),
+            revision: revision.revision.clone(),
+            name: Some(revision.name.clone()),
+            document: Some(revision.document.clone()),
+            symbol: revision.symbol.clone(),
+            signature_identity: revision.signature_identity.clone(),
+        },
+    }
+}
+
+fn try_push_query_entity(
+    result: &mut CodeQueryResult,
+    seen: &mut BTreeSet<(String, String, String)>,
+    revision: &CodeEntityRevision,
+    projection: CodeQueryProjection,
+    budget: &phenix_sdk::CodeQueryBudget,
+) -> Result<bool, String> {
+    let key = (
+        revision.entity.repository_id.clone(),
+        revision.entity.id.clone(),
+        revision.revision.clone(),
+    );
+    if seen.contains(&key) {
+        return Ok(true);
+    }
+    if result.entities.len() >= usize::try_from(budget.max_entities).unwrap_or(usize::MAX) {
+        return Ok(false);
+    }
+
+    result.entities.push(project_query_entity(revision, projection));
+    if encoded_query_result_len(result)? > budget.max_bytes {
+        result.entities.pop();
+        return Ok(false);
+    }
+    seen.insert(key);
+    Ok(true)
+}
+
+fn try_push_query_relation(
+    result: &mut CodeQueryResult,
+    seen: &mut BTreeSet<(String, String, String, CodeEntityRelationKind, String, String, Option<String>)>,
+    relation: &CodeQueryRelation,
+    budget: &phenix_sdk::CodeQueryBudget,
+) -> Result<bool, String> {
+    let key = (
+        relation.source.repository_id.clone(),
+        relation.source.id.clone(),
+        relation.source_revision.clone(),
+        relation.kind,
+        relation.target.entity.repository_id.clone(),
+        relation.target.entity.id.clone(),
+        relation.target.revision.clone(),
+    );
+    if seen.contains(&key) {
+        return Ok(true);
+    }
+    if result.relations.len() >= usize::try_from(budget.max_relations).unwrap_or(usize::MAX) {
+        return Ok(false);
+    }
+
+    result.relations.push(relation.clone());
+    if encoded_query_result_len(result)? > budget.max_bytes {
+        result.relations.pop();
+        return Ok(false);
+    }
+    seen.insert(key);
+    Ok(true)
+}
+
+fn encoded_query_result_len(result: &CodeQueryResult) -> Result<u64, String> {
+    let len = serde_json::to_vec(result)
+        .map_err(|error| error.to_string())?
+        .len();
+    u64::try_from(len).map_err(|_| "code query result size does not fit u64".to_owned())
+}
+
+fn query_outgoing_relations(
+    context: &LanguageContext<'_, '_, '_>,
+    revision: &CodeEntityRevision,
+    kinds: &[CodeEntityRelationKind],
+) -> Result<(Vec<CodeQueryRelation>, bool), String> {
+    let mut complete = true;
+    let mut edges = Vec::new();
+    for kind in kinds {
+        match read_entity_relations(
+            context,
+            &revision.entity.repository_id,
+            &revision.entity.id,
+            &revision.revision,
+            *kind,
+            u32::MAX,
+        )? {
+            Some(relations) => {
+                complete &= relations.complete;
+                for target in relations.targets {
+                    edges.push(CodeQueryRelation {
+                        source: revision.entity.clone(),
+                        source_revision: revision.revision.clone(),
+                        kind: *kind,
+                        target,
+                    });
+                }
+            }
+            None => complete = false,
+        }
+    }
+    sort_query_relations(&mut edges);
+    edges.dedup();
+    Ok((edges, complete))
+}
+
+fn query_incoming_relations(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    target_revision: &CodeEntityRevision,
+    kinds: &[CodeEntityRelationKind],
+    repository_entities: &[CodeEntityRevision],
+) -> Result<(Vec<CodeQueryRelation>, bool), String> {
+    let mut complete = true;
+    let mut edges = Vec::new();
+
+    for source in repository_entities {
+        for kind in kinds {
+            match read_entity_relations(
+                context,
+                repository_id,
+                &source.entity.id,
+                &source.revision,
+                *kind,
+                u32::MAX,
+            )? {
+                Some(relations) => {
+                    complete &= relations.complete;
+                    for target in relations.targets {
+                        let same_entity = target.entity == target_revision.entity;
+                        let same_revision = target
+                            .revision
+                            .as_deref()
+                            .is_none_or(|revision| revision == target_revision.revision);
+                        if same_entity && same_revision {
+                            edges.push(CodeQueryRelation {
+                                source: source.entity.clone(),
+                                source_revision: source.revision.clone(),
+                                kind: *kind,
+                                target,
+                            });
+                        }
+                    }
+                }
+                None => complete = false,
+            }
+        }
+    }
+
+    sort_query_relations(&mut edges);
+    edges.dedup();
+    Ok((edges, complete))
+}
+
+fn sort_query_relations(relations: &mut [CodeQueryRelation]) {
+    relations.sort_by(|left, right| {
+        left.source
+            .repository_id
+            .cmp(&right.source.repository_id)
+            .then_with(|| left.source.id.cmp(&right.source.id))
+            .then_with(|| left.source_revision.cmp(&right.source_revision))
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| {
+                left.target
+                    .entity
+                    .repository_id
+                    .cmp(&right.target.entity.repository_id)
+            })
+            .then_with(|| left.target.entity.id.cmp(&right.target.entity.id))
+            .then_with(|| left.target.revision.cmp(&right.target.revision))
+    });
+}
+
+fn resolve_query_target(
+    context: &LanguageContext<'_, '_, '_>,
+    target: &CodeEntityRelationTarget,
+) -> Result<Option<CodeEntityRevision>, String> {
+    match target.revision.as_deref() {
+        Some(revision) => read_entity_revision_version(
+            context,
+            &target.entity.repository_id,
+            &target.entity.id,
+            revision,
+        ),
+        None => read_entity_revision(
+            context,
+            &target.entity.repository_id,
+            &target.entity.id,
+        ),
+    }
 }
 
 fn read_changed_neighborhood(
