@@ -1,11 +1,14 @@
 use crate::{attempt_service, resource_service};
 use phenix_core::{
-    ComponentInterface, PluginContext, PluginHost, PluginInstance, ServiceId, TransactionOp,
+    ComponentInterface, KernelError, PluginContext, PluginHost, PluginInstance, ServiceId,
+    TransactionOp,
 };
 use phenix_sdk::{
     step_transaction_service, StepTransactionCommand, StepTransactionInterface,
     StepTransactionResponse,
 };
+
+const MAX_STEP_TRANSACTION_CONFLICT_RETRIES: usize = 8;
 
 type StepTransactionContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
@@ -57,6 +60,26 @@ fn handle(
     host: &PluginHost<'_>,
     command: StepTransactionCommand,
 ) -> Result<StepTransactionResponse, String> {
+    for conflict_retry in 0..=MAX_STEP_TRANSACTION_CONFLICT_RETRIES {
+        match handle_once(context, host, command.clone()) {
+            Ok(response) => return Ok(response),
+            Err(StepTransactionError::Kernel(error))
+                if conflict_retry < MAX_STEP_TRANSACTION_CONFLICT_RETRIES
+                    && is_step_state_conflict(&error) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    unreachable!("step-transaction conflict retry loop always returns")
+}
+
+fn handle_once(
+    context: &StepTransactionContext<'_, '_>,
+    host: &PluginHost<'_>,
+    command: StepTransactionCommand,
+) -> Result<StepTransactionResponse, StepTransactionError> {
     match command {
         StepTransactionCommand::Settle {
             root_execution_id,
@@ -83,8 +106,7 @@ fn handle(
             host.transact_owned_durable_many(&[
                 (&resource_namespace, resource_operations.as_slice()),
                 (&attempt_namespace, attempt_operations.as_slice()),
-            ])
-            .map_err(|error| error.to_string())?;
+            ])?;
 
             Ok(StepTransactionResponse::Settled { ledger, attempt })
         }
@@ -111,20 +133,65 @@ fn handle(
                 host.transact_owned_durable_many(&[
                     (&resource_namespace, resource_operations.as_slice()),
                     (&attempt_namespace, attempt_operations.as_slice()),
-                ])
-                .map_err(|error| error.to_string())?;
+                ])?;
                 Some(ledger)
             } else {
                 context
                     .kernel
-                    .transact_durable(&attempt_namespace, &attempt_operations)
-                    .map_err(|error| error.to_string())?;
+                    .transact_durable(&attempt_namespace, &attempt_operations)?;
                 None
             };
 
             Ok(StepTransactionResponse::Aborted { ledger, attempt })
         }
     }
+}
+
+#[derive(Debug)]
+enum StepTransactionError {
+    Kernel(KernelError),
+    Other(String),
+}
+
+impl std::fmt::Display for StepTransactionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Kernel(error) => error.fmt(formatter),
+            Self::Other(error) => formatter.write_str(error),
+        }
+    }
+}
+
+impl From<KernelError> for StepTransactionError {
+    fn from(error: KernelError) -> Self {
+        Self::Kernel(error)
+    }
+}
+
+impl From<String> for StepTransactionError {
+    fn from(error: String) -> Self {
+        Self::Other(error)
+    }
+}
+
+fn is_step_state_conflict(error: &KernelError) -> bool {
+    let KernelError::Persistence { message, .. } = error else {
+        return false;
+    };
+    [
+        (
+            attempt_service::attempt_namespace(),
+            attempt_service::ATTEMPT_STATE_KEY,
+        ),
+        (
+            resource_service::execution_resource_namespace(),
+            resource_service::RESOURCE_STATE_KEY,
+        ),
+    ]
+    .into_iter()
+    .any(|(namespace, key)| {
+        message == &format!("transaction assertion failed for {namespace}/{key}")
+    })
 }
 
 fn read_resource_state(

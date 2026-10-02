@@ -41,12 +41,13 @@ fn authority() -> Authority {
     execution_manifest(Authority::default()).maximum_authority
 }
 
-struct FailFirstMultiTransaction {
+struct FailFirstTransaction {
     inner: LocalPersistence,
     fail: Arc<AtomicBool>,
+    multi_only: bool,
 }
 
-impl PersistenceBackend for FailFirstMultiTransaction {
+impl PersistenceBackend for FailFirstTransaction {
     fn supported_features(&self) -> BTreeSet<BackendFeature> {
         self.inner.supported_features()
     }
@@ -81,10 +82,10 @@ impl PersistenceBackend for FailFirstMultiTransaction {
         &mut self,
         transactions: &[NamespaceTransaction],
     ) -> Result<(), PersistenceError> {
-        if transactions.len() > 1 && self.fail.swap(false, Ordering::SeqCst) {
+        if (!self.multi_only || transactions.len() > 1) && self.fail.swap(false, Ordering::SeqCst) {
             return Err(PersistenceError::AssertionFailed {
                 namespace: transactions[0].namespace.clone(),
-                key: "injected-multi-transaction-failure".into(),
+                key: "state".into(),
             });
         }
         self.inner.transact_many(transactions)
@@ -92,12 +93,17 @@ impl PersistenceBackend for FailFirstMultiTransaction {
 }
 
 fn kernel(path: &PathBuf) -> Kernel {
+    kernel_with_failure(path, true)
+}
+
+fn kernel_with_failure(path: &PathBuf, multi_only: bool) -> Kernel {
     let manifest = execution_manifest(Authority::default());
     let plugin = manifest.id.clone();
     let fail = Arc::new(AtomicBool::new(true));
-    let persistence = FailFirstMultiTransaction {
+    let persistence = FailFirstTransaction {
         inner: LocalPersistence::open(path).unwrap(),
         fail,
+        multi_only,
     };
     let mut kernel = Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
     kernel
@@ -356,42 +362,11 @@ fn lookup_attempt(kernel: &mut Kernel) -> phenix_sdk::StepAttemptRecord {
 }
 
 #[test]
-fn failed_atomic_settlement_commits_neither_owner() {
-    let path = temp_db("settlement-failure");
+fn transient_atomic_settlement_conflict_is_retried_in_one_call() {
+    let path = temp_db("settlement-conflict-retry");
     let mut kernel = kernel(&path);
     setup_dispatched(&mut kernel);
 
-    assert!(settle(&mut kernel).is_err());
-    assert_eq!(
-        lookup_attempt(&mut kernel).phase,
-        StepAttemptPhase::Dispatched
-    );
-
-    let response: ExecutionResourceResponse = invoke(
-        &mut kernel,
-        execution_resource_service(),
-        &ExecutionResourceCommand::SettleReservation {
-            root_execution_id: "root".into(),
-            reservation_id: "reservation-1".into(),
-            actual: actual(),
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        response,
-        ExecutionResourceResponse::RootBudget { .. }
-    ));
-    drop(kernel);
-    let _ = fs::remove_file(path);
-}
-
-#[test]
-fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
-    let path = temp_db("settlement-retry");
-    let mut kernel = kernel(&path);
-    setup_dispatched(&mut kernel);
-
-    assert!(settle(&mut kernel).is_err());
     let response = settle(&mut kernel).unwrap();
     let settled_attempt = match response {
         StepTransactionResponse::Settled { attempt, .. } => attempt,
@@ -402,43 +377,17 @@ fn failed_atomic_settlement_can_be_retried_as_one_transaction() {
     assert_eq!(settled_attempt.settled_actual, Some(actual()));
     assert_eq!(settled_attempt.usage, Some(usage()));
     assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Settled);
+
     drop(kernel);
     let _ = fs::remove_file(path);
 }
 
 #[test]
-fn failed_atomic_abort_commits_neither_owner() {
-    let path = temp_db("abort-failure");
+fn transient_atomic_abort_conflict_is_retried_in_one_call() {
+    let path = temp_db("abort-conflict-retry");
     let mut kernel = kernel(&path);
     setup_routed(&mut kernel);
 
-    assert!(abort(&mut kernel).is_err());
-    assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Routed);
-
-    let response: ExecutionResourceResponse = invoke(
-        &mut kernel,
-        execution_resource_service(),
-        &ExecutionResourceCommand::ReleaseReservation {
-            root_execution_id: "root".into(),
-            reservation_id: "reservation-1".into(),
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        response,
-        ExecutionResourceResponse::RootBudget { .. }
-    ));
-    drop(kernel);
-    let _ = fs::remove_file(path);
-}
-
-#[test]
-fn failed_atomic_abort_can_be_retried_without_double_release() {
-    let path = temp_db("abort-retry");
-    let mut kernel = kernel(&path);
-    setup_routed(&mut kernel);
-
-    assert!(abort(&mut kernel).is_err());
     let response = abort(&mut kernel).unwrap();
     let aborted_attempt = match response {
         StepTransactionResponse::Aborted { attempt, .. } => attempt,
@@ -457,6 +406,42 @@ fn failed_atomic_abort_can_be_retried_without_double_release() {
         },
     );
     assert!(release_again.is_err());
+
+    drop(kernel);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn transient_attempt_state_conflict_is_retried_in_one_call() {
+    let path = temp_db("attempt-conflict-retry");
+    let mut kernel = kernel_with_failure(&path, false);
+
+    create_attempt(&mut kernel);
+    assert_eq!(lookup_attempt(&mut kernel).phase, StepAttemptPhase::Planned);
+
+    drop(kernel);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn transient_resource_state_conflict_is_retried_in_one_call() {
+    let path = temp_db("resource-conflict-retry");
+    let mut kernel = kernel_with_failure(&path, false);
+
+    setup_root_and_reservation(&mut kernel);
+    let response: ExecutionResourceResponse = invoke(
+        &mut kernel,
+        execution_resource_service(),
+        &ExecutionResourceCommand::Remaining {
+            root_execution_id: "root".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        response,
+        ExecutionResourceResponse::Remaining { .. }
+    ));
+
     drop(kernel);
     let _ = fs::remove_file(path);
 }
