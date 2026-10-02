@@ -3879,6 +3879,60 @@ mod tests {
             .iter()
             .all(|entity| entity.name.is_none() && entity.document.is_none()));
 
+        let LanguageResponse::EntityFacet {
+            reference: Some(relation_facet),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntityFacet {
+                repository_id: b.entity.repository_id.clone(),
+                entity_id: b.entity.id.clone(),
+                facet: CodeEntityFacet::Relation {
+                    name: "references".into(),
+                },
+            },
+        )
+        .unwrap() else {
+            panic!("expected relation facet reference");
+        };
+        assert_eq!(
+            relation_facet.revision,
+            result.relations[0].relation_revision
+        );
+
+        let replay = invoke(
+            &mut kernel,
+            LanguageCommand::IngestEntityRelations {
+                observation_id: "query-relation-entity-b-references".into(),
+                fact_id: "fact-query-relation-entity-b-references".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            replay,
+            LanguageResponse::EntityRelations { relations: Some(_) }
+        ));
+
+        let LanguageResponse::EntityChanges { page } = invoke(
+            &mut kernel,
+            LanguageCommand::GetEntityChanges {
+                repository_id: "repo-query".into(),
+                after_sequence: 0,
+                limit: 10,
+            },
+        )
+        .unwrap() else {
+            panic!("expected sequenced code fact changes");
+        };
+        assert_eq!(page.current_sequence, 4);
+        assert_eq!(page.events.len(), 4);
+        let relation_event = page.events.last().expect("relation change event");
+        assert_eq!(
+            relation_event.changes.relations,
+            vec!["references".to_owned()]
+        );
+        assert_eq!(relation_event.previous_revision, Some(b.revision.clone()));
+        assert_eq!(relation_event.revision, b.revision);
+
         let _ = fs::remove_file(path);
     }
 
@@ -4545,6 +4599,73 @@ mod tests {
         assert_eq!(locator.selection_range.start.character, 7);
         assert_eq!(locator.selection_range.end.character, 12);
         assert!(locator.body_range.is_none());
+
+        let LanguageResponse::Query {
+            result: document_query,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Document {
+                        repository_id: "repo-1".into(),
+                        document: fallback.document.clone(),
+                    },
+                    selection: CodeQuerySelection::Entities,
+                    traversal: None,
+                    projection: CodeQueryProjection::Structural,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 1,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap() else {
+            panic!("expected document semantic query");
+        };
+        assert_eq!(document_query.entities.len(), 2);
+        assert!(document_query
+            .entities
+            .iter()
+            .all(|entity| entity.document.as_ref() == Some(&fallback.document)));
+
+        let LanguageResponse::Query {
+            result: position_query,
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Position {
+                        repository_id: "repo-1".into(),
+                        document: fallback.document.clone(),
+                        position: CodeSourcePosition {
+                            line: 0,
+                            character: 22,
+                        },
+                        position_encoding: CodePositionEncoding::Utf16,
+                    },
+                    selection: CodeQuerySelection::Entities,
+                    traversal: None,
+                    projection: CodeQueryProjection::Structural,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 1,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap() else {
+            panic!("expected position semantic query");
+        };
+        assert_eq!(position_query.entities.len(), 2);
+        assert_eq!(
+            position_query.entities[0].symbol.as_deref(),
+            Some("outer::inner")
+        );
+        assert_eq!(position_query.entities[1].symbol.as_deref(), Some("outer"));
+        assert_eq!(position_query.roots.len(), 2);
 
         let body_error = invoke(
             &mut kernel,
