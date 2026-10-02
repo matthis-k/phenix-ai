@@ -206,14 +206,15 @@ impl PluginInstance for InvocationDefaultsPlugin {
 
 fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
     let policy = RecoveryClassifierPolicy::default();
-    if request.prompt.len() > policy.max_prompt_bytes as usize {
-        return Ok(ContextRecoveryDecision::Sufficient);
+    if let Some(limit) = policy.max_prompt_bytes {
+        if request.prompt.len() > limit as usize {
+            return Ok(ContextRecoveryDecision::Sufficient);
+        }
     }
-    if request.state.anchors.len() > policy.max_anchors as usize {
-        return Err(format!(
-            "recovery anchors exceed {} entries",
-            policy.max_anchors
-        ));
+    if let Some(limit) = policy.max_anchors {
+        if request.state.anchors.len() > limit as usize {
+            return Err(format!("recovery anchors exceed {limit} entries"));
+        }
     }
     if matches!(
         recovery_cold_gate(&request.state),
@@ -221,7 +222,10 @@ fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDe
     ) {
         return Ok(ContextRecoveryDecision::Sufficient);
     }
-    let query = bounded_utf8(request.prompt.trim(), policy.max_need_query_bytes as usize);
+    let query = policy.max_need_query_bytes.map_or_else(
+        || request.prompt.trim().to_owned(),
+        |limit| bounded_utf8(request.prompt.trim(), limit as usize),
+    );
     if query.is_empty() {
         return Ok(ContextRecoveryDecision::Sufficient);
     }
@@ -267,7 +271,6 @@ fn resolve_defaults(
         &request.tools,
         DEFAULT_POLICY_REVISION,
         DEFAULT_ROUTE_POLICY_REVISION,
-        u32::MAX,
     ))
 }
 
@@ -335,7 +338,6 @@ fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParam
         &request.tools,
         HELPER_POLICY_REVISION,
         HELPER_ROUTE_POLICY_REVISION,
-        u32::MAX,
     )
 }
 
@@ -345,7 +347,6 @@ fn invocation_params(
     tools: &[ModelToolDescriptor],
     policy_revision: &str,
     route_policy_revision: &str,
-    _max_retries: u32,
 ) -> InvocationParams {
     let optional_tools = tools
         .iter()
@@ -432,11 +433,11 @@ mod tests {
     }
 
     #[test]
-    fn oversized_recovery_prompt_skips_recovery_without_failing_turn() {
-        let policy = RecoveryClassifierPolicy::default();
+    fn default_recovery_policy_does_not_truncate_or_reject_long_prompts() {
+        let prompt = "x".repeat(8 * 1024);
         let decision = assess_recovery(&ContextRecoveryRequest {
             profile_id: RoutingProfileId::parse("default").unwrap(),
-            prompt: "x".repeat(policy.max_prompt_bytes as usize + 1),
+            prompt: prompt.clone(),
             state: ContextRecoveryState {
                 anchors: Vec::new(),
                 has_durable_session_history: false,
@@ -446,7 +447,11 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(decision, ContextRecoveryDecision::Sufficient);
+        assert!(matches!(
+            decision,
+            ContextRecoveryDecision::Missing { needs }
+                if matches!(&needs[..], [ContextNeed::Task { query }] if query == &prompt)
+        ));
     }
 
     #[test]
