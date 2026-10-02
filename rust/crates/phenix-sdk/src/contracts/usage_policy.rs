@@ -309,7 +309,9 @@ impl UsagePolicy {
                     .task
                     .request_input_tokens
                     .saturating_add(planned_context.total_input_tokens()),
-                output_tokens: planned_context.output_reserve_tokens,
+                // The reserve is a routing floor, not the execution ceiling. The
+                // policy output budget is the amount the attempt may actually use.
+                output_tokens: output_budget,
                 cost_microunits: cost_budget,
             },
             deadline_at_ms: input.task.deadline_at_ms,
@@ -380,7 +382,7 @@ mod tests {
         assert_eq!(plan.context.reducible_input_tokens, 200);
         assert_eq!(plan.reducible_input_dropped_tokens, 300);
         assert_eq!(plan.reservation.input_tokens, 1_000);
-        assert_eq!(plan.reservation.output_tokens, 200);
+        assert_eq!(plan.reservation.output_tokens, 250);
         assert_eq!(plan.retry.reserved_attempts, 2);
     }
 
