@@ -276,46 +276,42 @@ Do not infer that delegation was efficient because parent-context bytes fell. Co
 
 ## Code intelligence
 
-Current language facts remain owned by the existing language-intelligence contract. Add a first-party code-intelligence provider for repository-wide structure and history rather than moving code semantics into Core.
+The language/code-intelligence contract owns one normalized semantic code model. Repository graph traversal, LSP-like point queries, structured reads, and memory freshness all query that model. Do not add a second graph-owned semantic store.
 
-The normalized model should support:
+The normalized model includes:
 
 ```text
 LogicalCodeEntity
-  stable logical id
-  kind
+  stable repository-scoped identity
 
 CodeEntityRevision
-  logical id
-  source revision
-  current name/location/signature
-  exact language/source references
+  current name/location/signature/body evidence
+  provider and source provenance
+  facet revisions
 
 CodeRelation
   source entity
   relation kind
   target entity
-  source revision interval
+  relation revision and completeness
 
 CodeLineage
-  same_entity | renamed | moved | extracted_from | inlined_into |
-  split_from | merged_from | replaced_by
+  rename | move | replacement | extract | split | merge
   evidence
   confidence where inferred
 ```
 
 File path and line range are observations, not logical identity.
 
-The first Rust implementation should consume existing language facts from rust-analyzer or SCIP where practical and use Tree-sitter only where it fills a concrete gap. Other languages may use SCIP or focused adapters. Joern may be an optional graph provider. RefactoringMiner may be an optional Java lineage provider.
+Expose one bounded semantic query shape over these facts. Position, entity, document, and repository anchors are different extraction scopes. Multi-hop repository traversal is the graph case of the same query. Structural projection must stay separate from exact source expansion so graph context does not pull function bodies into the model by default.
 
-The normalized Phenix identity remains stable across providers so memory and task state do not depend on one external graph engine.
+Repository graph indexes are derived and rebuildable. They may index entity membership, outgoing relations, incoming relations, containment, and changes, but canonical entity and relation revisions remain language-owned. Removing an index may reduce performance or availability; it must not change semantic answers.
 
-Provider symbol IDs map to workspace/repository-scoped logical IDs; they are not
-portable identities themselves. Record analyzer/index version and exact source
-revision. Unsaved buffers and dirty worktrees need distinct revision identities.
-Ambiguous rename/split/merge evidence creates tentative lineage and revalidation,
-not a forced identity merge. When analyzers are absent or stale, exact file/revision
-references remain usable and semantic identity guarantees are reported unavailable.
+The first Rust implementation should consume existing language facts from rust-analyzer or SCIP where practical and use Tree-sitter only where it fills a concrete gap. Other languages may use SCIP or focused adapters. Joern may be an optional evidence provider rather than a new canonical graph owner. RefactoringMiner may be an optional Java lineage provider.
+
+Provider symbol IDs map to workspace/repository-scoped logical IDs; they are not portable identities themselves. Record analyzer/index version and exact source revision. Unsaved buffers and dirty worktrees need distinct revision identities. Ambiguous rename/split/merge evidence creates tentative lineage and revalidation, not a forced identity merge. When analyzers are absent or stale, exact file/revision references remain usable and semantic identity guarantees are reported unavailable.
+
+See `unified-semantic-code-query.md` for the query contract, migration plan, and repository traversal invariants.
 
 ## Structured code actions
 
@@ -455,7 +451,7 @@ Do not multiply standalone paper compression ratios to predict combined savings.
 3. Implement stable prompt assembly, cache epochs, deferred tool schemas, progressive skills, typed/lazy tool observations, artifact references, and exact deduplication under the plan.
 4. Implement the context retention lifecycle and cache-aware batched compaction on top of the existing memory checkpoint contract.
 5. Use #510 delegation for isolated exploration and selective child-context inheritance within the plan's delegation budget.
-6. Add first-party repository code graph, structured reads/edits, stable logical entity identity, and temporal lineage.
+6. Unify point reads and repository traversal behind the semantic code query contract. Keep repository graph indexes derived from the existing logical entity, relation, and lineage model.
 7. Let memory depend on logical code entities and relations so repository knowledge survives ordinary refactors and invalidates on semantic changes.
 8. Add primitive-agent export and delta resume.
 9. Benchmark optional learned pruning and compression providers after deterministic stages are measurable.
