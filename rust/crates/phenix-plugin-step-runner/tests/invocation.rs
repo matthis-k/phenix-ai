@@ -490,7 +490,7 @@ fn context_limit_prunes_reducible_context_and_retries_same_target() {
     load_optional_overflow_context(&mut kernel);
 
     let mut params = params("context-limit-policy");
-    params.policy.max_retries = 1;
+    params.policy.max_retries = Some(1);
     let mut invocation = request();
     invocation.session_id = Some(SessionId::parse("session-retry").unwrap());
     let response: StepRunnerResponse = invoke(
