@@ -117,11 +117,11 @@ pub use phenix_plugin_language::{
     language_service, CodeChangedNeighborhood, CodeEntityEditEvidence, CodeEntityEditResult,
     CodeEntityEditValidation, CodeEntityInsertPosition, CodeEntityRelationKind,
     CodeEntityRelationTarget, CodeEntityRelations, CodeQuery, CodeQueryAnchor, CodeQueryBudget,
-    CodeQueryCoverage, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection,
-    CodeQueryRelation, CodeQueryResult, CodeQuerySelection, CodeQueryTraversal, CodeRelationKind,
-    DocumentProvenance, LanguageCommand, LanguageDocumentIdentity, LanguageInterface,
-    LanguageObservation, LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch,
-    LanguageResponse, LANGUAGE_SERVICE,
+    CodeQueryCoverage, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection, CodeQueryRelation,
+    CodeQueryResult, CodeQuerySelection, CodeQueryTraversal, CodeRelationKind, DocumentProvenance,
+    LanguageCommand, LanguageDocumentIdentity, LanguageInterface, LanguageObservation,
+    LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch, LanguageResponse,
+    LANGUAGE_SERVICE,
 };
 pub use phenix_plugin_memory::{
     memory_component_id, memory_component_manifest, memory_factory, memory_manifest,

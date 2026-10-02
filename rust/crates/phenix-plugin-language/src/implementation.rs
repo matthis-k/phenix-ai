@@ -1895,11 +1895,7 @@ fn query_repository_entities(
     {
         Some(index) if index.repository_sequence == repository_sequence => index,
         _ => {
-            let index = build_repository_entity_index(
-                context,
-                repository_id,
-                repository_sequence,
-            )?;
+            let index = build_repository_entity_index(context, repository_id, repository_sequence)?;
             let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
             context
                 .kernel
@@ -1934,7 +1930,8 @@ fn query_repository_entities(
             &pointer.entity.repository_id,
             &pointer.entity.id,
             &pointer.revision,
-        )? else {
+        )?
+        else {
             return Err(format!(
                 "derived repository index references missing entity revision: {}/{}@{}",
                 pointer.entity.repository_id, pointer.entity.id, pointer.revision
@@ -2331,7 +2328,8 @@ fn query_outgoing_relation_kind(
             &pointer.target_revision,
             pointer.stored_kind,
             u32::MAX,
-        )? else {
+        )?
+        else {
             complete = false;
             continue;
         };
@@ -4185,10 +4183,7 @@ mod tests {
             .transact_durable(
                 &language_namespace(),
                 &[TransactionOp::Delete {
-                    key: outgoing_relation_index_key(
-                        "repo-query",
-                        CodeRelationKind::References,
-                    ),
+                    key: outgoing_relation_index_key("repo-query", CodeRelationKind::References),
                 }],
             )
             .unwrap();
@@ -4417,8 +4412,7 @@ mod tests {
             },
         };
 
-        let LanguageResponse::Query { result: first } =
-            invoke(&mut kernel, query()).unwrap()
+        let LanguageResponse::Query { result: first } = invoke(&mut kernel, query()).unwrap()
         else {
             panic!("expected initial repository query result");
         };
@@ -4434,8 +4428,7 @@ mod tests {
 
         record_query_revision(&mut kernel, &query_revision("entity-c", "c"));
 
-        let LanguageResponse::Query { result: second } =
-            invoke(&mut kernel, query()).unwrap()
+        let LanguageResponse::Query { result: second } = invoke(&mut kernel, query()).unwrap()
         else {
             panic!("expected refreshed repository query result");
         };
@@ -5081,7 +5074,8 @@ mod tests {
                 max_bytes: 1024,
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected point source read");
         };
         let LanguageResponse::Query {
@@ -5105,7 +5099,8 @@ mod tests {
                 },
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected unified source query");
         };
         assert_eq!(source_query.sources, vec![point_source]);
