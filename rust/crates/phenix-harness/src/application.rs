@@ -31,8 +31,8 @@ use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
-    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
-    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
+    InterfaceId, InterfaceSchema, InvocationOutcome, Key, LocalPersistence, LogSink,
+    ModelInferenceFailure, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
     PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
     PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
@@ -4729,7 +4729,14 @@ mod tests {
                 .map_err(|error| error.to_string())?;
 
             if self.calls.fetch_add(1, AtomicOrdering::SeqCst) == 0 {
-                return Err("fixture provider failed once".into());
+                let failure = ModelInferenceFailure::InvalidRequest {
+                    message: "fixture provider failed this execution".into(),
+                };
+                return serde_json::to_vec(
+                    &InvocationOutcome::domain_error(PhenixValue::from(&failure))
+                        .into_transport_value(),
+                )
+                .map_err(|error| error.to_string());
             }
 
             let response = ModelInferenceResponse {
