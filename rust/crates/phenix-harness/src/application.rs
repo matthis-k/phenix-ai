@@ -30,8 +30,9 @@ use phenix_application_interface::{
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId, InterfaceSchema,
-    Key, LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
+    ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId,
+    InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor,
+    ModelToolResult,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
     PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
     PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
@@ -2167,12 +2168,28 @@ fn json_value_to_phenix(value: serde_json::Value) -> Result<PhenixValue, Applica
                 .map(json_value_to_phenix)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        serde_json::Value::Object(values) => PhenixValue::Map(
-            values
-                .into_iter()
-                .map(|(key, value)| json_value_to_phenix(value).map(|value| (key, value)))
-                .collect::<Result<BTreeMap<_, _>, _>>()?,
-        ),
+        serde_json::Value::Object(values) => {
+            let is_reference = values.len() == 4
+                && ["digest", "media_type", "bytes", "locator"]
+                    .iter()
+                    .all(|key| values.contains_key(*key));
+            if is_reference {
+                let reference = serde_json::from_value::<ContentReference>(
+                    serde_json::Value::Object(values.clone()),
+                )
+                .map_err(|error| ApplicationError::InvalidResponse {
+                    message: format!("invalid log content reference: {error}"),
+                })?;
+                PhenixValue::from(&reference)
+            } else {
+                PhenixValue::Map(
+                    values
+                        .into_iter()
+                        .map(|(key, value)| json_value_to_phenix(value).map(|value| (key, value)))
+                        .collect::<Result<BTreeMap<_, _>, _>>()?,
+                )
+            }
+        }
     })
 }
 
@@ -4634,6 +4651,11 @@ mod tests {
         assert_eq!(page.records.len(), 1);
         assert_eq!(page.records[0].kind, "runtime_trace");
         assert_eq!(page.next_cursor.as_deref(), Some("1"));
+        let payload_reference = match &page.records[0].payload {
+            PhenixValue::Map(payload) => payload.get("reference").unwrap(),
+            other => panic!("unexpected log payload: {other:?}"),
+        };
+        assert_eq!(payload_reference, &PhenixValue::from(&reference));
 
         let expanded = invoke_operation::<ReadLogReference>(
             &mut worker,
