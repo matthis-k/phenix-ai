@@ -12,7 +12,7 @@ use phenix_sdk::{
     CodeEntityRelations, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
     CodeIdentityContinuityState,
     CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection,
-    CodeQueryRelation, CodeQueryResult, CodeQuerySelection,
+    CodeQueryRelation, CodeQueryResult, CodeQuerySelection, CodeRelationKind,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
     CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
     FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
@@ -1473,7 +1473,7 @@ fn execute_code_query(
 
             let repository_entities = if matches!(
                 direction,
-                CodeQueryDirection::Incoming | CodeQueryDirection::Both
+                CodeQueryDirection::Outgoing | CodeQueryDirection::Both
             ) {
                 Some(query_repository_entities(context, &repository_id)?)
             } else {
@@ -1514,8 +1514,15 @@ fn execute_code_query(
                     direction,
                     CodeQueryDirection::Outgoing | CodeQueryDirection::Both
                 ) {
-                    let (mut outgoing, complete) =
-                        query_outgoing_relations(context, &revision, &kinds)?;
+                    let (mut outgoing, complete) = query_outgoing_relations(
+                        context,
+                        &repository_id,
+                        &revision,
+                        &kinds,
+                        repository_entities
+                            .as_deref()
+                            .expect("outgoing query loaded repository entities"),
+                    )?;
                     result.coverage.complete &= complete;
                     edges.append(&mut outgoing);
                 }
@@ -1523,15 +1530,8 @@ fn execute_code_query(
                     direction,
                     CodeQueryDirection::Incoming | CodeQueryDirection::Both
                 ) {
-                    let (mut incoming, complete) = query_incoming_relations(
-                        context,
-                        &repository_id,
-                        &revision,
-                        &kinds,
-                        repository_entities
-                            .as_deref()
-                            .expect("incoming query loaded repository entities"),
-                    )?;
+                    let (mut incoming, complete) =
+                        query_incoming_relations(context, &revision, &kinds)?;
                     result.coverage.complete &= complete;
                     edges.append(&mut incoming);
                 }
@@ -1555,7 +1555,7 @@ fn execute_code_query(
                     } else {
                         CodeEntityRelationTarget {
                             entity: edge.source.clone(),
-                            revision: Some(edge.source_revision.clone()),
+                            revision: edge.source_revision.clone(),
                         }
                     };
                     if next.entity.repository_id != repository_id {
@@ -1677,7 +1677,15 @@ fn try_push_query_entity(
 
 fn try_push_query_relation(
     result: &mut CodeQueryResult,
-    seen: &mut BTreeSet<(String, String, String, CodeEntityRelationKind, String, String, Option<String>)>,
+    seen: &mut BTreeSet<(
+        String,
+        String,
+        Option<String>,
+        CodeRelationKind,
+        String,
+        String,
+        Option<String>,
+    )>,
     relation: &CodeQueryRelation,
     budget: &phenix_sdk::CodeQueryBudget,
 ) -> Result<bool, String> {
@@ -1713,76 +1721,96 @@ fn encoded_query_result_len(result: &CodeQueryResult) -> Result<u64, String> {
     u64::try_from(len).map_err(|_| "code query result size does not fit u64".to_owned())
 }
 
-fn query_outgoing_relations(
+fn stored_relation_kind(kind: CodeRelationKind) -> CodeEntityRelationKind {
+    match kind {
+        CodeRelationKind::Calls => CodeEntityRelationKind::Callers,
+        CodeRelationKind::References => CodeEntityRelationKind::References,
+        CodeRelationKind::Implements => CodeEntityRelationKind::Implementations,
+    }
+}
+
+fn canonical_relations_from_stored(
+    relations: CodeEntityRelations,
+    kind: CodeRelationKind,
+) -> Vec<CodeQueryRelation> {
+    let target = CodeEntityRelationTarget {
+        entity: relations.entity,
+        revision: Some(relations.revision),
+    };
+    relations
+        .targets
+        .into_iter()
+        .map(|source| CodeQueryRelation {
+            source: source.entity,
+            source_revision: source.revision,
+            kind,
+            target: target.clone(),
+        })
+        .collect()
+}
+
+fn query_incoming_relations(
     context: &LanguageContext<'_, '_, '_>,
     revision: &CodeEntityRevision,
-    kinds: &[CodeEntityRelationKind],
+    kinds: &[CodeRelationKind],
 ) -> Result<(Vec<CodeQueryRelation>, bool), String> {
     let mut complete = true;
     let mut edges = Vec::new();
+
     for kind in kinds {
+        let stored_kind = stored_relation_kind(*kind);
         match read_entity_relations(
             context,
             &revision.entity.repository_id,
             &revision.entity.id,
             &revision.revision,
-            *kind,
+            stored_kind,
             u32::MAX,
         )? {
             Some(relations) => {
                 complete &= relations.complete;
-                for target in relations.targets {
-                    edges.push(CodeQueryRelation {
-                        source: revision.entity.clone(),
-                        source_revision: revision.revision.clone(),
-                        kind: *kind,
-                        target,
-                    });
-                }
+                edges.extend(canonical_relations_from_stored(relations, *kind));
             }
             None => complete = false,
         }
     }
+
     sort_query_relations(&mut edges);
     edges.dedup();
     Ok((edges, complete))
 }
 
-fn query_incoming_relations(
+fn query_outgoing_relations(
     context: &LanguageContext<'_, '_, '_>,
     repository_id: &str,
-    target_revision: &CodeEntityRevision,
-    kinds: &[CodeEntityRelationKind],
+    source_revision: &CodeEntityRevision,
+    kinds: &[CodeRelationKind],
     repository_entities: &[CodeEntityRevision],
 ) -> Result<(Vec<CodeQueryRelation>, bool), String> {
     let mut complete = true;
     let mut edges = Vec::new();
 
-    for source in repository_entities {
+    for target_revision in repository_entities {
         for kind in kinds {
+            let stored_kind = stored_relation_kind(*kind);
             match read_entity_relations(
                 context,
                 repository_id,
-                &source.entity.id,
-                &source.revision,
-                *kind,
+                &target_revision.entity.id,
+                &target_revision.revision,
+                stored_kind,
                 u32::MAX,
             )? {
                 Some(relations) => {
                     complete &= relations.complete;
-                    for target in relations.targets {
-                        let same_entity = target.entity == target_revision.entity;
-                        let same_revision = target
-                            .revision
+                    for edge in canonical_relations_from_stored(relations, *kind) {
+                        let same_entity = edge.source == source_revision.entity;
+                        let same_revision = edge
+                            .source_revision
                             .as_deref()
-                            .is_none_or(|revision| revision == target_revision.revision);
+                            .is_none_or(|revision| revision == source_revision.revision);
                         if same_entity && same_revision {
-                            edges.push(CodeQueryRelation {
-                                source: source.entity.clone(),
-                                source_revision: source.revision.clone(),
-                                kind: *kind,
-                                target,
-                            });
+                            edges.push(edge);
                         }
                     }
                 }
