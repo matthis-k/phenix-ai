@@ -1479,7 +1479,7 @@ impl ApplicationWorker {
                 ledger: RootBudgetLedger {
                     root_execution_id: execution_id.clone(),
                     // Default roots have no cumulative lifetime token or turn ceiling.
-                    // Individual invocations remain bounded by UsagePolicy and the selected model.
+                    // Explicit policy and intrinsic model capacities may still bound a request.
                     limits: RootBudgetLimits {
                         fresh_input_tokens: u64::MAX,
                         output_tokens: u64::MAX,
@@ -3247,14 +3247,7 @@ async fn serve_application_worker_with_execution_capacity(
                     continue;
                 };
                 if should_defer_application_invocation(&active, &invocation) {
-                    if deferred.len() >= APPLICATION_INVOCATION_CAPACITY {
-                        invocation.respond(Err(ApplicationError::Conflict {
-                            message: "application invocation queue is full while an execution owns the runtime"
-                                .to_owned(),
-                        }));
-                    } else {
-                        deferred.push_back(invocation);
-                    }
+                    deferred.push_back(invocation);
                     continue;
                 }
                 dispatch_application_invocation(
