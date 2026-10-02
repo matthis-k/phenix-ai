@@ -549,13 +549,23 @@ pub enum CodeQueryAnchor {
     },
 }
 
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeRelationKind {
+    Calls,
+    References,
+    Implements,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "selection", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CodeQuerySelection {
     Entities,
     Relations {
         #[serde(default)]
-        kinds: Vec<CodeEntityRelationKind>,
+        kinds: Vec<CodeRelationKind>,
     },
 }
 
@@ -618,8 +628,8 @@ pub struct CodeQueryEntity {
 #[serde(deny_unknown_fields)]
 pub struct CodeQueryRelation {
     pub source: LogicalCodeEntity,
-    pub source_revision: String,
-    pub kind: CodeEntityRelationKind,
+    pub source_revision: Option<String>,
+    pub kind: CodeRelationKind,
     pub target: CodeEntityRelationTarget,
 }
 
@@ -982,7 +992,7 @@ mod code_entity_facet_resource_tests {
                         revision: Some("rev-1".into()),
                     },
                     selection: CodeQuerySelection::Relations {
-                        kinds: vec![CodeEntityRelationKind::References],
+                        kinds: vec![CodeRelationKind::References],
                     },
                     traversal: Some(CodeQueryTraversal {
                         direction: CodeQueryDirection::Outgoing,
