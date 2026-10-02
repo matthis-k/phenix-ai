@@ -2057,18 +2057,20 @@ fn try_push_query_entity(
     Ok(true)
 }
 
+type QueryRelationIdentity = (
+    String,
+    String,
+    Option<String>,
+    CodeRelationKind,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
 fn try_push_query_relation(
     result: &mut CodeQueryResult,
-    seen: &mut BTreeSet<(
-        String,
-        String,
-        Option<String>,
-        CodeRelationKind,
-        String,
-        String,
-        String,
-        Option<String>,
-    )>,
+    seen: &mut BTreeSet<QueryRelationIdentity>,
     relation: &CodeQueryRelation,
     budget: &phenix_sdk::CodeQueryBudget,
 ) -> Result<bool, String> {
@@ -3759,8 +3761,8 @@ fn entity_source_locator_key(repository_id: &str, entity_id: &str, revision: &st
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedHarness,
-        ResolvedHarnessActivation,
+        Kernel, KernelConfig, LocalPersistence, PersistenceBackend, PhenixValue, Project,
+        ResolvedHarness, ResolvedHarnessActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -4179,14 +4181,19 @@ mod tests {
         assert_eq!(result.relations[1].source, b.entity);
         assert_eq!(result.relations[1].target.entity, c.entity);
 
-        kernel
-            .transact_durable(
+        drop(kernel);
+        let mut persistence = LocalPersistence::open(&path).unwrap();
+        persistence
+            .transact(
+                &language_manifest().id,
                 &language_namespace(),
                 &[TransactionOp::Delete {
                     key: outgoing_relation_index_key("repo-query", CodeRelationKind::References),
                 }],
             )
             .unwrap();
+        drop(persistence);
+        let mut kernel = kernel_with(&path);
         let LanguageResponse::Query { result: rebuilt } = invoke(
             &mut kernel,
             LanguageCommand::Query {
