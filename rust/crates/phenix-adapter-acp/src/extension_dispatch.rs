@@ -5,8 +5,9 @@ use phenix_application_interface::{
     Cancel, CloseSession, CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics,
     GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
     InvokeCapability, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
-    ListSkills, Operation, Prompt, RemoveClientTool, RenameSession, ResumeSession,
-    SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable, UnsubscribeObservable,
+    ListSkills, Operation, Prompt, QueryLogs, ReadLogReference, RemoveClientTool, RenameSession,
+    ResumeSession, SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable,
+    UnsubscribeObservable,
 };
 use phenix_core::{ContractId, PhenixValue, ValueCodec};
 use std::sync::Arc;
@@ -51,6 +52,8 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
             GetExecutionTree,
             GetProvenance,
             GetDiagnostics,
+            QueryLogs,
+            ReadLogReference,
             ListObservables,
             GetObservable,
             SubscribeObservable,

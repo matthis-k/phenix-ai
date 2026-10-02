@@ -59,6 +59,17 @@ Explicit file sinks remain supported. Their implicit store remains adjacent at `
 
 `PHENIX_LOG_STORE` overrides the inferred CAS root. Console sinks require an explicit store root when `reference` mode is selected. With no explicit log sink, `phenix.debug` uses the Phenix state directory as the canonical directory sink.
 
+## Application inspection
+
+Application clients read logs through the `logs` capability. Storage paths stay private to Phenix.
+
+- `log-query` returns bounded structured pages. It accepts an opaque cursor plus optional session and execution filters.
+- `log-reference-read` resolves a typed `ContentReference` through the configured reference store and verifies its digest before returning bytes.
+- Returned log payloads normalize nested `ContentReference` values to the structural application representation. A client can pass the same reference directly to `log-reference-read`.
+- The application worker resolves its local log reader once at startup. With no explicit sink, it uses the same default local directory as `phenix.debug`.
+
+Frontends render these records. They do not parse `phenix.log` or derive object paths from CAS locators.
+
 ## Invariants
 
 1. The main log remains useful without loading referenced content.

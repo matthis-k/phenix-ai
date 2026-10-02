@@ -3,21 +3,25 @@ use phenix_application_interface::{
     types::{
         Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
         ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
-        InteractionHandlers, PageInput, PermissionRequest, PermissionResponse, PromptInput,
-        PromptResult, Provenance, ReviewDecision, ReviewDecisionInput, ReviewRecord,
-        SelectionDefaultSelectInput, SelectionSelectInput, Selections, SessionCreateInput,
-        SessionInfo, SessionInput, SessionProjection, SessionResumeInput, SessionSnapshot,
-        SessionUpdate, SetInteractionHandlersInput,
+        InteractionHandlers, LogPage, LogQueryInput, LogReferenceContent, LogReferenceInput,
+        PageInput, PermissionRequest, PermissionResponse, PromptInput, PromptResult, Provenance,
+        ReviewDecision, ReviewDecisionInput, ReviewRecord, SelectionDefaultSelectInput,
+        SelectionSelectInput, Selections, SessionCreateInput, SessionInfo, SessionInput,
+        SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
+        SetInteractionHandlersInput,
     },
     Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
     CreateSession as AppCreateSession, DecideReview as AppDecideReview,
     DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
     ListDefaultSelections as AppListDefaultSelections, ListSelections as AppListSelections,
-    ListSessions as AppListSessions, Prompt as AppPrompt, RenameSession as AppRenameSession,
+    ListSessions as AppListSessions, Prompt as AppPrompt, QueryLogs as AppQueryLogs,
+    ReadLogReference as AppReadLogReference, RenameSession as AppRenameSession,
     ResumeSession as AppResumeSession, SelectDefaultSelection as AppSelectDefaultSelection,
     SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
 };
-use phenix_core::{CapabilityOwnerId, ReferenceId, RoutingProfileId, SessionId, ValueCodec};
+use phenix_core::{
+    CapabilityOwnerId, ContentReference, ReferenceId, RoutingProfileId, SessionId, ValueCodec,
+};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -133,6 +137,8 @@ enum RequestProjection {
         session_id: String,
         execution_id: String,
     },
+    Logs,
+    LogReference,
     Review,
 }
 
@@ -147,6 +153,8 @@ enum FacadeOutcome {
     Prompt(PromptResult),
     Selections(Selections),
     Provenance(Provenance),
+    Logs(LogPage),
+    LogReference(LogReferenceContent),
     Review(ReviewRecord),
 }
 
@@ -285,6 +293,59 @@ impl UserData for FacadeClient {
                 &this.core,
                 SelectionDefaultSelectInput { selection_id },
                 RequestProjection::DefaultSelections,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method("logs", |lua, this, options: Option<Table>| {
+            require_ready(&this.core)?;
+            let cursor = options
+                .as_ref()
+                .map(|options| options.get::<Option<String>>("cursor"))
+                .transpose()?
+                .flatten();
+            let limit = options
+                .as_ref()
+                .map(|options| options.get::<Option<u64>>("limit"))
+                .transpose()?
+                .flatten();
+            let session_id = options
+                .as_ref()
+                .map(|options| options.get::<Option<String>>("session_id"))
+                .transpose()?
+                .flatten()
+                .map(parse_session_id)
+                .transpose()?;
+            let execution_id = options
+                .as_ref()
+                .map(|options| options.get::<Option<String>>("execution_id"))
+                .transpose()?
+                .flatten();
+            let request = application_request::<AppQueryLogs>(
+                &this.core,
+                LogQueryInput {
+                    cursor,
+                    limit,
+                    session_id,
+                    execution_id,
+                },
+                RequestProjection::Logs,
+            )?;
+            lua.create_userdata(request)
+        });
+        methods.add_method("log_reference", |lua, this, reference: Table| {
+            require_ready(&this.core)?;
+            let value = lua_to_phenix(
+                lua,
+                &<ContentReference as ValueCodec>::phenix_type(),
+                Value::Table(reference),
+            )
+            .map_err(lua_error)?;
+            let reference = ContentReference::from_value(&value)
+                .map_err(|error| lua_error(BindingError::conversion(error.to_string())))?;
+            let request = application_request::<AppReadLogReference>(
+                &this.core,
+                LogReferenceInput { reference },
+                RequestProjection::LogReference,
             )?;
             lua.create_userdata(request)
         });
@@ -801,6 +862,8 @@ fn decode_outcome(
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::Provenance(provenance))
         }
+        RequestProjection::Logs => Ok(FacadeOutcome::Logs(decode(&value)?)),
+        RequestProjection::LogReference => Ok(FacadeOutcome::LogReference(decode(&value)?)),
         RequestProjection::Review => Ok(FacadeOutcome::Review(decode(&value)?)),
     }
 }
@@ -835,6 +898,10 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
         FacadeOutcome::Prompt(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Selections(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
         FacadeOutcome::Provenance(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::Logs(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
+        FacadeOutcome::LogReference(value) => {
+            facade_value(lua, &value.to_value()).map_err(lua_error)
+        }
         FacadeOutcome::Review(value) => facade_value(lua, &value.to_value()).map_err(lua_error),
     }
 }
@@ -1515,6 +1582,20 @@ fn features_table(lua: &Lua, core: &FacadeCore) -> LuaResult<Table> {
                 .map_err(lua_error)?,
         )?;
     }
+    let log_query = ContractId::parse(AppQueryLogs::ID).expect("static log query operation");
+    let log_reference =
+        ContractId::parse(AppReadLogReference::ID).expect("static log reference operation");
+    let logs = core
+        .raw
+        .state
+        .supports_extension(&log_query)
+        .map_err(lua_error)?
+        && core
+            .raw
+            .state
+            .supports_extension(&log_reference)
+            .map_err(lua_error)?;
+    result.set("logs", logs)?;
     let authentication_list = ContractId::parse(AppDiscoverAuthentication::ID)
         .expect("static authentication discovery operation");
     let authenticate =

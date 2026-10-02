@@ -12,7 +12,8 @@ use phenix_application_interface::{
         Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
         AuthenticationMethods, AuthenticationResult, CapabilityInvokeInput, CapabilityInvokeResult,
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
-        InteractionHandlers, Message, MessageRole, PageInput, PermissionHandlerRef,
+        InteractionHandlers, LogPage, LogQueryInput, LogRecord, LogReferenceContent,
+        LogReferenceInput, Message, MessageRole, PageInput, PermissionHandlerRef,
         PermissionRequest, PermissionResponse, PromptInput, PromptResult, ReviewDecisionInput,
         ReviewRecord, SelectionDefaultSelectInput, SelectionInfo, SelectionPresentation,
         SelectionSelectInput, Selections, SessionChange, SessionCreateInput, SessionInfo,
@@ -22,19 +23,20 @@ use phenix_application_interface::{
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
-    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, RemoveClientTool,
-    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection, SetInteractionHandlers,
+    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
+    ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
+    SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId, InterfaceSchema,
-    Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError,
-    ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, ValueCodec, ValueId,
-    ValuePath,
+    ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
+    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
+    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
+    PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
+    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -487,6 +489,7 @@ pub struct ApplicationWorker {
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
     event_sender: Option<mpsc::Sender<ApplicationEvent>>,
+    log_reader: Result<StructuredLogReader, String>,
 }
 
 impl ApplicationWorker {
@@ -500,6 +503,7 @@ impl ApplicationWorker {
                 elicitation: None,
             },
             event_sender: None,
+            log_reader: configured_log_reader(),
         })
     }
 
@@ -592,10 +596,99 @@ impl ApplicationWorker {
             DecideReview::ID => self
                 .decide_review(decode(input)?)
                 .map(|value| value.to_value()),
+            QueryLogs::ID => self
+                .query_logs(decode(input)?)
+                .map(|value| value.to_value()),
+            ReadLogReference::ID => self
+                .read_log_reference(decode(input)?)
+                .map(|value| value.to_value()),
             _ => Err(ApplicationError::UnsupportedCapability {
                 capability: operation.clone(),
             }),
         }
+    }
+
+    fn log_reader(&self) -> Result<&StructuredLogReader, ApplicationError> {
+        self.log_reader
+            .as_ref()
+            .map_err(|message| ApplicationError::Failed {
+                message: message.clone(),
+            })
+    }
+
+    fn query_logs(&self, request: LogQueryInput) -> Result<LogPage, ApplicationError> {
+        const DEFAULT_LIMIT: usize = 200;
+        const MAX_LIMIT: usize = 1000;
+        const READ_BATCH: usize = 512;
+
+        let mut cursor = request
+            .cursor
+            .as_deref()
+            .unwrap_or("0")
+            .parse::<u64>()
+            .map_err(|error| ApplicationError::InvalidInput {
+                message: format!("invalid log cursor: {error}"),
+            })?;
+        let limit = usize::try_from(request.limit.unwrap_or(DEFAULT_LIMIT as u64))
+            .unwrap_or(MAX_LIMIT)
+            .clamp(1, MAX_LIMIT);
+        let reader = self.log_reader()?;
+        let mut records = Vec::new();
+
+        let next_cursor = 'scan: loop {
+            let page = reader
+                .read_page(cursor, READ_BATCH)
+                .map_err(|message| ApplicationError::Failed { message })?;
+            if page.records.is_empty() {
+                break 'scan None;
+            }
+
+            let page_has_more = page.next_cursor.is_some();
+            let page_record_count = page.records.len();
+            for (index, raw) in page.records.into_iter().enumerate() {
+                let record_cursor = cursor;
+                cursor = cursor.saturating_add(1);
+                if !log_record_matches(
+                    &raw,
+                    request.session_id.as_ref(),
+                    request.execution_id.as_deref(),
+                ) {
+                    continue;
+                }
+                records.push(application_log_record(record_cursor, raw)?);
+                if records.len() == limit {
+                    break 'scan (index + 1 < page_record_count || page_has_more)
+                        .then(|| cursor.to_string());
+                }
+            }
+
+            match page.next_cursor {
+                Some(next) => cursor = next,
+                None => break 'scan None,
+            }
+        };
+
+        Ok(LogPage {
+            records,
+            next_cursor,
+        })
+    }
+
+    fn read_log_reference(
+        &self,
+        request: LogReferenceInput,
+    ) -> Result<LogReferenceContent, ApplicationError> {
+        let reader = self.log_reader()?;
+        let content = reader
+            .read_reference(&request.reference)
+            .map_err(|message| ApplicationError::Failed { message })?
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: request.reference.digest.to_string(),
+            })?;
+        Ok(LogReferenceContent {
+            reference: request.reference,
+            content: Bytes::from(content),
+        })
     }
 
     fn set_interaction_handlers(
@@ -1956,6 +2049,138 @@ impl ApplicationWorker {
             }
         })
     }
+}
+
+fn configured_log_reader() -> Result<StructuredLogReader, String> {
+    let sink = if let Some(spec) =
+        env::var_os("PHENIX_DEBUG_LOG").filter(|value| !value.as_os_str().is_empty())
+    {
+        LogSink::parse(&spec.to_string_lossy())
+    } else {
+        LogSink::from_env().map(|sink| sink.unwrap_or_else(LogSink::default_local))
+    }?;
+    StructuredLogReader::configured(sink)
+}
+
+fn log_record_matches(
+    value: &serde_json::Value,
+    session_id: Option<&SessionId>,
+    execution_id: Option<&str>,
+) -> bool {
+    session_id
+        .is_none_or(|session_id| log_json_contains_field(value, "session_id", session_id.as_str()))
+        && execution_id
+            .is_none_or(|execution_id| log_json_contains_field(value, "execution_id", execution_id))
+}
+
+fn log_json_contains_field(value: &serde_json::Value, key: &str, expected: &str) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| log_json_contains_field(value, key, expected)),
+        serde_json::Value::Object(values) => {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value == expected)
+                || values
+                    .values()
+                    .any(|value| log_json_contains_field(value, key, expected))
+        }
+        _ => false,
+    }
+}
+
+fn application_log_record(
+    cursor: u64,
+    value: serde_json::Value,
+) -> Result<LogRecord, ApplicationError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| ApplicationError::InvalidResponse {
+            message: "structured log record must be an object".to_owned(),
+        })?;
+    let timestamp_ms = object
+        .get("timestamp_ms")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| ApplicationError::InvalidResponse {
+            message: "structured log record is missing timestamp_ms".to_owned(),
+        })?;
+    let pid = object
+        .get("pid")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| ApplicationError::InvalidResponse {
+            message: "structured log record is missing pid".to_owned(),
+        })?;
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ApplicationError::InvalidResponse {
+            message: "structured log record is missing kind".to_owned(),
+        })?
+        .to_owned();
+    let payload = json_value_to_phenix(
+        object
+            .get("payload")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )?;
+    Ok(LogRecord {
+        cursor: cursor.to_string(),
+        timestamp_ms,
+        pid,
+        kind,
+        payload,
+    })
+}
+
+fn json_value_to_phenix(value: serde_json::Value) -> Result<PhenixValue, ApplicationError> {
+    Ok(match value {
+        serde_json::Value::Null => PhenixValue::Option(None),
+        serde_json::Value::Bool(value) => PhenixValue::Bool(value),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                PhenixValue::I64(value)
+            } else if let Some(value) = value.as_u64() {
+                PhenixValue::U64(value)
+            } else if let Some(value) = value.as_f64() {
+                PhenixValue::F64(value)
+            } else {
+                return Err(ApplicationError::InvalidResponse {
+                    message: "structured log number cannot be represented".to_owned(),
+                });
+            }
+        }
+        serde_json::Value::String(value) => PhenixValue::String(value),
+        serde_json::Value::Array(values) => PhenixValue::List(
+            values
+                .into_iter()
+                .map(json_value_to_phenix)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_json::Value::Object(values) => {
+            let is_reference = values.len() == 4
+                && ["digest", "media_type", "bytes", "locator"]
+                    .iter()
+                    .all(|key| values.contains_key(*key));
+            if is_reference {
+                let reference = serde_json::from_value::<ContentReference>(
+                    serde_json::Value::Object(values.clone()),
+                )
+                .map_err(|error| ApplicationError::InvalidResponse {
+                    message: format!("invalid log content reference: {error}"),
+                })?;
+                PhenixValue::from(&reference)
+            } else {
+                PhenixValue::Map(
+                    values
+                        .into_iter()
+                        .map(|(key, value)| json_value_to_phenix(value).map(|value| (key, value)))
+                        .collect::<Result<BTreeMap<_, _>, _>>()?,
+                )
+            }
+        }
+    })
 }
 
 fn authentication_method_id(provider: &PluginId, method: &str) -> Result<String, ApplicationError> {
@@ -4311,6 +4536,7 @@ fn configured_capabilities() -> Vec<ContractId> {
         "client-tools",
         "interaction",
         "review",
+        "logs",
     ]
     .into_iter()
     .map(|name| {
@@ -4362,6 +4588,79 @@ mod tests {
         let mut harness = PhenixHarness::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
+    }
+
+    #[test]
+    fn application_log_operations_filter_and_expand_references() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-application-log-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let logger = phenix_core::StructuredLogger::new(LogSink::directory(&root))
+            .unwrap()
+            .with_detail_mode(phenix_core::LogDetailMode::Reference);
+        let detail = serde_json::json!({"body": "referenced"});
+        let reference = logger.store_json(&detail).unwrap();
+        logger
+            .record(
+                "runtime_trace",
+                serde_json::json!({
+                    "session_id": "session.keep",
+                    "execution_id": "execution.keep",
+                    "reference": reference.clone(),
+                }),
+            )
+            .unwrap();
+        logger
+            .record(
+                "runtime_trace",
+                serde_json::json!({
+                    "session_id": "session.other",
+                    "execution_id": "execution.other",
+                }),
+            )
+            .unwrap();
+
+        let mut worker = application_worker();
+        worker.log_reader = Ok(StructuredLogReader::configured(LogSink::directory(&root)).unwrap());
+
+        let page = invoke_operation::<QueryLogs>(
+            &mut worker,
+            LogQueryInput {
+                cursor: None,
+                limit: Some(1),
+                session_id: Some(SessionId::parse("session.keep").unwrap()),
+                execution_id: Some("execution.keep".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].kind, "runtime_trace");
+        assert_eq!(page.next_cursor.as_deref(), Some("1"));
+        let payload_reference = match &page.records[0].payload {
+            PhenixValue::Map(payload) => payload.get("reference").unwrap(),
+            other => panic!("unexpected log payload: {other:?}"),
+        };
+        assert_eq!(payload_reference, &PhenixValue::from(&reference));
+
+        let expanded = invoke_operation::<ReadLogReference>(
+            &mut worker,
+            LogReferenceInput {
+                reference: reference.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(expanded.reference, reference);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(expanded.content.as_ref()).unwrap(),
+            detail
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     async fn invoke_transport_operation<O: Operation>(

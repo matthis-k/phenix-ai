@@ -5,7 +5,7 @@ use std::{
     env,
     ffi::OsString,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process,
     sync::Mutex,
@@ -82,6 +82,28 @@ impl LogSink {
     }
 
     #[must_use]
+    pub fn default_local_directory() -> PathBuf {
+        if let Some(state_db) = env::var_os("PHENIX_STATE_DB") {
+            let state_db = PathBuf::from(state_db);
+            if let Some(parent) = state_db.parent() {
+                return parent.to_path_buf();
+            }
+        }
+        if let Some(state_home) = env::var_os("XDG_STATE_HOME") {
+            return PathBuf::from(state_home).join("phenix");
+        }
+        if let Some(home) = env::var_os("HOME") {
+            return PathBuf::from(home).join(".local/state/phenix");
+        }
+        env::temp_dir().join("phenix")
+    }
+
+    #[must_use]
+    pub fn default_local() -> Self {
+        Self::Directory(Self::default_local_directory())
+    }
+
+    #[must_use]
     pub fn description(&self) -> String {
         match self {
             Self::Stderr => "stderr".into(),
@@ -152,6 +174,97 @@ enum LogWriter {
     Stderr,
     Stdout,
     File(File),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructuredLogPage {
+    pub records: Vec<Value>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructuredLogReader {
+    path: PathBuf,
+    reference_store: Option<FileContentReferenceStore>,
+}
+
+impl StructuredLogReader {
+    pub fn configured(sink: LogSink) -> Result<Self, String> {
+        let path = match &sink {
+            LogSink::Directory(root) => root.join("phenix.log"),
+            LogSink::AppendFile(path) | LogSink::TruncateFile(path) => path.clone(),
+            LogSink::Stderr | LogSink::Stdout => {
+                return Err("configured log sink is not readable as a local file".into())
+            }
+        };
+        let mut reference_store = sink
+            .inferred_store_root()
+            .map(FileContentReferenceStore::new);
+        if let Some(root) =
+            env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
+        {
+            reference_store = Some(FileContentReferenceStore::new(root));
+        }
+        Ok(Self {
+            path,
+            reference_store,
+        })
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn read_page(&self, cursor: u64, limit: usize) -> Result<StructuredLogPage, String> {
+        if limit == 0 {
+            return Ok(StructuredLogPage {
+                records: Vec::new(),
+                next_cursor: Some(cursor),
+            });
+        }
+        let file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(StructuredLogPage {
+                    records: Vec::new(),
+                    next_cursor: None,
+                })
+            }
+            Err(error) => return Err(format!("{}: {error}", self.path.display())),
+        };
+        let mut records = Vec::new();
+        let mut scanned = cursor;
+        let mut has_more = false;
+        for line in BufReader::new(file).lines().skip(cursor as usize) {
+            let line = line.map_err(|error| format!("{}: {error}", self.path.display()))?;
+            if records.len() == limit {
+                has_more = true;
+                break;
+            }
+            scanned += 1;
+            let value = serde_json::from_str::<Value>(&line).map_err(|error| {
+                format!(
+                    "{} record {} is invalid JSON: {error}",
+                    self.path.display(),
+                    scanned
+                )
+            })?;
+            records.push(value);
+        }
+        Ok(StructuredLogPage {
+            records,
+            next_cursor: has_more.then_some(scanned),
+        })
+    }
+
+    pub fn read_reference(&self, reference: &ContentReference) -> Result<Option<Vec<u8>>, String> {
+        let store = self
+            .reference_store
+            .as_ref()
+            .ok_or_else(|| "configured log sink has no reference store".to_owned())?;
+        store.get(reference)
+    }
 }
 
 pub struct StructuredLogger {
@@ -605,6 +718,45 @@ mod tests {
             parent_value["body"]["digest"],
             serde_json::to_value(child_again.digest).unwrap()
         );
+    }
+
+    #[test]
+    fn structured_log_reader_pages_root_records_and_reads_references() {
+        let root = unique_path("reader");
+        let logger = StructuredLogger::new(LogSink::directory(&root))
+            .unwrap()
+            .with_detail_mode(LogDetailMode::Reference);
+        logger
+            .record("first", serde_json::json!({"value": 1}))
+            .unwrap();
+        let reference = logger
+            .store_json(&serde_json::json!({"detail": "payload"}))
+            .unwrap();
+        logger
+            .record(
+                "second",
+                serde_json::json!({"reference": reference.clone()}),
+            )
+            .unwrap();
+
+        let reader = StructuredLogReader::configured(LogSink::directory(&root)).unwrap();
+        let first = reader.read_page(0, 1).unwrap();
+        assert_eq!(first.records.len(), 1);
+        assert_eq!(first.next_cursor, Some(1));
+        assert_eq!(first.records[0]["kind"], "first");
+
+        let second = reader.read_page(first.next_cursor.unwrap(), 8).unwrap();
+        assert_eq!(second.records.len(), 1);
+        assert_eq!(second.next_cursor, None);
+        assert_eq!(second.records[0]["kind"], "second");
+
+        let bytes = reader.read_reference(&reference).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            serde_json::json!({"detail": "payload"})
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

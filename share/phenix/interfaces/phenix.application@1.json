@@ -79,6 +79,18 @@
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.interaction@1"
     },
+    "phenix.application.log-query@1": {
+      "input": "phenix.application.type.log-query-input@1",
+      "output": "phenix.application.type.log-page@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.logs@1"
+    },
+    "phenix.application.log-reference-read@1": {
+      "input": "phenix.application.type.log-reference-input@1",
+      "output": "phenix.application.type.log-reference-content@1",
+      "error": "phenix.application.error@1",
+      "capability": "phenix.application.capability.logs@1"
+    },
     "phenix.application.observable-get@1": {
       "input": "phenix.application.type.observable-get-input@1",
       "output": "phenix.application.type.observable-value@1",
@@ -279,6 +291,11 @@
     "phenix.application.capability.lineage@1": {
       "dependencies": [
         "phenix.application.capability.sessions@1"
+      ]
+    },
+    "phenix.application.capability.logs@1": {
+      "dependencies": [
+        "phenix.application.capability.discovery@1"
       ]
     },
     "phenix.application.capability.observables@1": {
@@ -2182,6 +2199,178 @@
                   }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.log-page@1": {
+      "type": "table",
+      "value": {
+        "next_cursor": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        },
+        "records": {
+          "type": "list",
+          "value": {
+            "type": "table",
+            "value": {
+              "cursor": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "payload": {
+                "type": "any"
+              },
+              "pid": {
+                "type": "u64"
+              },
+              "timestamp_ms": {
+                "type": "u64"
+              }
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.log-query-input@1": {
+      "type": "table",
+      "value": {
+        "cursor": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        },
+        "execution_id": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        },
+        "limit": {
+          "type": "option",
+          "value": {
+            "type": "u64"
+          }
+        },
+        "session_id": {
+          "type": "option",
+          "value": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "phenix.application.type.log-record@1": {
+      "type": "table",
+      "value": {
+        "cursor": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "any"
+        },
+        "pid": {
+          "type": "u64"
+        },
+        "timestamp_ms": {
+          "type": "u64"
+        }
+      }
+    },
+    "phenix.application.type.log-reference-content@1": {
+      "type": "table",
+      "value": {
+        "content": {
+          "type": "bytes"
+        },
+        "reference": {
+          "type": "table",
+          "value": {
+            "bytes": {
+              "type": "u64"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "locator": {
+              "type": "variant",
+              "value": {
+                "File": {
+                  "type": "table",
+                  "value": {
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "Service": {
+                  "type": "table",
+                  "value": {
+                    "resource": {
+                      "type": "string"
+                    },
+                    "service": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "media_type": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "phenix.application.type.log-reference-input@1": {
+      "type": "table",
+      "value": {
+        "reference": {
+          "type": "table",
+          "value": {
+            "bytes": {
+              "type": "u64"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "locator": {
+              "type": "variant",
+              "value": {
+                "File": {
+                  "type": "table",
+                  "value": {
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "Service": {
+                  "type": "table",
+                  "value": {
+                    "resource": {
+                      "type": "string"
+                    },
+                    "service": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "media_type": {
+              "type": "string"
             }
           }
         }
