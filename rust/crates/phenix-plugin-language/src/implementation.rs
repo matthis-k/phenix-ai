@@ -10,6 +10,8 @@ use phenix_sdk::{
     CodeEntityLineageKind, CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
     CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelations,
     CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView, CodeIdentityContinuityState,
+    CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection,
+    CodeQueryRelation, CodeQueryResult, CodeQuerySelection,
     CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
     CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
     FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
@@ -18,7 +20,7 @@ use phenix_sdk::{
 };
 use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const LANGUAGE_PLUGIN: &str = "phenix.language";
 const LANGUAGE_NAMESPACE: &str = "phenix.language.state";
@@ -131,6 +133,9 @@ fn handle(
     command: LanguageCommand,
 ) -> Result<LanguageResponse, String> {
     match command {
+        LanguageCommand::Query { query } => Ok(LanguageResponse::Query {
+            result: execute_code_query(context, query)?,
+        }),
         LanguageCommand::ActivateProvider {
             workspace_id,
             provider_id,
