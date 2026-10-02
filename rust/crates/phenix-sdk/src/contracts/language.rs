@@ -486,6 +486,7 @@ pub enum CodeEntityRelationKind {
     Callers,
     References,
     Implementations,
+    Contains,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -576,6 +577,7 @@ pub enum CodeRelationKind {
     Calls,
     References,
     Implements,
+    Contains,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
