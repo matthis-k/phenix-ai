@@ -345,7 +345,7 @@ fn invocation_params(
     tools: &[ModelToolDescriptor],
     policy_revision: &str,
     route_policy_revision: &str,
-    max_retries: u32,
+    _max_retries: u32,
 ) -> InvocationParams {
     let optional_tools = tools
         .iter()
@@ -355,13 +355,13 @@ fn invocation_params(
         profile_id,
         policy: UsagePolicy {
             revision: policy_revision.into(),
-            max_fresh_input_tokens: u64::MAX,
-            max_output_tokens: u64::MAX,
+            max_fresh_input_tokens: None,
+            max_output_tokens: None,
             max_cost_microunits: None,
-            max_retries,
-            max_tool_result_bytes: u64::MAX,
-            max_tool_schemas: u32::MAX,
-            max_skills: u32::MAX,
+            max_retries: None,
+            max_tool_result_bytes: None,
+            max_tool_schemas: None,
+            max_skills: None,
             require_known_capacity: false,
             delegation: DelegationResourcePolicy::default(),
         },
@@ -485,6 +485,6 @@ mod tests {
         let params = resolve_helper_defaults(&request);
         assert_eq!(params.profile_id, request.profile_id);
         assert_eq!(params.policy.revision, HELPER_POLICY_REVISION);
-        assert_eq!(params.policy.max_retries, u32::MAX);
+        assert_eq!(params.policy.max_retries, None);
     }
 }
