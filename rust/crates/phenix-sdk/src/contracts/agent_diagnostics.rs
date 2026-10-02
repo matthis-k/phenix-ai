@@ -80,7 +80,6 @@ pub fn agent_diagnostic_event_type() -> EventTypeId {
     EventTypeId::parse(AGENT_DIAGNOSTIC_EVENT).expect("static agent diagnostic event type is valid")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
