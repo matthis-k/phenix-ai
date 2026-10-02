@@ -336,7 +336,7 @@ mod tests {
                     estimates: RoutingEstimateMode::PreferTrusted {
                         min_confidence_millis: 100,
                     },
-                    max_candidate_attempts: 2,
+                    max_candidate_attempts: Some(2),
                 },
             )
             .unwrap();
@@ -379,7 +379,7 @@ mod tests {
                 &RouteSelectionPolicy {
                     revision: "policy-1".into(),
                     estimates: RoutingEstimateMode::Ignore,
-                    max_candidate_attempts: 2,
+                    max_candidate_attempts: Some(2),
                 },
             )
             .unwrap();

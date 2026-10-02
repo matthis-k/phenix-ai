@@ -31,12 +31,13 @@ use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
-    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
-    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
-    PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
-    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
+    InterfaceId, InterfaceSchema, InvocationOutcome, Key, LocalPersistence, LogSink,
+    ModelInferenceFailure, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError,
+    ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
+    ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -1479,7 +1480,7 @@ impl ApplicationWorker {
                 ledger: RootBudgetLedger {
                     root_execution_id: execution_id.clone(),
                     // Default roots have no cumulative lifetime token or turn ceiling.
-                    // Individual invocations remain bounded by UsagePolicy and the selected model.
+                    // Explicit policy and intrinsic model capacities may still bound a request.
                     limits: RootBudgetLimits {
                         fresh_input_tokens: u64::MAX,
                         output_tokens: u64::MAX,
@@ -3247,14 +3248,7 @@ async fn serve_application_worker_with_execution_capacity(
                     continue;
                 };
                 if should_defer_application_invocation(&active, &invocation) {
-                    if deferred.len() >= APPLICATION_INVOCATION_CAPACITY {
-                        invocation.respond(Err(ApplicationError::Conflict {
-                            message: "application invocation queue is full while an execution owns the runtime"
-                                .to_owned(),
-                        }));
-                    } else {
-                        deferred.push_back(invocation);
-                    }
+                    deferred.push_back(invocation);
                     continue;
                 }
                 dispatch_application_invocation(
@@ -4562,7 +4556,10 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        sync::{Condvar, Mutex as StdMutex},
+        sync::{
+            atomic::{AtomicU32, Ordering as AtomicOrdering},
+            Condvar, Mutex as StdMutex,
+        },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -4689,6 +4686,68 @@ mod tests {
             }],
             resource_namespaces: Vec::new(),
             maximum_authority: Authority::default(),
+        }
+    }
+
+    fn fail_once_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.fail-once-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct FailOnceModel {
+        calls: Arc<AtomicU32>,
+    }
+
+    impl PluginInstance for FailOnceModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!("unsupported fail-once fixture service: {service}"));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let _request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+
+            if self.calls.fetch_add(1, AtomicOrdering::SeqCst) == 0 {
+                // This regression exercises failed-execution recovery, not retry policy.
+                let failure = ModelInferenceFailure::InvalidRequest {
+                    message: "fixture provider failed this execution".into(),
+                };
+                return serde_json::to_vec(
+                    &InvocationOutcome::domain_error(PhenixValue::from(&failure))
+                        .into_transport_value(),
+                )
+                .map_err(|error| error.to_string());
+            }
+
+            let response = ModelInferenceResponse {
+                output: Bytes::new(b"second prompt completed".to_vec()),
+                provider_metadata: BTreeMap::new(),
+                usage: Default::default(),
+                tool_calls: Vec::new(),
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
         }
     }
 
@@ -5018,6 +5077,135 @@ mod tests {
             events.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_prompt_does_not_poison_the_session_or_next_execution() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let model_calls = Arc::clone(&calls);
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(fail_once_model_manifest(), move || {
+                Box::new(FailOnceModel {
+                    calls: Arc::clone(&model_calls),
+                })
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.fail-once-model",
+            "fixture-fail-once",
+            "failed-prompt-resubmit-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.failed-prompt-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-failed-prompt-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-failed-prompt-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let first = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: created.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "fail this execution".into(),
+                }],
+            },
+        )
+        .await
+        .expect_err("first provider invocation must fail");
+        assert!(
+            matches!(first, ApplicationError::Failed { .. }),
+            "unexpected first prompt error: {first:?}"
+        );
+
+        let second = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: created.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "run a fresh execution".into(),
+                }],
+            },
+        )
+        .await
+        .expect("a failed execution must not poison the session");
+        assert_eq!(second.stop_reason, StopReason::EndTurn);
+        assert_ne!(second.execution_id, "execution-1");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Failed { .. },
+                    },
+                } if execution_id == "execution-1"
+            )
+        }));
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Completed,
+                    },
+                } if execution_id == &second.execution_id
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

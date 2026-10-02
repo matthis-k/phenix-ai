@@ -353,7 +353,13 @@ impl ExtensionCallbackRequest {
 
 #[derive(Clone)]
 pub struct ExtensionCallbacks {
-    sender: mpsc::SyncSender<ExtensionCallbackRequest>,
+    sender: CallbackSender,
+}
+
+#[derive(Clone)]
+enum CallbackSender {
+    Unbounded(mpsc::Sender<ExtensionCallbackRequest>),
+    Bounded(mpsc::SyncSender<ExtensionCallbackRequest>),
 }
 
 #[derive(Debug)]
@@ -366,9 +372,25 @@ enum CallbackError {
 
 impl ExtensionCallbacks {
     #[must_use]
+    pub fn channel() -> (Self, mpsc::Receiver<ExtensionCallbackRequest>) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            Self {
+                sender: CallbackSender::Unbounded(sender),
+            },
+            receiver,
+        )
+    }
+
+    #[must_use]
     pub fn bounded(capacity: NonZeroUsize) -> (Self, mpsc::Receiver<ExtensionCallbackRequest>) {
         let (sender, receiver) = mpsc::sync_channel(capacity.get());
-        (Self { sender }, receiver)
+        (
+            Self {
+                sender: CallbackSender::Bounded(sender),
+            },
+            receiver,
+        )
     }
 
     async fn receive(
@@ -397,18 +419,26 @@ impl ExtensionCallbacks {
             ))
         })?;
         let (response, received) = oneshot::channel();
-        self.sender
-            .try_send(ExtensionCallbackRequest {
-                callback: callback.callback.clone(),
-                input,
-                response,
-            })
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => CallbackError::QueueFull,
-                mpsc::TrySendError::Disconnected(_) => CallbackError::Disconnected(
+        let request = ExtensionCallbackRequest {
+            callback: callback.callback.clone(),
+            input,
+            response,
+        };
+        match &self.sender {
+            CallbackSender::Unbounded(sender) => sender.send(request).map_err(|_| {
+                CallbackError::Disconnected(
                     "ACP extension callback receiver disconnected".to_owned(),
-                ),
-            })?;
+                )
+            })?,
+            CallbackSender::Bounded(sender) => {
+                sender.try_send(request).map_err(|error| match error {
+                    mpsc::TrySendError::Full(_) => CallbackError::QueueFull,
+                    mpsc::TrySendError::Disconnected(_) => CallbackError::Disconnected(
+                        "ACP extension callback receiver disconnected".to_owned(),
+                    ),
+                })?;
+            }
+        }
         let output = received
             .await
             .map_err(|_| {

@@ -14,10 +14,10 @@ use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
     agent_loop_factory, agent_loop_manifest, agent_loop_progress_service, agent_loop_service,
     agent_tool_execution_service, AgentLoopCommand, AgentLoopControlInterface,
-    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
+    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopProgress,
     AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
     AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface, AgentToolExecutionRequest,
-    AgentToolExecutionResponse, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    AgentToolExecutionResponse,
 };
 use phenix_sdk::{
     default_invocation_service, AttemptOutcome, BudgetActual, ContextDemand,
@@ -133,6 +133,7 @@ impl PluginInstance for InvocationProvider {
                         input: PhenixValue::String("fixture-input".into()),
                     })
                     .collect(),
+                "fixture.many" => Vec::new(),
                 "fixture.loop" => vec![ModelToolCall {
                     call_id: format!("fixture-call-{}", self.calls),
                     callable_id: tool.id.clone(),
@@ -424,13 +425,13 @@ fn tool_adapter_component() -> ComponentManifest {
 fn fixture_policy() -> UsagePolicy {
     UsagePolicy {
         revision: "policy-1".into(),
-        max_fresh_input_tokens: 100,
-        max_output_tokens: 100,
+        max_fresh_input_tokens: Some(100),
+        max_output_tokens: Some(100),
         max_cost_microunits: None,
-        max_retries: 0,
-        max_tool_result_bytes: 1024,
-        max_tool_schemas: 8,
-        max_skills: 0,
+        max_retries: Some(0),
+        max_tool_result_bytes: Some(1024),
+        max_tool_schemas: Some(8),
+        max_skills: Some(0),
         require_known_capacity: false,
         delegation: DelegationResourcePolicy::default(),
     }
@@ -662,7 +663,7 @@ fn tool_executor_can_activate_a_schema_for_the_next_model_turn() {
 }
 
 #[test]
-fn eleven_calls_fail_before_any_tool_executes() {
+fn default_agent_loop_accepts_more_than_ten_tool_calls_in_one_turn() {
     let (mut kernel, agent_loop, executions, _) = kernel(true);
     let output = invoke_agent_loop(
         &mut kernel,
@@ -675,18 +676,15 @@ fn eleven_calls_fail_before_any_tool_executes() {
 
     assert_eq!(
         response,
-        AgentLoopResponse::Failed {
-            failure: AgentLoopFailure::ToolCallLimitExceeded {
-                limit: DEFAULT_MAX_TOOL_CALLS_PER_TURN,
-                actual: 11,
-            },
+        AgentLoopResponse::Completed {
+            output: Bytes::new(b"provider-output-2".to_vec()),
             usage: AgentLoopUsage {
-                model_calls: 1,
-                tool_calls: 0,
+                model_calls: 2,
+                tool_calls: 11,
             },
         }
     );
-    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert_eq!(executions.load(Ordering::SeqCst), 11);
 }
 
 #[test]

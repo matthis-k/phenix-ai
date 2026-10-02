@@ -12,7 +12,7 @@ pub use agent_loop::{
     AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
     AgentToolExecutionRequest, AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE,
     AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    AGENT_TOOL_EXECUTION_SERVICE,
 };
 
 #[cfg(test)]

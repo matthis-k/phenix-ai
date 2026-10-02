@@ -289,13 +289,13 @@ fn setup_routing(kernel: &mut Kernel, publish: bool) {
 fn policy(max_input: u64) -> UsagePolicy {
     UsagePolicy {
         revision: "policy-1".into(),
-        max_fresh_input_tokens: max_input,
-        max_output_tokens: 128,
+        max_fresh_input_tokens: Some(max_input),
+        max_output_tokens: Some(128),
         max_cost_microunits: Some(1_000),
-        max_retries: 1,
-        max_tool_result_bytes: 64 * 1024,
-        max_tool_schemas: 4,
-        max_skills: 4,
+        max_retries: Some(1),
+        max_tool_result_bytes: Some(64 * 1024),
+        max_tool_schemas: Some(4),
+        max_skills: Some(4),
         require_known_capacity: true,
         delegation: DelegationResourcePolicy::default(),
     }
@@ -352,7 +352,7 @@ fn request(max_input: u64) -> PlannedStepRequest {
         route_policy: RouteSelectionPolicy {
             revision: "route-policy-1".into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 4,
+            max_candidate_attempts: Some(4),
         },
         now_ms: 1_000,
     }

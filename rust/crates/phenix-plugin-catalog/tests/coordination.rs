@@ -322,7 +322,7 @@ fn configure_routing(kernel: &mut Kernel, plan: &StepPlan) -> phenix_sdk::RouteD
             policy: RouteSelectionPolicy {
                 revision: "route-policy-1".into(),
                 estimates: RoutingEstimateMode::Ignore,
-                max_candidate_attempts: 8,
+                max_candidate_attempts: Some(8),
             },
         },
     )

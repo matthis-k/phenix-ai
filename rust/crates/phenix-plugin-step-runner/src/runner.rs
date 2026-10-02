@@ -430,7 +430,7 @@ fn run_delegated_task(
         route_policy: RouteSelectionPolicy {
             revision: record.binding.resources.target.policy_revision.clone(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 1,
+            max_candidate_attempts: Some(1),
         },
         now_ms,
     };
@@ -689,13 +689,13 @@ fn delegated_usage_policy(
 ) -> UsagePolicy {
     UsagePolicy {
         revision: record.binding.parent_policy_revision.clone(),
-        max_fresh_input_tokens: record.binding.resources.budget.input_tokens,
-        max_output_tokens: record.binding.resources.budget.output_tokens,
+        max_fresh_input_tokens: Some(record.binding.resources.budget.input_tokens),
+        max_output_tokens: Some(record.binding.resources.budget.output_tokens),
         max_cost_microunits: record.binding.resources.budget.cost_microunits,
-        max_retries: record.binding.resources.attempts.saturating_sub(1),
-        max_tool_result_bytes: 0,
-        max_tool_schemas: 0,
-        max_skills: 0,
+        max_retries: Some(record.binding.resources.attempts.saturating_sub(1)),
+        max_tool_result_bytes: Some(0),
+        max_tool_schemas: Some(0),
+        max_skills: Some(0),
         require_known_capacity: parent_plan.routing.require_known_capacity,
         delegation: DelegationResourcePolicy::default(),
     }

@@ -1,7 +1,5 @@
 use std::num::NonZeroUsize;
 
-const DEFAULT_MAX_PARALLEL_CALLS: usize = 10;
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolConcurrency {
     ParallelSafe,
@@ -23,17 +21,19 @@ pub enum ScheduledToolBatch {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ToolScheduler {
-    max_parallel_calls: NonZeroUsize,
+    max_parallel_calls: Option<NonZeroUsize>,
 }
 
 impl ToolScheduler {
     #[must_use]
     pub const fn new(max_parallel_calls: NonZeroUsize) -> Self {
-        Self { max_parallel_calls }
+        Self {
+            max_parallel_calls: Some(max_parallel_calls),
+        }
     }
 
     #[must_use]
-    pub const fn max_parallel_calls(self) -> NonZeroUsize {
+    pub const fn max_parallel_calls(self) -> Option<NonZeroUsize> {
         self.max_parallel_calls
     }
 
@@ -49,7 +49,10 @@ impl ToolScheduler {
             match call.concurrency {
                 ToolConcurrency::ParallelSafe => {
                     parallel.push(call);
-                    if parallel.len() == self.max_parallel_calls.get() {
+                    if self
+                        .max_parallel_calls
+                        .is_some_and(|limit| parallel.len() == limit.get())
+                    {
                         batches.push(ScheduledToolBatch::Parallel(std::mem::take(&mut parallel)));
                     }
                 }
@@ -66,10 +69,9 @@ impl ToolScheduler {
 
 impl Default for ToolScheduler {
     fn default() -> Self {
-        Self::new(
-            NonZeroUsize::new(DEFAULT_MAX_PARALLEL_CALLS)
-                .expect("default parallel tool-call limit is non-zero"),
-        )
+        Self {
+            max_parallel_calls: None,
+        }
     }
 }
 
@@ -92,8 +94,8 @@ mod tests {
     }
 
     #[test]
-    fn default_scheduler_uses_scheduler_parallel_limit() {
-        assert_eq!(ToolScheduler::default().max_parallel_calls().get(), 10);
+    fn default_scheduler_has_no_parallel_limit() {
+        assert_eq!(ToolScheduler::default().max_parallel_calls(), None);
     }
 
     #[test]

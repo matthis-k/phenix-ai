@@ -22,10 +22,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const INVOCATION_DEFAULTS_PLUGIN: &str = "phenix.harness.invocation-defaults";
 pub const INVOCATION_DEFAULTS_COMPONENT: &str = "phenix.harness.invocation-defaults";
 const ROUTING_PROFILE_OPTION: &str = "model.default";
-const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v1";
-const HELPER_POLICY_REVISION: &str = "harness.usage.helper.v1";
-const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v1";
-const HELPER_ROUTE_POLICY_REVISION: &str = "harness.routing.helper.v1";
+const DEFAULT_POLICY_REVISION: &str = "harness.usage.default.v2";
+const HELPER_POLICY_REVISION: &str = "harness.usage.helper.v2";
+const DEFAULT_ROUTE_POLICY_REVISION: &str = "harness.routing.default.v2";
+const HELPER_ROUTE_POLICY_REVISION: &str = "harness.routing.helper.v2";
 
 #[must_use]
 pub fn invocation_defaults_manifest(maximum_authority: Authority) -> PluginManifest {
@@ -206,14 +206,15 @@ impl PluginInstance for InvocationDefaultsPlugin {
 
 fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
     let policy = RecoveryClassifierPolicy::default();
-    if request.prompt.len() > policy.max_prompt_bytes as usize {
-        return Ok(ContextRecoveryDecision::Sufficient);
+    if let Some(limit) = policy.max_prompt_bytes {
+        if request.prompt.len() > limit as usize {
+            return Ok(ContextRecoveryDecision::Sufficient);
+        }
     }
-    if request.state.anchors.len() > policy.max_anchors as usize {
-        return Err(format!(
-            "recovery anchors exceed {} entries",
-            policy.max_anchors
-        ));
+    if let Some(limit) = policy.max_anchors {
+        if request.state.anchors.len() > limit as usize {
+            return Err(format!("recovery anchors exceed {limit} entries"));
+        }
     }
     if matches!(
         recovery_cold_gate(&request.state),
@@ -221,7 +222,10 @@ fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDe
     ) {
         return Ok(ContextRecoveryDecision::Sufficient);
     }
-    let query = bounded_utf8(request.prompt.trim(), policy.max_need_query_bytes as usize);
+    let query = policy.max_need_query_bytes.map_or_else(
+        || request.prompt.trim().to_owned(),
+        |limit| bounded_utf8(request.prompt.trim(), limit as usize),
+    );
     if query.is_empty() {
         return Ok(ContextRecoveryDecision::Sufficient);
     }
@@ -267,7 +271,6 @@ fn resolve_defaults(
         &request.tools,
         DEFAULT_POLICY_REVISION,
         DEFAULT_ROUTE_POLICY_REVISION,
-        1,
     ))
 }
 
@@ -335,7 +338,6 @@ fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParam
         &request.tools,
         HELPER_POLICY_REVISION,
         HELPER_ROUTE_POLICY_REVISION,
-        0,
     )
 }
 
@@ -345,7 +347,6 @@ fn invocation_params(
     tools: &[ModelToolDescriptor],
     policy_revision: &str,
     route_policy_revision: &str,
-    max_retries: u32,
 ) -> InvocationParams {
     let optional_tools = tools
         .iter()
@@ -355,18 +356,18 @@ fn invocation_params(
         profile_id,
         policy: UsagePolicy {
             revision: policy_revision.into(),
-            max_fresh_input_tokens: 128 * 1024,
-            max_output_tokens: 16 * 1024,
+            max_fresh_input_tokens: None,
+            max_output_tokens: None,
             max_cost_microunits: None,
-            max_retries,
-            max_tool_result_bytes: 1024 * 1024,
-            max_tool_schemas: 128,
-            max_skills: 64,
+            max_retries: None,
+            max_tool_result_bytes: None,
+            max_tool_schemas: None,
+            max_skills: None,
             require_known_capacity: false,
             delegation: DelegationResourcePolicy::default(),
         },
         intent: InvocationIntent {
-            output_reserve_tokens: 8 * 1024,
+            output_reserve_tokens: 0,
             required_context_capabilities: BTreeSet::new(),
             required_capabilities: BTreeSet::new(),
             required_tools: BTreeSet::new(),
@@ -379,7 +380,7 @@ fn invocation_params(
         route_policy: RouteSelectionPolicy {
             revision: route_policy_revision.into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 8,
+            max_candidate_attempts: None,
         },
     }
 }
@@ -389,6 +390,28 @@ mod tests {
     use super::*;
     use phenix_core::Bytes;
     use phenix_sdk::{ContextRecoveryState, HelperInvocationKind};
+
+    #[test]
+    fn default_invocation_policy_has_no_implicit_limits_or_deadline() {
+        let params = invocation_params(
+            RoutingProfileId::parse("default").unwrap(),
+            None,
+            &[],
+            DEFAULT_POLICY_REVISION,
+            DEFAULT_ROUTE_POLICY_REVISION,
+        );
+
+        assert_eq!(params.policy.max_fresh_input_tokens, None);
+        assert_eq!(params.policy.max_output_tokens, None);
+        assert_eq!(params.policy.max_cost_microunits, None);
+        assert_eq!(params.policy.max_retries, None);
+        assert_eq!(params.policy.max_tool_result_bytes, None);
+        assert_eq!(params.policy.max_tool_schemas, None);
+        assert_eq!(params.policy.max_skills, None);
+        assert_eq!(params.intent.output_reserve_tokens, 0);
+        assert_eq!(params.intent.deadline_at_ms, None);
+        assert_eq!(params.route_policy.max_candidate_attempts, None);
+    }
 
     #[test]
     fn provider_exports_replaceable_interfaces() {
@@ -432,11 +455,11 @@ mod tests {
     }
 
     #[test]
-    fn oversized_recovery_prompt_skips_recovery_without_failing_turn() {
-        let policy = RecoveryClassifierPolicy::default();
+    fn default_recovery_policy_does_not_truncate_or_reject_long_prompts() {
+        let prompt = "x".repeat(8 * 1024);
         let decision = assess_recovery(&ContextRecoveryRequest {
             profile_id: RoutingProfileId::parse("default").unwrap(),
-            prompt: "x".repeat(policy.max_prompt_bytes as usize + 1),
+            prompt: prompt.clone(),
             state: ContextRecoveryState {
                 anchors: Vec::new(),
                 has_durable_session_history: false,
@@ -446,7 +469,11 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(decision, ContextRecoveryDecision::Sufficient);
+        assert!(matches!(
+            decision,
+            ContextRecoveryDecision::Missing { needs }
+                if matches!(&needs[..], [ContextNeed::Task { query }] if query == &prompt)
+        ));
     }
 
     #[test]
@@ -472,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn helper_defaults_preserve_pinned_profile_and_disable_retries() {
+    fn helper_defaults_preserve_pinned_profile_without_implicit_retry_cap() {
         let request = HelperInvocationRequest {
             execution_id: "execution-1".into(),
             parent_attempt_id: "attempt-1".into(),
@@ -485,6 +512,6 @@ mod tests {
         let params = resolve_helper_defaults(&request);
         assert_eq!(params.profile_id, request.profile_id);
         assert_eq!(params.policy.revision, HELPER_POLICY_REVISION);
-        assert_eq!(params.policy.max_retries, 0);
+        assert_eq!(params.policy.max_retries, None);
     }
 }

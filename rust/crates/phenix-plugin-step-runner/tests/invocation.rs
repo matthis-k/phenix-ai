@@ -410,13 +410,13 @@ fn params(revision: &str) -> InvocationParams {
         profile_id: phenix_core::RoutingProfileId::parse("default").unwrap(),
         policy: UsagePolicy {
             revision: revision.into(),
-            max_fresh_input_tokens: 4_000,
-            max_output_tokens: 512,
+            max_fresh_input_tokens: Some(4_000),
+            max_output_tokens: Some(512),
             max_cost_microunits: None,
-            max_retries: 0,
-            max_tool_result_bytes: 64 * 1024,
-            max_tool_schemas: 4,
-            max_skills: 4,
+            max_retries: Some(0),
+            max_tool_result_bytes: Some(64 * 1024),
+            max_tool_schemas: Some(4),
+            max_skills: Some(4),
             require_known_capacity: true,
             delegation: DelegationResourcePolicy::default(),
         },
@@ -434,7 +434,7 @@ fn params(revision: &str) -> InvocationParams {
         route_policy: RouteSelectionPolicy {
             revision: "fixture-route-policy".into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 2,
+            max_candidate_attempts: Some(2),
         },
     }
 }
@@ -490,7 +490,7 @@ fn context_limit_prunes_reducible_context_and_retries_same_target() {
     load_optional_overflow_context(&mut kernel);
 
     let mut params = params("context-limit-policy");
-    params.policy.max_retries = 1;
+    params.policy.max_retries = Some(1);
     let mut invocation = request();
     invocation.session_id = Some(SessionId::parse("session-retry").unwrap());
     let response: StepRunnerResponse = invoke(

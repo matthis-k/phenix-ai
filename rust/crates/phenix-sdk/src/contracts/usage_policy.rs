@@ -13,13 +13,19 @@ pub const DEFERRED_TOOL_SCHEMAS_CAPABILITY: &str = "tools.deferred_schemas";
 #[serde(deny_unknown_fields)]
 pub struct UsagePolicy {
     pub revision: String,
-    pub max_fresh_input_tokens: u64,
-    pub max_output_tokens: u64,
+    #[serde(default)]
+    pub max_fresh_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
     pub max_cost_microunits: Option<u64>,
-    pub max_retries: u32,
-    pub max_tool_result_bytes: u64,
-    pub max_tool_schemas: u32,
-    pub max_skills: u32,
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    #[serde(default)]
+    pub max_tool_result_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_tool_schemas: Option<u32>,
+    #[serde(default)]
+    pub max_skills: Option<u32>,
     pub require_known_capacity: bool,
     pub delegation: DelegationResourcePolicy,
 }
@@ -181,8 +187,14 @@ impl UsagePolicy {
 
         let fresh_input_budget = self
             .max_fresh_input_tokens
-            .min(input.remaining.fresh_input_tokens);
-        let output_budget = self.max_output_tokens.min(input.remaining.output_tokens);
+            .map_or(input.remaining.fresh_input_tokens, |limit| {
+                limit.min(input.remaining.fresh_input_tokens)
+            });
+        let output_budget = self
+            .max_output_tokens
+            .map_or(input.remaining.output_tokens, |limit| {
+                limit.min(input.remaining.output_tokens)
+            });
         let cost_budget = match (self.max_cost_microunits, input.remaining.cost_microunits) {
             (Some(policy), Some(remaining)) => Some(policy.min(remaining)),
             (Some(policy), None) => Some(policy),
@@ -207,11 +219,13 @@ impl UsagePolicy {
         }
 
         let required_tools = u32::try_from(input.task.required_tools.len()).unwrap_or(u32::MAX);
-        if required_tools > self.max_tool_schemas {
-            return Err(UsagePlanError::RequiredToolSetExceedsBudget {
-                requested: required_tools,
-                allowed: self.max_tool_schemas,
-            });
+        if let Some(limit) = self.max_tool_schemas {
+            if required_tools > limit {
+                return Err(UsagePlanError::RequiredToolSetExceedsBudget {
+                    requested: required_tools,
+                    allowed: limit,
+                });
+            }
         }
 
         let deferred_tool_schemas = input
@@ -226,19 +240,23 @@ impl UsagePolicy {
             .collect::<BTreeSet<_>>();
         if !deferred_tool_schemas {
             let eager_tool_count = u32::try_from(eager_tools.len()).unwrap_or(u32::MAX);
-            if eager_tool_count > self.max_tool_schemas {
-                return Err(UsagePlanError::EagerToolSetExceedsBudget {
-                    requested: eager_tool_count,
-                    allowed: self.max_tool_schemas,
-                });
+            if let Some(limit) = self.max_tool_schemas {
+                if eager_tool_count > limit {
+                    return Err(UsagePlanError::EagerToolSetExceedsBudget {
+                        requested: eager_tool_count,
+                        allowed: limit,
+                    });
+                }
             }
         }
         let required_skills = u32::try_from(input.task.required_skills.len()).unwrap_or(u32::MAX);
-        if required_skills > self.max_skills {
-            return Err(UsagePlanError::RequiredSkillSetExceedsBudget {
-                requested: required_skills,
-                allowed: self.max_skills,
-            });
+        if let Some(limit) = self.max_skills {
+            if required_skills > limit {
+                return Err(UsagePlanError::RequiredSkillSetExceedsBudget {
+                    requested: required_skills,
+                    allowed: limit,
+                });
+            }
         }
 
         let reducible_budget = fresh_input_budget.saturating_sub(mandatory_input_tokens);
@@ -260,8 +278,12 @@ impl UsagePolicy {
             required_capabilities: planned_context.required_capabilities.clone(),
         };
 
-        let max_attempts = self.max_retries.saturating_add(1);
-        let reserved_attempts = max_attempts.min(input.remaining.attempts);
+        let max_attempts = self
+            .max_retries
+            .map_or(input.remaining.attempts, |retries| {
+                retries.saturating_add(1).min(input.remaining.attempts)
+            });
+        let reserved_attempts = max_attempts;
 
         Ok(StepPlan {
             policy_revision: self.revision.clone(),
@@ -291,13 +313,31 @@ impl UsagePolicy {
                 } else {
                     BTreeSet::new()
                 },
-                max_schemas: self.max_tool_schemas,
-                max_result_bytes: self.max_tool_result_bytes,
+                max_schemas: self.max_tool_schemas.unwrap_or_else(|| {
+                    u32::try_from(
+                        input
+                            .task
+                            .required_tools
+                            .union(&input.task.optional_tools)
+                            .count(),
+                    )
+                    .unwrap_or(u32::MAX)
+                }),
+                max_result_bytes: self.max_tool_result_bytes.unwrap_or(u64::MAX),
             },
             skills: SkillProvisionBudget {
                 initial: input.task.required_skills.clone(),
                 expandable: input.task.optional_skills.clone(),
-                max_loaded: self.max_skills,
+                max_loaded: self.max_skills.unwrap_or_else(|| {
+                    u32::try_from(
+                        input
+                            .task
+                            .required_skills
+                            .union(&input.task.optional_skills)
+                            .count(),
+                    )
+                    .unwrap_or(u32::MAX)
+                }),
             },
             delegation: self.delegation.clone(),
             retry: RetryBudget {
@@ -309,7 +349,9 @@ impl UsagePolicy {
                     .task
                     .request_input_tokens
                     .saturating_add(planned_context.total_input_tokens()),
-                output_tokens: planned_context.output_reserve_tokens,
+                // The reserve is a routing floor, not the execution ceiling. The
+                // policy output budget is the amount the attempt may actually use.
+                output_tokens: output_budget,
                 cost_microunits: cost_budget,
             },
             deadline_at_ms: input.task.deadline_at_ms,
@@ -329,13 +371,13 @@ mod tests {
     fn policy() -> UsagePolicy {
         UsagePolicy {
             revision: "policy-1".to_owned(),
-            max_fresh_input_tokens: 1_000,
-            max_output_tokens: 250,
+            max_fresh_input_tokens: Some(1_000),
+            max_output_tokens: Some(250),
             max_cost_microunits: Some(5_000),
-            max_retries: 1,
-            max_tool_result_bytes: 32 * 1024,
-            max_tool_schemas: 8,
-            max_skills: 4,
+            max_retries: Some(1),
+            max_tool_result_bytes: Some(32 * 1024),
+            max_tool_schemas: Some(8),
+            max_skills: Some(4),
             require_known_capacity: true,
             delegation: DelegationResourcePolicy::default(),
         }
@@ -380,7 +422,7 @@ mod tests {
         assert_eq!(plan.context.reducible_input_tokens, 200);
         assert_eq!(plan.reducible_input_dropped_tokens, 300);
         assert_eq!(plan.reservation.input_tokens, 1_000);
-        assert_eq!(plan.reservation.output_tokens, 200);
+        assert_eq!(plan.reservation.output_tokens, 250);
         assert_eq!(plan.retry.reserved_attempts, 2);
     }
 
