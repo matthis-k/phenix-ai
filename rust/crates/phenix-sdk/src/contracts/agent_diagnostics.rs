@@ -73,3 +73,32 @@ pub enum AgentDiagnosticEvent {
 pub fn agent_diagnostic_event_type() -> EventTypeId {
     EventTypeId::parse(AGENT_DIAGNOSTIC_EVENT).expect("static agent diagnostic event type is valid")
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_failure_diagnostic_is_metadata_only() {
+        let diagnostic = AgentDiagnosticEvent::ToolInvocationFailed {
+            execution_id: "execution-7".into(),
+            session_id: None,
+            call_id: "call-3".into(),
+            callable_id: CallableId::parse("workspace.shell").unwrap(),
+            reason: "permission denied".into(),
+        };
+        let value = serde_json::to_value(diagnostic).unwrap();
+        let object = value.as_object().unwrap();
+
+        assert_eq!(object["event"], "tool_invocation_failed");
+        assert_eq!(object["execution_id"], "execution-7");
+        assert_eq!(object["call_id"], "call-3");
+        assert_eq!(object["callable_id"], "workspace.shell");
+        assert_eq!(object["reason"], "permission denied");
+        assert!(!object.contains_key("input"));
+        assert!(!object.contains_key("output"));
+        assert!(!object.contains_key("arguments"));
+        assert!(!object.contains_key("result"));
+    }
+}
