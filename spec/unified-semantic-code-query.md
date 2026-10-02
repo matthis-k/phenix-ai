@@ -232,6 +232,19 @@ struct CodeBudget {
 
 Results must report truncation and coverage explicitly.
 
+When a relation traversal is truncated by a budget, selection uses one deterministic
+ranking rule:
+
+1. preserve the resolved root entities first;
+2. prefer smaller semantic hop distance from a root;
+3. within one hop, order relations by canonical source, relation kind, target identity,
+   target revision, then relation revision;
+4. preserve that queue order when admitting entities and relations until a hard bound is hit.
+
+This ranking is structural and provider-neutral. It does not add learned relevance scores
+or another semantic index. Task-conditioned learned pruning remains a separate optional
+context policy.
+
 ## Result model
 
 Use one query result shape instead of separate LSP and graph results.
@@ -358,7 +371,7 @@ This PR should establish:
 - compatibility with existing `LogicalCodeEntity` and relation persistence;
 - regression tests proving existing point reads and new graph reads observe the same facts.
 
-Richer containment extraction, ranking, and cold-build behavior may follow in later commits on the same PR if they remain coherent. Context projection now consumes the unified query contract through the typed language binding.
+Richer containment extraction and cold-build behavior may follow in later commits on the same PR if they remain coherent. Context projection now consumes the unified query contract through the typed language binding. Budget truncation uses deterministic structural ranking by root, semantic hop distance, and canonical relation identity.
 
 ## Acceptance
 
