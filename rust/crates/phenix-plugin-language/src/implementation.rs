@@ -3290,6 +3290,101 @@ mod tests {
         .unwrap();
     }
 
+    fn query_revision(entity_id: &str, name: &str) -> CodeEntityRevision {
+        CodeEntityRevision {
+            entity: LogicalCodeEntity {
+                id: entity_id.into(),
+                repository_id: "repo-query".into(),
+            },
+            revision: format!("revision-{entity_id}"),
+            sequence: 1,
+            document: LanguageDocumentIdentity {
+                path: format!("src/{entity_id}.rs"),
+                file_version: Some(format!("sha256:{entity_id}")),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some(format!("crate::{name}")),
+            name: name.into(),
+            signature_identity: Some(format!("signature-{entity_id}")),
+            body_identity: Some(format!("body-{entity_id}")),
+            provider_id: "rust-analyzer".into(),
+            provider_epoch: epoch(1),
+            facets: CodeEntityFacetRevisions {
+                existence: format!("existence-{entity_id}"),
+                name_location: format!("name-location-{entity_id}"),
+                signature: Some(format!("signature-{entity_id}")),
+                body: Some(format!("body-{entity_id}")),
+                relations: BTreeMap::new(),
+            },
+        }
+    }
+
+    fn record_query_revision(kernel: &mut Kernel, revision: &CodeEntityRevision) {
+        let response = invoke(
+            kernel,
+            LanguageCommand::RecordEntityRevision {
+                revision: revision.clone(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            LanguageResponse::EntityRevision { revision: Some(_) }
+        ));
+    }
+
+    fn ingest_query_relation(
+        kernel: &mut Kernel,
+        source: &CodeEntityRevision,
+        kind: CodeEntityRelationKind,
+        targets: Vec<CodeEntityRelationTarget>,
+    ) {
+        let observation_id = format!(
+            "query-relation-{}-{}",
+            source.entity.id,
+            relation_kind_key(kind)
+        );
+        let fact_id = format!("fact-{observation_id}");
+        let payload = serde_json::to_value(CodeEntityProviderRelationFactBatch {
+            facts: vec![phenix_sdk::CodeEntityProviderRelationFact {
+                id: fact_id.clone(),
+                entity: source.entity.clone(),
+                revision: source.revision.clone(),
+                kind,
+                targets,
+                complete: true,
+            }],
+        })
+        .unwrap()
+        .into();
+
+        invoke(
+            kernel,
+            LanguageCommand::Consume {
+                observation_id: observation_id.clone(),
+                execution_id: format!("execution-{observation_id}"),
+                workspace_id: "workspace".into(),
+                provider_id: source.provider_id.clone(),
+                epoch: source.provider_epoch,
+                result: LanguageOperationResult {
+                    operation: relation_operation(kind),
+                    payload,
+                    documents: vec![source.document.clone()],
+                },
+            },
+        )
+        .unwrap();
+
+        invoke(
+            kernel,
+            LanguageCommand::IngestEntityRelations {
+                observation_id,
+                fact_id,
+            },
+        )
+        .unwrap();
+    }
+
     fn validate_semantic_edit(
         kernel: &mut Kernel,
         revision: &CodeEntityRevision,
@@ -3369,6 +3464,231 @@ mod tests {
                 provenance: DocumentProvenance::WorkspaceBacked,
             }],
         }
+    }
+
+    #[test]
+    fn unified_query_reuses_canonical_relation_facts_for_point_and_graph_reads() {
+        let path = temp_db("unified-code-query");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        let a = query_revision("entity-a", "a");
+        let b = query_revision("entity-b", "b");
+        let c = query_revision("entity-c", "c");
+        for revision in [&a, &b, &c] {
+            record_query_revision(&mut kernel, revision);
+        }
+
+        ingest_query_relation(
+            &mut kernel,
+            &a,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: b.entity.clone(),
+                revision: Some(b.revision.clone()),
+            }],
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &b,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: c.entity.clone(),
+                revision: Some(c.revision.clone()),
+            }],
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &c,
+            CodeEntityRelationKind::References,
+            Vec::new(),
+        );
+
+        let LanguageResponse::EntityRelations {
+            relations: Some(point),
+        } = invoke(
+            &mut kernel,
+            LanguageCommand::ReadEntityRelations {
+                repository_id: a.entity.repository_id.clone(),
+                entity_id: a.entity.id.clone(),
+                revision: a.revision.clone(),
+                kind: CodeEntityRelationKind::References,
+                max_items: 8,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected point relation read");
+        };
+        assert_eq!(point.targets[0].entity, b.entity);
+
+        let LanguageResponse::Query { result } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: a.entity.clone(),
+                        revision: Some(a.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeEntityRelationKind::References],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 2,
+                    }),
+                    projection: CodeQueryProjection::Structural,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected unified code query result");
+        };
+
+        assert_eq!(result.repository_id, "repo-query");
+        assert_eq!(result.coverage.repository_sequence, 3);
+        assert!(result.coverage.complete);
+        assert!(!result.coverage.truncated);
+        assert_eq!(
+            result
+                .entities
+                .iter()
+                .map(|entity| entity.entity.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entity-a", "entity-b", "entity-c"]
+        );
+        assert_eq!(result.relations.len(), 2);
+        assert_eq!(result.relations[0].source, a.entity);
+        assert_eq!(result.relations[0].target.entity, b.entity);
+        assert_eq!(result.relations[1].source, b.entity);
+        assert_eq!(result.relations[1].target.entity, c.entity);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unified_query_derives_incoming_traversal_from_the_same_relation_facts() {
+        let path = temp_db("unified-code-query-incoming");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        let a = query_revision("entity-a", "a");
+        let b = query_revision("entity-b", "b");
+        for revision in [&a, &b] {
+            record_query_revision(&mut kernel, revision);
+        }
+        ingest_query_relation(
+            &mut kernel,
+            &a,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: b.entity.clone(),
+                revision: Some(b.revision.clone()),
+            }],
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &b,
+            CodeEntityRelationKind::References,
+            Vec::new(),
+        );
+
+        let LanguageResponse::Query { result } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: b.entity.clone(),
+                        revision: Some(b.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeEntityRelationKind::References],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Incoming,
+                        max_depth: 1,
+                    }),
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 4,
+                        max_relations: 4,
+                        max_bytes: 8 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected incoming unified code query result");
+        };
+
+        assert!(result.coverage.complete);
+        assert_eq!(result.relations.len(), 1);
+        assert_eq!(result.relations[0].source, a.entity);
+        assert_eq!(result.relations[0].target.entity, b.entity);
+        assert!(result
+            .entities
+            .iter()
+            .all(|entity| entity.name.is_none() && entity.document.is_none()));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn repository_query_is_deterministic_and_reports_budget_truncation() {
+        let path = temp_db("unified-code-query-budget");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        for (id, name) in [
+            ("entity-c", "c"),
+            ("entity-a", "a"),
+            ("entity-b", "b"),
+        ] {
+            record_query_revision(&mut kernel, &query_revision(id, name));
+        }
+
+        let LanguageResponse::Query { result } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Repository {
+                        repository_id: "repo-query".into(),
+                    },
+                    selection: CodeQuerySelection::Entities,
+                    traversal: None,
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 2,
+                        max_relations: 1,
+                        max_bytes: 8 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap()
+        else {
+            panic!("expected repository query result");
+        };
+
+        assert_eq!(
+            result
+                .entities
+                .iter()
+                .map(|entity| entity.entity.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entity-a", "entity-b"]
+        );
+        assert!(result.coverage.truncated);
+        assert!(!result.coverage.complete);
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
