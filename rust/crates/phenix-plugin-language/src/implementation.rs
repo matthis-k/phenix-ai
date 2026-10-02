@@ -19,6 +19,7 @@ use phenix_sdk::{
     WorkspaceInterface, WorkspaceResponse, WorkspaceWrite, LANGUAGE_SERVICE, WORKSPACE_SERVICE,
 };
 use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -29,6 +30,20 @@ const PERSISTENCE_READ: &str = "kernel.persistence.read";
 const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 const WORKSPACE_READ: &str = "workspace.read";
 const WORKSPACE_WRITE: &str = "workspace.write";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct DerivedOutgoingRelationPointer {
+    target: LogicalCodeEntity,
+    target_revision: String,
+    stored_kind: CodeEntityRelationKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct DerivedOutgoingRelationIndex {
+    repository_sequence: u64,
+    complete: bool,
+    pointers: Vec<DerivedOutgoingRelationPointer>,
+}
 
 #[derive(Default)]
 struct LanguageState {
@@ -1219,6 +1234,20 @@ fn relation_kind_key(kind: CodeEntityRelationKind) -> &'static str {
     }
 }
 
+fn outgoing_relation_index_key(
+    repository_id: &str,
+    entity_id: &str,
+    revision: &str,
+    kind: CodeRelationKind,
+) -> String {
+    let kind = match kind {
+        CodeRelationKind::Calls => "calls",
+        CodeRelationKind::References => "references",
+        CodeRelationKind::Implements => "implements",
+    };
+    format!("index/outgoing/{repository_id}/{entity_id}/{revision}/{kind}")
+}
+
 fn entity_relations_key(
     repository_id: &str,
     entity_id: &str,
@@ -2009,38 +2038,183 @@ fn query_outgoing_relations(
     let mut complete = true;
     let mut edges = Vec::new();
 
-    for target_revision in repository_entities {
-        for kind in kinds {
-            let stored_kind = stored_relation_kind(*kind);
-            match read_entity_relations(
-                context,
-                repository_id,
-                &target_revision.entity.id,
-                &target_revision.revision,
-                stored_kind,
-                u32::MAX,
-            )? {
-                Some(relations) => {
-                    complete &= relations.complete;
-                    for edge in canonical_relations_from_stored(relations, *kind)? {
-                        let same_entity = edge.source == source_revision.entity;
-                        let same_revision = edge
-                            .source_revision
-                            .as_deref()
-                            .is_none_or(|revision| revision == source_revision.revision);
-                        if same_entity && same_revision {
-                            edges.push(edge);
-                        }
-                    }
-                }
-                None => complete = false,
-            }
-        }
+    for kind in kinds {
+        let (mut kind_edges, kind_complete) = query_outgoing_relation_kind(
+            context,
+            repository_id,
+            source_revision,
+            *kind,
+            repository_entities,
+        )?;
+        complete &= kind_complete;
+        edges.append(&mut kind_edges);
     }
 
     sort_query_relations(&mut edges);
     edges.dedup();
     Ok((edges, complete))
+}
+
+fn query_outgoing_relation_kind(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    source_revision: &CodeEntityRevision,
+    kind: CodeRelationKind,
+    repository_entities: &[CodeEntityRevision],
+) -> Result<(Vec<CodeQueryRelation>, bool), String> {
+    let sequence_key = entity_change_sequence_key(repository_id);
+    let sequence_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &sequence_key)
+        .map_err(|error| error.to_string())?;
+    let repository_sequence = sequence_bytes
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let index_key = outgoing_relation_index_key(
+        repository_id,
+        &source_revision.entity.id,
+        &source_revision.revision,
+        kind,
+    );
+    let existing_index = context
+        .kernel
+        .read_durable(&language_namespace(), &index_key)
+        .map_err(|error| error.to_string())?;
+
+    let index = match existing_index
+        .as_deref()
+        .map(|bytes| {
+            serde_json::from_slice::<DerivedOutgoingRelationIndex>(bytes)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?
+    {
+        Some(index) if index.repository_sequence == repository_sequence => index,
+        _ => {
+            let index = build_outgoing_relation_index(
+                context,
+                repository_id,
+                source_revision,
+                kind,
+                repository_entities,
+                repository_sequence,
+            )?;
+            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+            context
+                .kernel
+                .transact_durable(
+                    &language_namespace(),
+                    &[
+                        TransactionOp::AssertValue {
+                            key: sequence_key,
+                            expected: sequence_bytes,
+                        },
+                        TransactionOp::AssertValue {
+                            key: index_key.clone(),
+                            expected: existing_index,
+                        },
+                        TransactionOp::Put {
+                            key: index_key,
+                            value: encoded,
+                        },
+                    ],
+                )
+                .map_err(|error| {
+                    format!("code query repository changed while building relation index: {error}")
+                })?;
+            index
+        }
+    };
+
+    let mut complete = index.complete;
+    let mut edges = Vec::new();
+    for pointer in index.pointers {
+        let Some(relations) = read_entity_relations(
+            context,
+            &pointer.target.repository_id,
+            &pointer.target.id,
+            &pointer.target_revision,
+            pointer.stored_kind,
+            u32::MAX,
+        )? else {
+            complete = false;
+            continue;
+        };
+        complete &= relations.complete;
+        for edge in canonical_relations_from_stored(relations, kind)? {
+            let same_entity = edge.source == source_revision.entity;
+            let same_revision = edge
+                .source_revision
+                .as_deref()
+                .is_none_or(|revision| revision == source_revision.revision);
+            if same_entity && same_revision {
+                edges.push(edge);
+            }
+        }
+    }
+    sort_query_relations(&mut edges);
+    edges.dedup();
+    Ok((edges, complete))
+}
+
+fn build_outgoing_relation_index(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    source_revision: &CodeEntityRevision,
+    kind: CodeRelationKind,
+    repository_entities: &[CodeEntityRevision],
+    repository_sequence: u64,
+) -> Result<DerivedOutgoingRelationIndex, String> {
+    let stored_kind = stored_relation_kind(kind);
+    let mut complete = true;
+    let mut pointers = Vec::new();
+
+    for target_revision in repository_entities {
+        match read_entity_relations(
+            context,
+            repository_id,
+            &target_revision.entity.id,
+            &target_revision.revision,
+            stored_kind,
+            u32::MAX,
+        )? {
+            Some(relations) => {
+                complete &= relations.complete;
+                let points_to_source = relations.targets.iter().any(|source| {
+                    source.entity == source_revision.entity
+                        && source
+                            .revision
+                            .as_deref()
+                            .is_none_or(|revision| revision == source_revision.revision)
+                });
+                if points_to_source {
+                    pointers.push(DerivedOutgoingRelationPointer {
+                        target: target_revision.entity.clone(),
+                        target_revision: target_revision.revision.clone(),
+                        stored_kind,
+                    });
+                }
+            }
+            None => complete = false,
+        }
+    }
+
+    pointers.sort_by(|left, right| {
+        left.target
+            .repository_id
+            .cmp(&right.target.repository_id)
+            .then_with(|| left.target.id.cmp(&right.target.id))
+            .then_with(|| left.target_revision.cmp(&right.target_revision))
+            .then_with(|| left.stored_kind.cmp(&right.stored_kind))
+    });
+    pointers.dedup();
+    Ok(DerivedOutgoingRelationIndex {
+        repository_sequence,
+        complete,
+        pointers,
+    })
 }
 
 fn sort_query_relations(relations: &mut [CodeQueryRelation]) {
