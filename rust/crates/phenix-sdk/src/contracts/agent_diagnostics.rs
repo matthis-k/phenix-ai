@@ -1,3 +1,9 @@
+//! Metadata-only diagnostics for agent execution observability.
+//!
+//! These events carry correlation and lifecycle fields only. Prompt content, tool arguments,
+//! tool results, and file contents remain outside this contract and follow explicit content-capture
+//! policy instead.
+
 use phenix_core::{CallableId, EventTypeId, SessionId};
 use serde::{Deserialize, Serialize};
 
