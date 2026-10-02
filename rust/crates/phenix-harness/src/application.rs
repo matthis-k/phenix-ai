@@ -30,14 +30,13 @@ use phenix_application_interface::{
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId,
-    InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry, SharedPluginInvocation,
-    SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
+    ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
+    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
+    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
+    PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
+    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
