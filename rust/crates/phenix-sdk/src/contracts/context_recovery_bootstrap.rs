@@ -192,6 +192,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_recovery_policy_has_no_implicit_limits_or_timeout() {
+        let policy = RecoveryClassifierPolicy::default();
+        assert_eq!(policy.max_prompt_bytes, None);
+        assert_eq!(policy.max_anchors, None);
+        assert_eq!(policy.max_needs, None);
+        assert_eq!(policy.max_need_query_bytes, None);
+        assert_eq!(policy.max_attempts, None);
+        assert_eq!(policy.max_output_tokens, None);
+        assert_eq!(policy.classifier_timeout_ms, None);
+        assert_eq!(policy.total_timeout_ms, None);
+    }
+
+    #[test]
     fn bare_path_does_not_suppress_fallback_recovery() {
         let state = ContextRecoveryState {
             anchors: vec![ContextAnchor::Path {
