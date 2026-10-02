@@ -1470,7 +1470,7 @@ fn execute_code_query(
     if query.budget.max_entities == 0 {
         return Err("code query requires a non-zero entity budget".into());
     }
-    if matches!(query.selection, CodeQuerySelection::Relations { .. })
+    if matches!(&query.selection, CodeQuerySelection::Relations { .. })
         && query.budget.max_relations == 0
     {
         return Err("code relation query requires a non-zero relation budget".into());
@@ -1603,53 +1603,11 @@ fn execute_code_query(
                 }
             }
         }
-        CodeQuerySelection::Source | CodeQuerySelection::Body => {
-            let body = matches!(selection, CodeQuerySelection::Body);
-            for revision in seeds {
-                if result.sources.len()
-                    >= usize::try_from(budget.max_entities).unwrap_or(usize::MAX)
-                {
-                    result.coverage.truncated = true;
-                    result.coverage.complete = false;
-                    break;
-                }
-                let used = encoded_query_result_len(&result)?;
-                let remaining = budget.max_bytes.saturating_sub(used);
-                if remaining == 0 {
-                    result.coverage.truncated = true;
-                    result.coverage.complete = false;
-                    break;
-                }
-                let view = if body {
-                    read_entity_body(
-                        context,
-                        &revision.entity.repository_id,
-                        &revision.entity.id,
-                        &revision.revision,
-                        remaining,
-                    )?
-                } else {
-                    read_entity_source(
-                        context,
-                        &revision.entity.repository_id,
-                        &revision.entity.id,
-                        &revision.revision,
-                        remaining,
-                    )?
-                };
-                let Some(view) = view else {
-                    result.coverage.complete = false;
-                    continue;
-                };
-                result.coverage.complete &= view.complete;
-                result.sources.push(view);
-                if encoded_query_result_len(&result)? > budget.max_bytes {
-                    result.sources.pop();
-                    result.coverage.truncated = true;
-                    result.coverage.complete = false;
-                    break;
-                }
-            }
+        CodeQuerySelection::Source => {
+            push_query_sources(context, &mut result, seeds, false, &budget)?;
+        }
+        CodeQuerySelection::Body => {
+            push_query_sources(context, &mut result, seeds, true, &budget)?;
         }
         CodeQuerySelection::Relations { kinds } => {
             if kinds.is_empty() {
@@ -1856,6 +1814,59 @@ fn query_position_entities(
 fn code_range_contains_position(range: &CodeSourceRange, position: &CodeSourcePosition) -> bool {
     let position = code_position_key(position);
     code_position_key(&range.start) <= position && position < code_position_key(&range.end)
+}
+
+fn push_query_sources(
+    context: &LanguageContext<'_, '_, '_>,
+    result: &mut CodeQueryResult,
+    seeds: Vec<CodeEntityRevision>,
+    body: bool,
+    budget: &phenix_sdk::CodeQueryBudget,
+) -> Result<(), String> {
+    for revision in seeds {
+        if result.sources.len() >= usize::try_from(budget.max_entities).unwrap_or(usize::MAX) {
+            result.coverage.truncated = true;
+            result.coverage.complete = false;
+            break;
+        }
+        let used = encoded_query_result_len(result)?;
+        let remaining = budget.max_bytes.saturating_sub(used);
+        if remaining == 0 {
+            result.coverage.truncated = true;
+            result.coverage.complete = false;
+            break;
+        }
+        let view = if body {
+            read_entity_body(
+                context,
+                &revision.entity.repository_id,
+                &revision.entity.id,
+                &revision.revision,
+                remaining,
+            )?
+        } else {
+            read_entity_source(
+                context,
+                &revision.entity.repository_id,
+                &revision.entity.id,
+                &revision.revision,
+                remaining,
+            )?
+        };
+        let Some(view) = view else {
+            result.coverage.complete = false;
+            continue;
+        };
+        result.coverage.complete &= view.complete;
+        result.sources.push(view);
+        if encoded_query_result_len(result)? > budget.max_bytes {
+            result.sources.pop();
+            result.coverage.truncated = true;
+            result.coverage.complete = false;
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn query_repository_entities(
