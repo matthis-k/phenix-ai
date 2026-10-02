@@ -5318,7 +5318,7 @@ mod tests {
                         "kind": 12,
                         "range": {
                             "start": {"line": 0, "character": 0},
-                            "end": {"line": 0, "character": 34}
+                            "end": {"line": 0, "character": 32}
                         },
                         "selectionRange": {
                             "start": {"line": 0, "character": 7},
@@ -5510,7 +5510,7 @@ mod tests {
         assert_eq!(locator.range.start.line, 0);
         assert_eq!(locator.range.start.character, 0);
         assert_eq!(locator.range.end.line, 0);
-        assert_eq!(locator.range.end.character, 34);
+        assert_eq!(locator.range.end.character, 32);
         assert_eq!(locator.selection_range.start.character, 7);
         assert_eq!(locator.selection_range.end.character, 12);
         assert!(locator.body_range.is_none());
