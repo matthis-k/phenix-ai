@@ -24,20 +24,19 @@ use phenix_application_interface::{
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
     DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
     ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
-    ReadLogReference, RemoveClientTool,
-    RenameSession, ResumeSession, SelectDefaultSelection, SelectSelection, SetInteractionHandlers,
+    ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
+    SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, ContractId, EntryTriggerKind, HasPhenixSchema, InterfaceId, InterfaceSchema,
-    Key, LocalPersistence, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError,
-    LogSink, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    StructuredLogReader,
-    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, ValueCodec, ValueId,
-    ValuePath,
+    Key, LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
+    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient, ServiceContribution,
+    ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry, SharedPluginInvocation,
+    SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -2071,11 +2070,10 @@ fn log_record_matches(
     session_id: Option<&SessionId>,
     execution_id: Option<&str>,
 ) -> bool {
-    session_id.is_none_or(|session_id| {
-        log_json_contains_field(value, "session_id", session_id.as_str())
-    }) && execution_id.is_none_or(|execution_id| {
-        log_json_contains_field(value, "execution_id", execution_id)
-    })
+    session_id
+        .is_none_or(|session_id| log_json_contains_field(value, "session_id", session_id.as_str()))
+        && execution_id
+            .is_none_or(|execution_id| log_json_contains_field(value, "execution_id", execution_id))
 }
 
 fn log_json_contains_field(value: &serde_json::Value, key: &str, expected: &str) -> bool {

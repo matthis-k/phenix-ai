@@ -175,7 +175,9 @@ impl StructuredLogReader {
                 return Err("configured log sink is not readable as a local file".into())
             }
         };
-        let mut reference_store = sink.inferred_store_root().map(FileContentReferenceStore::new);
+        let mut reference_store = sink
+            .inferred_store_root()
+            .map(FileContentReferenceStore::new);
         if let Some(root) =
             env::var_os(PHENIX_LOG_STORE_ENV).filter(|root| !root.as_os_str().is_empty())
         {
@@ -702,12 +704,17 @@ mod tests {
         let logger = StructuredLogger::new(LogSink::directory(&root))
             .unwrap()
             .with_detail_mode(LogDetailMode::Reference);
-        logger.record("first", serde_json::json!({"value": 1})).unwrap();
+        logger
+            .record("first", serde_json::json!({"value": 1}))
+            .unwrap();
         let reference = logger
             .store_json(&serde_json::json!({"detail": "payload"}))
             .unwrap();
         logger
-            .record("second", serde_json::json!({"reference": reference.clone()}))
+            .record(
+                "second",
+                serde_json::json!({"reference": reference.clone()}),
+            )
             .unwrap();
 
         let reader = StructuredLogReader::configured(LogSink::directory(&root)).unwrap();

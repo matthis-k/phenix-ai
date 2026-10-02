@@ -6,8 +6,8 @@ use phenix_application_interface::{
     GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
     InvokeCapability, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
     ListSkills, Operation, Prompt, QueryLogs, ReadLogReference, RemoveClientTool, RenameSession,
-    ResumeSession,
-    SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable, UnsubscribeObservable,
+    ResumeSession, SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable,
+    UnsubscribeObservable,
 };
 use phenix_core::{ContractId, PhenixValue, ValueCodec};
 use std::sync::Arc;
