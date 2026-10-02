@@ -430,7 +430,7 @@ fn run_delegated_task(
         route_policy: RouteSelectionPolicy {
             revision: record.binding.resources.target.policy_revision.clone(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 1,
+            max_candidate_attempts: Some(1),
         },
         now_ms,
     };
