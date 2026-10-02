@@ -1587,6 +1587,7 @@ fn execute_code_query(
         CodeQuerySelection::Entities => {
             for revision in seeds {
                 if !try_push_query_entity(
+                    context,
                     &mut result,
                     &mut entity_keys,
                     &revision,
@@ -1636,6 +1637,7 @@ fn execute_code_query(
 
             while let Some((revision, depth)) = queue.pop_front() {
                 if !try_push_query_entity(
+                    context,
                     &mut result,
                     &mut entity_keys,
                     &revision,
@@ -1934,10 +1936,11 @@ fn build_repository_entity_index(
 }
 
 fn project_query_entity(
+    context: &LanguageContext<'_, '_, '_>,
     revision: &CodeEntityRevision,
     projection: CodeQueryProjection,
-) -> CodeQueryEntity {
-    match projection {
+) -> Result<CodeQueryEntity, String> {
+    let mut entity = match projection {
         CodeQueryProjection::Identity => CodeQueryEntity {
             entity: revision.entity.clone(),
             revision: revision.revision.clone(),
@@ -1945,19 +1948,31 @@ fn project_query_entity(
             document: None,
             symbol: None,
             signature_identity: None,
+            source: None,
         },
-        CodeQueryProjection::Structural => CodeQueryEntity {
+        CodeQueryProjection::Structural | CodeQueryProjection::SourceLocations => CodeQueryEntity {
             entity: revision.entity.clone(),
             revision: revision.revision.clone(),
             name: Some(revision.name.clone()),
             document: Some(revision.document.clone()),
             symbol: revision.symbol.clone(),
             signature_identity: revision.signature_identity.clone(),
+            source: None,
         },
+    };
+    if matches!(projection, CodeQueryProjection::SourceLocations) {
+        entity.source = read_entity_source_locator(
+            context,
+            &revision.entity.repository_id,
+            &revision.entity.id,
+            &revision.revision,
+        )?;
     }
+    Ok(entity)
 }
 
 fn try_push_query_entity(
+    context: &LanguageContext<'_, '_, '_>,
     result: &mut CodeQueryResult,
     seen: &mut BTreeSet<(String, String, String)>,
     revision: &CodeEntityRevision,
@@ -1978,7 +1993,7 @@ fn try_push_query_entity(
 
     result
         .entities
-        .push(project_query_entity(revision, projection));
+        .push(project_query_entity(context, revision, projection)?);
     if encoded_query_result_len(result)? > budget.max_bytes {
         result.entities.pop();
         return Ok(false);
