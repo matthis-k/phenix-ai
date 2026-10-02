@@ -1375,6 +1375,15 @@ fn execute_code_query(
         return Err("code query requires a non-zero byte budget".into());
     }
 
+    let repository_id = match &query.anchor {
+        CodeQueryAnchor::Position { repository_id, .. }
+        | CodeQueryAnchor::Document { repository_id, .. }
+        | CodeQueryAnchor::Repository { repository_id } => repository_id.clone(),
+        CodeQueryAnchor::Entity { entity, .. } => entity.repository_id.clone(),
+    };
+    validate_identity("code repository id", &repository_id)?;
+    let repository_sequence = read_entity_change_sequence(context, &repository_id)?;
+
     let CodeQuery {
         anchor,
         selection,
@@ -1383,21 +1392,41 @@ fn execute_code_query(
         budget,
     } = query;
 
-    let (repository_id, roots, seeds) = match anchor {
+    let (roots, seeds) = match anchor {
+        CodeQueryAnchor::Position {
+            repository_id: anchor_repository_id,
+            document,
+            position,
+            position_encoding,
+        } => {
+            ensure_query_repository(&repository_id, &anchor_repository_id)?;
+            validate_documents(std::slice::from_ref(&document))?;
+            let seeds = query_position_entities(
+                context,
+                &repository_id,
+                &document,
+                &position,
+                position_encoding,
+            )?;
+            if seeds.is_empty() {
+                return Err(format!(
+                    "no logical code entity covers {}:{}:{}",
+                    document.path, position.line, position.character
+                ));
+            }
+            let roots = query_roots(&seeds);
+            (roots, seeds)
+        }
         CodeQueryAnchor::Entity { entity, revision } => {
-            validate_identity("code repository id", &entity.repository_id)?;
             validate_identity("logical code entity id", &entity.id)?;
             if let Some(revision) = revision.as_deref() {
                 validate_identity("code entity revision", revision)?;
             }
             let resolved = match revision {
-                Some(revision) => read_entity_revision_version(
-                    context,
-                    &entity.repository_id,
-                    &entity.id,
-                    &revision,
-                )?,
-                None => read_entity_revision(context, &entity.repository_id, &entity.id)?,
+                Some(revision) => {
+                    read_entity_revision_version(context, &repository_id, &entity.id, &revision)?
+                }
+                None => read_entity_revision(context, &repository_id, &entity.id)?,
             }
             .ok_or_else(|| {
                 format!(
@@ -1406,7 +1435,6 @@ fn execute_code_query(
                 )
             })?;
             (
-                entity.repository_id.clone(),
                 vec![CodeEntityRelationTarget {
                     entity,
                     revision: Some(resolved.revision.clone()),
@@ -1414,14 +1442,24 @@ fn execute_code_query(
                 vec![resolved],
             )
         }
-        CodeQueryAnchor::Repository { repository_id } => {
-            validate_identity("code repository id", &repository_id)?;
-            let entities = query_repository_entities(context, &repository_id)?;
-            (repository_id, Vec::new(), entities)
+        CodeQueryAnchor::Document {
+            repository_id: anchor_repository_id,
+            document,
+        } => {
+            ensure_query_repository(&repository_id, &anchor_repository_id)?;
+            validate_documents(std::slice::from_ref(&document))?;
+            let seeds = query_document_entities(context, &repository_id, &document)?;
+            let roots = query_roots(&seeds);
+            (roots, seeds)
+        }
+        CodeQueryAnchor::Repository {
+            repository_id: anchor_repository_id,
+        } => {
+            ensure_query_repository(&repository_id, &anchor_repository_id)?;
+            (Vec::new(), query_repository_entities(context, &repository_id)?)
         }
     };
 
-    let repository_sequence = read_entity_change_sequence(context, &repository_id)?;
     let mut result = CodeQueryResult {
         repository_id: repository_id.clone(),
         roots,
@@ -1579,6 +1617,85 @@ fn execute_code_query(
     }
 
     Ok(result)
+}
+
+fn ensure_query_repository(expected: &str, actual: &str) -> Result<(), String> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err("code query anchor repository identity changed during resolution".into())
+    }
+}
+
+fn query_roots(revisions: &[CodeEntityRevision]) -> Vec<CodeEntityRelationTarget> {
+    revisions
+        .iter()
+        .map(|revision| CodeEntityRelationTarget {
+            entity: revision.entity.clone(),
+            revision: Some(revision.revision.clone()),
+        })
+        .collect()
+}
+
+fn query_document_entities(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    document: &LanguageDocumentIdentity,
+) -> Result<Vec<CodeEntityRevision>, String> {
+    let mut entities = query_repository_entities(context, repository_id)?
+        .into_iter()
+        .filter(|revision| revision.document == *document)
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        left.document
+            .path
+            .cmp(&right.document.path)
+            .then_with(|| left.symbol.cmp(&right.symbol))
+            .then_with(|| left.entity.id.cmp(&right.entity.id))
+    });
+    Ok(entities)
+}
+
+fn query_position_entities(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    document: &LanguageDocumentIdentity,
+    position: &CodeSourcePosition,
+    position_encoding: CodePositionEncoding,
+) -> Result<Vec<CodeEntityRevision>, String> {
+    let mut matches = Vec::new();
+    for revision in query_document_entities(context, repository_id, document)? {
+        let Some(locator) = read_entity_source_locator(
+            context,
+            repository_id,
+            &revision.entity.id,
+            &revision.revision,
+        )? else {
+            continue;
+        };
+        if locator.document != *document || locator.position_encoding != position_encoding {
+            continue;
+        }
+        if code_range_contains_position(&locator.range, position) {
+            matches.push((revision, locator.range));
+        }
+    }
+
+    matches.sort_by(|(left_revision, left_range), (right_revision, right_range)| {
+        code_position_key(&right_range.start)
+            .cmp(&code_position_key(&left_range.start))
+            .then_with(|| code_position_key(&left_range.end).cmp(&code_position_key(&right_range.end)))
+            .then_with(|| left_revision.entity.id.cmp(&right_revision.entity.id))
+    });
+    Ok(matches
+        .into_iter()
+        .map(|(revision, _)| revision)
+        .collect())
+}
+
+fn code_range_contains_position(range: &CodeSourceRange, position: &CodeSourcePosition) -> bool {
+    let position = code_position_key(position);
+    code_position_key(&range.start) <= position && position < code_position_key(&range.end)
 }
 
 fn query_repository_entities(
