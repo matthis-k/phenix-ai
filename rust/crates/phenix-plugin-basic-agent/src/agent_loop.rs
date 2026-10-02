@@ -11,7 +11,10 @@ use phenix_sdk::{
     AGENT_DIAGNOSTIC_EVENT_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, num::{NonZeroU32, NonZeroU64}};
+use std::{
+    collections::BTreeMap,
+    num::{NonZeroU32, NonZeroU64},
+};
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
 pub const AGENT_LOOP_SERVICE: &str = "phenix.agent-loop@1";

@@ -185,14 +185,16 @@ impl UsagePolicy {
             return Err(UsagePlanError::NoAttemptsRemaining);
         }
 
-        let fresh_input_budget = self.max_fresh_input_tokens.map_or(
-            input.remaining.fresh_input_tokens,
-            |limit| limit.min(input.remaining.fresh_input_tokens),
-        );
-        let output_budget = self.max_output_tokens.map_or(
-            input.remaining.output_tokens,
-            |limit| limit.min(input.remaining.output_tokens),
-        );
+        let fresh_input_budget = self
+            .max_fresh_input_tokens
+            .map_or(input.remaining.fresh_input_tokens, |limit| {
+                limit.min(input.remaining.fresh_input_tokens)
+            });
+        let output_budget = self
+            .max_output_tokens
+            .map_or(input.remaining.output_tokens, |limit| {
+                limit.min(input.remaining.output_tokens)
+            });
         let cost_budget = match (self.max_cost_microunits, input.remaining.cost_microunits) {
             (Some(policy), Some(remaining)) => Some(policy.min(remaining)),
             (Some(policy), None) => Some(policy),
@@ -276,9 +278,11 @@ impl UsagePolicy {
             required_capabilities: planned_context.required_capabilities.clone(),
         };
 
-        let max_attempts = self.max_retries.map_or(input.remaining.attempts, |retries| {
-            retries.saturating_add(1).min(input.remaining.attempts)
-        });
+        let max_attempts = self
+            .max_retries
+            .map_or(input.remaining.attempts, |retries| {
+                retries.saturating_add(1).min(input.remaining.attempts)
+            });
         let reserved_attempts = max_attempts;
 
         Ok(StepPlan {
