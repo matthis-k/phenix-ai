@@ -299,6 +299,13 @@ task evidence
 
 Do not inject a whole repository graph into every model turn.
 
+The first context consumer is `ContextCommand::LoadCodeQuery`. It uses the optional
+`LanguageInterface` binding to execute the same bounded `CodeQuery` contract, stores the
+result as an immutable external context resource, and injects that exact revision into the
+target execution. The persisted context copy is recovery evidence, not a second semantic
+authority. If the language binding is absent, the command fails instead of falling back to a
+separate graph implementation.
+
 ## Memory integration
 
 Memory references canonical entity/facet/relation revisions.
@@ -351,7 +358,7 @@ This PR should establish:
 - compatibility with existing `LogicalCodeEntity` and relation persistence;
 - regression tests proving existing point reads and new graph reads observe the same facts.
 
-Position-driven provider resolution, richer containment extraction, ranking, and context projection may follow in later commits on the same PR if they remain coherent.
+Richer containment extraction, ranking, and cold-build behavior may follow in later commits on the same PR if they remain coherent. Context projection now consumes the unified query contract through the typed language binding.
 
 ## Acceptance
 
