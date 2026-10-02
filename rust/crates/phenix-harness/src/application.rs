@@ -650,7 +650,8 @@ impl ApplicationWorker {
             }
 
             let page_has_more = page.next_cursor.is_some();
-            for raw in page.records {
+            let page_record_count = page.records.len();
+            for (index, raw) in page.records.into_iter().enumerate() {
                 let record_cursor = cursor;
                 cursor = cursor.saturating_add(1);
                 if !log_record_matches(
@@ -662,9 +663,8 @@ impl ApplicationWorker {
                 }
                 records.push(application_log_record(record_cursor, raw)?);
                 if records.len() == limit {
-                    next_cursor = (page_has_more || cursor < page.next_cursor.unwrap_or(cursor))
-                        .then(|| cursor.to_string())
-                        .or_else(|| page_has_more.then(|| cursor.to_string()));
+                    next_cursor = (index + 1 < page_record_count || page_has_more)
+                        .then(|| cursor.to_string());
                     break 'scan;
                 }
             }
