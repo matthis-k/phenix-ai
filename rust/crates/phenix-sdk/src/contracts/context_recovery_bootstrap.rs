@@ -53,7 +53,6 @@ pub struct RecoveryClassifierPolicy {
     pub total_timeout_ms: Option<u64>,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryBootstrapRequest {
