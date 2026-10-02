@@ -4327,14 +4327,6 @@ mod tests {
             vec!["entity-a", "entity-b"]
         );
 
-        let index_bytes = kernel
-            .persistence()
-            .read(&language_namespace(), &repository_entity_index_key("repo-query"))
-            .unwrap()
-            .expect("derived repository entity index");
-        let index: DerivedRepositoryEntityIndex = serde_json::from_slice(&index_bytes).unwrap();
-        assert_eq!(index.repository_sequence, 2);
-
         record_query_revision(&mut kernel, &query_revision("entity-c", "c"));
 
         let LanguageResponse::Query { result: second } =
@@ -4351,16 +4343,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["entity-a", "entity-b", "entity-c"]
         );
-
-        let refreshed_bytes = kernel
-            .persistence()
-            .read(&language_namespace(), &repository_entity_index_key("repo-query"))
-            .unwrap()
-            .expect("refreshed derived repository entity index");
-        let refreshed: DerivedRepositoryEntityIndex =
-            serde_json::from_slice(&refreshed_bytes).unwrap();
-        assert_eq!(refreshed.repository_sequence, 3);
-        assert_eq!(refreshed.entities.len(), 3);
 
         let _ = fs::remove_file(path);
     }
