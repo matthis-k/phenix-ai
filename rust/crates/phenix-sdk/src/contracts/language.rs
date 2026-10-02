@@ -560,7 +560,16 @@ pub enum CodeQueryAnchor {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CodeRelationKind {

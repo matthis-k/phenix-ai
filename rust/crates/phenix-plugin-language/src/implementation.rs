@@ -10,10 +10,9 @@ use phenix_sdk::{
     CodeEntityLineageKind, CodeEntityProviderEditValidationFactBatch, CodeEntityProviderFactBatch,
     CodeEntityProviderRelationFactBatch, CodeEntityRelationKind, CodeEntityRelationTarget,
     CodeEntityRelations, CodeEntityRevision, CodeEntitySourceLocator, CodeEntitySourceView,
-    CodeIdentityContinuityState,
-    CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection,
-    CodeQueryRelation, CodeQueryResult, CodeQuerySelection, CodeRelationKind,
-    CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint, CodePositionEncoding,
+    CodeIdentityContinuityState, CodeIdentityContinuityStatus, CodeIdentityRebuildCheckpoint,
+    CodePositionEncoding, CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity,
+    CodeQueryProjection, CodeQueryRelation, CodeQueryResult, CodeQuerySelection, CodeRelationKind,
     CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
     FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
     LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand, WorkspaceFileVersion,
@@ -1362,7 +1361,6 @@ fn read_entity_relations(
     Ok(Some(relations))
 }
 
-
 fn execute_code_query(
     context: &LanguageContext<'_, '_, '_>,
     query: CodeQuery,
@@ -1539,12 +1537,7 @@ fn execute_code_query(
                 edges.dedup();
 
                 for edge in edges {
-                    if !try_push_query_relation(
-                        &mut result,
-                        &mut relation_keys,
-                        &edge,
-                        &budget,
-                    )? {
+                    if !try_push_query_relation(&mut result, &mut relation_keys, &edge, &budget)? {
                         result.coverage.truncated = true;
                         result.coverage.complete = false;
                         break;
@@ -1666,7 +1659,9 @@ fn try_push_query_entity(
         return Ok(false);
     }
 
-    result.entities.push(project_query_entity(revision, projection));
+    result
+        .entities
+        .push(project_query_entity(revision, projection));
     if encoded_query_result_len(result)? > budget.max_bytes {
         result.entities.pop();
         return Ok(false);
@@ -1854,11 +1849,7 @@ fn resolve_query_target(
             &target.entity.id,
             revision,
         ),
-        None => read_entity_revision(
-            context,
-            &target.entity.repository_id,
-            &target.entity.id,
-        ),
+        None => read_entity_revision(context, &target.entity.repository_id, &target.entity.id),
     }
 }
 
@@ -3574,8 +3565,7 @@ mod tests {
                 },
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected unified code query result");
         };
 
@@ -3651,8 +3641,7 @@ mod tests {
                 },
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected incoming unified code query result");
         };
 
@@ -3674,11 +3663,7 @@ mod tests {
         let mut kernel = kernel_with(&path);
         activate(&mut kernel, 1);
 
-        for (id, name) in [
-            ("entity-c", "c"),
-            ("entity-a", "a"),
-            ("entity-b", "b"),
-        ] {
+        for (id, name) in [("entity-c", "c"), ("entity-a", "a"), ("entity-b", "b")] {
             record_query_revision(&mut kernel, &query_revision(id, name));
         }
 
@@ -3700,8 +3685,7 @@ mod tests {
                 },
             },
         )
-        .unwrap()
-        else {
+        .unwrap() else {
             panic!("expected repository query result");
         };
 
