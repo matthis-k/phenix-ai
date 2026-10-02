@@ -382,7 +382,10 @@ fn trace_logger() -> Result<&'static StructuredLogger, String> {
         .map_err(Clone::clone)
 }
 
-fn diagnostic_summary(event: &EventEnvelope, diagnostic: &AgentDiagnosticEvent) -> serde_json::Value {
+fn diagnostic_summary(
+    event: &EventEnvelope,
+    diagnostic: &AgentDiagnosticEvent,
+) -> serde_json::Value {
     let mut summary = serde_json::Map::from_iter([
         ("emitter".to_owned(), json!(event.emitter.as_str())),
         ("causality_id".to_owned(), json!(event.causality_id)),
