@@ -54,8 +54,8 @@ operations! {
     GetExecutionTree: "execution-tree", "inspection", SessionInput => ExecutionTree;
     GetProvenance: "execution-provenance", "inspection", ExecutionInput => Provenance;
     GetDiagnostics: "diagnostics", "diagnostics", Empty => Diagnostics;
-    QueryLogs: "log-query", "diagnostics", LogQueryInput => LogPage;
-    ReadLogReference: "log-reference-read", "diagnostics", LogReferenceInput => LogReferenceContent;
+    QueryLogs: "log-query", "logs", LogQueryInput => LogPage;
+    ReadLogReference: "log-reference-read", "logs", LogReferenceInput => LogReferenceContent;
     ListObservables: "observable-list", "observables", Empty => ObservableList;
     GetObservable: "observable-get", "observables", ObservableGetInput => ObservableValue;
     SubscribeObservable: "observable-subscribe", "observables", ObservableSubscribeInput => ObservableSubscriptionResult;
@@ -140,6 +140,7 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         ("callables", vec!["sessions"]),
         ("inspection", vec!["sessions"]),
         ("diagnostics", vec!["discovery"]),
+        ("logs", vec!["discovery"]),
         ("observables", vec!["discovery"]),
         ("permission", vec!["prompt"]),
         ("elicitation", vec!["sessions"]),
