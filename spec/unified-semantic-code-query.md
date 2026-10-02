@@ -1,6 +1,6 @@
 # Unified semantic code query
 
-status: implementation in progress
+status: partial
 
 ## Goal
 
