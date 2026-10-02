@@ -649,6 +649,7 @@ pub struct CodeQueryRelation {
     pub source: LogicalCodeEntity,
     pub source_revision: Option<String>,
     pub kind: CodeRelationKind,
+    pub relation_revision: String,
     pub target: CodeEntityRelationTarget,
 }
 
