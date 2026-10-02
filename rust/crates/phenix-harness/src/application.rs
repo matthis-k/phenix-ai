@@ -4619,8 +4619,7 @@ mod tests {
             .unwrap();
 
         let mut worker = application_worker();
-        worker.log_reader =
-            Ok(StructuredLogReader::configured(LogSink::directory(&root)).unwrap());
+        worker.log_reader = Ok(StructuredLogReader::configured(LogSink::directory(&root)).unwrap());
 
         let page = invoke_operation::<QueryLogs>(
             &mut worker,
