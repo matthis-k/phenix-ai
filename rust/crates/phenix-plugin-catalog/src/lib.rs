@@ -33,7 +33,7 @@ pub use phenix_plugin_basic_agent::{
     AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
     AgentToolExecutionRequest, AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE,
     AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE, DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    AGENT_TOOL_EXECUTION_SERVICE,
 };
 pub use phenix_plugin_basic_context::{
     basic_context_component_manifest, basic_context_factory, basic_context_manifest,
