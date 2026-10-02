@@ -4730,6 +4730,7 @@ mod tests {
                 .map_err(|error| error.to_string())?;
 
             if self.calls.fetch_add(1, AtomicOrdering::SeqCst) == 0 {
+                // This regression exercises failed-execution recovery, not retry policy.
                 let failure = ModelInferenceFailure::InvalidRequest {
                     message: "fixture provider failed this execution".into(),
                 };
