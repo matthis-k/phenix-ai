@@ -32,7 +32,7 @@ pub fn recovery_cold_gate(state: &ContextRecoveryState) -> RecoveryColdGate {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryClassifierPolicy {
     #[serde(default)]
@@ -53,20 +53,6 @@ pub struct RecoveryClassifierPolicy {
     pub total_timeout_ms: Option<u64>,
 }
 
-impl Default for RecoveryClassifierPolicy {
-    fn default() -> Self {
-        Self {
-            max_prompt_bytes: None,
-            max_anchors: None,
-            max_needs: None,
-            max_need_query_bytes: None,
-            max_attempts: None,
-            max_output_tokens: None,
-            classifier_timeout_ms: None,
-            total_timeout_ms: None,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
