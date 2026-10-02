@@ -1236,6 +1236,7 @@ fn relation_operation(kind: CodeEntityRelationKind) -> LanguageOperationKind {
         CodeEntityRelationKind::Callers => LanguageOperationKind::CallHierarchy,
         CodeEntityRelationKind::References => LanguageOperationKind::References,
         CodeEntityRelationKind::Implementations => LanguageOperationKind::Implementations,
+        CodeEntityRelationKind::Contains => LanguageOperationKind::DocumentSymbols,
     }
 }
 
@@ -1244,6 +1245,7 @@ fn relation_kind_key(kind: CodeEntityRelationKind) -> &'static str {
         CodeEntityRelationKind::Callers => "callers",
         CodeEntityRelationKind::References => "references",
         CodeEntityRelationKind::Implementations => "implementations",
+        CodeEntityRelationKind::Contains => "contains",
     }
 }
 
@@ -1256,6 +1258,7 @@ fn outgoing_relation_index_key(repository_id: &str, kind: CodeRelationKind) -> S
         CodeRelationKind::Calls => "calls",
         CodeRelationKind::References => "references",
         CodeRelationKind::Implements => "implements",
+        CodeRelationKind::Contains => "contains",
     };
     format!("index/outgoing/{repository_id}/{kind}")
 }
@@ -1317,16 +1320,52 @@ fn ingest_entity_relations(
         return Err("relation fact provider no longer owns the current entity revision".into());
     }
 
-    let mut targets = fact.targets;
-    targets.sort_by(|left, right| {
+    store_entity_relations(
+        context,
+        CodeEntityRelations {
+            entity: fact.entity,
+            revision: fact.revision,
+            kind: fact.kind,
+            targets: fact.targets,
+            complete: fact.complete,
+        },
+    )
+}
+
+fn store_entity_relations(
+    context: &LanguageContext<'_, '_, '_>,
+    mut relations: CodeEntityRelations,
+) -> Result<CodeEntityRelations, String> {
+    validate_identity("code repository id", &relations.entity.repository_id)?;
+    validate_identity("logical code entity id", &relations.entity.id)?;
+    validate_identity("code entity revision", &relations.revision)?;
+    let current = read_entity_revision(
+        context,
+        &relations.entity.repository_id,
+        &relations.entity.id,
+    )?
+    .ok_or_else(|| {
+        format!(
+            "unknown logical code entity: {}/{}",
+            relations.entity.repository_id, relations.entity.id
+        )
+    })?;
+    if current.revision != relations.revision {
+        return Err(format!(
+            "relation fact revision is stale: expected {}, current {}",
+            relations.revision, current.revision
+        ));
+    }
+
+    relations.targets.sort_by(|left, right| {
         left.entity
             .repository_id
             .cmp(&right.entity.repository_id)
             .then_with(|| left.entity.id.cmp(&right.entity.id))
             .then_with(|| left.revision.cmp(&right.revision))
     });
-    targets.dedup();
-    for target in &targets {
+    relations.targets.dedup();
+    for target in &relations.targets {
         validate_identity(
             "relation target repository id",
             &target.entity.repository_id,
@@ -1337,13 +1376,6 @@ fn ingest_entity_relations(
         }
     }
 
-    let relations = CodeEntityRelations {
-        entity: fact.entity,
-        revision: fact.revision,
-        kind: fact.kind,
-        targets,
-        complete: fact.complete,
-    };
     let key = entity_relations_key(
         &relations.entity.repository_id,
         &relations.entity.id,
@@ -2210,6 +2242,7 @@ fn stored_relation_kind(kind: CodeRelationKind) -> CodeEntityRelationKind {
         CodeRelationKind::Calls => CodeEntityRelationKind::Callers,
         CodeRelationKind::References => CodeEntityRelationKind::References,
         CodeRelationKind::Implements => CodeEntityRelationKind::Implementations,
+        CodeRelationKind::Contains => CodeEntityRelationKind::Contains,
     }
 }
 
@@ -2277,6 +2310,7 @@ fn stored_relation_kind_from_facet(name: &str) -> Option<CodeEntityRelationKind>
         "callers" => Some(CodeEntityRelationKind::Callers),
         "references" => Some(CodeEntityRelationKind::References),
         "implementations" => Some(CodeEntityRelationKind::Implementations),
+        "contains" => Some(CodeEntityRelationKind::Contains),
         _ => None,
     }
 }
@@ -2677,6 +2711,7 @@ fn read_changed_neighborhood(
         CodeEntityRelationKind::Callers,
         CodeEntityRelationKind::References,
         CodeEntityRelationKind::Implementations,
+        CodeEntityRelationKind::Contains,
     ] {
         if remaining == 0 {
             complete = false;
