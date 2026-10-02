@@ -1885,15 +1885,47 @@ fn query_repository_entities(
         .read_durable(&language_namespace(), &index_key)
         .map_err(|error| error.to_string())?;
 
-    let index = match existing_index
+    let decoded_index = existing_index
         .as_deref()
         .map(|bytes| {
             serde_json::from_slice::<DerivedRepositoryEntityIndex>(bytes)
                 .map_err(|error| error.to_string())
         })
-        .transpose()?
-    {
+        .transpose()?;
+    let index = match decoded_index {
         Some(index) if index.repository_sequence == repository_sequence => index,
+        Some(index) if index.repository_sequence < repository_sequence => {
+            let index = catch_up_repository_entity_index(
+                context,
+                repository_id,
+                index,
+                repository_sequence,
+            )?;
+            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+            context
+                .kernel
+                .transact_durable(
+                    &language_namespace(),
+                    &[
+                        TransactionOp::AssertValue {
+                            key: sequence_key.clone(),
+                            expected: sequence_bytes.clone(),
+                        },
+                        TransactionOp::AssertValue {
+                            key: index_key.clone(),
+                            expected: existing_index.clone(),
+                        },
+                        TransactionOp::Put {
+                            key: index_key.clone(),
+                            value: encoded,
+                        },
+                    ],
+                )
+                .map_err(|error| {
+                    format!("code query repository changed while advancing entity index: {error}")
+                })?;
+            index
+        }
         _ => {
             let index = build_repository_entity_index(context, repository_id, repository_sequence)?;
             let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
@@ -1988,6 +2020,72 @@ fn build_repository_entity_index(
         repository_sequence,
         entities,
     })
+}
+
+fn changed_entity_ids_since(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    after_sequence: u64,
+    repository_sequence: u64,
+) -> Result<BTreeSet<String>, String> {
+    if after_sequence > repository_sequence {
+        return Err("derived code index is ahead of the canonical repository sequence".into());
+    }
+
+    let mut changed = BTreeSet::new();
+    let mut cursor = after_sequence;
+    while cursor < repository_sequence {
+        let page = read_entity_changes(context, repository_id, cursor, 100)?;
+        if page.current_sequence != repository_sequence {
+            return Err("code query repository changed while advancing derived index".into());
+        }
+        for event in page.events {
+            changed.insert(event.entity.id);
+        }
+        if page.caught_up {
+            break;
+        }
+        if page.next_after_sequence <= cursor {
+            return Err("code entity change stream did not advance while updating index".into());
+        }
+        cursor = page.next_after_sequence;
+    }
+    Ok(changed)
+}
+
+fn catch_up_repository_entity_index(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    mut index: DerivedRepositoryEntityIndex,
+    repository_sequence: u64,
+) -> Result<DerivedRepositoryEntityIndex, String> {
+    let changed = changed_entity_ids_since(
+        context,
+        repository_id,
+        index.repository_sequence,
+        repository_sequence,
+    )?;
+    for entity_id in changed {
+        index
+            .entities
+            .retain(|pointer| pointer.entity.id != entity_id);
+        if let Some(revision) = read_entity_revision(context, repository_id, &entity_id)? {
+            index.entities.push(DerivedRepositoryEntityPointer {
+                entity: revision.entity,
+                revision: revision.revision,
+            });
+        }
+    }
+    index.entities.sort_by(|left, right| {
+        left.entity
+            .repository_id
+            .cmp(&right.entity.repository_id)
+            .then_with(|| left.entity.id.cmp(&right.entity.id))
+            .then_with(|| left.revision.cmp(&right.revision))
+    });
+    index.entities.dedup();
+    index.repository_sequence = repository_sequence;
+    Ok(index)
 }
 
 fn project_query_entity(
@@ -2264,15 +2362,50 @@ fn query_outgoing_relation_kind(
         .read_durable(&language_namespace(), &index_key)
         .map_err(|error| error.to_string())?;
 
-    let index = match existing_index
+    let decoded_index = existing_index
         .as_deref()
         .map(|bytes| {
             serde_json::from_slice::<DerivedOutgoingRelationIndex>(bytes)
                 .map_err(|error| error.to_string())
         })
-        .transpose()?
-    {
+        .transpose()?;
+    let index = match decoded_index {
         Some(index) if index.repository_sequence == repository_sequence => index,
+        Some(index)
+            if index.repository_sequence < repository_sequence && index.complete =>
+        {
+            let index = catch_up_outgoing_relation_index(
+                context,
+                repository_id,
+                kind,
+                index,
+                repository_sequence,
+            )?;
+            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+            context
+                .kernel
+                .transact_durable(
+                    &language_namespace(),
+                    &[
+                        TransactionOp::AssertValue {
+                            key: sequence_key.clone(),
+                            expected: sequence_bytes.clone(),
+                        },
+                        TransactionOp::AssertValue {
+                            key: index_key.clone(),
+                            expected: existing_index.clone(),
+                        },
+                        TransactionOp::Put {
+                            key: index_key.clone(),
+                            value: encoded,
+                        },
+                    ],
+                )
+                .map_err(|error| {
+                    format!("code query repository changed while advancing relation index: {error}")
+                })?;
+            index
+        }
         _ => {
             let index = build_outgoing_relation_index(
                 context,
@@ -2350,6 +2483,77 @@ fn query_outgoing_relation_kind(
     sort_query_relations(&mut edges);
     edges.dedup();
     Ok((edges, complete))
+}
+
+fn catch_up_outgoing_relation_index(
+    context: &LanguageContext<'_, '_, '_>,
+    repository_id: &str,
+    kind: CodeRelationKind,
+    mut index: DerivedOutgoingRelationIndex,
+    repository_sequence: u64,
+) -> Result<DerivedOutgoingRelationIndex, String> {
+    let changed = changed_entity_ids_since(
+        context,
+        repository_id,
+        index.repository_sequence,
+        repository_sequence,
+    )?;
+    let stored_kind = stored_relation_kind(kind);
+
+    for entity_id in changed {
+        for pointers in index.pointers_by_source.values_mut() {
+            pointers.retain(|pointer| pointer.target.id != entity_id);
+        }
+        index
+            .pointers_by_source
+            .retain(|_, pointers| !pointers.is_empty());
+
+        let Some(target_revision) = read_entity_revision(context, repository_id, &entity_id)? else {
+            continue;
+        };
+        match read_entity_relations(
+            context,
+            repository_id,
+            &entity_id,
+            &target_revision.revision,
+            stored_kind,
+            u32::MAX,
+        )? {
+            Some(relations) => {
+                index.complete &= relations.complete;
+                for source in &relations.targets {
+                    if source.entity.repository_id != repository_id {
+                        continue;
+                    }
+                    index
+                        .pointers_by_source
+                        .entry(source.entity.id.clone())
+                        .or_default()
+                        .push(DerivedOutgoingRelationPointer {
+                            source_revision: source.revision.clone(),
+                            target: target_revision.entity.clone(),
+                            target_revision: target_revision.revision.clone(),
+                            stored_kind,
+                        });
+                }
+            }
+            None => index.complete = false,
+        }
+    }
+
+    for pointers in index.pointers_by_source.values_mut() {
+        pointers.sort_by(|left, right| {
+            left.source_revision
+                .cmp(&right.source_revision)
+                .then_with(|| left.target.repository_id.cmp(&right.target.repository_id))
+                .then_with(|| left.target.id.cmp(&right.target.id))
+                .then_with(|| left.target_revision.cmp(&right.target_revision))
+                .then_with(|| left.stored_kind.cmp(&right.stored_kind))
+        });
+        pointers.dedup();
+    }
+    index.repository_sequence = repository_sequence;
+    Ok(index)
 }
 
 fn build_outgoing_relation_index(
