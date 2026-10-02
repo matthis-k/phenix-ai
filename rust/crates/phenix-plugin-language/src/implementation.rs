@@ -5013,7 +5013,7 @@ mod tests {
                     },
                     selection: CodeQuerySelection::Entities,
                     traversal: None,
-                    projection: CodeQueryProjection::Structural,
+                    projection: CodeQueryProjection::SourceLocations,
                     budget: phenix_sdk::CodeQueryBudget {
                         max_entities: 8,
                         max_relations: 1,
@@ -5033,6 +5033,16 @@ mod tests {
         );
         assert_eq!(position_query.entities[1].symbol.as_deref(), Some("outer"));
         assert_eq!(position_query.roots.len(), 2);
+        assert!(position_query
+            .entities
+            .iter()
+            .all(|entity| entity.source.is_some()));
+        let inner_source = position_query.entities[0]
+            .source
+            .as_ref()
+            .expect("inner source location");
+        assert_eq!(inner_source.range.start.character, 17);
+        assert_eq!(inner_source.range.end.character, 30);
 
         let body_error = invoke(
             &mut kernel,
