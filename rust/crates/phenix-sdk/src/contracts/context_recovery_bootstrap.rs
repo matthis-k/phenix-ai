@@ -32,7 +32,9 @@ pub fn recovery_cold_gate(state: &ContextRecoveryState) -> RecoveryColdGate {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[derive(
+    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryClassifierPolicy {
     #[serde(default)]
