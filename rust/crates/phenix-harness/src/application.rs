@@ -4229,14 +4229,11 @@ fn inspect_runtime(
 fn inspect_runtime_trace(
     context: &ApplicationAgentToolContext<'_, '_>,
 ) -> Result<PhenixValue, ApplicationError> {
-    let encoded = serde_json::to_vec(&context.kernel.runtime_trace()).map_err(|error| {
-        ApplicationError::Failed {
+    serde_json::to_value(context.kernel.runtime_trace())
+        .map(PhenixValue::from)
+        .map_err(|error| ApplicationError::Failed {
             message: format!("failed to encode runtime trace: {error}"),
-        }
-    })?;
-    serde_json::from_slice(&encoded).map_err(|error| ApplicationError::InvalidResponse {
-        message: format!("failed to decode runtime trace value: {error}"),
-    })
+        })
 }
 
 fn inspect_execution(
@@ -5676,7 +5673,11 @@ mod tests {
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
 
-        for (call_id, query) in [("inspect-graph", "graph"), ("inspect-values", "values")] {
+        for (call_id, query) in [
+            ("inspect-graph", "graph"),
+            ("inspect-trace", "trace"),
+            ("inspect-values", "values"),
+        ] {
             let request = AgentToolExecutionRequest {
                 execution_id: execution_id.clone(),
                 session_id: Some(session_id.clone()),
@@ -5717,6 +5718,16 @@ mod tests {
                     assert!(
                         matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty())
                     );
+                }
+                ("trace", PhenixValue::List(events)) => {
+                    assert!(!events.is_empty());
+                    assert!(events.iter().all(|event| {
+                        matches!(
+                            event,
+                            PhenixValue::Map(fields)
+                                if matches!(fields.get("event"), Some(PhenixValue::String(_)))
+                        )
+                    }));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
