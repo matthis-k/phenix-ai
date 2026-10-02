@@ -4181,6 +4181,46 @@ mod tests {
         assert_eq!(result.relations[1].source, b.entity);
         assert_eq!(result.relations[1].target.entity, c.entity);
 
+        kernel
+            .transact_durable(
+                &language_namespace(),
+                &[TransactionOp::Delete {
+                    key: outgoing_relation_index_key(
+                        "repo-query",
+                        CodeRelationKind::References,
+                    ),
+                }],
+            )
+            .unwrap();
+        let LanguageResponse::Query { result: rebuilt } = invoke(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: a.entity.clone(),
+                        revision: Some(a.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeRelationKind::References],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 2,
+                    }),
+                    projection: CodeQueryProjection::Structural,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+        )
+        .unwrap() else {
+            panic!("expected rebuilt unified query result");
+        };
+        assert_eq!(rebuilt, result);
+
         let _ = fs::remove_file(path);
     }
 
