@@ -2434,9 +2434,7 @@ fn query_outgoing_relation_kind(
         .transpose()?;
     let index = match decoded_index {
         Some(index) if index.repository_sequence == repository_sequence => index,
-        Some(index)
-            if index.repository_sequence < repository_sequence && index.complete =>
-        {
+        Some(index) if index.repository_sequence < repository_sequence && index.complete => {
             let index = catch_up_outgoing_relation_index(
                 context,
                 repository_id,
@@ -2571,7 +2569,8 @@ fn catch_up_outgoing_relation_index(
             .pointers_by_source
             .retain(|_, pointers| !pointers.is_empty());
 
-        let Some(target_revision) = read_entity_revision(context, repository_id, &entity_id)? else {
+        let Some(target_revision) = read_entity_revision(context, repository_id, &entity_id)?
+        else {
             continue;
         };
         match read_entity_relations(
