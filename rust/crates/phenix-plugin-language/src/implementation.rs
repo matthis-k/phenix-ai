@@ -1310,6 +1310,50 @@ fn ingest_entity_relations(
         relations.kind,
     );
     let encoded = serde_json::to_vec(&relations).map_err(|error| error.to_string())?;
+    let existing = context
+        .kernel
+        .read_durable(&language_namespace(), &key)
+        .map_err(|error| error.to_string())?;
+    if let Some(existing) = existing.as_deref() {
+        let existing_relations: CodeEntityRelations =
+            serde_json::from_slice(existing).map_err(|error| error.to_string())?;
+        if existing_relations == relations {
+            return Ok(relations);
+        }
+    }
+
+    let repository_id = relations.entity.repository_id.as_str();
+    let sequence_key = entity_change_sequence_key(repository_id);
+    let sequence_bytes = context
+        .kernel
+        .read_durable(&language_namespace(), &sequence_key)
+        .map_err(|error| error.to_string())?;
+    let current_sequence = sequence_bytes
+        .as_deref()
+        .map(|bytes| serde_json::from_slice::<u64>(bytes).map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let change_sequence = current_sequence
+        .checked_add(1)
+        .ok_or_else(|| "code relation change sequence overflow".to_owned())?;
+    let event = CodeEntityChangeEvent {
+        sequence: change_sequence,
+        entity: relations.entity.clone(),
+        previous_revision: Some(relations.revision.clone()),
+        revision: relations.revision.clone(),
+        changes: CodeEntityFacetChanges {
+            existence: false,
+            name_location: false,
+            signature: false,
+            body: false,
+            relations: vec![relation_kind_key(relations.kind).to_owned()],
+        },
+    };
+    let event_key = entity_change_key(repository_id, change_sequence);
+    let event_bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
+    let next_sequence_bytes =
+        serde_json::to_vec(&change_sequence).map_err(|error| error.to_string())?;
+
     context
         .kernel
         .transact_durable(
@@ -1317,14 +1361,27 @@ fn ingest_entity_relations(
             &[
                 TransactionOp::AssertValue {
                     key: key.clone(),
-                    expected: context
-                        .kernel
-                        .read_durable(&language_namespace(), &key)
-                        .map_err(|error| error.to_string())?,
+                    expected: existing,
+                },
+                TransactionOp::AssertValue {
+                    key: sequence_key.clone(),
+                    expected: sequence_bytes,
+                },
+                TransactionOp::AssertValue {
+                    key: event_key.clone(),
+                    expected: None,
                 },
                 TransactionOp::Put {
                     key,
                     value: encoded,
+                },
+                TransactionOp::Put {
+                    key: event_key,
+                    value: event_bytes,
+                },
+                TransactionOp::Put {
+                    key: sequence_key,
+                    value: next_sequence_bytes,
                 },
             ],
         )
@@ -1796,6 +1853,7 @@ fn try_push_query_relation(
         CodeRelationKind,
         String,
         String,
+        String,
         Option<String>,
     )>,
     relation: &CodeQueryRelation,
@@ -1806,6 +1864,7 @@ fn try_push_query_relation(
         relation.source.id.clone(),
         relation.source_revision.clone(),
         relation.kind,
+        relation.relation_revision.clone(),
         relation.target.entity.repository_id.clone(),
         relation.target.entity.id.clone(),
         relation.target.revision.clone(),
@@ -1844,21 +1903,28 @@ fn stored_relation_kind(kind: CodeRelationKind) -> CodeEntityRelationKind {
 fn canonical_relations_from_stored(
     relations: CodeEntityRelations,
     kind: CodeRelationKind,
-) -> Vec<CodeQueryRelation> {
+) -> Result<Vec<CodeQueryRelation>, String> {
+    let relation_revision = relation_set_revision(&relations)?;
     let target = CodeEntityRelationTarget {
         entity: relations.entity,
         revision: Some(relations.revision),
     };
-    relations
+    Ok(relations
         .targets
         .into_iter()
         .map(|source| CodeQueryRelation {
             source: source.entity,
             source_revision: source.revision,
             kind,
+            relation_revision: relation_revision.clone(),
             target: target.clone(),
         })
-        .collect()
+        .collect())
+}
+
+fn relation_set_revision(relations: &CodeEntityRelations) -> Result<String, String> {
+    let encoded = serde_json::to_string(relations).map_err(|error| error.to_string())?;
+    Ok(digest_identity("code-relation-set", &[encoded]))
 }
 
 fn query_incoming_relations(
@@ -1881,7 +1947,7 @@ fn query_incoming_relations(
         )? {
             Some(relations) => {
                 complete &= relations.complete;
-                edges.extend(canonical_relations_from_stored(relations, *kind));
+                edges.extend(canonical_relations_from_stored(relations, *kind)?);
             }
             None => complete = false,
         }
@@ -1915,7 +1981,7 @@ fn query_outgoing_relations(
             )? {
                 Some(relations) => {
                     complete &= relations.complete;
-                    for edge in canonical_relations_from_stored(relations, *kind) {
+                    for edge in canonical_relations_from_stored(relations, *kind)? {
                         let same_entity = edge.source == source_revision.entity;
                         let same_revision = edge
                             .source_revision
@@ -1944,6 +2010,7 @@ fn sort_query_relations(relations: &mut [CodeQueryRelation]) {
             .then_with(|| left.source.id.cmp(&right.source.id))
             .then_with(|| left.source_revision.cmp(&right.source_revision))
             .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.relation_revision.cmp(&right.relation_revision))
             .then_with(|| {
                 left.target
                     .entity
@@ -3687,7 +3754,7 @@ mod tests {
         };
 
         assert_eq!(result.repository_id, "repo-query");
-        assert_eq!(result.coverage.repository_sequence, 3);
+        assert_eq!(result.coverage.repository_sequence, 6);
         assert!(result.coverage.complete);
         assert!(!result.coverage.truncated);
         assert_eq!(
