@@ -9,8 +9,8 @@ use phenix_core::{
     RuntimeTraceSink, SdkClient, ServiceContribution, ServiceId, StructuredLogger,
 };
 use phenix_sdk::{
-    ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent, ModelRoutingInterface,
-    PlanningInterface, SessionInterface,
+    AgentDiagnosticEvent, ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent,
+    ModelRoutingInterface, PlanningInterface, SessionInterface,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -23,6 +23,7 @@ use std::{
 pub const DEBUG_SERVICE: &str = "phenix.debug@1";
 pub const DEBUG_LOG_ENV: &str = "PHENIX_DEBUG_LOG";
 const MODEL_DIAGNOSTIC_LISTENER_METHOD: &str = "model_diagnostic";
+const AGENT_DIAGNOSTIC_LISTENER_METHOD: &str = "agent_diagnostic";
 static TRACE_LOGGER: OnceLock<Result<StructuredLogger, String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
@@ -136,6 +137,34 @@ pub fn debug_runtime_trace_sink() -> Arc<dyn RuntimeTraceSink> {
     Arc::new(DebugRuntimeTraceSink::default())
 }
 
+struct AgentDiagnosticLogger;
+
+impl PluginListener for AgentDiagnosticLogger {
+    fn handle(&self, event: &EventEnvelope, _host: &PluginHost<'_>) -> Result<(), String> {
+        match serde_json::from_slice::<AgentDiagnosticEvent>(&event.payload) {
+            Ok(diagnostic) => record_trace_detail(
+                "agent_diagnostic",
+                diagnostic_summary(event, &diagnostic),
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "diagnostic": diagnostic,
+                }),
+            ),
+            Err(error) => record_trace_inline(
+                "agent_diagnostic_decode_failed",
+                json!({
+                    "emitter": event.emitter.as_str(),
+                    "causality_id": event.causality_id,
+                    "error": error.to_string(),
+                    "payload_bytes": event.payload.len(),
+                }),
+            ),
+        }
+        Ok(())
+    }
+}
+
 struct ModelDiagnosticLogger;
 
 impl PluginListener for ModelDiagnosticLogger {
@@ -208,6 +237,7 @@ impl PluginInstance for crate::Plugin {
     ) -> Option<Result<Arc<dyn PluginListener>, String>> {
         match listener.declaration.method.as_str() {
             MODEL_DIAGNOSTIC_LISTENER_METHOD => Some(Ok(Arc::new(ModelDiagnosticLogger))),
+            AGENT_DIAGNOSTIC_LISTENER_METHOD => Some(Ok(Arc::new(AgentDiagnosticLogger))),
             _ => None,
         }
     }
@@ -333,6 +363,34 @@ fn trace_logger() -> Result<&'static StructuredLogger, String> {
         .get_or_init(|| trace_sink().and_then(StructuredLogger::configured))
         .as_ref()
         .map_err(Clone::clone)
+}
+
+fn diagnostic_summary(
+    event: &EventEnvelope,
+    diagnostic: &AgentDiagnosticEvent,
+) -> serde_json::Value {
+    let mut summary = serde_json::Map::from_iter([
+        ("emitter".to_owned(), json!(event.emitter.as_str())),
+        ("causality_id".to_owned(), json!(event.causality_id)),
+    ]);
+    if let Ok(serde_json::Value::Object(fields)) = serde_json::to_value(diagnostic) {
+        for key in [
+            "event",
+            "execution_id",
+            "session_id",
+            "call_id",
+            "callable_id",
+            "turn",
+            "model_calls",
+            "tool_calls",
+            "reason",
+        ] {
+            if let Some(value) = fields.get(key) {
+                summary.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(summary)
 }
 
 fn event_name<T: Serialize>(value: &T) -> Option<String> {

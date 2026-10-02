@@ -6,8 +6,9 @@ use phenix_core::{
     SessionId, ValueCodec,
 };
 use phenix_sdk::{
-    DefaultInvocationCommand, DefaultInvocationInterface, InvocationRequest, StepRunnerResponse,
-    ToolObservation,
+    agent_diagnostic_event_type, AgentDiagnosticEvent, DefaultInvocationCommand,
+    DefaultInvocationInterface, InvocationRequest, StepRunnerResponse, ToolObservation,
+    AGENT_DIAGNOSTIC_EVENT_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, num::NonZeroU32};
@@ -428,14 +429,30 @@ fn run(
         model_calls: 0,
         tool_calls: 0,
     };
+    emit_agent_diagnostic(
+        context,
+        AgentDiagnosticEvent::RunStarted {
+            execution_id: execution_id.clone(),
+            session_id: session_id.clone(),
+            callable_id: callable_id.clone(),
+        },
+    );
 
     loop {
         if let Some(limit) = policy.max_model_turns() {
             if usage.model_calls >= limit.get() {
-                return Ok(AgentLoopResponse::Failed {
-                    failure: AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() },
-                    usage,
-                });
+                let failure = AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() };
+                emit_agent_diagnostic(
+                    context,
+                    AgentDiagnosticEvent::RunFailed {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        reason: format!("{failure:?}"),
+                        model_calls: usage.model_calls,
+                        tool_calls: usage.tool_calls,
+                    },
+                );
+                return Ok(AgentLoopResponse::Failed { failure, usage });
             }
         }
         if context
@@ -443,35 +460,89 @@ fn run(
             .cancellation_token()
             .is_some_and(|token| token.is_cancelled())
         {
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunCancelled {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
             return Ok(AgentLoopResponse::Cancelled { usage });
         }
-        let control: AgentLoopControlResponse = context
-            .sdk
-            .control
-            .invoke_projected(&AgentLoopControlRequest {
-                execution_id: execution_id.clone(),
-                session_id: session_id.clone(),
-            })
-            .map_err(|error| error.to_string())?;
+        let control: AgentLoopControlResponse =
+            match context
+                .sdk
+                .control
+                .invoke_projected(&AgentLoopControlRequest {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                }) {
+                Ok(control) => control,
+                Err(error) => {
+                    let reason = error.to_string();
+                    emit_agent_diagnostic(
+                        context,
+                        AgentDiagnosticEvent::ModelTurnFailed {
+                            execution_id: execution_id.clone(),
+                            session_id: session_id.clone(),
+                            turn,
+                            reason: reason.clone(),
+                        },
+                    );
+                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                    return Err(reason);
+                }
+            };
         if matches!(control, AgentLoopControlResponse::Cancelled) {
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunCancelled {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
             return Ok(AgentLoopResponse::Cancelled { usage });
         }
 
-        let response = context
-            .sdk
-            .invocation
-            .invoke_projected(&DefaultInvocationCommand::Invoke {
-                request: InvocationRequest {
-                    execution_id: execution_id.clone(),
-                    session_id: session_id.clone(),
-                    parent_attempt_id: parent_attempt_id.clone(),
-                    callable_id: callable_id.clone(),
-                    input: input.clone(),
-                    tools: tools.clone(),
-                    continuation: continuation.clone(),
-                },
-            })
-            .map_err(|error| error.to_string())?;
+        let turn = usage
+            .model_calls
+            .checked_add(1)
+            .ok_or_else(|| "agent loop model-call usage overflowed".to_owned())?;
+        emit_agent_diagnostic(
+            context,
+            AgentDiagnosticEvent::ModelTurnStarted {
+                execution_id: execution_id.clone(),
+                session_id: session_id.clone(),
+                turn,
+            },
+        );
+
+        let response =
+            match context
+                .sdk
+                .invocation
+                .invoke_projected(&DefaultInvocationCommand::Invoke {
+                    request: InvocationRequest {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        parent_attempt_id: parent_attempt_id.clone(),
+                        callable_id: callable_id.clone(),
+                        input: input.clone(),
+                        tools: tools.clone(),
+                        continuation: continuation.clone(),
+                    },
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    let reason = error.to_string();
+                    emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                    return Err(reason);
+                }
+            };
         usage.model_calls = usage
             .model_calls
             .checked_add(1)
@@ -480,22 +551,57 @@ fn run(
         let StepRunnerResponse::Completed {
             output, tool_calls, ..
         } = response;
+        let actual = u32::try_from(tool_calls.len())
+            .map_err(|_| "model returned too many tool calls to represent".to_owned())?;
+        emit_agent_diagnostic(
+            context,
+            AgentDiagnosticEvent::ModelTurnCompleted {
+                execution_id: execution_id.clone(),
+                session_id: session_id.clone(),
+                turn: usage.model_calls,
+                tool_calls: actual,
+            },
+        );
         if tool_calls.is_empty() {
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunCompleted {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
             return Ok(AgentLoopResponse::Completed { output, usage });
         }
 
-        let actual = u32::try_from(tool_calls.len())
-            .map_err(|_| "model returned too many tool calls to represent".to_owned())?;
         let limit = policy.max_tool_calls_per_turn().get();
         if actual > limit {
-            return Ok(AgentLoopResponse::Failed {
-                failure: AgentLoopFailure::ToolCallLimitExceeded { limit, actual },
-                usage,
-            });
+            let failure = AgentLoopFailure::ToolCallLimitExceeded { limit, actual };
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunFailed {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    reason: format!("{failure:?}"),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
+            return Ok(AgentLoopResponse::Failed { failure, usage });
         }
 
         let mut tool_results = Vec::with_capacity(tool_calls.len());
         for call in &tool_calls {
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::ToolInvocationStarted {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    call_id: call.call_id.clone(),
+                    callable_id: call.callable_id.clone(),
+                },
+            );
             emit_progress(
                 context,
                 AgentLoopProgressRecord {
@@ -505,15 +611,32 @@ fn run(
                 },
             )?;
 
-            let response: AgentToolExecutionResponse = context
-                .sdk
-                .tools
-                .invoke_projected(&AgentToolExecutionRequest {
-                    execution_id: execution_id.clone(),
-                    session_id: session_id.clone(),
-                    call: call.clone(),
-                })
-                .map_err(|error| error.to_string())?;
+            let response: AgentToolExecutionResponse =
+                match context
+                    .sdk
+                    .tools
+                    .invoke_projected(&AgentToolExecutionRequest {
+                        execution_id: execution_id.clone(),
+                        session_id: session_id.clone(),
+                        call: call.clone(),
+                    }) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let reason = error.to_string();
+                        emit_agent_diagnostic(
+                            context,
+                            AgentDiagnosticEvent::ToolInvocationFailed {
+                                execution_id: execution_id.clone(),
+                                session_id: session_id.clone(),
+                                call_id: call.call_id.clone(),
+                                callable_id: call.callable_id.clone(),
+                                reason: reason.clone(),
+                            },
+                        );
+                        emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+                        return Err(reason);
+                    }
+                };
 
             let (mut result, activated_tools, observation) = match response {
                 AgentToolExecutionResponse::Completed {
@@ -522,6 +645,25 @@ fn run(
                     observation,
                 } => (result, activated_tools, observation),
                 AgentToolExecutionResponse::Cancelled => {
+                    emit_agent_diagnostic(
+                        context,
+                        AgentDiagnosticEvent::ToolInvocationFailed {
+                            execution_id: execution_id.clone(),
+                            session_id: session_id.clone(),
+                            call_id: call.call_id.clone(),
+                            callable_id: call.callable_id.clone(),
+                            reason: "cancelled".into(),
+                        },
+                    );
+                    emit_agent_diagnostic(
+                        context,
+                        AgentDiagnosticEvent::RunCancelled {
+                            execution_id: execution_id.clone(),
+                            session_id: session_id.clone(),
+                            model_calls: usage.model_calls,
+                            tool_calls: usage.tool_calls,
+                        },
+                    );
                     return Ok(AgentLoopResponse::Cancelled { usage });
                 }
             };
@@ -552,6 +694,15 @@ fn run(
                 .tool_calls
                 .checked_add(1)
                 .ok_or_else(|| "agent loop tool-call usage overflowed".to_owned())?;
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::ToolInvocationCompleted {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    call_id: result.call_id.clone(),
+                    callable_id: result.callable_id.clone(),
+                },
+            );
             emit_progress(
                 context,
                 AgentLoopProgressRecord {
@@ -618,6 +769,38 @@ fn activate_tools(
     }
     active.extend(additions);
     Ok(())
+}
+
+fn emit_run_failed(
+    context: &AgentLoopContext<'_, '_>,
+    execution_id: &str,
+    session_id: &Option<SessionId>,
+    usage: &AgentLoopUsage,
+    reason: &str,
+) {
+    emit_agent_diagnostic(
+        context,
+        AgentDiagnosticEvent::RunFailed {
+            execution_id: execution_id.to_owned(),
+            session_id: session_id.clone(),
+            reason: reason.to_owned(),
+            model_calls: usage.model_calls,
+            tool_calls: usage.tool_calls,
+        },
+    );
+}
+
+fn emit_agent_diagnostic(context: &AgentLoopContext<'_, '_>, diagnostic: AgentDiagnosticEvent) {
+    let Ok(payload) = serde_json::to_vec(&diagnostic) else {
+        return;
+    };
+    let _ = context.kernel.dispatch_event(
+        agent_diagnostic_event_type(),
+        AGENT_DIAGNOSTIC_EVENT_VERSION,
+        0,
+        0,
+        payload,
+    );
 }
 
 fn emit_progress(

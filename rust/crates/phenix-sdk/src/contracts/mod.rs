@@ -1,3 +1,4 @@
+pub mod agent_diagnostics;
 pub mod budget;
 #[allow(clippy::large_enum_variant)]
 pub mod context;
@@ -33,6 +34,7 @@ pub mod usage;
 pub mod usage_policy;
 pub mod workspace;
 
+pub use agent_diagnostics::*;
 pub use budget::*;
 pub use context::*;
 pub use context_admission::*;
