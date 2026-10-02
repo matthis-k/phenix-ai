@@ -871,6 +871,7 @@ fn ingest_document_symbol_observation(
             &document,
             source_revision,
             symbol,
+            None,
             position_encoding,
             &mut parents,
             &mut seen,
@@ -905,6 +906,7 @@ fn ingest_lsp_document_symbol(
     document: &LanguageDocumentIdentity,
     source_revision: &str,
     symbol: &LspDocumentSymbol,
+    parent: Option<CodeEntityRelationTarget>,
     position_encoding: Option<CodePositionEncoding>,
     parents: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
@@ -992,6 +994,7 @@ fn ingest_lsp_document_symbol(
                     ),
                 )?;
             }
+            store_document_symbol_containment(context, current, parent)?;
             revisions.push(current.clone());
             ingest_lsp_children(
                 context,
@@ -1000,6 +1003,7 @@ fn ingest_lsp_document_symbol(
                 document,
                 source_revision,
                 symbol,
+                current,
                 position_encoding,
                 parents,
                 seen,
@@ -1054,7 +1058,8 @@ fn ingest_lsp_document_symbol(
             ),
         )?;
     }
-    revisions.push(revision);
+    store_document_symbol_containment(context, &revision, parent)?;
+    revisions.push(revision.clone());
 
     ingest_lsp_children(
         context,
@@ -1063,6 +1068,7 @@ fn ingest_lsp_document_symbol(
         document,
         source_revision,
         symbol,
+        &revision,
         position_encoding,
         parents,
         seen,
@@ -1078,6 +1084,7 @@ fn ingest_lsp_children(
     document: &LanguageDocumentIdentity,
     source_revision: &str,
     symbol: &LspDocumentSymbol,
+    parent: &CodeEntityRevision,
     position_encoding: Option<CodePositionEncoding>,
     parents: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
@@ -1095,6 +1102,10 @@ fn ingest_lsp_children(
             document,
             source_revision,
             child,
+            Some(CodeEntityRelationTarget {
+                entity: parent.entity.clone(),
+                revision: Some(parent.revision.clone()),
+            }),
             position_encoding,
             parents,
             seen,
@@ -1102,6 +1113,24 @@ fn ingest_lsp_children(
         )?;
     }
     parents.pop();
+    Ok(())
+}
+
+fn store_document_symbol_containment(
+    context: &LanguageContext<'_, '_, '_>,
+    revision: &CodeEntityRevision,
+    parent: Option<CodeEntityRelationTarget>,
+) -> Result<(), String> {
+    store_entity_relations(
+        context,
+        CodeEntityRelations {
+            entity: revision.entity.clone(),
+            revision: revision.revision.clone(),
+            kind: CodeEntityRelationKind::Contains,
+            targets: parent.into_iter().collect(),
+            complete: true,
+        },
+    )?;
     Ok(())
 }
 
