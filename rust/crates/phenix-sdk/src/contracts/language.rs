@@ -538,6 +538,113 @@ pub struct CodeChangedNeighborhood {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "anchor", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CodeQueryAnchor {
+    Entity {
+        entity: LogicalCodeEntity,
+        revision: Option<String>,
+    },
+    Repository {
+        repository_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(tag = "selection", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CodeQuerySelection {
+    Entities,
+    Relations {
+        #[serde(default)]
+        kinds: Vec<CodeEntityRelationKind>,
+    },
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeQueryDirection {
+    Outgoing,
+    Incoming,
+    Both,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryTraversal {
+    pub direction: CodeQueryDirection,
+    pub max_depth: u32,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeQueryProjection {
+    Identity,
+    Structural,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryBudget {
+    pub max_entities: u32,
+    pub max_relations: u32,
+    pub max_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQuery {
+    pub anchor: CodeQueryAnchor,
+    pub selection: CodeQuerySelection,
+    pub traversal: Option<CodeQueryTraversal>,
+    pub projection: CodeQueryProjection,
+    pub budget: CodeQueryBudget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryEntity {
+    pub entity: LogicalCodeEntity,
+    pub revision: String,
+    pub name: Option<String>,
+    pub document: Option<LanguageDocumentIdentity>,
+    pub symbol: Option<String>,
+    pub signature_identity: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryRelation {
+    pub source: LogicalCodeEntity,
+    pub source_revision: String,
+    pub kind: CodeEntityRelationKind,
+    pub target: CodeEntityRelationTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryCoverage {
+    pub repository_sequence: u64,
+    pub complete: bool,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct CodeQueryResult {
+    pub repository_id: String,
+    #[serde(default)]
+    pub roots: Vec<CodeEntityRelationTarget>,
+    #[serde(default)]
+    pub entities: Vec<CodeQueryEntity>,
+    #[serde(default)]
+    pub relations: Vec<CodeQueryRelation>,
+    pub coverage: CodeQueryCoverage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct CodeEntityProviderEditValidationFact {
     pub id: String,
@@ -611,6 +718,9 @@ pub enum CodeEntityInsertPosition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum LanguageCommand {
+    Query {
+        query: CodeQuery,
+    },
     ActivateProvider {
         workspace_id: String,
         provider_id: String,
@@ -767,6 +877,9 @@ pub enum LanguageCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum LanguageResponse {
+    Query {
+        result: CodeQueryResult,
+    },
     Provider {
         epoch: Option<LanguageProviderEpoch>,
     },
