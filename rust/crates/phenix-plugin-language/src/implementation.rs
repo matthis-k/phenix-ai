@@ -1542,7 +1542,10 @@ fn execute_code_query(
             repository_id: anchor_repository_id,
         } => {
             ensure_query_repository(&repository_id, &anchor_repository_id)?;
-            (Vec::new(), query_repository_entities(context, &repository_id)?)
+            (
+                Vec::new(),
+                query_repository_entities(context, &repository_id)?,
+            )
         }
     };
 
@@ -1756,7 +1759,8 @@ fn query_position_entities(
             repository_id,
             &revision.entity.id,
             &revision.revision,
-        )? else {
+        )?
+        else {
             continue;
         };
         if locator.document != *document || locator.position_encoding != position_encoding {
@@ -1767,16 +1771,17 @@ fn query_position_entities(
         }
     }
 
-    matches.sort_by(|(left_revision, left_range), (right_revision, right_range)| {
-        code_position_key(&right_range.start)
-            .cmp(&code_position_key(&left_range.start))
-            .then_with(|| code_position_key(&left_range.end).cmp(&code_position_key(&right_range.end)))
-            .then_with(|| left_revision.entity.id.cmp(&right_revision.entity.id))
-    });
-    Ok(matches
-        .into_iter()
-        .map(|(revision, _)| revision)
-        .collect())
+    matches.sort_by(
+        |(left_revision, left_range), (right_revision, right_range)| {
+            code_position_key(&right_range.start)
+                .cmp(&code_position_key(&left_range.start))
+                .then_with(|| {
+                    code_position_key(&left_range.end).cmp(&code_position_key(&right_range.end))
+                })
+                .then_with(|| left_revision.entity.id.cmp(&right_revision.entity.id))
+        },
+    );
+    Ok(matches.into_iter().map(|(revision, _)| revision).collect())
 }
 
 fn code_range_contains_position(range: &CodeSourceRange, position: &CodeSourcePosition) -> bool {
@@ -2138,7 +2143,8 @@ fn query_outgoing_relation_kind(
             &pointer.target_revision,
             pointer.stored_kind,
             u32::MAX,
-        )? else {
+        )?
+        else {
             complete = false;
             continue;
         };
@@ -4065,7 +4071,8 @@ mod tests {
                 },
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected relation facet reference");
         };
         assert_eq!(
@@ -4795,7 +4802,8 @@ mod tests {
                 },
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected document semantic query");
         };
         assert_eq!(document_query.entities.len(), 2);
@@ -4830,7 +4838,8 @@ mod tests {
                 },
             },
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("expected position semantic query");
         };
         assert_eq!(position_query.entities.len(), 2);
