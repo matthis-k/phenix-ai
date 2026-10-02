@@ -3511,25 +3511,25 @@ mod tests {
             &mut kernel,
             &a,
             CodeEntityRelationKind::References,
-            vec![CodeEntityRelationTarget {
-                entity: b.entity.clone(),
-                revision: Some(b.revision.clone()),
-            }],
+            Vec::new(),
         );
         ingest_query_relation(
             &mut kernel,
             &b,
             CodeEntityRelationKind::References,
             vec![CodeEntityRelationTarget {
-                entity: c.entity.clone(),
-                revision: Some(c.revision.clone()),
+                entity: a.entity.clone(),
+                revision: Some(a.revision.clone()),
             }],
         );
         ingest_query_relation(
             &mut kernel,
             &c,
             CodeEntityRelationKind::References,
-            Vec::new(),
+            vec![CodeEntityRelationTarget {
+                entity: b.entity.clone(),
+                revision: Some(b.revision.clone()),
+            }],
         );
 
         let LanguageResponse::EntityRelations {
@@ -3537,9 +3537,9 @@ mod tests {
         } = invoke(
             &mut kernel,
             LanguageCommand::ReadEntityRelations {
-                repository_id: a.entity.repository_id.clone(),
-                entity_id: a.entity.id.clone(),
-                revision: a.revision.clone(),
+                repository_id: b.entity.repository_id.clone(),
+                entity_id: b.entity.id.clone(),
+                revision: b.revision.clone(),
                 kind: CodeEntityRelationKind::References,
                 max_items: 8,
             },
@@ -3548,7 +3548,7 @@ mod tests {
         else {
             panic!("expected point relation read");
         };
-        assert_eq!(point.targets[0].entity, b.entity);
+        assert_eq!(point.targets[0].entity, a.entity);
 
         let LanguageResponse::Query { result } = invoke(
             &mut kernel,
@@ -3559,7 +3559,7 @@ mod tests {
                         revision: Some(a.revision.clone()),
                     },
                     selection: CodeQuerySelection::Relations {
-                        kinds: vec![CodeEntityRelationKind::References],
+                        kinds: vec![CodeRelationKind::References],
                     },
                     traversal: Some(phenix_sdk::CodeQueryTraversal {
                         direction: CodeQueryDirection::Outgoing,
@@ -3615,16 +3615,16 @@ mod tests {
             &mut kernel,
             &a,
             CodeEntityRelationKind::References,
-            vec![CodeEntityRelationTarget {
-                entity: b.entity.clone(),
-                revision: Some(b.revision.clone()),
-            }],
+            Vec::new(),
         );
         ingest_query_relation(
             &mut kernel,
             &b,
             CodeEntityRelationKind::References,
-            Vec::new(),
+            vec![CodeEntityRelationTarget {
+                entity: a.entity.clone(),
+                revision: Some(a.revision.clone()),
+            }],
         );
 
         let LanguageResponse::Query { result } = invoke(
@@ -3636,7 +3636,7 @@ mod tests {
                         revision: Some(b.revision.clone()),
                     },
                     selection: CodeQuerySelection::Relations {
-                        kinds: vec![CodeEntityRelationKind::References],
+                        kinds: vec![CodeRelationKind::References],
                     },
                     traversal: Some(phenix_sdk::CodeQueryTraversal {
                         direction: CodeQueryDirection::Incoming,
