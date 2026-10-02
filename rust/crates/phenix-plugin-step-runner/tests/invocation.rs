@@ -434,7 +434,7 @@ fn params(revision: &str) -> InvocationParams {
         route_policy: RouteSelectionPolicy {
             revision: "fixture-route-policy".into(),
             estimates: RoutingEstimateMode::Ignore,
-            max_candidate_attempts: 2,
+            max_candidate_attempts: Some(2),
         },
     }
 }
