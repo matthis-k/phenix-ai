@@ -23,6 +23,12 @@ pub enum AgentDiagnosticEvent {
         turn: u32,
         tool_calls: u32,
     },
+    ModelTurnFailed {
+        execution_id: String,
+        session_id: Option<SessionId>,
+        turn: u32,
+        reason: String,
+    },
     ToolInvocationStarted {
         execution_id: String,
         session_id: Option<SessionId>,
@@ -34,6 +40,13 @@ pub enum AgentDiagnosticEvent {
         session_id: Option<SessionId>,
         call_id: String,
         callable_id: CallableId,
+    },
+    ToolInvocationFailed {
+        execution_id: String,
+        session_id: Option<SessionId>,
+        call_id: String,
+        callable_id: CallableId,
+        reason: String,
     },
     RunCompleted {
         execution_id: String,
