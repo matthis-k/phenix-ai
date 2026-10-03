@@ -1,9 +1,10 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentManifest, GraphReconciler, Kernel, KernelError,
-    LiveReconciliationError, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
+    ArtifactRevision, Authority, ComponentEntryTrigger, ComponentId, ComponentManifest,
+    GraphGenerationId, GraphReconciler, Kernel,
+    KernelError, LiveReconciliationError, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
     PluginBuildEvidence, PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution,
-    PluginId, PluginManifest, ReconciliationResult, ResolvedHarness, ResolvedHarnessError,
-    RuntimeId,
+    PluginId, PluginManifest, ReconciliationPreview, ReconciliationResult, ResolvedHarness,
+    ResolvedHarnessError, RootExecutionConstraints, RuntimeId,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,6 +31,8 @@ impl PluginManagementRequest {
 pub struct PluginLoadRequest {
     pub manifest: PluginManifest<PluginArtifactInput>,
     pub components: Vec<ComponentManifest>,
+    #[serde(default)]
+    pub entry_triggers: Vec<ComponentEntryTrigger>,
     pub expected_active_revision: Option<ArtifactRevision>,
 }
 
@@ -43,6 +46,8 @@ pub struct PluginUnloadRequest {
 pub struct PluginSetRequest {
     pub plugins: Vec<PluginManifest>,
     pub components: Vec<ComponentManifest>,
+    #[serde(default)]
+    pub entry_triggers: Vec<ComponentEntryTrigger>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +97,20 @@ pub struct PluginManagementResult {
     pub build: Option<PluginBuildReport>,
 }
 
+#[derive(Debug)]
+pub struct PreparedPluginManagement {
+    pub candidate: ResolvedHarness,
+    pub preview: ReconciliationPreview,
+    pub build: Option<PluginBuildReport>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PluginTrialResult {
+    pub generation: GraphGenerationId,
+    pub preview: ReconciliationPreview,
+    pub build: Option<PluginBuildReport>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PluginManagementError {
     Authorization {
@@ -118,6 +137,15 @@ pub enum PluginManagementError {
     Candidate {
         error: Box<ResolvedHarnessError>,
         build: Option<Box<PluginBuildReport>>,
+    },
+    ComponentOwnership {
+        plugin: PluginId,
+        component: ComponentId,
+        owner: PluginId,
+    },
+    EntryTriggerOwnership {
+        plugin: PluginId,
+        component: ComponentId,
     },
     Reconciliation {
         error: Box<LiveReconciliationError>,
@@ -157,6 +185,18 @@ impl Display for PluginManagementError {
             Self::Candidate { error, .. } => {
                 write!(f, "plugin management candidate resolution failed: {error}")
             }
+            Self::ComponentOwnership {
+                plugin,
+                component,
+                owner,
+            } => write!(
+                f,
+                "plugin {plugin} load contains component {component} owned by {owner}"
+            ),
+            Self::EntryTriggerOwnership { plugin, component } => write!(
+                f,
+                "plugin {plugin} load contains an entry trigger for non-owned component {component}"
+            ),
             Self::Reconciliation { error, .. } => {
                 write!(f, "plugin management reconciliation failed: {error:?}")
             }
@@ -167,23 +207,17 @@ impl Display for PluginManagementError {
 impl Error for PluginManagementError {}
 
 impl GraphReconciler {
-    /// Apply one kernel-owned desired-state plugin management request.
+    /// Prepare one Plugin management request without changing the active runtime.
     ///
-    /// This is the sole load, build, replace, unload, and reconcile lifecycle.
-    /// Build inputs become concrete artifacts before candidate/runtime
-    /// resolution and then share the ready-artifact activation path.
-    pub fn manage(
-        &mut self,
-        kernel: &mut Kernel,
+    /// Build/materialization, expected-revision checks, desired-set mutation,
+    /// and candidate resolution are shared by stable activation and resident
+    /// trials. The returned candidate has not executed Plugin lifecycle code.
+    pub fn prepare_management(
+        &self,
         request: PluginManagementRequest,
         authority_ceiling: &Authority,
         context: &mut PluginManagementContext<'_>,
-    ) -> Result<PluginManagementResult, PluginManagementError> {
-        self.preflight_live_reconciliation(kernel)
-            .map_err(|error| PluginManagementError::Reconciliation {
-                error: Box::new(error),
-                build: None,
-            })?;
+    ) -> Result<PreparedPluginManagement, PluginManagementError> {
         if !context
             .caller_authority
             .permits_all(context.policy.required_authority())
@@ -199,41 +233,128 @@ impl GraphReconciler {
             }
         })?;
 
-        let (plugins, components, build) = match request {
+        let (plugins, components, entry_triggers, build) = match request {
             PluginManagementRequest::Load(request) => {
                 let request = *request;
                 check_load_expected_revision(self.active(), &request)?;
                 let (manifest, build) = materialize_manifest(request.manifest, context)?;
-                let (plugins, components) = apply_load(
+                let (plugins, components, entry_triggers) = apply_load(
                     self.active(),
                     ConcretePluginLoadRequest {
                         manifest,
                         components: request.components,
+                        entry_triggers: request.entry_triggers,
                     },
-                );
-                (plugins, components, build)
+                )?;
+                (plugins, components, entry_triggers, build)
             }
             PluginManagementRequest::Unload(request) => {
-                let (plugins, components) = apply_unload(self.active(), request)?;
-                (plugins, components, None)
+                let (plugins, components, entry_triggers) =
+                    apply_unload(self.active(), request)?;
+                (plugins, components, entry_triggers, None)
             }
             PluginManagementRequest::Reconcile(request) => {
-                let (plugins, components) = apply_reconcile(request);
-                (plugins, components, None)
+                let (plugins, components, entry_triggers) = apply_reconcile(request);
+                (plugins, components, entry_triggers, None)
             }
         };
         let candidate = self
             .active()
-            .with_plugin_set(plugins, components, authority_ceiling)
+            .with_plugin_set(plugins, components, entry_triggers, authority_ceiling)
             .map_err(|error| map_candidate_error(error, build.clone()))?;
+        let preview = self.preview_candidate(&candidate);
+        Ok(PreparedPluginManagement {
+            candidate,
+            preview,
+            build,
+        })
+    }
+
+    /// Build and store one Plugin artifact without changing or staging a graph generation.
+    ///
+    /// This uses the same policy attenuation, executor, artifact store, and build evidence
+    /// path as stable activation and resident trials.
+    pub fn build_artifact(
+        plan: PluginBuildPlan,
+        context: &mut PluginManagementContext<'_>,
+    ) -> Result<PluginBuildReport, PluginManagementError> {
+        if !context
+            .caller_authority
+            .permits_all(context.policy.required_authority())
+        {
+            return Err(PluginManagementError::Authorization {
+                required: context.policy.required_authority().clone(),
+            });
+        }
+        context.artifact_store.preflight().map_err(|error| {
+            PluginManagementError::InvalidArtifact {
+                message: error.message,
+                build: None,
+            }
+        })?;
+        let (_, build) = build_artifact(plan, context)?;
+        build.ok_or_else(|| PluginManagementError::InvalidArtifact {
+            message: "plugin build completed without a build report".into(),
+            build: None,
+        })
+    }
+
+    /// Apply one kernel-owned desired-state Plugin management request.
+    pub fn manage(
+        &mut self,
+        kernel: &mut Kernel,
+        request: PluginManagementRequest,
+        authority_ceiling: &Authority,
+        context: &mut PluginManagementContext<'_>,
+    ) -> Result<PluginManagementResult, PluginManagementError> {
+        self.preflight_live_reconciliation(kernel)
+            .map_err(|error| PluginManagementError::Reconciliation {
+                error: Box::new(error),
+                build: None,
+            })?;
+        let prepared = self.prepare_management(request, authority_ceiling, context)?;
+        let build = prepared.build;
         let reconciliation = self
-            .activate_candidate_on_kernel(kernel, candidate)
+            .activate_candidate_on_kernel(kernel, prepared.candidate)
             .map_err(|error| PluginManagementError::Reconciliation {
                 error: Box::new(error),
                 build: build.clone().map(Box::new),
             })?;
         Ok(PluginManagementResult {
             reconciliation,
+            build,
+        })
+    }
+
+    /// Prepare and stage one Plugin-management candidate as a resident trial.
+    ///
+    /// The active/default generation is unchanged. Candidate lifecycle executes
+    /// under the supplied root constraints through the ordinary residency path.
+    pub fn trial_management(
+        &mut self,
+        kernel: &mut Kernel,
+        request: PluginManagementRequest,
+        authority_ceiling: &Authority,
+        constraints: &RootExecutionConstraints,
+        context: &mut PluginManagementContext<'_>,
+    ) -> Result<PluginTrialResult, PluginManagementError> {
+        self.preflight_live_reconciliation(kernel)
+            .map_err(|error| PluginManagementError::Reconciliation {
+                error: Box::new(error),
+                build: None,
+            })?;
+        let prepared = self.prepare_management(request, authority_ceiling, context)?;
+        let build = prepared.build;
+        let preview = prepared.preview;
+        let generation = self
+            .make_candidate_resident_on_kernel(kernel, prepared.candidate, constraints)
+            .map_err(|error| PluginManagementError::Reconciliation {
+                error: Box::new(error),
+                build: build.clone().map(Box::new),
+            })?;
+        Ok(PluginTrialResult {
+            generation,
+            preview,
             build,
         })
     }
@@ -307,10 +428,34 @@ fn build_artifact(
             evidence: execution.evidence,
         });
     }
-    let artifact = PluginArtifact {
+    let staged_artifact = PluginArtifact {
         locator: output.locator().to_owned(),
         revision: ArtifactRevision::from_content(output.content()),
         configuration: plan.configuration().clone(),
+    };
+    let staged_report = PluginBuildReport {
+        artifact: staged_artifact.clone(),
+        source: plan.source().clone(),
+        effective_authority: effective_authority.clone(),
+        evidence: execution.evidence.clone(),
+    };
+    let locator = context
+        .artifact_store
+        .store_built(&staged_artifact, output.content())
+        .map_err(|error| PluginManagementError::InvalidArtifact {
+            message: error.message,
+            build: Some(Box::new(staged_report.clone())),
+        })?;
+    if locator.trim().is_empty() {
+        return Err(PluginManagementError::InvalidArtifact {
+            message: "artifact store returned an empty canonical locator".into(),
+            build: Some(Box::new(staged_report)),
+        });
+    }
+    let artifact = PluginArtifact {
+        locator,
+        revision: staged_artifact.revision,
+        configuration: staged_artifact.configuration,
     };
     let report = PluginBuildReport {
         artifact: artifact.clone(),
@@ -318,13 +463,6 @@ fn build_artifact(
         effective_authority,
         evidence: execution.evidence,
     };
-    context
-        .artifact_store
-        .store_built(&artifact, output.content())
-        .map_err(|error| PluginManagementError::InvalidArtifact {
-            message: error.message,
-            build: Some(Box::new(report.clone())),
-        })?;
     Ok((artifact, Some(report)))
 }
 
@@ -349,13 +487,54 @@ fn map_candidate_error(
 fn apply_load(
     active: &ResolvedHarness,
     request: ConcretePluginLoadRequest,
-) -> (Vec<PluginManifest>, Vec<ComponentManifest>) {
+) -> Result<
+    (
+        Vec<PluginManifest>,
+        Vec<ComponentManifest>,
+        Vec<ComponentEntryTrigger>,
+    ),
+    PluginManagementError,
+> {
     let plugin = request.manifest.id.clone();
+    if let Some(component) = request
+        .components
+        .iter()
+        .find(|component| component.owner != plugin)
+    {
+        return Err(PluginManagementError::ComponentOwnership {
+            plugin,
+            component: component.id.clone(),
+            owner: component.owner.clone(),
+        });
+    }
+    let replacement_components = request
+        .components
+        .iter()
+        .map(|component| component.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(trigger) = request
+        .entry_triggers
+        .iter()
+        .find(|trigger| !replacement_components.contains(&trigger.component))
+    {
+        return Err(PluginManagementError::EntryTriggerOwnership {
+            plugin,
+            component: trigger.component.clone(),
+        });
+    }
+
     let mut plugins: Vec<_> = active.plugins().to_vec();
     match plugins.iter_mut().find(|manifest| manifest.id == plugin) {
         Some(slot) => *slot = request.manifest,
         None => plugins.push(request.manifest),
     }
+
+    let replaced_components = active
+        .components()
+        .iter()
+        .filter(|component| component.owner == plugin)
+        .map(|component| component.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut components: Vec<_> = active
         .components()
         .iter()
@@ -363,13 +542,16 @@ fn apply_load(
         .cloned()
         .collect();
     components.extend(request.components);
-    (plugins, components)
-}
 
-#[derive(Clone, Debug, PartialEq)]
-struct ConcretePluginLoadRequest {
-    manifest: PluginManifest,
-    components: Vec<ComponentManifest>,
+    let mut entry_triggers = active
+        .entry_triggers()
+        .iter()
+        .filter(|trigger| !replaced_components.contains(&trigger.component))
+        .cloned()
+        .collect::<Vec<_>>();
+    entry_triggers.extend(request.entry_triggers);
+
+    Ok((plugins, components, entry_triggers))
 }
 
 fn check_load_expected_revision(
@@ -390,7 +572,14 @@ fn check_load_expected_revision(
 fn apply_unload(
     active: &ResolvedHarness,
     request: PluginUnloadRequest,
-) -> Result<(Vec<PluginManifest>, Vec<ComponentManifest>), PluginManagementError> {
+) -> Result<
+    (
+        Vec<PluginManifest>,
+        Vec<ComponentManifest>,
+        Vec<ComponentEntryTrigger>,
+    ),
+    PluginManagementError,
+> {
     let existing = active
         .plugins()
         .iter()
@@ -405,17 +594,35 @@ fn apply_unload(
         .filter(|manifest| manifest.id != request.plugin)
         .cloned()
         .collect();
+    let removed_components = active
+        .components()
+        .iter()
+        .filter(|component| component.owner == request.plugin)
+        .map(|component| component.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     let components = active
         .components()
         .iter()
         .filter(|component| component.owner != request.plugin)
         .cloned()
         .collect();
-    Ok((plugins, components))
+    let entry_triggers = active
+        .entry_triggers()
+        .iter()
+        .filter(|trigger| !removed_components.contains(&trigger.component))
+        .cloned()
+        .collect();
+    Ok((plugins, components, entry_triggers))
 }
 
-fn apply_reconcile(request: PluginSetRequest) -> (Vec<PluginManifest>, Vec<ComponentManifest>) {
-    (request.plugins, request.components)
+fn apply_reconcile(
+    request: PluginSetRequest,
+) -> (
+    Vec<PluginManifest>,
+    Vec<ComponentManifest>,
+    Vec<ComponentEntryTrigger>,
+) {
+    (request.plugins, request.components, request.entry_triggers)
 }
 
 fn check_expected_revision(

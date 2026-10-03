@@ -80,6 +80,21 @@ impl Kernel {
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
         self.validate_generation_authority(candidate)?;
+        if self
+            .graph_generation()
+            .is_some_and(|generation| generation != candidate.generation())
+        {
+            let active_roots = self.generation_state.root_leases.load(Ordering::Acquire);
+            if active_roots > 0 {
+                return Err(KernelError::GenerationInUse {
+                    generation: self
+                        .graph_generation()
+                        .cloned()
+                        .ok_or(KernelError::ResolvedGenerationMissing)?,
+                    active_roots,
+                });
+            }
+        }
         let candidate_lifecycle_constraints = RootExecutionConstraints {
             authority: candidate.authority_ceiling().clone(),
             pinned_bindings: BTreeMap::new(),

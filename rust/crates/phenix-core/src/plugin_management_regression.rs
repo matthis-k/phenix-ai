@@ -1,6 +1,7 @@
 use crate::{
-    runtime_provider_service, ArtifactRevision, Authority, ComponentExport, ComponentId,
-    ComponentImport, ComponentManifest, GraphReconciler, InterfaceId, Kernel, KernelError,
+    runtime_provider_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
+    ComponentExport, ComponentId, ComponentImport, ComponentManifest, EntryTriggerKind,
+    GraphReconciler, InterfaceId, Kernel, KernelError,
     PluginArtifact, PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError,
     PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
@@ -58,10 +59,10 @@ impl PluginArtifactStore for TestArtifactStore {
 
     fn store_built(
         &mut self,
-        _artifact: &PluginArtifact,
+        artifact: &PluginArtifact,
         _content: &[u8],
-    ) -> Result<(), PluginArtifactStoreError> {
-        Ok(())
+    ) -> Result<String, PluginArtifactStoreError> {
+        Ok(artifact.locator.clone())
     }
 }
 
@@ -90,6 +91,30 @@ fn manage(
         kernel,
         request,
         authority_ceiling,
+        &mut PluginManagementContext {
+            caller_authority: authority_ceiling,
+            policy: &policy,
+            artifact_store: &mut artifact_store,
+            build_executor: &mut build_executor,
+        },
+    )
+}
+
+fn trial(
+    reconciler: &mut GraphReconciler,
+    kernel: &mut Kernel,
+    request: PluginManagementRequest,
+    authority_ceiling: &Authority,
+    constraints: &crate::RootExecutionConstraints,
+) -> Result<crate::PluginTrialResult, PluginManagementError> {
+    let policy = PluginManagementPolicy::new(Authority::default(), Authority::default());
+    let mut artifact_store = TestArtifactStore;
+    let mut build_executor = UnexpectedBuildExecutor;
+    reconciler.trial_management(
+        kernel,
+        request,
+        authority_ceiling,
+        constraints,
         &mut PluginManagementContext {
             caller_authority: authority_ceiling,
             policy: &policy,
@@ -322,6 +347,149 @@ fn activate_runtime_fixture(
 }
 
 #[test]
+fn trial_management_stages_candidate_without_changing_the_active_generation() {
+    let echo = service("fixture.trial.echo@1");
+    let first = embedded_manifest("fixture.trial.plugin", Some(echo.clone()));
+    let mut second = first.clone();
+    second.version = 2;
+    let initial = ResolvedHarness::resolve([first.clone()], [], [], &Authority::default()).unwrap();
+    let active_generation = initial.generation().clone();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let stops = Arc::new(AtomicUsize::new(0));
+
+    let mut kernel = Kernel::new(initial.kernel_config().clone());
+    kernel.activate_resolved_harness(&initial).unwrap();
+    let starts_for_factory = Arc::clone(&starts);
+    let stops_for_factory = Arc::clone(&stops);
+    kernel
+        .register_embedded_factory(first.id.clone(), move || {
+            Box::new(TrackingInstance {
+                starts: Arc::clone(&starts_for_factory),
+                stops: Arc::clone(&stops_for_factory),
+                response: b"trial".to_vec(),
+            })
+        })
+        .unwrap();
+    kernel.activate_all().unwrap();
+
+    let constraints = kernel
+        .capture_root_execution_constraints(&Authority::default(), [])
+        .unwrap();
+    let mut reconciler = GraphReconciler::new(initial);
+    let result = trial(
+        &mut reconciler,
+        &mut kernel,
+        PluginManagementRequest::load(PluginLoadRequest {
+            manifest: ready(second),
+            components: Vec::new(),
+            entry_triggers: Vec::new(),
+            expected_active_revision: None,
+        }),
+        &Authority::default(),
+        &constraints,
+    )
+    .unwrap();
+
+    assert_ne!(result.generation, active_generation);
+    assert_eq!(kernel.graph_generation(), Some(&active_generation));
+    assert_eq!(reconciler.active().generation(), &active_generation);
+    assert_eq!(
+        reconciler
+            .resident(&result.generation)
+            .expect("trial candidate remains inspectable")
+            .generation(),
+        &result.generation
+    );
+    assert!(kernel
+        .resident_generation_ids()
+        .contains(&result.generation));
+    assert_eq!(starts.load(Ordering::Relaxed), 2);
+    assert_eq!(stops.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        kernel
+            .invoke_in_generation(&result.generation, &echo, b"probe", &constraints, None,)
+            .unwrap(),
+        b"trial"
+    );
+}
+
+#[test]
+fn trial_management_can_add_plugin_owned_model_tool_triggers() {
+    let tool_interface = interface("fixture.trial.tool@1");
+    let first = embedded_manifest(
+        "fixture.trial.tool-plugin",
+        Some(ServiceId::parse(tool_interface.as_str()).unwrap()),
+    );
+    let component = provider_component(&first.id, &tool_interface);
+    let initial = ResolvedHarness::resolve(
+        [first.clone()],
+        [component.clone()],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
+    let active_generation = initial.generation().clone();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let stops = Arc::new(AtomicUsize::new(0));
+
+    let mut kernel = Kernel::new(initial.kernel_config().clone());
+    kernel.activate_resolved_harness(&initial).unwrap();
+    let starts_for_factory = Arc::clone(&starts);
+    let stops_for_factory = Arc::clone(&stops);
+    kernel
+        .register_embedded_factory(first.id.clone(), move || {
+            Box::new(TrackingInstance {
+                starts: Arc::clone(&starts_for_factory),
+                stops: Arc::clone(&stops_for_factory),
+                response: b"tool".to_vec(),
+            })
+        })
+        .unwrap();
+    kernel.activate_all().unwrap();
+
+    let mut second = first;
+    second.version = 2;
+    let trigger = ComponentEntryTrigger {
+        component: component.id.clone(),
+        interface: tool_interface,
+        trigger: EntryTriggerKind::ToolCall {
+            callable_id: CallableId::parse("fixture.trial.tool").unwrap(),
+            description: "Generation-local trial tool".into(),
+        },
+        required_authority: Authority::default(),
+    };
+    let constraints = kernel
+        .capture_root_execution_constraints(&Authority::default(), [])
+        .unwrap();
+    let mut reconciler = GraphReconciler::new(initial);
+    let result = trial(
+        &mut reconciler,
+        &mut kernel,
+        PluginManagementRequest::load(PluginLoadRequest {
+            manifest: ready(second),
+            components: vec![component],
+            entry_triggers: vec![trigger.clone()],
+            expected_active_revision: None,
+        }),
+        &Authority::default(),
+        &constraints,
+    )
+    .unwrap();
+
+    assert_eq!(reconciler.active().generation(), &active_generation);
+    assert!(reconciler.active().entry_triggers().is_empty());
+    assert_eq!(
+        reconciler
+            .resident(&result.generation)
+            .expect("trial generation remains resident")
+            .entry_triggers(),
+        &[trigger]
+    );
+    assert_eq!(starts.load(Ordering::Relaxed), 2);
+    assert_eq!(stops.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn load_activates_a_new_guest_in_a_new_generation() {
     let runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.bridge", &runtime);
@@ -353,6 +521,7 @@ fn load_activates_a_new_guest_in_a_new_generation() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(guest.clone()),
             components: vec![guest_component.clone()],
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -445,6 +614,7 @@ fn loading_an_active_plugin_with_a_new_artifact_is_a_replacement() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(second_guest.clone()),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -490,6 +660,7 @@ fn stale_expected_revision_is_rejected_before_commit() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(candidate_guest),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: Some(ArtifactRevision::from_content(b"unexpected")),
         }),
         &Authority::default(),
@@ -526,6 +697,7 @@ fn expected_revision_rejects_load_when_plugin_is_not_active() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(guest),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: Some(ArtifactRevision::from_content(b"guest-v0")),
         }),
         &Authority::default(),
@@ -578,6 +750,7 @@ fn failed_start_keeps_the_previous_generation_active() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(candidate_guest),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -662,6 +835,7 @@ fn unknown_runtime_is_rejected_before_commit() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(invalid_guest),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -704,6 +878,7 @@ fn runtime_provider_cycle_is_rejected_during_desired_set_reconcile() {
         PluginManagementRequest::Reconcile(PluginSetRequest {
             plugins: vec![bridge_a, bridge_b],
             components: Vec::new(),
+            entry_triggers: Vec::new(),
         }),
         &Authority::default(),
     )
@@ -798,6 +973,7 @@ fn old_and_new_invocations_are_pinned_to_their_generations() {
         PluginManagementRequest::load(PluginLoadRequest {
             manifest: ready(second),
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),

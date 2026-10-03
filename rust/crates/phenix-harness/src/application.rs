@@ -28,13 +28,18 @@ use phenix_application_interface::{
     SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
-    ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
-    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
-    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
-    PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ArtifactRevision, Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId,
+    ClientConnectionId, ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, ContentReference, ContractId, EntryTriggerKind,
+    GraphGenerationId, GraphReconciler, HasPhenixSchema, InterfaceId, InterfaceSchema, Key,
+    LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
+    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
+    PhenixValue, PluginArtifact, PluginArtifactStore, PluginArtifactStoreError,
+    PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure,
+    PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext,
+    PluginManagementPolicy, PluginManagementRequest, PluginManifest, Project,
+    RootExecutionConstraints, RootExecutionHandle, RoutingProfileId, RuntimeId, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
@@ -66,6 +71,7 @@ use phenix_sdk::{
     RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind,
     WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
 };
+use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -73,7 +79,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
 };
 use tokio::sync::mpsc;
@@ -96,6 +102,13 @@ const APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE: &str =
 const APPLICATION_WORKSPACE_GIT_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-git@1";
 const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
+const APPLICATION_SESSION_CONTROL_CAPABILITY: &str = "application.session.control";
+const RUNTIME_GENERATION_SELECT_CAPABILITY: &str = "runtime.generation.select";
+const RUNTIME_PLUGIN_INSPECT_CAPABILITY: &str = "runtime.plugin.inspect";
+const RUNTIME_PLUGIN_BUILD_CAPABILITY: &str = "runtime.plugin.build";
+const RUNTIME_PLUGIN_TRIAL_CAPABILITY: &str = "runtime.plugin.trial";
+const RUNTIME_PLUGIN_PROMOTE_CAPABILITY: &str = "runtime.plugin.promote";
+const RUNTIME_PLUGIN_RETIRE_CAPABILITY: &str = "runtime.plugin.retire";
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationShellToolRequest {
@@ -1129,6 +1142,97 @@ impl ApplicationWorker {
             .collect()
     }
 
+    fn resolve_bool_option_on(
+        &self,
+        root: &RootExecutionHandle,
+        session_id: &SessionId,
+        key: &str,
+    ) -> Result<bool, ApplicationError> {
+        let response = self.invoke_option_command_on(
+            root,
+            OptionCommand::Resolve {
+                key: OptionKey::parse(key).map_err(|error| ApplicationError::InvalidInput {
+                    message: error.to_owned(),
+                })?,
+                context: OptionContext {
+                    session: Some(
+                        OptionSubjectId::parse(session_id.as_str().to_owned()).map_err(
+                            |error| ApplicationError::InvalidInput {
+                                message: error.to_owned(),
+                            },
+                        )?,
+                    ),
+                    agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                        |error| ApplicationError::InvalidInput {
+                            message: error.to_owned(),
+                        },
+                    )?),
+                },
+            },
+        )?;
+        let OptionResponse::Value { option } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} returned a non-value response"),
+            });
+        };
+        match option.value {
+            OptionValue::Bool(value) => Ok(value),
+            other => Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} must be boolean, got {other:?}"),
+            }),
+        }
+    }
+
+    fn workspace_context_sources_on(
+        &self,
+        root: &RootExecutionHandle,
+    ) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
+        let WorkspaceResponse::List { entries } = self.invoke_workspace_command_on(
+            root,
+            WorkspaceCommand::List {
+                path: None,
+                recursive: true,
+            },
+        )?
+        else {
+            return Err(ApplicationError::InvalidResponse {
+                message: "workspace list returned a non-list response".into(),
+            });
+        };
+        let mut paths = entries
+            .into_iter()
+            .filter(|entry| entry.kind == WorkspaceEntryKind::File)
+            .map(|entry| entry.path)
+            .filter(|path| {
+                matches!(
+                    path.rsplit('/').next().unwrap_or(path.as_str()),
+                    "AGENTS.md" | "AGENTS.override.md" | "CONTRIBUTING.md" | "DEVELOPMENT.md"
+                )
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+
+        paths
+            .into_iter()
+            .map(|path| {
+                let WorkspaceResponse::Read { content, .. } = self.invoke_workspace_command_on(
+                    root,
+                    WorkspaceCommand::Read { path: path.clone() },
+                )?
+                else {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: format!("workspace read returned a non-read response for {path}"),
+                    });
+                };
+                Ok(RepositoryContextSource {
+                    path,
+                    content: content.into_bytes().into(),
+                })
+            })
+            .collect()
+    }
+
     fn packaged_skill_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
         let root = packaged_skill_root(
             env::var_os("PHENIX_SKILL_PATH").map(PathBuf::from),
@@ -1243,6 +1347,131 @@ impl ApplicationWorker {
         Ok(())
     }
 
+    fn prepare_execution_context_on(
+        &self,
+        root: &RootExecutionHandle,
+        session: &SessionInfo,
+        execution_id: &str,
+    ) -> Result<(), ApplicationError> {
+        let context_auto =
+            self.resolve_bool_option_on(root, &session.session_id, "context.auto_load")?;
+        let skills_auto =
+            self.resolve_bool_option_on(root, &session.session_id, "skills.auto_load")?;
+        if !context_auto && !skills_auto {
+            return Ok(());
+        }
+
+        let workspace_id = workspace_context_id(&session.working_directory);
+        let sources = if context_auto {
+            self.workspace_context_sources_on(root)?
+        } else {
+            Vec::new()
+        };
+        let mut descriptors = if sources.is_empty() {
+            Vec::new()
+        } else {
+            match self.invoke_context_command_on(
+                root,
+                ContextCommand::DiscoverRepository {
+                    workspace_id,
+                    sources,
+                },
+            )? {
+                ContextResponse::Discovered { descriptors } => descriptors,
+                _ => {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: "repository context discovery returned an unexpected response"
+                            .into(),
+                    })
+                }
+            }
+        };
+
+        if skills_auto {
+            let packaged = self.packaged_skill_sources()?;
+            if !packaged.is_empty() {
+                let ContextResponse::Discovered {
+                    descriptors: packaged_descriptors,
+                } = self.invoke_context_command_on(
+                    root,
+                    ContextCommand::DiscoverRepository {
+                        workspace_id: "harness".into(),
+                        sources: packaged,
+                    },
+                )?
+                else {
+                    return Err(ApplicationError::InvalidResponse {
+                        message: "packaged skill discovery returned an unexpected response".into(),
+                    });
+                };
+                descriptors.extend(packaged_descriptors);
+            }
+        }
+
+        descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
+        for descriptor in descriptors {
+            let mandatory_project_instruction = context_auto
+                && descriptor.kind == ContextResourceKind::ProjectInstruction
+                && descriptor.scope == ContextScope::Workspace;
+            let mandatory_skill = skills_auto
+                && descriptor.kind == ContextResourceKind::Skill
+                && self.skill_is_mandatory_on(root, &descriptor)?;
+            if !mandatory_project_instruction && !mandatory_skill {
+                continue;
+            }
+            let response = self.invoke_context_command_on(
+                root,
+                ContextCommand::Load {
+                    execution_id: execution_id.to_owned(),
+                    resource_id: descriptor.resource_id,
+                    revision: descriptor.revision,
+                    requester: ContextInjectionRequester::ContextPolicy,
+                    lifetime: ContextInjectionLifetime::Execution,
+                    reason: if mandatory_skill {
+                        "auto-load mandatory skill"
+                    } else {
+                        "auto-load workspace project instruction"
+                    }
+                    .into(),
+                },
+            )?;
+            if !matches!(response, ContextResponse::Loaded { .. }) {
+                return Err(ApplicationError::InvalidResponse {
+                    message: "context load returned an unexpected response".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn skill_is_mandatory_on(
+        &self,
+        root: &RootExecutionHandle,
+        descriptor: &ContextDescriptor,
+    ) -> Result<bool, ApplicationError> {
+        let response = self.invoke_context_command_on(
+            root,
+            ContextCommand::Get {
+                resource_id: descriptor.resource_id.clone(),
+                revision: descriptor.revision.clone(),
+            },
+        )?;
+        let ContextResponse::Resource {
+            resource: Some(resource),
+        } = response
+        else {
+            return Ok(false);
+        };
+        let content = String::from_utf8_lossy(resource.content.as_ref()).to_lowercase();
+        let mut lines = content.lines();
+        if lines.next().is_none_or(|line| line.trim() != "---") {
+            return Ok(false);
+        }
+        Ok(lines.take_while(|line| line.trim() != "---").any(|line| {
+            line.trim_start().starts_with("description:") && line.contains("must always apply")
+        }))
+    }
+
     fn skill_is_mandatory(&self, descriptor: &ContextDescriptor) -> Result<bool, ApplicationError> {
         let response = self.invoke_context_command(ContextCommand::Get {
             resource_id: descriptor.resource_id.clone(),
@@ -1346,15 +1575,30 @@ impl ApplicationWorker {
     }
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
-        let session = self.require_open_application_session(&request.session_id)?;
-        let execution_id = self.allocate_root_execution()?;
-        if let Err(error) =
-            self.prepare_execution_context(&application_session_info(&session)?, &execution_id)
-        {
-            let _ = self.finish_root_execution(&execution_id, false);
+        let root = {
+            let harness = self.harness.lock();
+            harness.root_execution_handle(&self.authority)
+        };
+        self.prompt_on(&root, request)
+    }
+
+    fn prompt_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: PromptInput,
+    ) -> Result<PromptResult, ApplicationError> {
+        let session = self.require_open_application_session_on(root, &request.session_id)?;
+        let execution_id = self.allocate_root_execution_on(root)?;
+        if let Err(error) = self.prepare_execution_context_on(
+            root,
+            &application_session_info(&session)?,
+            &execution_id,
+        ) {
+            let _ = self.finish_root_execution_on(root, &execution_id, false);
             return Err(error);
         }
-        if let Err(error) = self.append_session_change(
+        if let Err(error) = self.append_session_change_on(
+            root,
             &session,
             SessionChange::Message {
                 message: Message {
@@ -1363,7 +1607,7 @@ impl ApplicationWorker {
                 },
             },
         ) {
-            let _ = self.finish_root_execution(&execution_id, false);
+            let _ = self.finish_root_execution_on(root, &execution_id, false);
             return Err(error);
         }
         Ok(PromptResult {
@@ -1565,6 +1809,338 @@ impl ApplicationWorker {
         R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
             message: error.to_string(),
         })
+    }
+
+    fn invoke_runtime_on<C, R>(
+        &self,
+        root: &RootExecutionHandle,
+        service: phenix_core::ServiceId,
+        command: C,
+    ) -> Result<R, ApplicationError>
+    where
+        for<'a> PhenixValue: From<&'a C>,
+        R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,
+    {
+        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
+            ApplicationError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        let output =
+            root.invoke(&service, &input, None)
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+        let output: PhenixValue =
+            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+        R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        })
+    }
+
+    fn invoke_session_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: SessionCommand,
+    ) -> Result<SessionResponse, ApplicationError> {
+        self.invoke_runtime_on(root, session_service(), command)
+    }
+
+    fn invoke_execution_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: ExecutionCommand,
+    ) -> Result<ExecutionResponse, ApplicationError> {
+        self.invoke_runtime_on(root, execution_service(), command)
+    }
+
+    fn invoke_execution_resource_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: ExecutionResourceCommand,
+    ) -> Result<ExecutionResourceResponse, ApplicationError> {
+        self.invoke_runtime_on(root, execution_resource_service(), command)
+    }
+
+    fn invoke_option_command_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: OptionCommand,
+    ) -> Result<OptionResponse, ApplicationError> {
+        self.invoke_runtime_on(root, options_service(), command)
+    }
+
+    fn invoke_context_command_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: ContextCommand,
+    ) -> Result<ContextResponse, ApplicationError> {
+        self.invoke_runtime_on(root, context_service(), command)
+    }
+
+    fn invoke_workspace_command_on(
+        &self,
+        root: &RootExecutionHandle,
+        command: WorkspaceCommand,
+    ) -> Result<WorkspaceResponse, ApplicationError> {
+        self.invoke_runtime_on(root, workspace_service(), command)
+    }
+
+    fn session_record_on(
+        &self,
+        root: &RootExecutionHandle,
+        id: &SessionId,
+    ) -> Result<Option<SessionRecord>, ApplicationError> {
+        let response = self.invoke_session_on(root, SessionCommand::Get { id: id.clone() })?;
+        let SessionResponse::Session { session } = response else {
+            return Err(unexpected_session_response("get", response));
+        };
+        Ok(session)
+    }
+
+    fn require_open_application_session_on(
+        &self,
+        root: &RootExecutionHandle,
+        id: &SessionId,
+    ) -> Result<SessionRecord, ApplicationError> {
+        let session =
+            self.session_record_on(root, id)?
+                .ok_or_else(|| ApplicationError::NotFound {
+                    resource: id.to_string(),
+                })?;
+        application_session_info(&session)?;
+        if session.lifecycle != SessionLifecycle::Open {
+            return Err(ApplicationError::Conflict {
+                message: format!("session is closed: {id}"),
+            });
+        }
+        Ok(session)
+    }
+
+    fn load_session_snapshot_on(
+        &self,
+        root: &RootExecutionHandle,
+        request: SessionResumeInput,
+    ) -> Result<SessionSnapshot, ApplicationError> {
+        let session = self
+            .session_record_on(root, &request.session_id)?
+            .ok_or_else(|| ApplicationError::NotFound {
+                resource: request.session_id.to_string(),
+            })?;
+        let session = application_session_info(&session)?;
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::Journal {
+                id: request.session_id.clone(),
+                stream: session_change_stream(),
+                after_sequence: request.after_sequence,
+            },
+        )?;
+        let SessionResponse::Journal {
+            through_sequence,
+            entries,
+        } = response
+        else {
+            return Err(unexpected_session_response("journal", response));
+        };
+        if request
+            .after_sequence
+            .is_some_and(|sequence| sequence > through_sequence)
+        {
+            return Err(ApplicationError::Conflict {
+                message: format!(
+                    "resume sequence for {} is ahead of runtime watermark {through_sequence}",
+                    request.session_id
+                ),
+            });
+        }
+        let mut expected = request.after_sequence.unwrap_or(0).saturating_add(1);
+        let mut updates = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if entry.sequence != expected {
+                return Err(ApplicationError::InvalidResponse {
+                    message: format!(
+                        "session journal gap for {}: expected {expected}, got {}",
+                        request.session_id, entry.sequence
+                    ),
+                });
+            }
+            expected = expected
+                .checked_add(1)
+                .ok_or_else(|| ApplicationError::Failed {
+                    message: "session journal sequence overflow".to_owned(),
+                })?;
+            updates.push(session_update_from_journal(&request.session_id, entry)?);
+        }
+        Ok(SessionSnapshot {
+            session,
+            through_sequence,
+            updates,
+        })
+    }
+
+    fn resume_session_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: SessionResumeInput,
+    ) -> Result<SessionSnapshot, ApplicationError> {
+        let replace_projection = request.after_sequence.is_none();
+        let snapshot = self.load_session_snapshot_on(root, request)?;
+        if replace_projection {
+            self.projection
+                .replace_snapshot(snapshot.clone())
+                .map_err(application_projection_error)?;
+        }
+        Ok(snapshot)
+    }
+
+    fn project_journal_entry_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        session: SessionInfo,
+        journal: SessionJournalEntry,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        let update = session_update_from_journal(&session.session_id, journal)?;
+        let contiguous = self
+            .projection
+            .state()
+            .sessions
+            .get(session.session_id.as_str())
+            .and_then(|projection| projection.through_sequence.checked_add(1))
+            == Some(update.sequence);
+        if contiguous {
+            self.projection
+                .apply_update(update.clone())
+                .map_err(application_projection_error)?;
+        } else {
+            let snapshot = self.load_session_snapshot_on(
+                root,
+                SessionResumeInput {
+                    session_id: session.session_id,
+                    after_sequence: None,
+                },
+            )?;
+            self.projection
+                .repair_with_snapshot(snapshot, [update.clone()])
+                .map_err(application_projection_error)?;
+        }
+        self.emit_session_update(update.clone())?;
+        Ok(update)
+    }
+
+    fn append_session_change_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        session: &SessionRecord,
+        change: SessionChange,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        self.reserve_session_event_slot()?;
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::AppendJournal {
+                id: session.id.clone(),
+                entry: session_change_journal(&change),
+            },
+        )?;
+        let SessionResponse::JournalAppended { entry } = response else {
+            return Err(unexpected_session_response("append journal", response));
+        };
+        self.project_journal_entry_on(root, application_session_info(session)?, entry)
+    }
+
+    fn append_execution_change_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        session_id: &SessionId,
+        execution_id: &str,
+        update: ExecutionChange,
+    ) -> Result<SessionUpdate, ApplicationError> {
+        let session = self.require_open_application_session_on(root, session_id)?;
+        self.append_session_change_on(
+            root,
+            &session,
+            SessionChange::Execution {
+                execution_id: execution_id.to_owned(),
+                update,
+            },
+        )
+    }
+
+    fn allocate_root_execution_on(
+        &mut self,
+        root: &RootExecutionHandle,
+    ) -> Result<String, ApplicationError> {
+        let response = self.invoke_execution_on(
+            root,
+            ExecutionCommand::AllocateExecution {
+                prefix: "execution-".to_owned(),
+                requested_authority: ExecutionAuthority::new(
+                    root.authority()
+                        .capabilities()
+                        .map(|capability| capability.as_str().to_owned()),
+                ),
+            },
+        )?;
+        let ExecutionResponse::Execution { execution } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected execution allocation response: {response:?}"),
+            });
+        };
+        let execution_id = execution.id;
+
+        let response = match self.invoke_execution_resource_on(
+            root,
+            ExecutionResourceCommand::RegisterRootBudget {
+                ledger: RootBudgetLedger {
+                    root_execution_id: execution_id.clone(),
+                    limits: RootBudgetLimits {
+                        fresh_input_tokens: u64::MAX,
+                        output_tokens: u64::MAX,
+                        cost_microunits: None,
+                        attempts: u32::MAX,
+                    },
+                    reservations: BTreeMap::new(),
+                },
+            },
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = self.finish_root_execution_on(root, &execution_id, false);
+                return Err(error);
+            }
+        };
+        if !matches!(response, ExecutionResourceResponse::RootBudget { .. }) {
+            let error = ApplicationError::InvalidResponse {
+                message: format!("unexpected root-budget registration response: {response:?}"),
+            };
+            let _ = self.finish_root_execution_on(root, &execution_id, false);
+            return Err(error);
+        }
+        Ok(execution_id)
+    }
+
+    fn finish_root_execution_on(
+        &self,
+        root: &RootExecutionHandle,
+        execution_id: &str,
+        success: bool,
+    ) -> Result<(), ApplicationError> {
+        let response = self.invoke_execution_on(
+            root,
+            ExecutionCommand::FinishExecution {
+                id: execution_id.to_owned(),
+                success,
+            },
+        )?;
+        if matches!(response, ExecutionResponse::Execution { .. }) {
+            Ok(())
+        } else {
+            Err(ApplicationError::InvalidResponse {
+                message: format!("unexpected execution completion response: {response:?}"),
+            })
+        }
     }
 
     fn require_open_application_session(
@@ -2610,7 +3186,7 @@ pub async fn serve_configured_application(
         client,
     )?;
     let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
-    let worker = serve_application_worker(worker, service.clone(), receiver);
+    let worker = serve_application_worker(worker, service.clone(), transport.clone(), receiver);
     let stdio = serve_stdio_with_events_and_callbacks(
         transport,
         configured_capabilities(),
@@ -2625,6 +3201,7 @@ pub async fn serve_configured_application(
 
 struct ActiveExecution {
     execution_id: String,
+    root: RootExecutionHandle,
     cancellation: Arc<AtomicBool>,
     progress_error: Option<ApplicationError>,
     prompt: ApplicationInvocation,
@@ -2650,8 +3227,12 @@ enum ExecutionWorkerEvent {
 #[derive(Clone)]
 struct ApplicationAgentToolRun {
     service: SdkApplicationService,
+    control_transport: ChannelTransport,
+    harness: Weak<Mutex<PhenixHarness>>,
     session_id: SessionId,
     execution_id: String,
+    root_generation: GraphGenerationId,
+    root_constraints: RootExecutionConstraints,
     permission_handler: Option<PermissionHandlerRef>,
     tools: Vec<ModelToolDescriptor>,
     runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
@@ -3085,6 +3666,10 @@ fn execute_application_agent_tool(
         execute_runtime_entry_trigger(context, trigger, &dispatch_call)
     } else if dispatch_call.callable_id.as_str() == "phenix.inspect" {
         execute_runtime_inspect_tool_call(context, &run, &dispatch_call)
+    } else if dispatch_call.callable_id.as_str() == "phenix.session" {
+        execute_runtime_session_tool_call(context, &run, &dispatch_call)
+    } else if dispatch_call.callable_id.as_str() == "phenix.plugin" {
+        execute_runtime_plugin_tool_call(context, &run, &dispatch_call)
     } else {
         execute_admitted_client_tool_call(
             &run.service,
@@ -3201,11 +3786,13 @@ fn record_application_agent_progress(
 async fn serve_application_worker(
     worker: ApplicationWorker,
     service: SdkApplicationService,
+    control_transport: ChannelTransport,
     receiver: mpsc::Receiver<ApplicationInvocation>,
 ) {
     serve_application_worker_with_execution_capacity(
         worker,
         service,
+        control_transport,
         receiver,
         APPLICATION_EXECUTION_CAPACITY,
     )
@@ -3215,6 +3802,7 @@ async fn serve_application_worker(
 async fn serve_application_worker_with_execution_capacity(
     mut worker: ApplicationWorker,
     service: SdkApplicationService,
+    control_transport: ChannelTransport,
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
     execution_capacity: usize,
 ) {
@@ -3234,6 +3822,7 @@ async fn serve_application_worker_with_execution_capacity(
                     &mut worker,
                     &service,
                     &execution_sender,
+                    &control_transport,
                     &mut active,
                     invocation,
                 );
@@ -3254,6 +3843,7 @@ async fn serve_application_worker_with_execution_capacity(
                     &mut worker,
                     &service,
                     &execution_sender,
+                    &control_transport,
                     &mut active,
                     invocation,
                 );
@@ -3294,8 +3884,10 @@ fn should_defer_application_invocation(
     match invocation.operation.as_str() {
         Cancel::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
             .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
-        Prompt::ID => decode::<PromptInput>(invocation.input.clone())
-            .is_ok_and(|request| !active.contains_key(request.session_id.as_str())),
+        Prompt::ID => false,
+        CreateSession::ID | ListSessions::ID | ResumeSession::ID | RenameSession::ID => false,
+        CloseSession::ID => decode::<ApplicationSessionInput>(invocation.input.clone())
+            .is_ok_and(|request| active.contains_key(request.session_id.as_str())),
         _ => true,
     }
 }
@@ -3304,11 +3896,19 @@ fn dispatch_application_invocation(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
     execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
+    control_transport: &ChannelTransport,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
     if invocation.operation.as_str() == Prompt::ID {
-        start_prompt(worker, service, execution_sender, active, invocation);
+        start_prompt(
+            worker,
+            service,
+            execution_sender,
+            control_transport,
+            active,
+            invocation,
+        );
         return;
     }
     if invocation.operation.as_str() == Cancel::ID {
@@ -3332,6 +3932,7 @@ fn start_prompt(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
     execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
+    control_transport: &ChannelTransport,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
@@ -3352,7 +3953,27 @@ fn start_prompt(
         }));
         return;
     }
-    if let Err(error) = ensure_session_projection(worker, &request.session_id) {
+
+    let root = {
+        let harness = worker.harness.lock();
+        match invocation.root.as_ref() {
+            Some(selection) => harness
+                .root_execution_handle_in_generation(&selection.generation, &selection.constraints)
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                }),
+            None => Ok(harness.root_execution_handle(&worker.authority)),
+        }
+    };
+    let root = match root {
+        Ok(root) => root,
+        Err(error) => {
+            invocation.respond(Err(error));
+            return;
+        }
+    };
+
+    if let Err(error) = ensure_session_projection_on(worker, &root, &request.session_id) {
         invocation.respond(Err(error));
         return;
     }
@@ -3367,17 +3988,30 @@ fn start_prompt(
             return;
         }
     };
+
     let tool_surface = {
         let harness = worker.harness.lock();
-        application_model_tool_surface(
-            service,
-            &request.session_id,
-            harness.resolved_harness(),
-            &worker.authority,
-        )
+        let resolved = root
+            .generation()
+            .ok_or_else(|| ApplicationError::Failed {
+                message: "application prompt root has no resolved graph generation".to_owned(),
+            })
+            .and_then(|generation| {
+                harness
+                    .resolved_harness_in_generation(generation)
+                    .map_err(|error| ApplicationError::Failed {
+                        message: error.to_string(),
+                    })
+            });
+        match resolved.and_then(|resolved| {
+            application_model_tool_surface(service, &request.session_id, resolved, root.authority())
+        }) {
+            Ok(surface) => Ok((surface, harness.application_agent_tools().clone())),
+            Err(error) => Err(error),
+        }
     };
-    let tool_surface = match tool_surface {
-        Ok(surface) => surface,
+    let (tool_surface, adapter) = match tool_surface {
+        Ok(value) => value,
         Err(error) => {
             invocation.respond(Err(error));
             return;
@@ -3385,14 +4019,16 @@ fn start_prompt(
     };
     let tools = tool_surface.tools;
     let runtime_entry_triggers = tool_surface.runtime_entry_triggers;
-    let prompt = match worker.prompt(request.clone()) {
+
+    let prompt = match worker.prompt_on(&root, request.clone()) {
         Ok(prompt) => prompt,
         Err(error) => {
             invocation.respond(Err(error));
             return;
         }
     };
-    if let Err(error) = worker.append_execution_change(
+    if let Err(error) = worker.append_execution_change_on(
+        &root,
         &request.session_id,
         &prompt.execution_id,
         ExecutionChange::State {
@@ -3408,16 +4044,17 @@ fn start_prompt(
         key,
         ActiveExecution {
             execution_id: prompt.execution_id.clone(),
+            root: root.clone(),
             cancellation: Arc::clone(&cancellation),
             progress_error: None,
             prompt: invocation,
         },
     );
 
-    let harness = Arc::clone(&worker.harness);
-    let authority = worker.authority.clone();
     let permission_handler = worker.interaction_handlers().permission.clone();
+    let harness = Arc::downgrade(&worker.harness);
     let application_service = service.clone();
+    let application_control = control_transport.clone();
     let session_id = request.session_id;
     let execution_id = prompt.execution_id;
     let runtime_execution_id = execution_id.clone();
@@ -3428,9 +4065,11 @@ fn start_prompt(
         let execution_session = session_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             run_agent_execution(
+                adapter,
+                root,
                 harness,
-                authority,
                 application_service,
+                application_control,
                 AgentExecutionContext {
                     session_id: execution_session,
                     execution_id: runtime_execution_id,
@@ -3576,9 +4215,11 @@ fn finish_prompt(
         }));
         return;
     }
+    let root = &execution.root;
     if let Some(error) = execution.progress_error {
-        let _ = worker.finish_root_execution(&completion.execution_id, false);
-        let _ = worker.append_execution_change(
+        let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
+        let _ = worker.append_execution_change_on(
+            root,
             &completion.session_id,
             &completion.execution_id,
             ExecutionChange::State {
@@ -3591,8 +4232,9 @@ fn finish_prompt(
         return;
     }
     if execution.cancellation.load(Ordering::Acquire) {
-        let _ = worker.finish_root_execution(&completion.execution_id, false);
-        let _ = worker.append_execution_change(
+        let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
+        let _ = worker.append_execution_change_on(
+            root,
             &completion.session_id,
             &completion.execution_id,
             ExecutionChange::State {
@@ -3609,18 +4251,20 @@ fn finish_prompt(
 
     let result = match completion.result {
         Ok(text) => worker
-            .finish_root_execution(&completion.execution_id, true)
+            .finish_root_execution_on(root, &completion.execution_id, true)
             .and_then(|()| {
-                complete_prompt_output(
+                complete_prompt_output_on(
                     worker,
+                    root,
                     &completion.session_id,
                     &completion.execution_id,
                     text,
                 )
             }),
         Err(error) => {
-            let _ = worker.finish_root_execution(&completion.execution_id, false);
-            let _ = worker.append_execution_change(
+            let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
+            let _ = worker.append_execution_change_on(
+                root,
                 &completion.session_id,
                 &completion.execution_id,
                 ExecutionChange::State {
@@ -3635,6 +4279,46 @@ fn finish_prompt(
     execution
         .prompt
         .respond(result.map(|value| value.to_value()));
+}
+
+fn complete_prompt_output_on(
+    worker: &mut ApplicationWorker,
+    root: &RootExecutionHandle,
+    session_id: &SessionId,
+    execution_id: &str,
+    text: String,
+) -> Result<PromptResult, ApplicationError> {
+    let session = worker.require_open_application_session_on(root, session_id)?;
+    worker.append_session_change_on(
+        root,
+        &session,
+        SessionChange::TextDelta {
+            execution_id: execution_id.to_owned(),
+            text: text.clone(),
+        },
+    )?;
+    worker.append_session_change_on(
+        root,
+        &session,
+        SessionChange::Message {
+            message: Message {
+                role: MessageRole::Assistant,
+                content: vec![Content::Text { text }],
+            },
+        },
+    )?;
+    worker.append_execution_change_on(
+        root,
+        session_id,
+        execution_id,
+        ExecutionChange::State {
+            state: ExecutionState::Completed,
+        },
+    )?;
+    Ok(PromptResult {
+        execution_id: execution_id.to_owned(),
+        stop_reason: StopReason::EndTurn,
+    })
 }
 
 fn complete_prompt_output(
@@ -3671,6 +4355,30 @@ fn complete_prompt_output(
         execution_id: execution_id.to_owned(),
         stop_reason: StopReason::EndTurn,
     })
+}
+
+fn ensure_session_projection_on(
+    worker: &mut ApplicationWorker,
+    root: &RootExecutionHandle,
+    session_id: &SessionId,
+) -> Result<(), ApplicationError> {
+    if worker
+        .projection()
+        .state()
+        .sessions
+        .contains_key(session_id.as_str())
+    {
+        return Ok(());
+    }
+    worker
+        .resume_session_on(
+            root,
+            SessionResumeInput {
+                session_id: session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .map(|_| ())
 }
 
 fn ensure_session_projection(
@@ -3772,9 +4480,11 @@ struct AgentExecutionContext {
 }
 
 fn run_agent_execution(
-    harness: Arc<Mutex<PhenixHarness>>,
-    authority: Authority,
+    adapter: ApplicationAgentToolRegistry,
+    root: RootExecutionHandle,
+    harness: Weak<Mutex<PhenixHarness>>,
     service: SdkApplicationService,
+    control_transport: ChannelTransport,
     context: AgentExecutionContext,
     cancellation: Arc<AtomicBool>,
 ) -> Result<String, ApplicationError> {
@@ -3796,16 +4506,24 @@ fn run_agent_execution(
         return Err(ApplicationError::Cancelled);
     }
 
-    let adapter = {
-        let harness = harness.lock();
-        harness.application_agent_tools().clone()
-    };
+    let root_generation = root
+        .generation()
+        .cloned()
+        .ok_or_else(|| ApplicationError::Failed {
+            message: "application agent root has no graph generation".to_owned(),
+        })?;
+    let root_constraints = root.constraints().clone();
+
     adapter.register(
         execution_id.clone(),
         ApplicationAgentToolRun {
             service,
+            control_transport,
+            harness,
             session_id: session_id.clone(),
             execution_id: execution_id.clone(),
+            root_generation,
+            root_constraints,
             permission_handler,
             tools: tools.clone(),
             runtime_entry_triggers,
@@ -3828,9 +4546,8 @@ fn run_agent_execution(
                 message: error.to_string(),
             }
         })?;
-        let output = harness
-            .lock()
-            .invoke(&agent_loop_service(), &encoded, &authority, None)
+        let output = root
+            .invoke(&agent_loop_service(), &encoded, None)
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
@@ -4051,7 +4768,7 @@ fn application_model_tool_surface(
         }
     }
 
-    graph_tools.extend(host_model_tools());
+    graph_tools.extend(host_model_tools(authority));
     let tools = model_tool_surface(service, session_id, graph_tools)?;
     Ok(ApplicationModelToolSurface {
         tools,
@@ -4059,17 +4776,72 @@ fn application_model_tool_surface(
     })
 }
 
-fn host_model_tools() -> Vec<ModelToolDescriptor> {
-    vec![ModelToolDescriptor {
+fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
+    let mut tools = vec![ModelToolDescriptor {
         id: CallableId::parse("phenix.inspect")
             .expect("static inspection callable id is valid"),
-        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution, dag, trace, values, value <value-id>. The tool is read-only and reports the generation pinned to the current execution.".to_owned(),
+        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution [execution-id], dag [execution-id], trace, values, value <value-id>. Omitting an execution id targets the current execution.".to_owned(),
         input_schema: PhenixSchema::Table(BTreeMap::from([(
             Key::parse("query").expect("static inspection field is valid"),
             PhenixSchema::String,
         )])),
         output_schema: PhenixSchema::Any,
-    }]
+    }];
+
+    let session_control = CapabilityId::parse(APPLICATION_SESSION_CONTROL_CAPABILITY)
+        .expect("static application session control capability is valid");
+    if authority.permits(&session_control) {
+        tools.push(ModelToolDescriptor {
+            id: CallableId::parse("phenix.session")
+                .expect("static session control callable id is valid"),
+            description: "Create, list, resume, prompt, or close another Phenix session through the canonical application operations. Prompt accepts an optional resident graph generation and waits for that session's execution to finish.".to_owned(),
+            input_schema: PhenixSchema::Table(BTreeMap::from([
+                (
+                    Key::parse("operation").expect("static session operation field is valid"),
+                    PhenixSchema::String,
+                ),
+                (
+                    Key::parse("arguments").expect("static session arguments field is valid"),
+                    PhenixSchema::Any,
+                ),
+            ])),
+            output_schema: PhenixSchema::Any,
+        });
+    }
+
+    let plugin_visible = [
+        RUNTIME_PLUGIN_INSPECT_CAPABILITY,
+        RUNTIME_PLUGIN_BUILD_CAPABILITY,
+        RUNTIME_PLUGIN_TRIAL_CAPABILITY,
+        RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
+        RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+    ]
+    .into_iter()
+    .any(|capability| {
+        authority.permits(
+            &CapabilityId::parse(capability).expect("static runtime plugin capability is valid"),
+        )
+    });
+    if plugin_visible {
+        tools.push(ModelToolDescriptor {
+            id: CallableId::parse("phenix.plugin")
+                .expect("static plugin management callable id is valid"),
+            description: "Inspect generations; build a Plugin artifact; trial a Plugin load/replacement in a resident generation; or promote, roll back to, and retire resident generations. Build and trial use the configured Phenix workspace backend and keep Core as the lifecycle owner.".to_owned(),
+            input_schema: PhenixSchema::Table(BTreeMap::from([
+                (
+                    Key::parse("operation").expect("static plugin operation field is valid"),
+                    PhenixSchema::String,
+                ),
+                (
+                    Key::parse("arguments").expect("static plugin arguments field is valid"),
+                    PhenixSchema::Any,
+                ),
+            ])),
+            output_schema: PhenixSchema::Any,
+        });
+    }
+
+    tools
 }
 fn execute_runtime_entry_trigger(
     context: &ApplicationAgentToolContext<'_, '_>,
@@ -4121,6 +4893,986 @@ fn execute_runtime_entry_trigger(
         },
     }
 }
+fn execute_runtime_plugin_tool_call(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    call: &ModelToolCall,
+) -> ExecutionChange {
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        let PhenixValue::Table(fields) = &call.input else {
+            return Err(ApplicationError::InvalidInput {
+                message: "phenix.plugin input must contain operation and arguments".to_owned(),
+            });
+        };
+        let operation = match fields.get("operation") {
+            Some(PhenixValue::String(operation)) if !operation.trim().is_empty() => {
+                operation.trim()
+            }
+            _ => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "phenix.plugin operation must be a non-empty string".to_owned(),
+                })
+            }
+        };
+        let arguments = fields
+            .get("arguments")
+            .ok_or_else(|| ApplicationError::InvalidInput {
+                message: "phenix.plugin input is missing arguments".to_owned(),
+            })?;
+        execute_runtime_plugin_control(context, run, operation, arguments)
+    })();
+
+    match result {
+        Ok(output) => ExecutionChange::ToolResult {
+            call_id: call.call_id.clone(),
+            output,
+        },
+        Err(error) => ExecutionChange::ToolFailed {
+            call_id: call.call_id.clone(),
+            error,
+        },
+    }
+}
+
+fn require_runtime_plugin_capability(
+    authority: &Authority,
+    capability: &str,
+) -> Result<(), ApplicationError> {
+    let capability_id =
+        CapabilityId::parse(capability).map_err(|error| ApplicationError::Failed {
+            message: error.to_string(),
+        })?;
+    if authority.permits(&capability_id) {
+        Ok(())
+    } else {
+        Err(ApplicationError::PermissionDenied {
+            message: format!("phenix.plugin requires {capability}"),
+        })
+    }
+}
+
+fn runtime_plugin_build_authority() -> Authority {
+    Authority::new(
+        ["workspace.read", "workspace.shell"]
+            .into_iter()
+            .map(|value| CapabilityId::parse(value).expect("static build capability is valid")),
+    )
+}
+
+fn runtime_plugin_policy(required_capability: &str) -> PluginManagementPolicy {
+    PluginManagementPolicy::new(
+        Authority::new([CapabilityId::parse(required_capability)
+            .expect("static plugin management capability is valid")]),
+        runtime_plugin_build_authority(),
+    )
+}
+
+fn runtime_plugin_typed_argument<T>(
+    arguments: &PhenixValue,
+    key: &str,
+) -> Result<T, ApplicationError>
+where
+    T: DeserializeOwned,
+{
+    let value =
+        session_control_field(arguments, key).ok_or_else(|| ApplicationError::InvalidInput {
+            message: format!("phenix.plugin argument {key} is required"),
+        })?;
+    let encoded = serde_json::to_vec(value).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("failed to encode phenix.plugin argument {key}: {error}"),
+    })?;
+    serde_json::from_slice(&encoded).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("invalid phenix.plugin argument {key}: {error}"),
+    })
+}
+
+fn runtime_plugin_build_report_value(report: &PluginBuildReport) -> PhenixValue {
+    PhenixValue::Map(BTreeMap::from([
+        (
+            "artifact_locator".to_owned(),
+            PhenixValue::String(report.artifact.locator.clone()),
+        ),
+        (
+            "artifact_revision".to_owned(),
+            PhenixValue::String(report.artifact.revision.as_ref().to_owned()),
+        ),
+        (
+            "provenance".to_owned(),
+            PhenixValue::List(
+                report
+                    .evidence
+                    .provenance()
+                    .iter()
+                    .cloned()
+                    .map(PhenixValue::String)
+                    .collect(),
+            ),
+        ),
+        (
+            "diagnostics".to_owned(),
+            PhenixValue::List(
+                report
+                    .evidence
+                    .diagnostics()
+                    .iter()
+                    .cloned()
+                    .map(PhenixValue::String)
+                    .collect(),
+            ),
+        ),
+    ]))
+}
+
+struct WorkspacePluginBuildExecutor<'context, 'host, 'runtime> {
+    context: &'context ApplicationAgentToolContext<'host, 'runtime>,
+}
+
+impl PluginBuildExecutor for WorkspacePluginBuildExecutor<'_, '_, '_> {
+    fn execute(
+        &mut self,
+        plan: &PluginBuildPlan,
+        effective_authority: &Authority,
+    ) -> Result<PluginBuildExecution, PluginBuildFailure> {
+        for capability in ["workspace.shell", "workspace.read"] {
+            let capability_id =
+                CapabilityId::parse(capability).expect("static workspace capability is valid");
+            if !effective_authority.permits(&capability_id) {
+                return Err(PluginBuildFailure {
+                    message: format!("plugin build authority denied: {capability}"),
+                    evidence: PluginBuildEvidence::bounded(
+                        Vec::new(),
+                        vec![format!(
+                            "build plan must explicitly request and receive {capability}"
+                        )],
+                    ),
+                });
+            }
+        }
+
+        let mut provenance = Vec::new();
+        let mut diagnostics = Vec::new();
+        for (index, step) in plan.steps().iter().enumerate() {
+            let command = WorkspaceCommand::Exec {
+                program: step.executable.as_ref().to_owned(),
+                arguments: step
+                    .argv
+                    .iter()
+                    .map(|argument| argument.as_ref().to_owned())
+                    .collect(),
+                working_directory: Some(step.working_directory.as_ref().to_owned()),
+                environment: step
+                    .environment
+                    .iter()
+                    .map(|(name, value)| (name.as_ref().to_owned(), value.to_owned()))
+                    .collect(),
+            };
+            let response = self
+                .context
+                .sdk
+                .workspace
+                .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&command)
+                .map_err(|error| PluginBuildFailure {
+                    message: format!("plugin build step {index} could not execute: {error}"),
+                    evidence: PluginBuildEvidence::bounded(provenance.clone(), diagnostics.clone()),
+                })?;
+            let WorkspaceResponse::Process {
+                exit_code,
+                stderr,
+                stderr_complete,
+                ..
+            } = response
+            else {
+                return Err(PluginBuildFailure {
+                    message: format!("plugin build step {index} returned a non-process response"),
+                    evidence: PluginBuildEvidence::bounded(provenance, diagnostics),
+                });
+            };
+            provenance.push(format!(
+                "workspace-exec:{index}:{}:{}",
+                step.executable.as_ref(),
+                exit_code
+            ));
+            if !stderr.trim().is_empty() {
+                diagnostics.push(stderr);
+            }
+            if !stderr_complete {
+                diagnostics.push(format!("plugin build step {index} stderr was truncated"));
+            }
+            if exit_code != 0 {
+                return Err(PluginBuildFailure {
+                    message: format!("plugin build step {index} exited with status {exit_code}"),
+                    evidence: PluginBuildEvidence::bounded(provenance, diagnostics),
+                });
+            }
+        }
+
+        let artifact_path = plan.artifact_output().as_ref().to_owned();
+        let response = self
+            .context
+            .sdk
+            .workspace
+            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::ReadBytes {
+                path: artifact_path.clone(),
+            })
+            .map_err(|error| PluginBuildFailure {
+                message: format!("plugin build output {artifact_path} is unavailable: {error}"),
+                evidence: PluginBuildEvidence::bounded(provenance.clone(), diagnostics.clone()),
+            })?;
+        let WorkspaceResponse::ReadBytes { content, .. } = response else {
+            return Err(PluginBuildFailure {
+                message: format!(
+                    "plugin build output {artifact_path} returned a non-read response"
+                ),
+                evidence: PluginBuildEvidence::bounded(provenance, diagnostics),
+            });
+        };
+        provenance.push(format!(
+            "workspace-artifact:{}:{}",
+            artifact_path,
+            ArtifactRevision::from_content(&content)
+        ));
+
+        Ok(PluginBuildExecution {
+            output: Some(PluginBuildOutput::new(artifact_path, content)),
+            evidence: PluginBuildEvidence::bounded(provenance, diagnostics),
+        })
+    }
+}
+
+struct WorkspacePluginArtifactStore<'context, 'host, 'runtime> {
+    context: &'context ApplicationAgentToolContext<'host, 'runtime>,
+    authority: &'context Authority,
+}
+
+impl WorkspacePluginArtifactStore<'_, '_, '_> {
+    fn require(&self, capability: &str) -> Result<(), PluginArtifactStoreError> {
+        let capability_id =
+            CapabilityId::parse(capability).expect("static workspace capability is valid");
+        if self.authority.permits(&capability_id) {
+            Ok(())
+        } else {
+            Err(PluginArtifactStoreError {
+                message: format!("plugin artifact store requires {capability}"),
+            })
+        }
+    }
+
+    fn read(&self, path: &str) -> Result<Vec<u8>, PluginArtifactStoreError> {
+        self.require("workspace.read")?;
+        let response = self
+            .context
+            .sdk
+            .workspace
+            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(&WorkspaceCommand::ReadBytes {
+                path: path.to_owned(),
+            })
+            .map_err(|error| PluginArtifactStoreError {
+                message: error.to_string(),
+            })?;
+        match response {
+            WorkspaceResponse::ReadBytes { content, .. } => Ok(content),
+            other => Err(PluginArtifactStoreError {
+                message: format!("plugin artifact read returned unexpected response: {other:?}"),
+            }),
+        }
+    }
+}
+
+impl PluginArtifactStore for WorkspacePluginArtifactStore<'_, '_, '_> {
+    fn preflight(&mut self) -> Result<(), PluginArtifactStoreError> {
+        let response = self
+            .context
+            .sdk
+            .workspace
+            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(
+                &WorkspaceCommand::Capabilities,
+            )
+            .map_err(|error| PluginArtifactStoreError {
+                message: error.to_string(),
+            })?;
+        match response {
+            WorkspaceResponse::Capabilities { .. } => Ok(()),
+            other => Err(PluginArtifactStoreError {
+                message: format!(
+                    "plugin artifact store workspace preflight returned unexpected response: {other:?}"
+                ),
+            }),
+        }
+    }
+
+    fn verify_ready(&mut self, artifact: &PluginArtifact) -> Result<(), PluginArtifactStoreError> {
+        let content = self.read(&artifact.locator)?;
+        let observed = ArtifactRevision::from_content(&content);
+        if observed == artifact.revision {
+            Ok(())
+        } else {
+            Err(PluginArtifactStoreError {
+                message: format!(
+                    "plugin artifact revision mismatch at {}: expected {}, observed {}",
+                    artifact.locator, artifact.revision, observed
+                ),
+            })
+        }
+    }
+
+    fn store_built(
+        &mut self,
+        artifact: &PluginArtifact,
+        content: &[u8],
+    ) -> Result<String, PluginArtifactStoreError> {
+        self.require("workspace.write")?;
+        let observed = ArtifactRevision::from_content(content);
+        if observed != artifact.revision {
+            return Err(PluginArtifactStoreError {
+                message: format!(
+                    "plugin build content revision mismatch: expected {}, observed {}",
+                    artifact.revision, observed
+                ),
+            });
+        }
+        let digest = artifact
+            .revision
+            .as_ref()
+            .strip_prefix("sha256:")
+            .expect("ArtifactRevision is canonical sha256");
+        let path = format!(".phenix/artifacts/{digest}");
+        let response = self
+            .context
+            .sdk
+            .workspace
+            .invoke_projected::<WorkspaceCommand, WorkspaceResponse>(
+                &WorkspaceCommand::WriteBytes {
+                    path: path.clone(),
+                    content: content.to_vec(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                },
+            )
+            .map_err(|error| PluginArtifactStoreError {
+                message: error.to_string(),
+            })?;
+        match response {
+            WorkspaceResponse::Written { .. } => {}
+            WorkspaceResponse::VersionConflict { conflicts } => {
+                return Err(PluginArtifactStoreError {
+                    message: format!(
+                        "content-addressed plugin artifact path conflicted: {conflicts:?}"
+                    ),
+                })
+            }
+            other => {
+                return Err(PluginArtifactStoreError {
+                    message: format!(
+                        "plugin artifact store returned unexpected write response: {other:?}"
+                    ),
+                })
+            }
+        }
+        let stored = self.read(&path)?;
+        if ArtifactRevision::from_content(&stored) != artifact.revision {
+            return Err(PluginArtifactStoreError {
+                message: format!("plugin artifact verification failed after storing {path}"),
+            });
+        }
+        Ok(path)
+    }
+}
+
+fn execute_runtime_plugin_control(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    operation: &str,
+    arguments: &PhenixValue,
+) -> Result<PhenixValue, ApplicationError> {
+    let harness = run
+        .harness
+        .upgrade()
+        .ok_or(ApplicationError::Disconnected)?;
+    match operation {
+        "inspect" => {
+            require_runtime_plugin_capability(
+                context.call.authority,
+                RUNTIME_PLUGIN_INSPECT_CAPABILITY,
+            )?;
+            let harness = harness.lock();
+            runtime_plugin_inspection_value(&harness)
+        }
+        "build" => {
+            require_runtime_plugin_capability(
+                context.call.authority,
+                RUNTIME_PLUGIN_BUILD_CAPABILITY,
+            )?;
+            let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
+            let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
+            let mut store = WorkspacePluginArtifactStore {
+                context,
+                authority: context.call.authority,
+            };
+            let mut executor = WorkspacePluginBuildExecutor { context };
+            let mut management = PluginManagementContext {
+                caller_authority: context.call.authority,
+                policy: &policy,
+                artifact_store: &mut store,
+                build_executor: &mut executor,
+            };
+            let report = GraphReconciler::build_artifact(plan, &mut management).map_err(|error| {
+                ApplicationError::Failed {
+                    message: error.to_string(),
+                }
+            })?;
+            Ok(runtime_plugin_build_report_value(&report))
+        }
+        "trial" => {
+            require_runtime_plugin_capability(
+                context.call.authority,
+                RUNTIME_PLUGIN_TRIAL_CAPABILITY,
+            )?;
+            let request: PluginLoadRequest = runtime_plugin_typed_argument(arguments, "request")?;
+            let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_CAPABILITY);
+            let mut store = WorkspacePluginArtifactStore {
+                context,
+                authority: context.call.authority,
+            };
+            let mut executor = WorkspacePluginBuildExecutor { context };
+            let mut management = PluginManagementContext {
+                caller_authority: context.call.authority,
+                policy: &policy,
+                artifact_store: &mut store,
+                build_executor: &mut executor,
+            };
+            let result = harness
+                .lock()
+                .trial_plugin_management(
+                    PluginManagementRequest::load(request),
+                    run.root_constraints.authority(),
+                    &run.root_constraints,
+                    &mut management,
+                )
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            Ok(PhenixValue::Map(BTreeMap::from([
+                (
+                    "generation".to_owned(),
+                    PhenixValue::String(result.generation.as_str().to_owned()),
+                ),
+                (
+                    "build".to_owned(),
+                    PhenixValue::Option(
+                        result
+                            .build
+                            .as_ref()
+                            .map(|report| Box::new(runtime_plugin_build_report_value(report))),
+                    ),
+                ),
+            ])))
+        }
+        "promote" | "rollback" => {
+            require_runtime_plugin_capability(
+                context.call.authority,
+                RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
+            )?;
+            let generation = runtime_plugin_generation_argument(arguments)?;
+            let constraints = run.root_constraints.clone();
+            let result = harness
+                .lock()
+                .promote_resident(&generation, &constraints)
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            Ok(PhenixValue::Map(BTreeMap::from([
+                (
+                    "previous_generation".to_owned(),
+                    PhenixValue::String(result.previous_generation.as_str().to_owned()),
+                ),
+                (
+                    "active_generation".to_owned(),
+                    PhenixValue::String(result.active_generation.as_str().to_owned()),
+                ),
+            ])))
+        }
+        "retire" => {
+            require_runtime_plugin_capability(
+                context.call.authority,
+                RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+            )?;
+            let generation = runtime_plugin_generation_argument(arguments)?;
+            let constraints = run.root_constraints.clone();
+            harness
+                .lock()
+                .retire_resident(&generation, &constraints)
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            Ok(PhenixValue::Map(BTreeMap::from([(
+                "retired_generation".to_owned(),
+                PhenixValue::String(generation.as_str().to_owned()),
+            )])))
+        }
+        other => Err(ApplicationError::InvalidInput {
+            message: format!(
+                "unknown phenix.plugin operation {other}; expected inspect, build, trial, promote, rollback, or retire"
+            ),
+        }),
+    }
+}
+
+fn runtime_plugin_generation_argument(
+    arguments: &PhenixValue,
+) -> Result<GraphGenerationId, ApplicationError> {
+    let value = session_control_required_string(arguments, "generation")?;
+    Ok(GraphGenerationId::from(value))
+}
+
+fn runtime_plugin_inspection_value(
+    harness: &PhenixHarness,
+) -> Result<PhenixValue, ApplicationError> {
+    let active = harness.generation().clone();
+    let mut generation_ids = vec![active.clone()];
+    generation_ids.extend(harness.resident_generations());
+    let generations = generation_ids
+        .into_iter()
+        .map(|generation| {
+            let resolved = harness
+                .resolved_harness_in_generation(&generation)
+                .map_err(|error| ApplicationError::Failed {
+                    message: error.to_string(),
+                })?;
+            let plugins = resolved
+                .plugins()
+                .iter()
+                .map(|manifest| {
+                    let (execution_kind, runtime, artifact_revision) = match &manifest.execution {
+                        PluginExecution::Embedded => ("embedded", None, None),
+                        PluginExecution::ResourceOnly => ("resource_only", None, None),
+                        PluginExecution::Runtime { runtime, artifact } => (
+                            "runtime",
+                            Some(runtime.as_str().to_owned()),
+                            Some(artifact.revision.as_ref().to_owned()),
+                        ),
+                    };
+                    Ok(PhenixValue::Map(BTreeMap::from([
+                        (
+                            "plugin".to_owned(),
+                            PhenixValue::String(manifest.id.to_string()),
+                        ),
+                        (
+                            "version".to_owned(),
+                            PhenixValue::U64(u64::from(manifest.version)),
+                        ),
+                        (
+                            "execution_kind".to_owned(),
+                            PhenixValue::String(execution_kind.to_owned()),
+                        ),
+                        (
+                            "runtime".to_owned(),
+                            PhenixValue::Option(
+                                runtime.map(|value| Box::new(PhenixValue::String(value))),
+                            ),
+                        ),
+                        (
+                            "artifact_revision".to_owned(),
+                            PhenixValue::Option(
+                                artifact_revision.map(|value| Box::new(PhenixValue::String(value))),
+                            ),
+                        ),
+                    ])))
+                })
+                .collect::<Result<Vec<_>, ApplicationError>>()?;
+            Ok(PhenixValue::Map(BTreeMap::from([
+                (
+                    "generation".to_owned(),
+                    PhenixValue::String(generation.as_str().to_owned()),
+                ),
+                (
+                    "default".to_owned(),
+                    PhenixValue::Bool(generation == active),
+                ),
+                ("plugins".to_owned(), PhenixValue::List(plugins)),
+            ])))
+        })
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+    Ok(PhenixValue::Map(BTreeMap::from([
+        (
+            "active_generation".to_owned(),
+            PhenixValue::String(active.as_str().to_owned()),
+        ),
+        ("generations".to_owned(), PhenixValue::List(generations)),
+    ])))
+}
+
+fn execute_runtime_session_tool_call(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    call: &ModelToolCall,
+) -> ExecutionChange {
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        require_application_session_control(context.call.authority)?;
+        let PhenixValue::Table(fields) = &call.input else {
+            return Err(ApplicationError::InvalidInput {
+                message: "phenix.session input must contain operation and arguments".to_owned(),
+            });
+        };
+        let operation = match fields.get("operation") {
+            Some(PhenixValue::String(operation)) if !operation.trim().is_empty() => {
+                operation.trim()
+            }
+            _ => {
+                return Err(ApplicationError::InvalidInput {
+                    message: "phenix.session operation must be a non-empty string".to_owned(),
+                })
+            }
+        };
+        let arguments = fields
+            .get("arguments")
+            .ok_or_else(|| ApplicationError::InvalidInput {
+                message: "phenix.session input is missing arguments".to_owned(),
+            })?;
+        execute_application_session_control(context, run, operation, arguments)
+    })();
+
+    match result {
+        Ok(output) => ExecutionChange::ToolResult {
+            call_id: call.call_id.clone(),
+            output,
+        },
+        Err(error) => ExecutionChange::ToolFailed {
+            call_id: call.call_id.clone(),
+            error,
+        },
+    }
+}
+
+fn require_application_session_control(authority: &Authority) -> Result<(), ApplicationError> {
+    let capability = CapabilityId::parse(APPLICATION_SESSION_CONTROL_CAPABILITY)
+        .expect("static application session control capability is valid");
+    if authority.permits(&capability) {
+        Ok(())
+    } else {
+        Err(ApplicationError::PermissionDenied {
+            message: format!("phenix.session requires {APPLICATION_SESSION_CONTROL_CAPABILITY}"),
+        })
+    }
+}
+
+fn execute_application_session_control(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    operation: &str,
+    arguments: &PhenixValue,
+) -> Result<PhenixValue, ApplicationError> {
+    match operation {
+        "create" => {
+            let working_directory =
+                session_control_required_string(arguments, "working_directory")?;
+            let title = session_control_optional_string(arguments, "title")?;
+            let response: SessionInfo = invoke_application_control(
+                run,
+                CreateSession::ID,
+                SessionCreateInput {
+                    working_directory,
+                    title,
+                },
+            )?;
+            Ok(response.to_value())
+        }
+        "list" => {
+            let response: SessionList =
+                invoke_application_control(run, ListSessions::ID, PageInput { cursor: None })?;
+            Ok(response.to_value())
+        }
+        "resume" => {
+            let session_id = session_control_session_id(arguments)?;
+            let after_sequence = session_control_optional_u64(arguments, "after_sequence")?;
+            let response: SessionSnapshot = invoke_application_control(
+                run,
+                ResumeSession::ID,
+                SessionResumeInput {
+                    session_id,
+                    after_sequence,
+                },
+            )?;
+            Ok(response.to_value())
+        }
+        "prompt" => {
+            let session_id = session_control_session_id(arguments)?;
+            if session_id == run.session_id {
+                return Err(ApplicationError::Conflict {
+                    message: "phenix.session cannot synchronously prompt its own active session"
+                        .to_owned(),
+                });
+            }
+            let text = session_control_required_string(arguments, "text")?;
+            let generation = match session_control_optional_string(arguments, "generation")? {
+                Some(generation) => {
+                    require_runtime_generation_select(context.call.authority)?;
+                    GraphGenerationId::from(generation)
+                }
+                None => run.root_generation.clone(),
+            };
+            prompt_child_session(run, session_id, text, generation)
+        }
+        "close" => {
+            let session_id = session_control_session_id(arguments)?;
+            if session_id == run.session_id {
+                return Err(ApplicationError::Conflict {
+                    message: "phenix.session cannot close its own active session".to_owned(),
+                });
+            }
+            let response: Acknowledged = invoke_application_control(
+                run,
+                CloseSession::ID,
+                ApplicationSessionInput { session_id },
+            )?;
+            Ok(response.to_value())
+        }
+        other => Err(ApplicationError::InvalidInput {
+            message: format!(
+                "unknown phenix.session operation {other}; expected create, list, resume, prompt, or close"
+            ),
+        }),
+    }
+}
+
+fn require_runtime_generation_select(authority: &Authority) -> Result<(), ApplicationError> {
+    let capability = CapabilityId::parse(RUNTIME_GENERATION_SELECT_CAPABILITY)
+        .expect("static runtime generation selection capability is valid");
+    if authority.permits(&capability) {
+        Ok(())
+    } else {
+        Err(ApplicationError::PermissionDenied {
+            message: format!(
+                "explicit phenix.session generation selection requires {RUNTIME_GENERATION_SELECT_CAPABILITY}"
+            ),
+        })
+    }
+}
+
+fn prompt_child_session(
+    run: &ApplicationAgentToolRun,
+    session_id: SessionId,
+    text: String,
+    generation: GraphGenerationId,
+) -> Result<PhenixValue, ApplicationError> {
+    if run.cancellation.load(Ordering::Acquire) {
+        return Err(ApplicationError::Cancelled);
+    }
+
+    let operation = ContractId::parse(Prompt::ID).map_err(|error| ApplicationError::Failed {
+        message: error.to_string(),
+    })?;
+    let constraints = run.root_constraints.clone();
+    let mut pending = run.control_transport.begin_blocking_in_generation(
+        &operation,
+        PromptInput {
+            session_id: session_id.clone(),
+            content: vec![Content::Text { text }],
+        }
+        .to_value(),
+        generation.clone(),
+        constraints.clone(),
+    )?;
+
+    let mut cancellation_requested = false;
+    let response = loop {
+        if let Some(response) = pending.try_recv()? {
+            break response;
+        }
+        if run.cancellation.load(Ordering::Acquire) && !cancellation_requested {
+            cancellation_requested = true;
+            let _: Acknowledged = invoke_application_control(
+                run,
+                Cancel::ID,
+                ApplicationSessionInput {
+                    session_id: session_id.clone(),
+                },
+            )?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+
+    let prompt = PromptResult::try_from(Project(&response)).map_err(|error| {
+        ApplicationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })?;
+    let snapshot: SessionSnapshot = invoke_application_control_in_generation(
+        run,
+        ResumeSession::ID,
+        SessionResumeInput {
+            session_id: session_id.clone(),
+            after_sequence: None,
+        },
+        generation.clone(),
+        constraints,
+    )?;
+    let assistant_message = snapshot
+        .updates
+        .iter()
+        .rev()
+        .find_map(|update| match &update.update {
+            SessionChange::TextDelta { execution_id, text }
+                if execution_id == &prompt.execution_id =>
+            {
+                Some(text.clone())
+            }
+            _ => None,
+        });
+
+    Ok(PhenixValue::Map(BTreeMap::from([
+        (
+            "session_id".to_owned(),
+            PhenixValue::String(session_id.to_string()),
+        ),
+        (
+            "execution_id".to_owned(),
+            PhenixValue::String(prompt.execution_id),
+        ),
+        (
+            "generation".to_owned(),
+            PhenixValue::String(generation.as_str().to_owned()),
+        ),
+        (
+            "stop_reason".to_owned(),
+            PhenixValue::String(
+                match prompt.stop_reason {
+                    StopReason::EndTurn => "end_turn",
+                    StopReason::Cancelled => "cancelled",
+                    StopReason::MaxTokens => "max_tokens",
+                    StopReason::Refused => "refused",
+                }
+                .to_owned(),
+            ),
+        ),
+        (
+            "through_sequence".to_owned(),
+            PhenixValue::U64(snapshot.through_sequence),
+        ),
+        (
+            "assistant_message".to_owned(),
+            PhenixValue::Option(assistant_message.map(|text| Box::new(PhenixValue::String(text)))),
+        ),
+    ])))
+}
+
+fn invoke_application_control<C, R>(
+    run: &ApplicationAgentToolRun,
+    operation: &str,
+    command: C,
+) -> Result<R, ApplicationError>
+where
+    for<'a> PhenixValue: From<&'a C>,
+    R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,
+{
+    let operation = ContractId::parse(operation).map_err(|error| ApplicationError::Failed {
+        message: error.to_string(),
+    })?;
+    let output = run
+        .control_transport
+        .invoke_blocking(&operation, PhenixValue::from(&command))?;
+    R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
+        message: error.to_string(),
+    })
+}
+
+fn invoke_application_control_in_generation<C, R>(
+    run: &ApplicationAgentToolRun,
+    operation: &str,
+    command: C,
+    generation: GraphGenerationId,
+    constraints: phenix_core::RootExecutionConstraints,
+) -> Result<R, ApplicationError>
+where
+    for<'a> PhenixValue: From<&'a C>,
+    R: for<'a> TryFrom<Project<&'a PhenixValue>, Error = phenix_core::ValueError>,
+{
+    let operation = ContractId::parse(operation).map_err(|error| ApplicationError::Failed {
+        message: error.to_string(),
+    })?;
+    let output = run.control_transport.invoke_blocking_in_generation(
+        &operation,
+        PhenixValue::from(&command),
+        generation,
+        constraints,
+    )?;
+    R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
+        message: error.to_string(),
+    })
+}
+
+fn session_control_session_id(arguments: &PhenixValue) -> Result<SessionId, ApplicationError> {
+    let value = session_control_required_string(arguments, "session_id")?;
+    SessionId::parse(value).map_err(|error| ApplicationError::InvalidInput {
+        message: error.to_string(),
+    })
+}
+
+fn session_control_required_string(
+    arguments: &PhenixValue,
+    key: &str,
+) -> Result<String, ApplicationError> {
+    match session_control_field(arguments, key) {
+        Some(PhenixValue::String(value)) if !value.trim().is_empty() => Ok(value.clone()),
+        Some(_) => Err(ApplicationError::InvalidInput {
+            message: format!("phenix.session argument {key} must be a non-empty string"),
+        }),
+        None => Err(ApplicationError::InvalidInput {
+            message: format!("phenix.session argument {key} is required"),
+        }),
+    }
+}
+
+fn session_control_optional_string(
+    arguments: &PhenixValue,
+    key: &str,
+) -> Result<Option<String>, ApplicationError> {
+    match session_control_field(arguments, key) {
+        None | Some(PhenixValue::Unit) | Some(PhenixValue::Option(None)) => Ok(None),
+        Some(PhenixValue::String(value)) => Ok(Some(value.clone())),
+        Some(PhenixValue::Option(Some(value))) => match value.as_ref() {
+            PhenixValue::String(value) => Ok(Some(value.clone())),
+            _ => Err(ApplicationError::InvalidInput {
+                message: format!("phenix.session argument {key} must be a string or null"),
+            }),
+        },
+        Some(_) => Err(ApplicationError::InvalidInput {
+            message: format!("phenix.session argument {key} must be a string or null"),
+        }),
+    }
+}
+
+fn session_control_optional_u64(
+    arguments: &PhenixValue,
+    key: &str,
+) -> Result<Option<u64>, ApplicationError> {
+    match session_control_field(arguments, key) {
+        None | Some(PhenixValue::Unit) | Some(PhenixValue::Option(None)) => Ok(None),
+        Some(PhenixValue::U64(value)) => Ok(Some(*value)),
+        Some(PhenixValue::I64(value)) if *value >= 0 => Ok(Some(*value as u64)),
+        Some(PhenixValue::Option(Some(value))) => match value.as_ref() {
+            PhenixValue::U64(value) => Ok(Some(*value)),
+            PhenixValue::I64(value) if *value >= 0 => Ok(Some(*value as u64)),
+            _ => Err(ApplicationError::InvalidInput {
+                message: format!(
+                    "phenix.session argument {key} must be a non-negative integer or null"
+                ),
+            }),
+        },
+        Some(_) => Err(ApplicationError::InvalidInput {
+            message: format!(
+                "phenix.session argument {key} must be a non-negative integer or null"
+            ),
+        }),
+    }
+}
+
+fn session_control_field<'a>(arguments: &'a PhenixValue, key: &str) -> Option<&'a PhenixValue> {
+    match arguments {
+        PhenixValue::Map(fields) => fields.get(key),
+        PhenixValue::Table(fields) => fields.get(key),
+        _ => None,
+    }
+}
+
 fn execute_runtime_inspect_tool_call(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
@@ -4199,7 +5951,9 @@ fn inspect_runtime(
             [
                 "graph",
                 "execution",
+                "execution <execution-id>",
                 "dag",
+                "dag <execution-id>",
                 "trace",
                 "values",
                 "value <value-id>",
@@ -4209,6 +5963,24 @@ fn inspect_runtime(
             .collect(),
         )),
         _ => {
+            if let Some(execution_id) = query.strip_prefix("execution ").map(str::trim) {
+                if execution_id.is_empty() {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "execution query requires an execution id".to_owned(),
+                    });
+                }
+                require_runtime_inspection_read(context.call.authority)?;
+                return inspect_execution(context, execution_id);
+            }
+            if let Some(execution_id) = query.strip_prefix("dag ").map(str::trim) {
+                if execution_id.is_empty() {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "dag query requires an execution id".to_owned(),
+                    });
+                }
+                require_runtime_inspection_read(context.call.authority)?;
+                return inspect_execution_dag(context, execution_id);
+            }
             if let Some(id) = query.strip_prefix("value ").map(str::trim) {
                 if id.is_empty() {
                     return Err(ApplicationError::InvalidInput {
@@ -4545,8 +6317,9 @@ mod tests {
         ListSessions, Prompt, RenameSession, ResumeSession,
     };
     use phenix_core::{
-        Bytes, InvocationOutcome, LocalPersistence, ModelId, ModelInferenceFailure, ModelToolTurn,
-        SessionId, ValueAddress,
+        Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
+        ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, ResourceNamespace,
+        SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
@@ -4786,6 +6559,710 @@ mod tests {
         }
     }
 
+    fn session_control_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.session-control-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct SessionControlModel {
+        child: Arc<StdMutex<Option<SessionId>>>,
+    }
+
+    impl PluginInstance for SessionControlModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!(
+                    "unsupported session-control fixture service: {service}"
+                ));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            let child = self
+                .child
+                .lock()
+                .map_err(|_| "session-control fixture target lock poisoned".to_owned())?
+                .clone()
+                .ok_or_else(|| "session-control fixture child is not configured".to_owned())?;
+
+            let response = if request.session_id.as_ref() == Some(&child) {
+                ModelInferenceResponse {
+                    output: Bytes::new(b"child session completed".to_vec()),
+                    provider_metadata: BTreeMap::new(),
+                    usage: Default::default(),
+                    tool_calls: Vec::new(),
+                }
+            } else {
+                match request.continuation.as_slice() {
+                    [] => {
+                        if !request
+                            .tools
+                            .iter()
+                            .any(|tool| tool.id.as_str() == "phenix.session")
+                        {
+                            return Err(
+                                "controller model did not receive the phenix.session tool".into()
+                            );
+                        }
+                        ModelInferenceResponse {
+                            output: Bytes::new(b"prompt child session".to_vec()),
+                            provider_metadata: BTreeMap::new(),
+                            usage: Default::default(),
+                            tool_calls: vec![ModelToolCall {
+                                call_id: "session-control-child-prompt".into(),
+                                callable_id: CallableId::parse("phenix.session").unwrap(),
+                                input: PhenixValue::Table(BTreeMap::from([
+                                    (
+                                        Key::parse("operation").unwrap(),
+                                        PhenixValue::String("prompt".into()),
+                                    ),
+                                    (
+                                        Key::parse("arguments").unwrap(),
+                                        PhenixValue::Map(BTreeMap::from([
+                                            (
+                                                "session_id".into(),
+                                                PhenixValue::String(child.to_string()),
+                                            ),
+                                            (
+                                                "text".into(),
+                                                PhenixValue::String(
+                                                    "complete the child session".into(),
+                                                ),
+                                            ),
+                                        ])),
+                                    ),
+                                ])),
+                            }],
+                        }
+                    }
+                    [turn] => {
+                        if turn.tool_results.len() != 1 {
+                            return Err(
+                                "controller model did not receive one child-session result".into(),
+                            );
+                        }
+                        let result = &turn.tool_results[0];
+                        if result.is_error {
+                            return Err("child-session orchestration returned an error".into());
+                        }
+                        let PhenixValue::Map(fields) = &result.output else {
+                            return Err("child-session result is not structured".into());
+                        };
+                        if !matches!(
+                            fields.get("stop_reason"),
+                            Some(PhenixValue::String(reason)) if reason == "end_turn"
+                        ) {
+                            return Err(format!(
+                                "child-session result has unexpected stop reason: {:?}",
+                                fields.get("stop_reason")
+                            ));
+                        }
+                        ModelInferenceResponse {
+                            output: Bytes::new(b"controller observed child completion".to_vec()),
+                            provider_metadata: BTreeMap::new(),
+                            usage: Default::default(),
+                            tool_calls: Vec::new(),
+                        }
+                    }
+                    turns => {
+                        return Err(format!(
+                            "session-control fixture received {} continuation turns",
+                            turns.len()
+                        ));
+                    }
+                }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+    struct MemoryDebugRequest {
+        operation: String,
+        value: Option<String>,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+    struct MemoryDebugResponse {
+        value: Option<String>,
+    }
+
+    struct MemoryDebugPlugin {
+        namespace: ResourceNamespace,
+    }
+
+    impl PluginInstance for MemoryDebugPlugin {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service.as_str() != "fixture.memory-debug@1" {
+                return Err(format!("unsupported memory-debug fixture service: {service}"));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = MemoryDebugRequest::from_value(&value)
+                .map_err(|error| error.to_string())?;
+            let response = match request.operation.as_str() {
+                "write" => {
+                    let value = request
+                        .value
+                        .ok_or_else(|| "memory-debug write requires a value".to_owned())?;
+                    host.transact_durable(
+                        &self.namespace,
+                        &[TransactionOp::Put {
+                            key: "fact".into(),
+                            value: value.as_bytes().to_vec(),
+                        }],
+                    )
+                    .map_err(|error| error.to_string())?;
+                    MemoryDebugResponse { value: Some(value) }
+                }
+                "read" => {
+                    let value = host
+                        .read_durable(&self.namespace, "fact")
+                        .map_err(|error| error.to_string())?
+                        .map(String::from_utf8)
+                        .transpose()
+                        .map_err(|error| error.to_string())?;
+                    MemoryDebugResponse { value }
+                }
+                operation => {
+                    return Err(format!(
+                        "unsupported memory-debug fixture operation: {operation}"
+                    ))
+                }
+            };
+            serde_json::to_vec(&response.to_value()).map_err(|error| error.to_string())
+        }
+    }
+
+    fn memory_debug_authority() -> Authority {
+        Authority::new([
+            CapabilityId::parse("kernel.persistence.read").unwrap(),
+            CapabilityId::parse("kernel.persistence.write").unwrap(),
+        ])
+    }
+
+    fn memory_debug_manifest(version: u32, namespace: ResourceNamespace) -> PluginManifest {
+        let persistence = memory_debug_authority();
+        PluginManifest {
+            id: PluginId::parse("fixture.memory-debug").unwrap(),
+            version,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: ServiceId::parse("fixture.memory-debug@1").unwrap(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: vec![namespace],
+            maximum_authority: persistence,
+        }
+    }
+
+    fn memory_debug_component() -> ComponentManifest {
+        let persistence = memory_debug_authority();
+        ComponentManifest {
+            listeners: Vec::new(),
+            id: ComponentId::parse("fixture.memory-debug").unwrap(),
+            owner: PluginId::parse("fixture.memory-debug").unwrap(),
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: InterfaceId::parse("fixture.memory-debug@1").unwrap(),
+                schema: InterfaceSchema::of::<MemoryDebugRequest, MemoryDebugResponse>(),
+                priority: 100,
+                required_authority: persistence.clone(),
+            }],
+            maximum_authority: persistence,
+        }
+    }
+
+    fn memory_debug_trigger() -> ComponentEntryTrigger {
+        ComponentEntryTrigger {
+            component: ComponentId::parse("fixture.memory-debug").unwrap(),
+            interface: InterfaceId::parse("fixture.memory-debug@1").unwrap(),
+            trigger: EntryTriggerKind::ToolCall {
+                callable_id: CallableId::parse("memory.debug").unwrap(),
+                description: "Write or recall one durable memory fixture value".into(),
+            },
+            required_authority: memory_debug_authority(),
+        }
+    }
+
+    #[derive(Default)]
+    struct RuntimeOrchestrationModelState {
+        controller: Option<SessionId>,
+        initial_generation: Option<String>,
+        trial_request: Option<PhenixValue>,
+    }
+
+    struct RuntimeOrchestrationModel {
+        state: Arc<StdMutex<RuntimeOrchestrationModelState>>,
+    }
+
+    fn runtime_orchestration_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.runtime-orchestration-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    fn orchestration_result(
+        request: &ModelInferenceRequest,
+        turn_index: usize,
+    ) -> Result<&ModelToolResult, String> {
+        let turn = request
+            .continuation
+            .get(turn_index)
+            .ok_or_else(|| format!("missing orchestration tool turn {turn_index}"))?;
+        if turn.tool_results.len() != 1 {
+            return Err(format!(
+                "orchestration turn {turn_index} produced {} tool results",
+                turn.tool_results.len()
+            ));
+        }
+        let result = &turn.tool_results[0];
+        if result.is_error {
+            return Err(format!(
+                "orchestration tool {} failed: {:?}",
+                result.callable_id, result.output
+            ));
+        }
+        Ok(result)
+    }
+
+    fn orchestration_string_field(
+        request: &ModelInferenceRequest,
+        turn_index: usize,
+        key: &str,
+    ) -> Result<String, String> {
+        let result = orchestration_result(request, turn_index)?;
+        let PhenixValue::Map(fields) = &result.output else {
+            return Err(format!(
+                "orchestration tool {} returned a non-map result",
+                result.callable_id
+            ));
+        };
+        match fields.get(key) {
+            Some(PhenixValue::String(value)) => Ok(value.clone()),
+            value => Err(format!(
+                "orchestration result field {key} is not a string: {value:?}"
+            )),
+        }
+    }
+
+    fn orchestration_operation_call(
+        call_id: &str,
+        callable_id: &str,
+        operation: &str,
+        arguments: BTreeMap<String, PhenixValue>,
+    ) -> ModelToolCall {
+        ModelToolCall {
+            call_id: call_id.into(),
+            callable_id: CallableId::parse(callable_id).unwrap(),
+            input: PhenixValue::Table(BTreeMap::from([
+                (
+                    Key::parse("operation").unwrap(),
+                    PhenixValue::String(operation.into()),
+                ),
+                (
+                    Key::parse("arguments").unwrap(),
+                    PhenixValue::Map(arguments),
+                ),
+            ])),
+        }
+    }
+
+    fn orchestration_response(
+        output: &str,
+        tool_calls: Vec<ModelToolCall>,
+    ) -> ModelInferenceResponse {
+        ModelInferenceResponse {
+            output: Bytes::new(output.as_bytes().to_vec()),
+            provider_metadata: BTreeMap::new(),
+            usage: Default::default(),
+            tool_calls,
+        }
+    }
+
+    impl RuntimeOrchestrationModel {
+        fn child_response(
+            &self,
+            request: &ModelInferenceRequest,
+        ) -> Result<ModelInferenceResponse, String> {
+            if !request
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "memory.debug")
+            {
+                return Err("selected child generation did not expose memory.debug".into());
+            }
+            let input = String::from_utf8_lossy(request.input.as_ref());
+            let write = input.contains("store Helios");
+            let read = input.contains("recall Helios");
+            if !write && !read {
+                return Err(format!(
+                    "unexpected child orchestration prompt: {}",
+                    input.trim()
+                ));
+            }
+            match request.continuation.as_slice() {
+                [] => {
+                    let tool_request = MemoryDebugRequest {
+                        operation: if write { "write" } else { "read" }.into(),
+                        value: write.then(|| "Helios".to_owned()),
+                    };
+                    Ok(orchestration_response(
+                        if write { "store durable memory" } else { "recall durable memory" },
+                        vec![ModelToolCall {
+                            call_id: if write {
+                                "memory-debug-write"
+                            } else {
+                                "memory-debug-read"
+                            }
+                            .into(),
+                            callable_id: CallableId::parse("memory.debug").unwrap(),
+                            input: tool_request.to_value(),
+                        }],
+                    ))
+                }
+                [turn] => {
+                    if turn.tool_results.len() != 1 || turn.tool_results[0].is_error {
+                        return Err("memory.debug child tool call failed".into());
+                    }
+                    let response = MemoryDebugResponse::from_value(&turn.tool_results[0].output)
+                        .map_err(|error| error.to_string())?;
+                    if response.value.as_deref() != Some("Helios") {
+                        return Err(format!(
+                            "memory.debug returned unexpected value: {:?}",
+                            response.value
+                        ));
+                    }
+                    Ok(orchestration_response(
+                        if write { "stored Helios" } else { "Helios" },
+                        Vec::new(),
+                    ))
+                }
+                turns => Err(format!(
+                    "child orchestration received {} continuation turns",
+                    turns.len()
+                )),
+            }
+        }
+
+        fn controller_response(
+            &self,
+            request: &ModelInferenceRequest,
+            initial_generation: &str,
+            trial_request: PhenixValue,
+        ) -> Result<ModelInferenceResponse, String> {
+            let g2 = || orchestration_string_field(request, 0, "generation");
+            match request.continuation.len() {
+                0 => {
+                    if request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.id.as_str() == "memory.debug")
+                    {
+                        return Err("controller G1 unexpectedly exposed memory.debug".into());
+                    }
+                    for tool in ["phenix.plugin", "phenix.session", "phenix.inspect"] {
+                        if !request.tools.iter().any(|candidate| candidate.id.as_str() == tool) {
+                            return Err(format!("controller did not receive {tool}"));
+                        }
+                    }
+                    Ok(orchestration_response(
+                        "stage the changed memory plugin",
+                        vec![orchestration_operation_call(
+                            "orchestration-trial",
+                            "phenix.plugin",
+                            "trial",
+                            BTreeMap::from([("request".into(), trial_request)]),
+                        )],
+                    ))
+                }
+                1 => Ok(orchestration_response(
+                    "create writer session",
+                    vec![orchestration_operation_call(
+                        "orchestration-create-writer",
+                        "phenix.session",
+                        "create",
+                        BTreeMap::from([
+                            (
+                                "working_directory".into(),
+                                PhenixValue::String("/workspace".into()),
+                            ),
+                            ("title".into(), PhenixValue::String("writer".into())),
+                        ]),
+                    )],
+                )),
+                2 => {
+                    let writer = SessionInfo::from_value(
+                        &orchestration_result(request, 1)?.output,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(orchestration_response(
+                        "write memory through G2",
+                        vec![orchestration_operation_call(
+                            "orchestration-prompt-writer",
+                            "phenix.session",
+                            "prompt",
+                            BTreeMap::from([
+                                (
+                                    "session_id".into(),
+                                    PhenixValue::String(writer.session_id.to_string()),
+                                ),
+                                (
+                                    "text".into(),
+                                    PhenixValue::String("store Helios".into()),
+                                ),
+                                ("generation".into(), PhenixValue::String(g2()?)),
+                            ]),
+                        )],
+                    ))
+                }
+                3 => Ok(orchestration_response(
+                    "create reader session",
+                    vec![orchestration_operation_call(
+                        "orchestration-create-reader",
+                        "phenix.session",
+                        "create",
+                        BTreeMap::from([
+                            (
+                                "working_directory".into(),
+                                PhenixValue::String("/workspace".into()),
+                            ),
+                            ("title".into(), PhenixValue::String("reader".into())),
+                        ]),
+                    )],
+                )),
+                4 => {
+                    let reader = SessionInfo::from_value(
+                        &orchestration_result(request, 3)?.output,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(orchestration_response(
+                        "recall memory through independent G2 session",
+                        vec![orchestration_operation_call(
+                            "orchestration-prompt-reader",
+                            "phenix.session",
+                            "prompt",
+                            BTreeMap::from([
+                                (
+                                    "session_id".into(),
+                                    PhenixValue::String(reader.session_id.to_string()),
+                                ),
+                                (
+                                    "text".into(),
+                                    PhenixValue::String("recall Helios".into()),
+                                ),
+                                ("generation".into(), PhenixValue::String(g2()?)),
+                            ]),
+                        )],
+                    ))
+                }
+                5 => {
+                    let result = orchestration_result(request, 4)?;
+                    let PhenixValue::Map(fields) = &result.output else {
+                        return Err("reader prompt returned a non-map result".into());
+                    };
+                    if fields.get("assistant_message")
+                        != Some(&PhenixValue::String("Helios".into()))
+                    {
+                        return Err(format!(
+                            "reader did not recall Helios: {:?}",
+                            fields.get("assistant_message")
+                        ));
+                    }
+                    let Some(PhenixValue::String(execution_id)) = fields.get("execution_id") else {
+                        return Err("reader prompt did not return an execution id".into());
+                    };
+                    Ok(orchestration_response(
+                        "inspect the child execution",
+                        vec![ModelToolCall {
+                            call_id: "orchestration-inspect-child".into(),
+                            callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                            input: PhenixValue::Table(BTreeMap::from([(
+                                Key::parse("query").unwrap(),
+                                PhenixValue::String(format!("execution {execution_id}")),
+                            )])),
+                        }],
+                    ))
+                }
+                6 => {
+                    orchestration_result(request, 5)?;
+                    Ok(orchestration_response(
+                        "promote G2",
+                        vec![orchestration_operation_call(
+                            "orchestration-promote",
+                            "phenix.plugin",
+                            "promote",
+                            BTreeMap::from([(
+                                "generation".into(),
+                                PhenixValue::String(g2()?),
+                            )]),
+                        )],
+                    ))
+                }
+                7 => {
+                    let active = orchestration_string_field(request, 6, "active_generation")?;
+                    if active != g2()? {
+                        return Err(format!("promotion selected unexpected generation {active}"));
+                    }
+                    Ok(orchestration_response(
+                        "roll back to G1",
+                        vec![orchestration_operation_call(
+                            "orchestration-rollback",
+                            "phenix.plugin",
+                            "rollback",
+                            BTreeMap::from([(
+                                "generation".into(),
+                                PhenixValue::String(initial_generation.to_owned()),
+                            )]),
+                        )],
+                    ))
+                }
+                8 => {
+                    let active = orchestration_string_field(request, 7, "active_generation")?;
+                    if active != initial_generation {
+                        return Err(format!("rollback selected unexpected generation {active}"));
+                    }
+                    Ok(orchestration_response(
+                        "retire G2",
+                        vec![orchestration_operation_call(
+                            "orchestration-retire",
+                            "phenix.plugin",
+                            "retire",
+                            BTreeMap::from([(
+                                "generation".into(),
+                                PhenixValue::String(g2()?),
+                            )]),
+                        )],
+                    ))
+                }
+                9 => {
+                    let retired = orchestration_string_field(request, 8, "retired_generation")?;
+                    if retired != g2()? {
+                        return Err(format!("retired unexpected generation {retired}"));
+                    }
+                    Ok(orchestration_response(
+                        "inspect final generation state",
+                        vec![orchestration_operation_call(
+                            "orchestration-inspect-generations",
+                            "phenix.plugin",
+                            "inspect",
+                            BTreeMap::new(),
+                        )],
+                    ))
+                }
+                10 => {
+                    let active = orchestration_string_field(request, 9, "active_generation")?;
+                    if active != initial_generation {
+                        return Err(format!(
+                            "final active generation is {active}, expected {initial_generation}"
+                        ));
+                    }
+                    Ok(orchestration_response("orchestration complete", Vec::new()))
+                }
+                turns => Err(format!(
+                    "controller orchestration received {turns} continuation turns"
+                )),
+            }
+        }
+    }
+
+    impl PluginInstance for RuntimeOrchestrationModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!(
+                    "unsupported runtime-orchestration fixture service: {service}"
+                ));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            let (controller, initial_generation, trial_request) = {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
+                (
+                    state.controller.clone(),
+                    state.initial_generation.clone(),
+                    state.trial_request.clone(),
+                )
+            };
+            let controller = controller
+                .ok_or_else(|| "runtime orchestration controller is not configured".to_owned())?;
+            let response = if request.session_id.as_ref() == Some(&controller) {
+                self.controller_response(
+                    &request,
+                    initial_generation
+                        .as_deref()
+                        .ok_or_else(|| {
+                            "runtime orchestration initial generation is not configured".to_owned()
+                        })?,
+                    trial_request.ok_or_else(|| {
+                        "runtime orchestration trial request is not configured".to_owned()
+                    })?,
+                )?
+            } else {
+                self.child_response(&request)?
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
     fn cancellation_gate_model_manifest() -> PluginManifest {
         PluginManifest {
             id: PluginId::parse("fixture.cancellation-gate-model").unwrap(),
@@ -4956,6 +7433,130 @@ mod tests {
                 value: OptionValue::String(profile.id.to_string()),
             })
             .unwrap();
+    }
+
+    #[test]
+    fn model_tool_surface_tracks_the_selected_graph_generation() {
+        fn resolved(callable: Option<&str>) -> phenix_core::ResolvedHarness {
+            let plugin = PluginId::parse("fixture.generation-tools").unwrap();
+            let component = ComponentId::parse("fixture.generation-tools.component").unwrap();
+            let interface = InterfaceId::parse("fixture.generation-tools.echo@1").unwrap();
+            let schema = InterfaceSchema::of::<ApplicationShellToolRequest, WorkspaceResponse>();
+            let manifest = PluginManifest {
+                id: plugin.clone(),
+                version: 1,
+                execution: PluginExecution::Embedded,
+                dependencies: Vec::new(),
+                services: vec![ServiceContribution {
+                    role: ServiceRole::Terminal,
+                    service: ServiceId::parse(interface.as_str()).unwrap(),
+                    priority: 100,
+                    required_authority: Authority::default(),
+                }],
+                resource_namespaces: Vec::new(),
+                maximum_authority: Authority::default(),
+            };
+            let component_manifest = ComponentManifest {
+                listeners: Vec::new(),
+                id: component.clone(),
+                owner: plugin,
+                imports: Vec::new(),
+                exports: vec![ComponentExport {
+                    interface: interface.clone(),
+                    schema,
+                    priority: 100,
+                    required_authority: Authority::default(),
+                }],
+                maximum_authority: Authority::default(),
+            };
+            let triggers = callable
+                .into_iter()
+                .map(|callable_id| ComponentEntryTrigger {
+                    component: component.clone(),
+                    interface: interface.clone(),
+                    trigger: EntryTriggerKind::ToolCall {
+                        callable_id: CallableId::parse(callable_id).unwrap(),
+                        description: "Generation-local fixture tool".into(),
+                    },
+                    required_authority: Authority::default(),
+                })
+                .collect::<Vec<_>>();
+
+            phenix_core::ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+                [manifest],
+                [component_manifest],
+                [],
+                triggers,
+                [],
+                BTreeMap::new(),
+                &Authority::default(),
+            )
+            .unwrap()
+        }
+
+        let g1 = resolved(None);
+        let g2 = resolved(Some("fixture.g2-only"));
+        assert_ne!(g1.generation(), g2.generation());
+
+        let sdk = phenix_core::ResolvedSdkContributions::resolve(
+            &[],
+            &[],
+            Vec::<phenix_core::SdkContribution>::new(),
+        )
+        .unwrap();
+        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            &ObservableStore::default(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture-generation-tools-runtime").unwrap(),
+            CapabilityGenerationId::parse("fixture-generation-tools-capability-generation")
+                .unwrap(),
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-generation-tools-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-generation-tools-client-generation")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+        let session_id = SessionId::parse("session-generation-tools").unwrap();
+
+        let g1_surface =
+            application_model_tool_surface(&service, &session_id, &g1, &Authority::default())
+                .unwrap();
+        let g2_surface =
+            application_model_tool_surface(&service, &session_id, &g2, &Authority::default())
+                .unwrap();
+
+        assert!(!g1_surface
+            .tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "fixture.g2-only"));
+        assert!(g2_surface
+            .tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "fixture.g2-only"));
+        assert!(!g1_surface
+            .runtime_entry_triggers
+            .contains_key(&CallableId::parse("fixture.g2-only").unwrap()));
+        assert!(g2_surface
+            .runtime_entry_triggers
+            .contains_key(&CallableId::parse("fixture.g2-only").unwrap()));
+    }
+
+    #[test]
+    fn plugin_build_policy_requires_explicit_runtime_and_workspace_authority() {
+        let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
+        let build = CapabilityId::parse(RUNTIME_PLUGIN_BUILD_CAPABILITY).unwrap();
+        let read = CapabilityId::parse("workspace.read").unwrap();
+        let shell = CapabilityId::parse("workspace.shell").unwrap();
+        let write = CapabilityId::parse("workspace.write").unwrap();
+
+        assert!(policy.required_authority().permits(&build));
+        assert!(policy.build_authority().permits(&read));
+        assert!(policy.build_authority().permits(&shell));
+        assert!(!policy.build_authority().permits(&write));
     }
 
     #[test]
@@ -5205,6 +7806,427 @@ mod tests {
 
         drop(transport);
         worker_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn model_session_control_prompts_an_independent_session_and_continues() {
+        let child_target = Arc::new(StdMutex::new(None));
+        let model_target = Arc::clone(&child_target);
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(session_control_model_manifest(), move || {
+                Box::new(SessionControlModel {
+                    child: Arc::clone(&model_target),
+                })
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.session-control-model",
+            "fixture-session-control",
+            "session-control-orchestration-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.session-control-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-session-control-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-session-control-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 4,
+        ));
+
+        let controller = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("controller".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let child = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("child".into()),
+            },
+        )
+        .await
+        .unwrap();
+        *child_target.lock().unwrap() = Some(child.session_id.clone());
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: controller.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "drive the child session".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("controller orchestration must not deadlock")
+        .unwrap();
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+
+        let controller_snapshot = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: controller.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(controller_snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller observed child completion"
+            )
+        }));
+
+        let child_snapshot = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: child.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(child_snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "child session completed"
+            )
+        }));
+        assert!(child_snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Completed,
+                    },
+                    ..
+                }
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn model_can_trial_plugin_test_memory_across_sessions_and_roll_back() {
+        let namespace =
+            ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
+        let first_manifest = memory_debug_manifest(1, namespace.clone());
+        let second_manifest = memory_debug_manifest(2, namespace.clone());
+        let component = memory_debug_component();
+        let trial_request = PluginLoadRequest {
+            manifest: second_manifest.map_artifact(PluginArtifactInput::Ready),
+            components: vec![component.clone()],
+            entry_triggers: vec![memory_debug_trigger()],
+            expected_active_revision: None,
+        };
+        let trial_request =
+            PhenixValue::from(serde_json::to_value(&trial_request).unwrap());
+
+        let state = Arc::new(StdMutex::new(RuntimeOrchestrationModelState::default()));
+        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let namespace_for_factory = namespace.clone();
+        builder
+            .add_embedded(first_manifest.clone(), move || {
+                Box::new(MemoryDebugPlugin {
+                    namespace: namespace_for_factory.clone(),
+                })
+            })
+            .unwrap();
+        builder.add_durable_schema(DurableSchemaRegistration::new(
+            first_manifest.id.clone(),
+            DurableSchema::new(namespace, 1),
+        ));
+        builder.add_component(component);
+        let state_for_factory = Arc::clone(&state);
+        builder
+            .add_embedded(runtime_orchestration_model_manifest(), move || {
+                Box::new(RuntimeOrchestrationModel {
+                    state: Arc::clone(&state_for_factory),
+                })
+            })
+            .unwrap();
+
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        {
+            let mut state = state.lock().unwrap();
+            state.initial_generation = Some(harness.generation().as_str().to_owned());
+            state.trial_request = Some(trial_request);
+        }
+
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.runtime-orchestration-model",
+            "fixture-runtime-orchestration",
+            "runtime-orchestration-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.runtime-orchestration-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-runtime-orchestration-client").unwrap(),
+                CapabilityGenerationId::parse(
+                    "fixture-runtime-orchestration-client-generation",
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker, service, receiver, 4,
+        ));
+
+        let controller = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("controller".into()),
+            },
+        )
+        .await
+        .unwrap();
+        state.lock().unwrap().controller = Some(controller.session_id.clone());
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: controller.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "trial the changed memory plugin and verify it".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("runtime orchestration must not deadlock")
+        .unwrap();
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+
+        let snapshot = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: controller.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "orchestration complete"
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn parent_cancellation_propagates_to_a_pending_child_session_prompt() {
+        let worker = application_worker();
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_harness()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let capability_generation = {
+            let harness = worker.harness.lock();
+            CapabilityGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture.orchestration-cancel-runtime").unwrap(),
+            capability_generation,
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-orchestration-cancel-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-orchestration-cancel-client-generation")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let controller = SessionId::parse("session-controller").unwrap();
+        let child = SessionId::parse("session-child").unwrap();
+        let (root_generation, root_constraints) = {
+            let harness = worker.harness.lock();
+            let root = harness.root_execution_handle(&worker.authority);
+            (
+                root.generation()
+                    .cloned()
+                    .expect("application root has a generation"),
+                root.constraints().clone(),
+            )
+        };
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (progress_sender, _progress_receiver) =
+            mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        let (control_transport, mut control_receiver) = ChannelTransport::new(4);
+        let run = ApplicationAgentToolRun {
+            service,
+            control_transport,
+            harness: Arc::downgrade(&worker.harness),
+            session_id: controller,
+            execution_id: "execution-controller".into(),
+            root_generation: root_generation.clone(),
+            root_constraints: root_constraints.clone(),
+            permission_handler: None,
+            tools: Vec::new(),
+            runtime_entry_triggers: BTreeMap::new(),
+            cancellation: Arc::clone(&cancellation),
+            progress_sender,
+        };
+
+        let child_for_call = child.clone();
+        let generation_for_call = root_generation.clone();
+        let call = tokio::task::spawn_blocking(move || {
+            prompt_child_session(
+                &run,
+                child_for_call,
+                "wait for cancellation".into(),
+                generation_for_call,
+            )
+        });
+
+        let child_prompt = control_receiver
+            .recv()
+            .await
+            .expect("child prompt application invocation");
+        assert_eq!(child_prompt.operation.as_str(), Prompt::ID);
+        let prompt_root = child_prompt
+            .root
+            .as_ref()
+            .expect("child prompt selects the inherited root explicitly");
+        assert_eq!(prompt_root.generation, root_generation);
+        assert_eq!(prompt_root.constraints, root_constraints);
+        let prompt_input = PromptInput::from_value(&child_prompt.input).unwrap();
+        assert_eq!(prompt_input.session_id, child);
+
+        cancellation.store(true, Ordering::Release);
+
+        let child_cancel = tokio::time::timeout(Duration::from_secs(2), control_receiver.recv())
+            .await
+            .expect("parent cancellation must request child cancellation")
+            .expect("child cancel application invocation");
+        assert_eq!(child_cancel.operation.as_str(), Cancel::ID);
+        assert!(child_cancel.root.is_none());
+        let cancel_input = ApplicationSessionInput::from_value(&child_cancel.input).unwrap();
+        assert_eq!(cancel_input.session_id, child);
+        child_cancel.respond(Ok(Acknowledged {}.to_value()));
+
+        child_prompt.respond(Ok(PromptResult {
+            execution_id: "execution-child".into(),
+            stop_reason: StopReason::Cancelled,
+        }
+        .to_value()));
+
+        let child_resume = control_receiver
+            .recv()
+            .await
+            .expect("child terminal state is resumed after prompt completion");
+        assert_eq!(child_resume.operation.as_str(), ResumeSession::ID);
+        let resume_root = child_resume
+            .root
+            .as_ref()
+            .expect("child resume stays in the selected generation");
+        assert_eq!(resume_root.generation, root_generation);
+        assert_eq!(resume_root.constraints, root_constraints);
+        let resume_input = SessionResumeInput::from_value(&child_resume.input).unwrap();
+        assert_eq!(resume_input.session_id, child);
+        child_resume.respond(Ok(SessionSnapshot {
+            session: session("session-child", None),
+            through_sequence: 4,
+            updates: Vec::new(),
+        }
+        .to_value()));
+
+        let result = call.await.unwrap().unwrap();
+        let PhenixValue::Map(result) = result else {
+            panic!("child orchestration result must be structured");
+        };
+        assert_eq!(
+            result.get("execution_id"),
+            Some(&PhenixValue::String("execution-child".into()))
+        );
+        assert_eq!(
+            result.get("stop_reason"),
+            Some(&PhenixValue::String("cancelled".into()))
+        );
+        assert_eq!(result.get("through_sequence"), Some(&PhenixValue::U64(4)));
+        assert_eq!(
+            result.get("assistant_message"),
+            Some(&PhenixValue::Option(None))
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5502,7 +8524,7 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 8);
         assert_eq!(
             tools
                 .iter()
@@ -5511,6 +8533,8 @@ mod tests {
             vec![
                 "bash",
                 "phenix.inspect",
+                "phenix.plugin",
+                "phenix.session",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
@@ -5535,7 +8559,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 6);
+        assert_eq!(report.tools.len(), 8);
         assert_eq!(
             report
                 .tools
@@ -5545,6 +8569,8 @@ mod tests {
             vec![
                 "bash",
                 "phenix.inspect",
+                "phenix.plugin",
+                "phenix.session",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
@@ -5557,17 +8583,29 @@ mod tests {
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, mut progress_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
-        let adapter = {
+        let (adapter, root_generation, root_constraints) = {
             let harness = worker.harness.lock();
-            harness.application_agent_tools().clone()
+            let root = harness.root_execution_handle(&worker.authority);
+            (
+                harness.application_agent_tools().clone(),
+                root.generation()
+                    .cloned()
+                    .expect("default application root has a generation"),
+                root.constraints().clone(),
+            )
         };
+        let (control_transport, _control_receiver) = ChannelTransport::new(1);
         adapter
             .register(
                 execution_id.clone(),
                 ApplicationAgentToolRun {
                     service,
+                    control_transport,
+                    harness: Arc::downgrade(&worker.harness),
                     session_id: session_id.clone(),
                     execution_id: execution_id.clone(),
+                    root_generation,
+                    root_constraints,
                     permission_handler: None,
                     tools: tools.clone(),
                     runtime_entry_triggers: surface.runtime_entry_triggers.clone(),

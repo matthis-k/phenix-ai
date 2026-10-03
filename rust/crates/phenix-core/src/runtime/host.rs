@@ -27,6 +27,18 @@ impl<'a> PluginHost<'a> {
         &self.scope.authority
     }
 
+    /// Capture the current root constraints for an explicitly rooted child.
+    ///
+    /// Authority is the effective authority at this call site. Pinned bindings
+    /// are copied from the root scope so a child cannot silently change its host
+    /// execution world.
+    pub fn root_execution_constraints(&self) -> RootExecutionConstraints {
+        RootExecutionConstraints {
+            authority: self.scope.authority.clone(),
+            pinned_bindings: self.scope.pinned_bindings.as_ref().clone(),
+        }
+    }
+
     pub fn cancellation_token(&self) -> Option<&CallCancellationToken> {
         self.scope.cancellation.as_ref()
     }

@@ -1,8 +1,12 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentEntryTrigger, ComponentManifest, ConfigContribution,
-    DurableSchemaRegistration, GraphGenerationId, Kernel, KernelError, LayerPolicy,
-    PersistenceBackend, PluginExecution, PluginId, PluginInstance, PluginManifest, ResolvedHarness,
-    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
+    Authority, CapabilityId, ComponentEntryTrigger, ComponentId, ComponentManifest,
+    ConfigContribution, DurableSchemaRegistration, GraphGenerationId, GraphReconciler, InterfaceId,
+    Kernel, KernelError, LayerPolicy, LiveReconciliationError, PersistenceBackend, PluginBuildPlan,
+    PluginBuildReport, PluginExecution, PluginId, PluginInstance, PluginManagementContext,
+    PluginManagementError, PluginManagementRequest, PluginManifest, PluginTrialResult,
+    ReconciliationResult, ResolvedHarness, ResolvedHarnessActivation,
+    ResolvedHarnessActivationError, ResolvedHarnessError, RootExecutionConstraints,
+    RootExecutionHandle, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
@@ -115,6 +119,13 @@ pub fn default_suite_authority() -> Authority {
         CapabilityId::parse("workspace.write").expect("static capability"),
         CapabilityId::parse("workspace.shell").expect("static capability"),
         CapabilityId::parse("workspace.git").expect("static capability"),
+        CapabilityId::parse("application.session.control").expect("static capability"),
+        CapabilityId::parse("runtime.generation.select").expect("static capability"),
+        CapabilityId::parse("runtime.plugin.inspect").expect("static capability"),
+        CapabilityId::parse("runtime.plugin.build").expect("static capability"),
+        CapabilityId::parse("runtime.plugin.trial").expect("static capability"),
+        CapabilityId::parse("runtime.plugin.promote").expect("static capability"),
+        CapabilityId::parse("runtime.plugin.retire").expect("static capability"),
     ])
 }
 
@@ -557,9 +568,10 @@ impl HarnessBuilder {
         for (plugin, factory) in self.embedded_factories {
             kernel.register_embedded_factory(plugin, move || factory())?;
         }
+        let reconciler = GraphReconciler::new(resolved);
         Ok(PhenixHarness {
             kernel,
-            resolved,
+            reconciler,
             application_agent_tools,
         })
     }
@@ -567,7 +579,7 @@ impl HarnessBuilder {
 
 pub struct PhenixHarness {
     kernel: Kernel,
-    resolved: ResolvedHarness,
+    reconciler: GraphReconciler,
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
 
@@ -581,15 +593,104 @@ impl PhenixHarness {
     }
 
     pub fn component_graph(&self) -> &phenix_core::ResolvedComponentGraph {
-        self.resolved.component_graph()
+        self.reconciler.active().component_graph()
     }
 
     pub fn resolved_harness(&self) -> &ResolvedHarness {
-        &self.resolved
+        self.reconciler.active()
+    }
+
+    pub fn resolved_harness_in_generation(
+        &self,
+        generation: &GraphGenerationId,
+    ) -> Result<&ResolvedHarness, KernelError> {
+        if self.reconciler.active().generation() == generation {
+            return Ok(self.reconciler.active());
+        }
+        self.reconciler
+            .resident(generation)
+            .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))
     }
 
     pub fn generation(&self) -> &GraphGenerationId {
-        self.resolved.generation()
+        self.reconciler.active().generation()
+    }
+
+    pub fn resident_generations(&self) -> Vec<GraphGenerationId> {
+        self.kernel.resident_generation_ids()
+    }
+
+    pub fn capture_root_execution_constraints(
+        &self,
+        caller_authority: &Authority,
+        pinned_bindings: impl IntoIterator<Item = (ComponentId, InterfaceId)>,
+    ) -> Result<RootExecutionConstraints, KernelError> {
+        self.kernel
+            .capture_root_execution_constraints(caller_authority, pinned_bindings)
+    }
+
+    pub fn root_execution_handle(&self, caller_authority: &Authority) -> RootExecutionHandle {
+        self.kernel.root_execution_handle(caller_authority)
+    }
+
+    pub fn root_execution_handle_in_generation(
+        &self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<RootExecutionHandle, KernelError> {
+        self.kernel
+            .root_execution_handle_in_generation(generation, constraints)
+    }
+
+    pub fn build_plugin_artifact(
+        &self,
+        plan: PluginBuildPlan,
+        context: &mut PluginManagementContext<'_>,
+    ) -> Result<PluginBuildReport, PluginManagementError> {
+        GraphReconciler::build_artifact(plan, context)
+    }
+
+    pub fn trial_plugin_management(
+        &mut self,
+        request: PluginManagementRequest,
+        authority_ceiling: &Authority,
+        constraints: &RootExecutionConstraints,
+        context: &mut PluginManagementContext<'_>,
+    ) -> Result<PluginTrialResult, PluginManagementError> {
+        self.reconciler.trial_management(
+            &mut self.kernel,
+            request,
+            authority_ceiling,
+            constraints,
+            context,
+        )
+    }
+
+    pub fn make_candidate_resident(
+        &mut self,
+        candidate: ResolvedHarness,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<GraphGenerationId, LiveReconciliationError> {
+        self.reconciler
+            .make_candidate_resident_on_kernel(&mut self.kernel, candidate, constraints)
+    }
+
+    pub fn promote_resident(
+        &mut self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<ReconciliationResult, LiveReconciliationError> {
+        self.reconciler
+            .promote_resident_on_kernel(&mut self.kernel, generation, constraints)
+    }
+
+    pub fn retire_resident(
+        &mut self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<(), LiveReconciliationError> {
+        self.reconciler
+            .retire_resident_on_kernel(&mut self.kernel, generation, constraints)
     }
 
     pub fn activate(&mut self) -> Result<(), KernelError> {
@@ -605,7 +706,7 @@ impl PhenixHarness {
             .expect("kernel-only resolved Harness activates");
         Self {
             kernel,
-            resolved,
+            reconciler: GraphReconciler::new(resolved),
             application_agent_tools: application::ApplicationAgentToolRegistry::default(),
         }
     }
@@ -632,6 +733,18 @@ impl PhenixHarness {
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
         self.kernel.invoke(service, input, authority, binding)
+    }
+
+    pub fn invoke_in_generation(
+        &mut self,
+        generation: &GraphGenerationId,
+        service: &phenix_core::ServiceId,
+        input: &[u8],
+        constraints: &RootExecutionConstraints,
+        binding: Option<&PluginId>,
+    ) -> Result<Vec<u8>, KernelError> {
+        self.kernel
+            .invoke_in_generation(generation, service, input, constraints, binding)
     }
 }
 
@@ -899,6 +1012,86 @@ mod tests {
                 .invoke(&service, b"input", &Authority::default(), None)
                 .unwrap(),
             b"layer:terminal"
+        );
+    }
+
+    #[test]
+    fn harness_can_exercise_resident_generation_before_promotion() {
+        let service = service();
+        let active_plugin = plugin("fixture.active");
+        let trial_plugin = plugin("fixture.trial");
+        let mut builder = HarnessBuilder::new();
+        builder
+            .add_embedded(
+                service_manifest(
+                    active_plugin.as_str(),
+                    service.clone(),
+                    100,
+                    Authority::default(),
+                ),
+                || Box::new(Echo(b"active")),
+            )
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+
+        let active_generation = harness.generation().clone();
+        harness
+            .kernel_mut()
+            .register_embedded_factory(trial_plugin.clone(), || Box::new(Echo(b"trial")))
+            .unwrap();
+        let candidate = ResolvedHarness::resolve(
+            [service_manifest(
+                trial_plugin.as_str(),
+                service.clone(),
+                100,
+                Authority::default(),
+            )],
+            [],
+            [],
+            &Authority::default(),
+        )
+        .unwrap();
+        let trial_generation = candidate.generation().clone();
+        let constraints = harness
+            .capture_root_execution_constraints(&Authority::default(), [])
+            .unwrap();
+
+        harness
+            .make_candidate_resident(candidate, &constraints)
+            .unwrap();
+
+        assert_eq!(harness.generation(), &active_generation);
+        assert_eq!(
+            harness
+                .invoke(&service, b"input", &Authority::default(), None)
+                .unwrap(),
+            b"active"
+        );
+        assert_eq!(
+            harness
+                .invoke_in_generation(&trial_generation, &service, b"input", &constraints, None,)
+                .unwrap(),
+            b"trial"
+        );
+
+        harness
+            .promote_resident(&trial_generation, &constraints)
+            .unwrap();
+
+        assert_eq!(harness.generation(), &trial_generation);
+        assert_eq!(
+            harness
+                .invoke(&service, b"input", &Authority::default(), None)
+                .unwrap(),
+            b"trial"
+        );
+        assert!(harness.resident_generations().contains(&active_generation));
+        assert_eq!(
+            harness
+                .invoke_in_generation(&active_generation, &service, b"input", &constraints, None,)
+                .unwrap(),
+            b"active"
         );
     }
 

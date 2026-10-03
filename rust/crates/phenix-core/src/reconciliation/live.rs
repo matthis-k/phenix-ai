@@ -3,6 +3,10 @@ use crate::{
     PluginManifest, ReconciliationResult, ResolvedCompositionMetadata, ResolvedHarness,
     ResolvedHarnessActivationError, RootExecutionConstraints, ServiceId,
 };
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LiveReconciliationError {
@@ -29,6 +33,45 @@ pub enum LiveReconciliationError {
     MetadataPolicy(MetadataReconciliationError),
     Runtime(crate::KernelError),
 }
+
+impl Display for LiveReconciliationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoActiveGeneration => f.write_str("no active graph generation"),
+            Self::ActiveGenerationMismatch { kernel, reconciler } => write!(
+                f,
+                "active graph generation mismatch: kernel={}, reconciler={}",
+                kernel.as_str(),
+                reconciler.as_str()
+            ),
+            Self::KernelConfigurationMismatch {
+                kernel_plugins,
+                resolved_plugins,
+            } => write!(
+                f,
+                "kernel plugin set differs from resolved Harness: kernel={kernel_plugins:?}, resolved={resolved_plugins:?}"
+            ),
+            Self::KernelPluginManifestMismatch { plugin, .. } => {
+                write!(f, "kernel Plugin manifest differs from resolved Harness for {plugin}")
+            }
+            Self::KernelLayerPolicyMismatch { service, .. } => {
+                write!(f, "kernel layer policy differs from resolved Harness for {service}")
+            }
+            Self::ResidentGenerationsPresent(generations) => write!(
+                f,
+                "stable replacement requires no resident generations; found {:?}",
+                generations
+                    .iter()
+                    .map(GraphGenerationId::as_str)
+                    .collect::<Vec<_>>()
+            ),
+            Self::MetadataPolicy(error) => write!(f, "{error}"),
+            Self::Runtime(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl Error for LiveReconciliationError {}
 
 impl GraphReconciler {
     pub(crate) fn preflight_live_reconciliation(
