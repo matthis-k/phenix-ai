@@ -484,6 +484,13 @@ fn map_candidate_error(
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct ConcretePluginLoadRequest {
+    manifest: PluginManifest,
+    components: Vec<ComponentManifest>,
+    entry_triggers: Vec<ComponentEntryTrigger>,
+}
+
 fn apply_load(
     active: &ResolvedHarness,
     request: ConcretePluginLoadRequest,
