@@ -427,10 +427,12 @@ mod tests {
 
     #[test]
     fn absent_retry_configuration_disables_automatic_retries() {
-        let mut policy = policy();
-        policy.max_retries = None;
+        let mut retry_policy = policy();
+        retry_policy.max_retries = None;
 
-        let plan = policy().plan(&input(ContextDemand::default())).unwrap();
+        let plan = retry_policy
+            .plan(&input(ContextDemand::default()))
+            .unwrap();
 
         assert_eq!(plan.retry.max_attempts, 1);
         assert_eq!(plan.retry.reserved_attempts, 1);
