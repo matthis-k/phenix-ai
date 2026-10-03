@@ -1008,10 +1008,6 @@ impl ApplicationWorker {
         })
     }
 
-
-
-
-
     fn resolve_bool_option_on(
         &self,
         root: &RootExecutionHandle,
@@ -1131,7 +1127,6 @@ impl ApplicationWorker {
             })
             .collect()
     }
-
 
     fn prepare_execution_context_on(
         &self,
@@ -1257,7 +1252,6 @@ impl ApplicationWorker {
             line.trim_start().starts_with("description:") && line.contains("must always apply")
         }))
     }
-
 
     fn create_session(
         &mut self,
@@ -1435,7 +1429,6 @@ impl ApplicationWorker {
             }),
         }
     }
-
 
     fn append_session_change(
         &mut self,
@@ -4076,7 +4069,6 @@ fn complete_prompt_output_on(
         stop_reason: StopReason::EndTurn,
     })
 }
-
 
 fn ensure_session_projection_on(
     worker: &mut ApplicationWorker,
