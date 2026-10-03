@@ -1054,8 +1054,7 @@ mod tests {
         let active_generation = harness.generation().clone();
         harness
             .kernel_mut()
-            .register_embedded_factory(trial_plugin.clone(), || Box::new(Echo(b"trial")))
-            .unwrap();
+            .preload_embedded_factory(trial_plugin.clone(), || Box::new(Echo(b"trial")));
         let candidate = ResolvedHarness::resolve(
             [service_manifest(
                 trial_plugin.as_str(),

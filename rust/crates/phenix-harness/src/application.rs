@@ -7453,7 +7453,9 @@ mod tests {
                         return Err("reader prompt returned a non-map result".into());
                     };
                     if fields.get("assistant_message")
-                        != Some(&PhenixValue::String("Helios".into()))
+                        != Some(&PhenixValue::Option(Some(Box::new(PhenixValue::String(
+                            "Helios".into(),
+                        )))))
                     {
                         return Err(format!(
                             "reader did not recall Helios: {:?}",
