@@ -231,13 +231,14 @@ fn setup_root(kernel: &mut Kernel) {
 }
 
 fn setup_root_with_output(kernel: &mut Kernel, output_tokens: u64) {
-    setup_root_with_limits(kernel, 4_000, output_tokens, 4);
+    setup_root_with_limits(kernel, 4_000, output_tokens, Some(10_000), 4);
 }
 
 fn setup_root_with_limits(
     kernel: &mut Kernel,
     fresh_input_tokens: u64,
     output_tokens: u64,
+    cost_microunits: Option<u64>,
     attempts: u32,
 ) {
     let _: ExecutionResponse = invoke(
@@ -258,7 +259,7 @@ fn setup_root_with_limits(
                 limits: phenix_sdk::RootBudgetLimits {
                     fresh_input_tokens,
                     output_tokens,
-                    cost_microunits: Some(10_000),
+                    cost_microunits,
                     attempts,
                 },
                 reservations: BTreeMap::new(),
@@ -627,7 +628,13 @@ mod iterative_dispatch_retry {
     fn repeated_retryable_failures_use_policy_state_instead_of_call_stack() {
         let path = temp_db("iterative-dispatch-retry");
         let mut kernel = kernel(&path);
-        setup_root_with_limits(&mut kernel, 1_000_000, 1_000_000, 256);
+        setup_root_with_limits(
+            &mut kernel,
+            1_000_000,
+            1_000_000,
+            Some(1_000_000),
+            256,
+        );
         setup_routing(&mut kernel, true);
 
         let mut request = request(1_000);
