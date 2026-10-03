@@ -5727,6 +5727,14 @@ mod tests {
                                 if matches!(fields.get("event"), Some(PhenixValue::String(_)))
                         )
                     }));
+                    assert!(events.iter().any(|event| {
+                        matches!(
+                            event,
+                            PhenixValue::Map(fields)
+                                if fields.get("event")
+                                    == Some(&PhenixValue::String("service_invocation".into()))
+                        )
+                    }));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
