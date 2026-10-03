@@ -1933,12 +1933,7 @@ fn resolve_retry_route(
 
     let parent = attempts
         .get(anchor.parent_attempt_id)
-        .ok_or_else(|| {
-            format!(
-                "unknown planned retry parent: {}",
-                anchor.parent_attempt_id
-            )
-        })?;
+        .ok_or_else(|| format!("unknown planned retry parent: {}", anchor.parent_attempt_id))?;
     let parent_decision = parent
         .route
         .clone()
