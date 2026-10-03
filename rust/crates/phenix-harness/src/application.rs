@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
     ApplicationEvent, ApplicationInvocation, ChannelTransport, ClientCapabilityCallbacks,
-    ClientCapabilityIdentity, SdkApplicationService,
+    ClientCapabilityIdentity, SdkApplicationService, WeakChannelTransport,
 };
 use phenix_application_interface::{
     types::{
@@ -3609,6 +3609,9 @@ async fn serve_application_worker_with_execution_capacity(
     mut receiver: mpsc::Receiver<ApplicationInvocation>,
     execution_capacity: usize,
 ) {
+    let weak_control_transport = control_transport.downgrade();
+    drop(control_transport);
+
     let (execution_sender, mut execution_events) =
         mpsc::channel::<ExecutionWorkerEvent>(execution_capacity);
     let mut active = BTreeMap::<String, ActiveExecution>::new();
@@ -3625,7 +3628,7 @@ async fn serve_application_worker_with_execution_capacity(
                     &mut worker,
                     &service,
                     &execution_sender,
-                    &control_transport,
+                    &weak_control_transport,
                     &mut active,
                     invocation,
                 );
@@ -3646,7 +3649,7 @@ async fn serve_application_worker_with_execution_capacity(
                     &mut worker,
                     &service,
                     &execution_sender,
-                    &control_transport,
+                    &weak_control_transport,
                     &mut active,
                     invocation,
                 );
@@ -3699,7 +3702,7 @@ fn dispatch_application_invocation(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
     execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
-    control_transport: &ChannelTransport,
+    control_transport: &WeakChannelTransport,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
@@ -3735,7 +3738,7 @@ fn start_prompt(
     worker: &mut ApplicationWorker,
     service: &SdkApplicationService,
     execution_sender: &mpsc::Sender<ExecutionWorkerEvent>,
-    control_transport: &ChannelTransport,
+    control_transport: &WeakChannelTransport,
     active: &mut BTreeMap<String, ActiveExecution>,
     invocation: ApplicationInvocation,
 ) {
@@ -3756,6 +3759,14 @@ fn start_prompt(
         }));
         return;
     }
+
+    let application_control = match control_transport.upgrade() {
+        Some(transport) => transport,
+        None => {
+            invocation.respond(Err(ApplicationError::Disconnected));
+            return;
+        }
+    };
 
     let default_authority = if invocation.root.is_none() {
         match worker.application_root_authority(&request.session_id) {
@@ -3872,7 +3883,6 @@ fn start_prompt(
     let permission_handler = worker.interaction_handlers().permission.clone();
     let harness = Arc::downgrade(&worker.harness);
     let application_service = service.clone();
-    let application_control = control_transport.clone();
     let session_id = request.session_id;
     let execution_id = prompt.execution_id;
     let runtime_execution_id = execution_id.clone();
