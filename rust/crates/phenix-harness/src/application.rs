@@ -7335,11 +7335,12 @@ mod tests {
                         return Err("runtime trace returned a non-list result".into());
                     };
                     let expected_g2 = g2()?;
-                    let controller_session = request
-                        .session_id
-                        .as_ref()
-                        .map(ToString::to_string)
-                        .ok_or_else(|| "controller request has no session id".to_owned())?;
+                    let controller_session =
+                        request
+                            .session_id
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .ok_or_else(|| "controller request has no session id".to_owned())?;
                     let observed = events.iter().any(|event| {
                         session_control_field(event, "event")
                             == Some(&PhenixValue::String("orchestration".into()))
