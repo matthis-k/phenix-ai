@@ -64,7 +64,10 @@ impl PluginInstance for FixtureProvider {
         if request.input.as_ref() == b"provider-fails" {
             return Err("fixture provider failed after invocation".into());
         }
-        if request.input.as_ref() == b"provider-unavailable" && request.model.as_str() == "small" {
+        if request.input.as_ref() == b"provider-always-unavailable"
+            || (request.input.as_ref() == b"provider-unavailable"
+                && request.model.as_str() == "small")
+        {
             let failure = ModelInferenceFailure::Unavailable {
                 message: "fixture provider is temporarily unavailable".into(),
             };
@@ -228,6 +231,15 @@ fn setup_root(kernel: &mut Kernel) {
 }
 
 fn setup_root_with_output(kernel: &mut Kernel, output_tokens: u64) {
+    setup_root_with_limits(kernel, 4_000, output_tokens, 4);
+}
+
+fn setup_root_with_limits(
+    kernel: &mut Kernel,
+    fresh_input_tokens: u64,
+    output_tokens: u64,
+    attempts: u32,
+) {
     let _: ExecutionResponse = invoke(
         kernel,
         execution_service(),
@@ -244,10 +256,10 @@ fn setup_root_with_output(kernel: &mut Kernel, output_tokens: u64) {
             ledger: phenix_sdk::RootBudgetLedger {
                 root_execution_id: "root".into(),
                 limits: phenix_sdk::RootBudgetLimits {
-                    fresh_input_tokens: 4_000,
+                    fresh_input_tokens,
                     output_tokens,
                     cost_microunits: Some(10_000),
-                    attempts: 4,
+                    attempts,
                 },
                 reservations: BTreeMap::new(),
             },
@@ -604,6 +616,49 @@ mod automatic_dispatch_retry {
         assert_eq!(first.outcome, Some(AttemptOutcome::Failed));
         assert_eq!(first.route.as_ref().unwrap().target.model.as_str(), "small");
         assert_eq!(remaining(&mut kernel).attempts, 2);
+        let _ = fs::remove_file(path);
+    }
+}
+
+mod iterative_dispatch_retry {
+    use super::*;
+
+    #[test]
+    fn repeated_retryable_failures_use_policy_state_instead_of_call_stack() {
+        let path = temp_db("iterative-dispatch-retry");
+        let mut kernel = kernel(&path);
+        setup_root_with_limits(&mut kernel, 1_000_000, 1_000_000, 256);
+        setup_routing(&mut kernel, true);
+
+        let mut request = request(1_000);
+        request.input = b"provider-always-unavailable".to_vec().into();
+        request.policy.max_retries = Some(63);
+
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run { request },
+        )
+        .unwrap_err();
+        assert!(error.contains("fixture provider is temporarily unavailable"));
+
+        let attempts: StepAttemptResponse = invoke(
+            &mut kernel,
+            step_attempt_service(),
+            &StepAttemptCommand::ListRoot {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attempts { attempts } = attempts else {
+            panic!("expected root attempt list");
+        };
+        assert_eq!(attempts.len(), 64);
+        assert!(attempts.iter().all(|attempt| {
+            attempt.phase == StepAttemptPhase::Settled
+                && attempt.outcome == Some(AttemptOutcome::Failed)
+        }));
+
         let _ = fs::remove_file(path);
     }
 }
