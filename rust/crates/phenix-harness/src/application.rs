@@ -3866,8 +3866,7 @@ fn dispatch_application_invocation(
                     root.generation()
                 );
             }
-            let result =
-                worker.invoke_session_application_operation_on(&root, &operation, input);
+            let result = worker.invoke_session_application_operation_on(&root, &operation, input);
             if operation.as_str() == CreateSession::ID {
                 eprintln!(
                     "runtime-orchestration: worker create finished success={}",
