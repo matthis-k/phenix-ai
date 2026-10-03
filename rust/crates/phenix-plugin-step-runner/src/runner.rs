@@ -19,10 +19,10 @@ use phenix_sdk::{
     ModelRoutingInterface, PlannedStepRequest, ProjectionRevision, ReacquisitionUsage,
     ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingCandidate,
     RoutingEstimateMode, RoutingEvidence, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptRecord,
-    StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface, StepRunnerResponse,
-    StepSettlementBasis, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
-    UsageAttemptKind, UsageAttribution, UsagePlanningInput, UsagePolicy, WorkerTaskState,
+    StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface,
+    StepRunnerResponse, StepSettlementBasis, StepTransactionCommand, StepTransactionInterface,
+    StepTransactionResponse, UsageAttemptKind, UsageAttribution, UsagePlanningInput, UsagePolicy,
+    WorkerTaskState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1979,9 +1979,11 @@ fn has_untried_retry_route(
     profile_id: &phenix_core::RoutingProfileId,
     callable_id: Option<&phenix_core::CallableId>,
 ) -> Result<bool, String> {
-    Ok(!retry_route_state(context, anchor, profile_id, callable_id)?
-        .candidates
-        .is_empty())
+    Ok(
+        !retry_route_state(context, anchor, profile_id, callable_id)?
+            .candidates
+            .is_empty(),
+    )
 }
 
 fn resolve_retry_route(
