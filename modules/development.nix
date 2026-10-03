@@ -119,6 +119,7 @@
 
               # `phenix-binding-lua-load` covers the host-linked LuaJIT module.
               # Keep a deadlock guard, but leave enough room for a cold/shared CI runner.
+              # Uncaptured output identifies the current phenix-harness stack-overflow site.
               timeout --signal=KILL 900 \
                 cargo test --quiet --workspace --lib --bins --exclude phenix-binding-lua --locked -- --nocapture
             '';
