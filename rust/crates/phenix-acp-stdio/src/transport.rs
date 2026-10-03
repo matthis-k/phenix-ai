@@ -1278,11 +1278,13 @@ mod tests {
         let (transport, mut receiver) = ChannelTransport::new(1);
         let operation = ContractId::parse("phenix.application.prompt@1").unwrap();
         let expected_operation = operation.clone();
+        let (polled, observed_poll) = tokio::sync::oneshot::channel();
         let caller = tokio::task::spawn_blocking(move || {
             let mut pending = transport
                 .begin_blocking(&operation, PhenixValue::String("input".to_owned()))
                 .unwrap();
             assert_eq!(pending.try_recv().unwrap(), None);
+            let _ = polled.send(());
             loop {
                 if let Some(value) = pending.try_recv().unwrap() {
                     return value;
@@ -1294,6 +1296,7 @@ mod tests {
         let invocation = receiver.recv().await.unwrap();
         assert_eq!(invocation.operation, expected_operation);
         assert_eq!(invocation.input, PhenixValue::String("input".to_owned()));
+        observed_poll.await.unwrap();
         invocation.respond(Ok(PhenixValue::String("output".to_owned())));
 
         assert_eq!(
