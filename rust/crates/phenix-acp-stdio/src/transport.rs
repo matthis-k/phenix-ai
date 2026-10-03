@@ -1197,6 +1197,21 @@ mod tests {
         )
     }
 
+    #[test]
+    fn weak_channel_transport_does_not_keep_the_application_queue_open() {
+        let (transport, mut receiver) = ChannelTransport::new(1);
+        let weak = transport.downgrade();
+
+        assert!(weak.upgrade().is_some());
+        drop(transport);
+
+        assert!(weak.upgrade().is_none());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
     #[tokio::test]
     async fn channel_transport_preserves_typed_operation_and_response() {
         let (transport, mut receiver) = ChannelTransport::new(1);
