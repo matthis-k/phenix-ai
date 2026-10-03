@@ -19,7 +19,7 @@ pub enum ScheduledToolBatch {
     Exclusive(ToolCallPlan),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ToolScheduler {
     max_parallel_calls: Option<NonZeroUsize>,
 }
@@ -67,13 +67,6 @@ impl ToolScheduler {
     }
 }
 
-impl Default for ToolScheduler {
-    fn default() -> Self {
-        Self {
-            max_parallel_calls: None,
-        }
-    }
-}
 
 fn flush_parallel(batches: &mut Vec<ScheduledToolBatch>, parallel: &mut Vec<ToolCallPlan>) {
     if parallel.is_empty() {
