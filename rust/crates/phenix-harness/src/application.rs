@@ -3860,19 +3860,7 @@ fn dispatch_application_invocation(
     });
     let result = if let Some(root) = selected_root {
         root.and_then(|root| {
-            if operation.as_str() == CreateSession::ID {
-                eprintln!(
-                    "runtime-orchestration: worker dispatch create generation={:?}",
-                    root.generation()
-                );
-            }
             let result = worker.invoke_session_application_operation_on(&root, &operation, input);
-            if operation.as_str() == CreateSession::ID {
-                eprintln!(
-                    "runtime-orchestration: worker create finished success={}",
-                    result.is_ok()
-                );
-            }
             result
         })
     } else if is_sdk_operation(&operation) {
@@ -5729,10 +5717,6 @@ fn execute_application_session_control(
                 let working_directory =
                     session_control_required_string(arguments, "working_directory")?;
                 let title = session_control_optional_string(arguments, "title")?;
-                eprintln!(
-                    "runtime-orchestration: create send execution={} controller={}",
-                    run.execution_id, run.session_id
-                );
                 let response: SessionInfo = invoke_application_control(
                     run,
                     CreateSession::ID,
@@ -5741,10 +5725,6 @@ fn execute_application_session_control(
                         title,
                     },
                 )?;
-                eprintln!(
-                    "runtime-orchestration: create response execution={} created={}",
-                    run.execution_id, response.session_id
-                );
                 target_session = Some(response.session_id.clone());
                 Ok(response.to_value())
             }
@@ -7229,11 +7209,6 @@ mod tests {
             &self,
             request: &ModelInferenceRequest,
         ) -> Result<ModelInferenceResponse, String> {
-            eprintln!(
-                "runtime-orchestration: child turn {} session={:?}",
-                request.continuation.len(),
-                request.session_id
-            );
             if !request
                 .tools
                 .iter()
@@ -7304,11 +7279,6 @@ mod tests {
             initial_generation: &str,
             trial_request: PhenixValue,
         ) -> Result<ModelInferenceResponse, String> {
-            eprintln!(
-                "runtime-orchestration: controller turn {} session={:?}",
-                request.continuation.len(),
-                request.session_id
-            );
             let g2 = || orchestration_string_field(request, 0, "generation");
             let reader_prompt = || -> Result<(SessionId, String), String> {
                 let reader = SessionInfo::from_value(&orchestration_result(request, 3)?.output)
@@ -7391,10 +7361,6 @@ mod tests {
                 2 => {
                     let writer = SessionInfo::from_value(&orchestration_result(request, 1)?.output)
                         .map_err(|error| error.to_string())?;
-                    eprintln!(
-                        "runtime-orchestration: writer session={} controller={:?}",
-                        writer.session_id, request.session_id
-                    );
                     Ok(orchestration_response(
                         "write memory through G2",
                         vec![orchestration_operation_call(
@@ -7680,12 +7646,6 @@ mod tests {
                     .lock()
                     .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
                 state.controller_turn_one_entries += 1;
-                if state.controller_turn_one_entries == 2 {
-                    eprintln!(
-                        "runtime-orchestration: second controller turn 1 backtrace:\n{:?}",
-                        std::backtrace::Backtrace::force_capture()
-                    );
-                }
                 if state.controller_turn_one_entries > 2 {
                     return Err(format!(
                         "controller turn 1 re-entered {} times for session {:?}",
@@ -8419,7 +8379,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn model_can_trial_plugin_test_memory_across_sessions_and_roll_back() {
-        eprintln!("runtime-orchestration: test start");
         let namespace = ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
         let first_manifest = memory_debug_manifest(1, namespace.clone());
         let second_manifest = memory_debug_manifest(2, namespace.clone());
