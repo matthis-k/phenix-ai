@@ -1,5 +1,6 @@
 use crate::{
-    default_suite_authority, runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
+    default_application_root_authority, default_suite_authority,
+    runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
@@ -507,9 +508,16 @@ pub struct ApplicationWorker {
 
 impl ApplicationWorker {
     pub fn new(harness: PhenixHarness) -> Result<Self, ObservableError> {
+        Self::new_with_authority(harness, default_application_root_authority())
+    }
+
+    pub fn new_with_authority(
+        harness: PhenixHarness,
+        authority: Authority,
+    ) -> Result<Self, ObservableError> {
         Ok(Self {
             harness: Arc::new(Mutex::new(harness)),
-            authority: default_suite_authority(),
+            authority,
             projection: SessionProjectionStore::new()?,
             interaction_handlers: InteractionHandlers {
                 permission: None,
@@ -7543,7 +7551,8 @@ mod tests {
             .unwrap();
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
-        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let mut worker =
+            ApplicationWorker::new_with_authority(harness, default_suite_authority()).unwrap();
         configure_fixture_routing(
             &mut worker,
             "fixture.session-control-model",
@@ -7718,7 +7727,8 @@ mod tests {
             state.trial_request = Some(trial_request);
         }
 
-        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let mut worker =
+            ApplicationWorker::new_with_authority(harness, default_suite_authority()).unwrap();
         configure_fixture_routing(
             &mut worker,
             "fixture.runtime-orchestration-model",
@@ -9214,7 +9224,7 @@ mod tests {
     }
 
     #[test]
-    fn default_application_root_execution_inherits_runtime_authority() {
+    fn default_application_root_execution_keeps_orchestration_opt_in() {
         let mut worker = application_worker();
         let execution_id = worker.allocate_root_execution().unwrap();
         let response = worker
@@ -9229,7 +9239,7 @@ mod tests {
             panic!("allocated application execution must be queryable");
         };
 
-        let expected = default_suite_authority()
+        let expected = default_application_root_authority()
             .capabilities()
             .map(|capability| capability.as_str().to_owned())
             .collect::<std::collections::BTreeSet<_>>();
@@ -9245,6 +9255,24 @@ mod tests {
                 "default application execution is missing {capability}"
             );
         }
+        for capability in [
+            APPLICATION_SESSION_CONTROL_CAPABILITY,
+            RUNTIME_GENERATION_SELECT_CAPABILITY,
+            RUNTIME_PLUGIN_INSPECT_CAPABILITY,
+            RUNTIME_PLUGIN_BUILD_CAPABILITY,
+            RUNTIME_PLUGIN_TRIAL_CAPABILITY,
+            RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
+            RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+        ] {
+            assert!(
+                !execution.authority.capabilities.contains(capability),
+                "default application execution unexpectedly grants {capability}"
+            );
+        }
+
+        let host_tools = host_model_tools(&default_application_root_authority());
+        assert!(!host_tools.iter().any(|tool| tool.id.as_str() == "phenix.session"));
+        assert!(!host_tools.iter().any(|tool| tool.id.as_str() == "phenix.plugin"));
     }
 
     #[test]
