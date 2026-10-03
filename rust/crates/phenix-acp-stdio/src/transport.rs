@@ -171,6 +171,47 @@ impl WeakChannelTransport {
             .upgrade()
             .map(|sender| ChannelTransport { sender })
     }
+
+    pub fn begin_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        self.upgrade()
+            .ok_or(ApplicationError::Disconnected)?
+            .begin_blocking(operation, input)
+    }
+
+    pub fn begin_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        self.upgrade()
+            .ok_or(ApplicationError::Disconnected)?
+            .begin_blocking_in_generation(operation, input, generation, constraints)
+    }
+
+    pub fn invoke_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking(operation, input)?.blocking_recv()
+    }
+
+    pub fn invoke_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking_in_generation(operation, input, generation, constraints)?
+            .blocking_recv()
+    }
 }
 
 impl ChannelTransport {
