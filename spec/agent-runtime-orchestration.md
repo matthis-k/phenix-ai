@@ -5,6 +5,7 @@ coverage:
   - rust/crates/phenix-harness/src/application.rs
   - rust/crates/phenix-acp-stdio/src/transport.rs
   - rust/crates/phenix-core/src/runtime/residency.rs
+  - rust/crates/phenix-core/src/runtime/trace.rs
   - rust/crates/phenix-core/src/plugin_management_regression.rs
   - rust/crates/phenix-core/src/plugin_build_loading_regression.rs
 depends_on:
@@ -18,7 +19,7 @@ depends_on:
 
 Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident Harness generation before promotion.
 
-The target workflow is:
+The supported workflow is:
 
 ```text
 controller session S0 on generation G1
@@ -54,7 +55,7 @@ Phenix already owns most required semantics:
 | authority attenuation | `Authority` and `RootExecutionConstraints` |
 | runtime inspection | `phenix.inspect` |
 
-The missing part is composition. A model execution cannot yet request these operations as one authorized development workflow.
+The composition layer exposes these operations to an authorized model execution as one development workflow, while keeping session ownership in the application layer and generation ownership in Core.
 
 ## Decisions
 
@@ -502,22 +503,11 @@ Detached child sessions can be added later as an explicit operation. They should
 
 ## Observability
 
-Every orchestration action should carry:
+Orchestration actions emit metadata-only `RuntimeTraceEvent::Orchestration` records carrying the controller session and execution, operation kind, target session when present, child execution when present, selected graph generation, target Plugin generation when relevant, success, and an error descriptor on failure.
 
-```text
-controller session
-controller execution
-target session
-child execution
-selected graph generation
-Plugin generation transition when relevant
-```
+Execution inspection remains generation-aware. The orchestration trace uses the existing runtime diagnostic stream rather than creating another log format.
 
-Execution inspection remains generation-aware.
-
-Add orchestration records to structured runtime diagnostics rather than creating another log format.
-
-The parent tool result should include enough stable IDs for `phenix.inspect` to continue the investigation.
+Parent tool results include stable session, execution, and generation identifiers where the operation produces them so `phenix.inspect` can continue the investigation.
 
 ## Public application API
 
@@ -525,13 +515,13 @@ The external application API remains compatible.
 
 Existing `Prompt` continues to mean "prompt this session using the default application root policy."
 
-Generation selection is initially an agent-development operation. If external clients later need explicit resident-generation selection, add a typed application operation that reuses the same internal root request.
+Generation selection is an agent-development operation. External application clients continue to use the default application root policy. A future public generation-selection operation, if needed, must reuse the same internal root request rather than introducing a second dispatch path.
 
 Do not overload a durable Session record with a generation field.
 
 ## Acceptance tests
 
-The feature is complete when automated tests prove:
+Regression coverage proves:
 
 - S0 can create S1 while S0 has an active execution.
 - S0 can synchronously prompt S1 and receive the terminal result.
