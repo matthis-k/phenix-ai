@@ -36,15 +36,15 @@ use phenix_core::{
     GraphGenerationId, GraphReconciler, HasPhenixSchema, InterfaceId, InterfaceSchema, Key,
     LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
-    PhenixValue, PluginArtifact, PluginArtifactStore, PluginArtifactStoreError,
-    PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure,
-    PluginArtifactInput, PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext,
+    PhenixValue, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
+    PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor,
+    PluginBuildFailure, PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
     PluginManagementContext, PluginManagementPolicy, PluginManagementRequest, PluginManifest,
     Project, ReconciliationPreview, RootExecutionConstraints, RootExecutionHandle,
-    RoutingProfileId, RuntimeId, SdkClient,
-    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
-    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
+    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
+    ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -4928,45 +4928,44 @@ fn runtime_reconciliation_preview_value(preview: &ReconciliationPreview) -> Phen
             ]))
         })
         .collect();
-    let bindings = preview
-        .diff
-        .bindings
-        .iter()
-        .map(|change| {
-            PhenixValue::Map(BTreeMap::from([
-                (
-                    "importer".to_owned(),
-                    PhenixValue::String(change.importer.to_string()),
-                ),
-                (
-                    "interface".to_owned(),
-                    PhenixValue::String(change.interface.to_string()),
-                ),
-                (
-                    "previous_provider".to_owned(),
-                    PhenixValue::Option(
-                        change
-                            .previous_provider
-                            .as_ref()
-                            .map(|provider| Box::new(PhenixValue::String(provider.to_string()))),
+    let bindings =
+        preview
+            .diff
+            .bindings
+            .iter()
+            .map(|change| {
+                PhenixValue::Map(BTreeMap::from([
+                    (
+                        "importer".to_owned(),
+                        PhenixValue::String(change.importer.to_string()),
                     ),
-                ),
-                (
-                    "next_provider".to_owned(),
-                    PhenixValue::Option(
-                        change
-                            .next_provider
-                            .as_ref()
-                            .map(|provider| Box::new(PhenixValue::String(provider.to_string()))),
+                    (
+                        "interface".to_owned(),
+                        PhenixValue::String(change.interface.to_string()),
                     ),
-                ),
-                (
-                    "authority_changed".to_owned(),
-                    PhenixValue::Bool(change.authority_changed),
-                ),
-            ]))
-        })
-        .collect();
+                    (
+                        "previous_provider".to_owned(),
+                        PhenixValue::Option(
+                            change.previous_provider.as_ref().map(|provider| {
+                                Box::new(PhenixValue::String(provider.to_string()))
+                            }),
+                        ),
+                    ),
+                    (
+                        "next_provider".to_owned(),
+                        PhenixValue::Option(
+                            change.next_provider.as_ref().map(|provider| {
+                                Box::new(PhenixValue::String(provider.to_string()))
+                            }),
+                        ),
+                    ),
+                    (
+                        "authority_changed".to_owned(),
+                        PhenixValue::Bool(change.authority_changed),
+                    ),
+                ]))
+            })
+            .collect();
     let interposition = preview
         .diff
         .interposition
@@ -5028,10 +5027,7 @@ fn runtime_reconciliation_preview_value(preview: &ReconciliationPreview) -> Phen
         ),
         ("components".to_owned(), PhenixValue::List(components)),
         ("bindings".to_owned(), PhenixValue::List(bindings)),
-        (
-            "interposition".to_owned(),
-            PhenixValue::List(interposition),
-        ),
+        ("interposition".to_owned(), PhenixValue::List(interposition)),
         ("resources".to_owned(), PhenixValue::List(resources)),
     ]))
 }
@@ -7347,9 +7343,7 @@ mod tests {
                     let Some(PhenixValue::Map(diff)) = fields.get("diff") else {
                         return Err("plugin trial did not expose its reconciliation diff".into());
                     };
-                    if diff.get("candidate_generation")
-                        != Some(&PhenixValue::String(g2()?))
-                    {
+                    if diff.get("candidate_generation") != Some(&PhenixValue::String(g2()?)) {
                         return Err(format!(
                             "plugin trial diff returned unexpected candidate generation: {:?}",
                             diff.get("candidate_generation")
