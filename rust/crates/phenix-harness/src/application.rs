@@ -6860,8 +6860,7 @@ mod tests {
                         .map_err(|error| error.to_string())?;
                     eprintln!(
                         "runtime-orchestration: writer session={} controller={:?}",
-                        writer.session_id,
-                        request.session_id
+                        writer.session_id, request.session_id
                     );
                     Ok(orchestration_response(
                         "write memory through G2",
