@@ -4915,10 +4915,10 @@ where
         session_control_field(arguments, key).ok_or_else(|| ApplicationError::InvalidInput {
             message: format!("phenix.plugin argument {key} is required"),
         })?;
-    let encoded = serde_json::to_vec(value).map_err(|error| ApplicationError::InvalidInput {
-        message: format!("failed to encode phenix.plugin argument {key}: {error}"),
+    let json = serde_json::Value::from_value(value).map_err(|error| ApplicationError::InvalidInput {
+        message: format!("phenix.plugin argument {key} is not JSON-compatible: {error}"),
     })?;
-    serde_json::from_slice(&encoded).map_err(|error| ApplicationError::InvalidInput {
+    serde_json::from_value(json).map_err(|error| ApplicationError::InvalidInput {
         message: format!("invalid phenix.plugin argument {key}: {error}"),
     })
 }
