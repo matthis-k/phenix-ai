@@ -38,10 +38,11 @@ use phenix_core::{
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
     PhenixValue, PluginArtifact, PluginArtifactStore, PluginArtifactStoreError,
     PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure,
-    PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext,
-    PluginManagementPolicy, PluginManagementRequest, PluginManifest, Project,
-    RootExecutionConstraints, RootExecutionHandle, RoutingProfileId, RuntimeId, SdkClient,
+    PluginArtifactInput, PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
+    PluginManagementContext, PluginManagementPolicy, PluginManagementRequest, PluginManifest,
+    Project, ReconciliationPreview, RootExecutionConstraints, RootExecutionHandle,
+    RoutingProfileId, RuntimeId, SdkClient,
     ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
@@ -4909,6 +4910,132 @@ where
     })
 }
 
+fn runtime_reconciliation_preview_value(preview: &ReconciliationPreview) -> PhenixValue {
+    let components = preview
+        .diff
+        .components
+        .iter()
+        .map(|change| {
+            PhenixValue::Map(BTreeMap::from([
+                (
+                    "component".to_owned(),
+                    PhenixValue::String(change.component.to_string()),
+                ),
+                (
+                    "kind".to_owned(),
+                    PhenixValue::String(format!("{:?}", change.kind).to_ascii_lowercase()),
+                ),
+            ]))
+        })
+        .collect();
+    let bindings = preview
+        .diff
+        .bindings
+        .iter()
+        .map(|change| {
+            PhenixValue::Map(BTreeMap::from([
+                (
+                    "importer".to_owned(),
+                    PhenixValue::String(change.importer.to_string()),
+                ),
+                (
+                    "interface".to_owned(),
+                    PhenixValue::String(change.interface.to_string()),
+                ),
+                (
+                    "previous_provider".to_owned(),
+                    PhenixValue::Option(
+                        change
+                            .previous_provider
+                            .as_ref()
+                            .map(|provider| Box::new(PhenixValue::String(provider.to_string()))),
+                    ),
+                ),
+                (
+                    "next_provider".to_owned(),
+                    PhenixValue::Option(
+                        change
+                            .next_provider
+                            .as_ref()
+                            .map(|provider| Box::new(PhenixValue::String(provider.to_string()))),
+                    ),
+                ),
+                (
+                    "authority_changed".to_owned(),
+                    PhenixValue::Bool(change.authority_changed),
+                ),
+            ]))
+        })
+        .collect();
+    let interposition = preview
+        .diff
+        .interposition
+        .iter()
+        .map(|change| {
+            PhenixValue::Map(BTreeMap::from([
+                (
+                    "service".to_owned(),
+                    PhenixValue::String(change.service.to_string()),
+                ),
+                (
+                    "previous_layers".to_owned(),
+                    PhenixValue::U64(change.previous.len() as u64),
+                ),
+                (
+                    "next_layers".to_owned(),
+                    PhenixValue::U64(change.next.len() as u64),
+                ),
+            ]))
+        })
+        .collect();
+    let resources = preview
+        .diff
+        .resources
+        .iter()
+        .map(|change| {
+            PhenixValue::Map(BTreeMap::from([
+                (
+                    "resource".to_owned(),
+                    PhenixValue::String(change.resource.clone()),
+                ),
+                (
+                    "kind".to_owned(),
+                    PhenixValue::String(format!("{:?}", change.kind).to_ascii_lowercase()),
+                ),
+                (
+                    "invalidation_targets".to_owned(),
+                    PhenixValue::List(
+                        change
+                            .invalidation_targets
+                            .iter()
+                            .cloned()
+                            .map(PhenixValue::String)
+                            .collect(),
+                    ),
+                ),
+            ]))
+        })
+        .collect();
+
+    PhenixValue::Map(BTreeMap::from([
+        (
+            "active_generation".to_owned(),
+            PhenixValue::String(preview.active_generation.as_str().to_owned()),
+        ),
+        (
+            "candidate_generation".to_owned(),
+            PhenixValue::String(preview.candidate_generation.as_str().to_owned()),
+        ),
+        ("components".to_owned(), PhenixValue::List(components)),
+        ("bindings".to_owned(), PhenixValue::List(bindings)),
+        (
+            "interposition".to_owned(),
+            PhenixValue::List(interposition),
+        ),
+        ("resources".to_owned(), PhenixValue::List(resources)),
+    ]))
+}
+
 fn runtime_plugin_build_report_value(report: &PluginBuildReport) -> PhenixValue {
     PhenixValue::Map(BTreeMap::from([
         (
@@ -5299,6 +5426,18 @@ fn execute_runtime_plugin_control(
                 )?;
                 let request: PluginLoadRequest =
                     runtime_plugin_typed_argument(arguments, "request")?;
+                let plugin = request.manifest.id.clone();
+                let ready_artifact_revision = match &request.manifest.execution {
+                    PluginExecution::Runtime {
+                        artifact: PluginArtifactInput::Ready(artifact),
+                        ..
+                    } => Some(artifact.revision.as_ref().to_owned()),
+                    PluginExecution::Embedded | PluginExecution::ResourceOnly
+                    | PluginExecution::Runtime {
+                        artifact: PluginArtifactInput::Build(_),
+                        ..
+                    } => None,
+                };
                 let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_CAPABILITY);
                 let mut store = WorkspacePluginArtifactStore {
                     context,
@@ -5323,10 +5462,30 @@ fn execute_runtime_plugin_control(
                         message: error.to_string(),
                     })?;
                 target_generation = Some(result.generation.clone());
+                let artifact_revision = result
+                    .build
+                    .as_ref()
+                    .map(|report| report.artifact.revision.as_ref().to_owned())
+                    .or(ready_artifact_revision);
                 Ok(PhenixValue::Map(BTreeMap::from([
                     (
                         "generation".to_owned(),
                         PhenixValue::String(result.generation.as_str().to_owned()),
+                    ),
+                    (
+                        "plugin".to_owned(),
+                        PhenixValue::String(plugin.to_string()),
+                    ),
+                    (
+                        "artifact_revision".to_owned(),
+                        PhenixValue::Option(
+                            artifact_revision
+                                .map(|revision| Box::new(PhenixValue::String(revision))),
+                        ),
+                    ),
+                    (
+                        "diff".to_owned(),
+                        runtime_reconciliation_preview_value(&result.preview),
                     ),
                     (
                         "build".to_owned(),
@@ -7172,21 +7331,46 @@ mod tests {
                         )],
                     ))
                 }
-                1 => Ok(orchestration_response(
-                    "create writer session",
-                    vec![orchestration_operation_call(
-                        "orchestration-create-writer",
-                        "phenix.session",
-                        "create",
-                        BTreeMap::from([
-                            (
-                                "working_directory".into(),
-                                PhenixValue::String("/workspace".into()),
-                            ),
-                            ("title".into(), PhenixValue::String("writer".into())),
-                        ]),
-                    )],
-                )),
+                1 => {
+                    let trial = orchestration_result(request, 0)?;
+                    let PhenixValue::Map(fields) = &trial.output else {
+                        return Err("plugin trial returned a non-map result".into());
+                    };
+                    if fields.get("plugin")
+                        != Some(&PhenixValue::String("fixture.memory-debug".into()))
+                    {
+                        return Err(format!(
+                            "plugin trial returned unexpected plugin: {:?}",
+                            fields.get("plugin")
+                        ));
+                    }
+                    let Some(PhenixValue::Map(diff)) = fields.get("diff") else {
+                        return Err("plugin trial did not expose its reconciliation diff".into());
+                    };
+                    if diff.get("candidate_generation")
+                        != Some(&PhenixValue::String(g2()?))
+                    {
+                        return Err(format!(
+                            "plugin trial diff returned unexpected candidate generation: {:?}",
+                            diff.get("candidate_generation")
+                        ));
+                    }
+                    Ok(orchestration_response(
+                        "create writer session",
+                        vec![orchestration_operation_call(
+                            "orchestration-create-writer",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([
+                                (
+                                    "working_directory".into(),
+                                    PhenixValue::String("/workspace".into()),
+                                ),
+                                ("title".into(), PhenixValue::String("writer".into())),
+                            ]),
+                        )],
+                    ))
+                }
                 2 => {
                     let writer = SessionInfo::from_value(&orchestration_result(request, 1)?.output)
                         .map_err(|error| error.to_string())?;
