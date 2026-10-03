@@ -628,13 +628,7 @@ mod iterative_dispatch_retry {
     fn repeated_retryable_failures_use_policy_state_instead_of_call_stack() {
         let path = temp_db("iterative-dispatch-retry");
         let mut kernel = kernel(&path);
-        setup_root_with_limits(
-            &mut kernel,
-            1_000_000,
-            1_000_000,
-            Some(1_000_000),
-            256,
-        );
+        setup_root_with_limits(&mut kernel, 1_000_000, 1_000_000, Some(1_000_000), 256);
         setup_routing(&mut kernel, true);
 
         let mut request = request(1_000);
