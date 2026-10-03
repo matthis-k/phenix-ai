@@ -67,7 +67,6 @@ impl ToolScheduler {
     }
 }
 
-
 fn flush_parallel(batches: &mut Vec<ScheduledToolBatch>, parallel: &mut Vec<ToolCallPlan>) {
     if parallel.is_empty() {
         return;
