@@ -5200,143 +5200,204 @@ impl PluginArtifactStore for WorkspacePluginArtifactStore<'_, '_, '_> {
     }
 }
 
+fn record_runtime_orchestration(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    run: &ApplicationAgentToolRun,
+    kind: &str,
+    operation: &str,
+    target_session: Option<&SessionId>,
+    child_execution: Option<&str>,
+    selected_generation: &GraphGenerationId,
+    target_generation: Option<&GraphGenerationId>,
+    result: &Result<PhenixValue, ApplicationError>,
+) {
+    context
+        .kernel
+        .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+            controller_session: run.session_id.to_string(),
+            controller_execution: run.execution_id.clone(),
+            kind: kind.to_owned(),
+            operation: operation.to_owned(),
+            target_session: target_session.map(ToString::to_string),
+            child_execution: child_execution.map(str::to_owned),
+            selected_generation: selected_generation.as_str().to_owned(),
+            target_generation: target_generation
+                .map(|generation| generation.as_str().to_owned()),
+            success: result.is_ok(),
+            error: result.as_ref().err().map(|error| format!("{error:?}")),
+        });
+}
+
+fn orchestration_output_string(output: &PhenixValue, key: &str) -> Option<String> {
+    match output {
+        PhenixValue::Map(fields) => fields.get(key),
+        PhenixValue::Table(fields) => fields.get(key),
+        _ => None,
+    }
+    .and_then(|value| match value {
+        PhenixValue::String(value) => Some(value.clone()),
+        _ => None,
+    })
+}
+
 fn execute_runtime_plugin_control(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
     operation: &str,
     arguments: &PhenixValue,
 ) -> Result<PhenixValue, ApplicationError> {
-    let harness = run
-        .harness
-        .upgrade()
-        .ok_or(ApplicationError::Disconnected)?;
-    match operation {
-        "inspect" => {
-            require_runtime_plugin_capability(
-                context.call.authority,
-                RUNTIME_PLUGIN_INSPECT_CAPABILITY,
-            )?;
-            let harness = harness.lock();
-            runtime_plugin_inspection_value(&harness)
-        }
-        "build" => {
-            require_runtime_plugin_capability(
-                context.call.authority,
-                RUNTIME_PLUGIN_BUILD_CAPABILITY,
-            )?;
-            let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
-            let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
-            let mut store = WorkspacePluginArtifactStore {
-                context,
-                authority: context.call.authority,
-            };
-            let mut executor = WorkspacePluginBuildExecutor { context };
-            let mut management = PluginManagementContext {
-                caller_authority: context.call.authority,
-                policy: &policy,
-                artifact_store: &mut store,
-                build_executor: &mut executor,
-            };
-            let report = GraphReconciler::build_artifact(plan, &mut management).map_err(|error| {
-                ApplicationError::Failed {
-                    message: error.to_string(),
-                }
-            })?;
-            Ok(runtime_plugin_build_report_value(&report))
-        }
-        "trial" => {
-            require_runtime_plugin_capability(
-                context.call.authority,
-                RUNTIME_PLUGIN_TRIAL_CAPABILITY,
-            )?;
-            let request: PluginLoadRequest = runtime_plugin_typed_argument(arguments, "request")?;
-            let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_CAPABILITY);
-            let mut store = WorkspacePluginArtifactStore {
-                context,
-                authority: context.call.authority,
-            };
-            let mut executor = WorkspacePluginBuildExecutor { context };
-            let mut management = PluginManagementContext {
-                caller_authority: context.call.authority,
-                policy: &policy,
-                artifact_store: &mut store,
-                build_executor: &mut executor,
-            };
-            let result = harness
-                .lock()
-                .trial_plugin_management(
-                    PluginManagementRequest::load(request),
-                    run.root_constraints.authority(),
-                    &run.root_constraints,
-                    &mut management,
-                )
-                .map_err(|error| ApplicationError::Failed {
-                    message: error.to_string(),
-                })?;
-            Ok(PhenixValue::Map(BTreeMap::from([
-                (
-                    "generation".to_owned(),
-                    PhenixValue::String(result.generation.as_str().to_owned()),
-                ),
-                (
-                    "build".to_owned(),
-                    PhenixValue::Option(
-                        result
-                            .build
-                            .as_ref()
-                            .map(|report| Box::new(runtime_plugin_build_report_value(report))),
+    let mut target_generation = None;
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        let harness = run
+            .harness
+            .upgrade()
+            .ok_or(ApplicationError::Disconnected)?;
+        match operation {
+            "inspect" => {
+                require_runtime_plugin_capability(
+                    context.call.authority,
+                    RUNTIME_PLUGIN_INSPECT_CAPABILITY,
+                )?;
+                let harness = harness.lock();
+                runtime_plugin_inspection_value(&harness)
+            }
+            "build" => {
+                require_runtime_plugin_capability(
+                    context.call.authority,
+                    RUNTIME_PLUGIN_BUILD_CAPABILITY,
+                )?;
+                let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
+                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
+                let mut store = WorkspacePluginArtifactStore {
+                    context,
+                    authority: context.call.authority,
+                };
+                let mut executor = WorkspacePluginBuildExecutor { context };
+                let mut management = PluginManagementContext {
+                    caller_authority: context.call.authority,
+                    policy: &policy,
+                    artifact_store: &mut store,
+                    build_executor: &mut executor,
+                };
+                let report =
+                    GraphReconciler::build_artifact(plan, &mut management).map_err(|error| {
+                        ApplicationError::Failed {
+                            message: error.to_string(),
+                        }
+                    })?;
+                Ok(runtime_plugin_build_report_value(&report))
+            }
+            "trial" => {
+                require_runtime_plugin_capability(
+                    context.call.authority,
+                    RUNTIME_PLUGIN_TRIAL_CAPABILITY,
+                )?;
+                let request: PluginLoadRequest =
+                    runtime_plugin_typed_argument(arguments, "request")?;
+                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_CAPABILITY);
+                let mut store = WorkspacePluginArtifactStore {
+                    context,
+                    authority: context.call.authority,
+                };
+                let mut executor = WorkspacePluginBuildExecutor { context };
+                let mut management = PluginManagementContext {
+                    caller_authority: context.call.authority,
+                    policy: &policy,
+                    artifact_store: &mut store,
+                    build_executor: &mut executor,
+                };
+                let result = harness
+                    .lock()
+                    .trial_plugin_management(
+                        PluginManagementRequest::load(request),
+                        run.root_constraints.authority(),
+                        &run.root_constraints,
+                        &mut management,
+                    )
+                    .map_err(|error| ApplicationError::Failed {
+                        message: error.to_string(),
+                    })?;
+                target_generation = Some(result.generation.clone());
+                Ok(PhenixValue::Map(BTreeMap::from([
+                    (
+                        "generation".to_owned(),
+                        PhenixValue::String(result.generation.as_str().to_owned()),
                     ),
+                    (
+                        "build".to_owned(),
+                        PhenixValue::Option(
+                            result
+                                .build
+                                .as_ref()
+                                .map(|report| Box::new(runtime_plugin_build_report_value(report))),
+                        ),
+                    ),
+                ])))
+            }
+            "promote" | "rollback" => {
+                require_runtime_plugin_capability(
+                    context.call.authority,
+                    RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
+                )?;
+                let generation = runtime_plugin_generation_argument(arguments)?;
+                target_generation = Some(generation.clone());
+                let constraints = run.root_constraints.clone();
+                let result = harness
+                    .lock()
+                    .promote_resident(&generation, &constraints)
+                    .map_err(|error| ApplicationError::Failed {
+                        message: error.to_string(),
+                    })?;
+                Ok(PhenixValue::Map(BTreeMap::from([
+                    (
+                        "previous_generation".to_owned(),
+                        PhenixValue::String(result.previous_generation.as_str().to_owned()),
+                    ),
+                    (
+                        "active_generation".to_owned(),
+                        PhenixValue::String(result.active_generation.as_str().to_owned()),
+                    ),
+                ])))
+            }
+            "retire" => {
+                require_runtime_plugin_capability(
+                    context.call.authority,
+                    RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+                )?;
+                let generation = runtime_plugin_generation_argument(arguments)?;
+                target_generation = Some(generation.clone());
+                let constraints = run.root_constraints.clone();
+                harness
+                    .lock()
+                    .retire_resident(&generation, &constraints)
+                    .map_err(|error| ApplicationError::Failed {
+                        message: error.to_string(),
+                    })?;
+                Ok(PhenixValue::Map(BTreeMap::from([(
+                    "retired_generation".to_owned(),
+                    PhenixValue::String(generation.as_str().to_owned()),
+                )])))
+            }
+            other => Err(ApplicationError::InvalidInput {
+                message: format!(
+                    "unknown phenix.plugin operation {other}; expected inspect, build, trial, promote, rollback, or retire"
                 ),
-            ])))
+            }),
         }
-        "promote" | "rollback" => {
-            require_runtime_plugin_capability(
-                context.call.authority,
-                RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
-            )?;
-            let generation = runtime_plugin_generation_argument(arguments)?;
-            let constraints = run.root_constraints.clone();
-            let result = harness
-                .lock()
-                .promote_resident(&generation, &constraints)
-                .map_err(|error| ApplicationError::Failed {
-                    message: error.to_string(),
-                })?;
-            Ok(PhenixValue::Map(BTreeMap::from([
-                (
-                    "previous_generation".to_owned(),
-                    PhenixValue::String(result.previous_generation.as_str().to_owned()),
-                ),
-                (
-                    "active_generation".to_owned(),
-                    PhenixValue::String(result.active_generation.as_str().to_owned()),
-                ),
-            ])))
-        }
-        "retire" => {
-            require_runtime_plugin_capability(
-                context.call.authority,
-                RUNTIME_PLUGIN_RETIRE_CAPABILITY,
-            )?;
-            let generation = runtime_plugin_generation_argument(arguments)?;
-            let constraints = run.root_constraints.clone();
-            harness
-                .lock()
-                .retire_resident(&generation, &constraints)
-                .map_err(|error| ApplicationError::Failed {
-                    message: error.to_string(),
-                })?;
-            Ok(PhenixValue::Map(BTreeMap::from([(
-                "retired_generation".to_owned(),
-                PhenixValue::String(generation.as_str().to_owned()),
-            )])))
-        }
-        other => Err(ApplicationError::InvalidInput {
-            message: format!(
-                "unknown phenix.plugin operation {other}; expected inspect, build, trial, promote, rollback, or retire"
-            ),
-        }),
-    }
+    })();
+
+    record_runtime_orchestration(
+        context,
+        run,
+        "plugin",
+        operation,
+        None,
+        None,
+        &run.root_generation,
+        target_generation.as_ref(),
+        &result,
+    );
+    result
 }
 
 fn runtime_plugin_generation_argument(
@@ -5483,77 +5544,102 @@ fn execute_application_session_control(
     operation: &str,
     arguments: &PhenixValue,
 ) -> Result<PhenixValue, ApplicationError> {
-    match operation {
-        "create" => {
-            let working_directory =
-                session_control_required_string(arguments, "working_directory")?;
-            let title = session_control_optional_string(arguments, "title")?;
-            let response: SessionInfo = invoke_application_control(
-                run,
-                CreateSession::ID,
-                SessionCreateInput {
-                    working_directory,
-                    title,
-                },
-            )?;
-            Ok(response.to_value())
-        }
-        "list" => {
-            let response: SessionList =
-                invoke_application_control(run, ListSessions::ID, PageInput { cursor: None })?;
-            Ok(response.to_value())
-        }
-        "resume" => {
-            let session_id = session_control_session_id(arguments)?;
-            let after_sequence = session_control_optional_u64(arguments, "after_sequence")?;
-            let response: SessionSnapshot = invoke_application_control(
-                run,
-                ResumeSession::ID,
-                SessionResumeInput {
-                    session_id,
-                    after_sequence,
-                },
-            )?;
-            Ok(response.to_value())
-        }
-        "prompt" => {
-            let session_id = session_control_session_id(arguments)?;
-            if session_id == run.session_id {
-                return Err(ApplicationError::Conflict {
-                    message: "phenix.session cannot synchronously prompt its own active session"
-                        .to_owned(),
-                });
+    let mut target_session = None;
+    let mut child_execution = None;
+    let mut selected_generation = run.root_generation.clone();
+    let result = (|| -> Result<PhenixValue, ApplicationError> {
+        match operation {
+            "create" => {
+                let working_directory =
+                    session_control_required_string(arguments, "working_directory")?;
+                let title = session_control_optional_string(arguments, "title")?;
+                let response: SessionInfo = invoke_application_control(
+                    run,
+                    CreateSession::ID,
+                    SessionCreateInput {
+                        working_directory,
+                        title,
+                    },
+                )?;
+                target_session = Some(response.session_id.clone());
+                Ok(response.to_value())
             }
-            let text = session_control_required_string(arguments, "text")?;
-            let generation = match session_control_optional_string(arguments, "generation")? {
-                Some(generation) => {
-                    require_runtime_generation_select(context.call.authority)?;
-                    GraphGenerationId::from(generation)
+            "list" => {
+                let response: SessionList =
+                    invoke_application_control(run, ListSessions::ID, PageInput { cursor: None })?;
+                Ok(response.to_value())
+            }
+            "resume" => {
+                let session_id = session_control_session_id(arguments)?;
+                target_session = Some(session_id.clone());
+                let after_sequence = session_control_optional_u64(arguments, "after_sequence")?;
+                let response: SessionSnapshot = invoke_application_control(
+                    run,
+                    ResumeSession::ID,
+                    SessionResumeInput {
+                        session_id,
+                        after_sequence,
+                    },
+                )?;
+                Ok(response.to_value())
+            }
+            "prompt" => {
+                let session_id = session_control_session_id(arguments)?;
+                target_session = Some(session_id.clone());
+                if session_id == run.session_id {
+                    return Err(ApplicationError::Conflict {
+                        message: "phenix.session cannot synchronously prompt its own active session"
+                            .to_owned(),
+                    });
                 }
-                None => run.root_generation.clone(),
-            };
-            prompt_child_session(run, session_id, text, generation)
-        }
-        "close" => {
-            let session_id = session_control_session_id(arguments)?;
-            if session_id == run.session_id {
-                return Err(ApplicationError::Conflict {
-                    message: "phenix.session cannot close its own active session".to_owned(),
-                });
+                let text = session_control_required_string(arguments, "text")?;
+                let generation = match session_control_optional_string(arguments, "generation")? {
+                    Some(generation) => {
+                        require_runtime_generation_select(context.call.authority)?;
+                        GraphGenerationId::from(generation)
+                    }
+                    None => run.root_generation.clone(),
+                };
+                selected_generation = generation.clone();
+                let output = prompt_child_session(run, session_id, text, generation)?;
+                child_execution = orchestration_output_string(&output, "execution_id");
+                Ok(output)
             }
-            let response: Acknowledged = invoke_application_control(
-                run,
-                CloseSession::ID,
-                ApplicationSessionInput { session_id },
-            )?;
-            Ok(response.to_value())
+            "close" => {
+                let session_id = session_control_session_id(arguments)?;
+                target_session = Some(session_id.clone());
+                if session_id == run.session_id {
+                    return Err(ApplicationError::Conflict {
+                        message: "phenix.session cannot close its own active session".to_owned(),
+                    });
+                }
+                let response: Acknowledged = invoke_application_control(
+                    run,
+                    CloseSession::ID,
+                    ApplicationSessionInput { session_id },
+                )?;
+                Ok(response.to_value())
+            }
+            other => Err(ApplicationError::InvalidInput {
+                message: format!(
+                    "unknown phenix.session operation {other}; expected create, list, resume, prompt, or close"
+                ),
+            }),
         }
-        other => Err(ApplicationError::InvalidInput {
-            message: format!(
-                "unknown phenix.session operation {other}; expected create, list, resume, prompt, or close"
-            ),
-        }),
-    }
+    })();
+
+    record_runtime_orchestration(
+        context,
+        run,
+        "session",
+        operation,
+        target_session.as_ref(),
+        child_execution.as_deref(),
+        &selected_generation,
+        None,
+        &result,
+    );
+    result
 }
 
 fn require_runtime_generation_select(authority: &Authority) -> Result<(), ApplicationError> {
