@@ -31,13 +31,12 @@ use phenix_core::{
     Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId,
     ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, ContentReference, ContractId, EntryTriggerKind, HasPhenixSchema,
-    InterfaceId, InterfaceSchema, InvocationOutcome, Key, LocalPersistence, LogSink,
-    ModelInferenceFailure, ModelToolCall, ModelToolDescriptor, ModelToolResult, ObservableError,
-    ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema, PhenixValue,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
-    ValueCodec, ValueId, ValuePath,
+    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
+    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
+    PhenixContract, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId, RuntimeId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCapabilityRegistry,
+    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -4229,14 +4228,11 @@ fn inspect_runtime(
 fn inspect_runtime_trace(
     context: &ApplicationAgentToolContext<'_, '_>,
 ) -> Result<PhenixValue, ApplicationError> {
-    let encoded = serde_json::to_vec(&context.kernel.runtime_trace()).map_err(|error| {
-        ApplicationError::Failed {
+    serde_json::to_value(context.kernel.runtime_trace())
+        .map(PhenixValue::from)
+        .map_err(|error| ApplicationError::Failed {
             message: format!("failed to encode runtime trace: {error}"),
-        }
-    })?;
-    serde_json::from_slice(&encoded).map_err(|error| ApplicationError::InvalidResponse {
-        message: format!("failed to decode runtime trace value: {error}"),
-    })
+        })
 }
 
 fn inspect_execution(
@@ -4548,7 +4544,10 @@ mod tests {
         ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
         ListSessions, Prompt, RenameSession, ResumeSession,
     };
-    use phenix_core::{Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_core::{
+        Bytes, InvocationOutcome, LocalPersistence, ModelId, ModelInferenceFailure, ModelToolTurn,
+        SessionId, ValueAddress,
+    };
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
@@ -5676,7 +5675,11 @@ mod tests {
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
 
-        for (call_id, query) in [("inspect-graph", "graph"), ("inspect-values", "values")] {
+        for (call_id, query) in [
+            ("inspect-graph", "graph"),
+            ("inspect-trace", "trace"),
+            ("inspect-values", "values"),
+        ] {
             let request = AgentToolExecutionRequest {
                 execution_id: execution_id.clone(),
                 session_id: Some(session_id.clone()),
@@ -5717,6 +5720,24 @@ mod tests {
                     assert!(
                         matches!(graph.get("components"), Some(PhenixValue::List(values)) if !values.is_empty())
                     );
+                }
+                ("trace", PhenixValue::List(events)) => {
+                    assert!(!events.is_empty());
+                    assert!(events.iter().all(|event| {
+                        matches!(
+                            event,
+                            PhenixValue::Map(fields)
+                                if matches!(fields.get("event"), Some(PhenixValue::String(_)))
+                        )
+                    }));
+                    assert!(events.iter().any(|event| {
+                        matches!(
+                            event,
+                            PhenixValue::Map(fields)
+                                if fields.get("event")
+                                    == Some(&PhenixValue::String("service_invocation".into()))
+                        )
+                    }));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {

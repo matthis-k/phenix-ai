@@ -19,7 +19,7 @@ pub enum ScheduledToolBatch {
     Exclusive(ToolCallPlan),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ToolScheduler {
     max_parallel_calls: Option<NonZeroUsize>,
 }
@@ -64,14 +64,6 @@ impl ToolScheduler {
         }
         flush_parallel(&mut batches, &mut parallel);
         batches
-    }
-}
-
-impl Default for ToolScheduler {
-    fn default() -> Self {
-        Self {
-            max_parallel_calls: None,
-        }
     }
 }
 
