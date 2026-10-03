@@ -490,17 +490,16 @@ struct ConcretePluginLoadRequest {
     entry_triggers: Vec<ComponentEntryTrigger>,
 }
 
+type PluginDesiredState = (
+    Vec<PluginManifest>,
+    Vec<ComponentManifest>,
+    Vec<ComponentEntryTrigger>,
+);
+
 fn apply_load(
     active: &ResolvedHarness,
     request: ConcretePluginLoadRequest,
-) -> Result<
-    (
-        Vec<PluginManifest>,
-        Vec<ComponentManifest>,
-        Vec<ComponentEntryTrigger>,
-    ),
-    PluginManagementError,
-> {
+) -> Result<PluginDesiredState, PluginManagementError> {
     let plugin = request.manifest.id.clone();
     if let Some(component) = request
         .components
@@ -578,14 +577,7 @@ fn check_load_expected_revision(
 fn apply_unload(
     active: &ResolvedHarness,
     request: PluginUnloadRequest,
-) -> Result<
-    (
-        Vec<PluginManifest>,
-        Vec<ComponentManifest>,
-        Vec<ComponentEntryTrigger>,
-    ),
-    PluginManagementError,
-> {
+) -> Result<PluginDesiredState, PluginManagementError> {
     let existing = active
         .plugins()
         .iter()
@@ -621,13 +613,7 @@ fn apply_unload(
     Ok((plugins, components, entry_triggers))
 }
 
-fn apply_reconcile(
-    request: PluginSetRequest,
-) -> (
-    Vec<PluginManifest>,
-    Vec<ComponentManifest>,
-    Vec<ComponentEntryTrigger>,
-) {
+fn apply_reconcile(request: PluginSetRequest) -> PluginDesiredState {
     (request.plugins, request.components, request.entry_triggers)
 }
 
