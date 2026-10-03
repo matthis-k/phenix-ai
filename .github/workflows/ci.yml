@@ -556,6 +556,8 @@ jobs:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
+          RUST_TEST_NOCAPTURE: "1"
+          RUST_TEST_THREADS: "1"
         run: "printf '%s\\n' '{\"command\":\"jobs/test-unit\",\"source\":{\"job\":\"test-unit\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-b3d8df2854c7 -- invoke"
 
       - name: Repository remains clean
