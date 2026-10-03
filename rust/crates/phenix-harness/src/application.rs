@@ -1008,139 +1008,9 @@ impl ApplicationWorker {
         })
     }
 
-    fn invoke_context_command(
-        &self,
-        command: ContextCommand,
-    ) -> Result<ContextResponse, ApplicationError> {
-        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = self
-            .harness
-            .lock()
-            .invoke(&context_service(), &input, &self.authority, None)
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
-            })?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        ContextResponse::try_from(Project(&output)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })
-    }
 
-    fn invoke_workspace_command(
-        &self,
-        command: WorkspaceCommand,
-    ) -> Result<WorkspaceResponse, ApplicationError> {
-        let input = serde_json::to_vec(&PhenixValue::from(&command)).map_err(|error| {
-            ApplicationError::InvalidInput {
-                message: error.to_string(),
-            }
-        })?;
-        let output = self
-            .harness
-            .lock()
-            .invoke(&workspace_service(), &input, &self.authority, None)
-            .map_err(|error| ApplicationError::Failed {
-                message: error.to_string(),
-            })?;
-        let output: PhenixValue =
-            serde_json::from_slice(&output).map_err(|error| ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-        WorkspaceResponse::try_from(Project(&output)).map_err(|error| {
-            ApplicationError::InvalidResponse {
-                message: error.to_string(),
-            }
-        })
-    }
 
-    fn resolve_bool_option(
-        &self,
-        session_id: &SessionId,
-        key: &str,
-    ) -> Result<bool, ApplicationError> {
-        let response = self.invoke_option_command(OptionCommand::Resolve {
-            key: OptionKey::parse(key).map_err(|error| ApplicationError::InvalidInput {
-                message: error.to_owned(),
-            })?,
-            context: OptionContext {
-                session: Some(
-                    OptionSubjectId::parse(session_id.as_str().to_owned()).map_err(|error| {
-                        ApplicationError::InvalidInput {
-                            message: error.to_owned(),
-                        }
-                    })?,
-                ),
-                agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
-                    |error| ApplicationError::InvalidInput {
-                        message: error.to_owned(),
-                    },
-                )?),
-            },
-        })?;
-        let OptionResponse::Value { option } = response else {
-            return Err(ApplicationError::InvalidResponse {
-                message: format!("option {key} returned a non-value response"),
-            });
-        };
-        match option.value {
-            OptionValue::Bool(value) => Ok(value),
-            other => Err(ApplicationError::InvalidResponse {
-                message: format!("option {key} must be boolean, got {other:?}"),
-            }),
-        }
-    }
 
-    fn workspace_context_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let WorkspaceResponse::List { entries } =
-            self.invoke_workspace_command(WorkspaceCommand::List {
-                path: None,
-                recursive: true,
-            })?
-        else {
-            return Err(ApplicationError::InvalidResponse {
-                message: "workspace list returned a non-list response".into(),
-            });
-        };
-        let mut paths = entries
-            .into_iter()
-            .filter(|entry| entry.kind == WorkspaceEntryKind::File)
-            .map(|entry| entry.path)
-            .filter(|path| {
-                matches!(
-                    path.rsplit('/').next().unwrap_or(path.as_str()),
-                    "AGENTS.md" | "AGENTS.override.md" | "CONTRIBUTING.md" | "DEVELOPMENT.md"
-                )
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        paths.dedup();
-
-        paths
-            .into_iter()
-            .map(|path| {
-                let WorkspaceResponse::Read { content, .. } =
-                    self.invoke_workspace_command(WorkspaceCommand::Read { path: path.clone() })?
-                else {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: format!("workspace read returned a non-read response for {path}"),
-                    });
-                };
-                Ok(RepositoryContextSource {
-                    path,
-                    content: content.into_bytes().into(),
-                })
-            })
-            .collect()
-    }
 
     fn resolve_bool_option_on(
         &self,
@@ -1262,90 +1132,6 @@ impl ApplicationWorker {
             .collect()
     }
 
-    fn prepare_execution_context(
-        &self,
-        session: &SessionInfo,
-        execution_id: &str,
-    ) -> Result<(), ApplicationError> {
-        let context_auto = self.resolve_bool_option(&session.session_id, "context.auto_load")?;
-        let skills_auto = self.resolve_bool_option(&session.session_id, "skills.auto_load")?;
-        if !context_auto && !skills_auto {
-            return Ok(());
-        }
-
-        let workspace_id = workspace_context_id(&session.working_directory);
-        let sources = if context_auto {
-            self.workspace_context_sources()?
-        } else {
-            Vec::new()
-        };
-        let mut descriptors = if sources.is_empty() {
-            Vec::new()
-        } else {
-            match self.invoke_context_command(ContextCommand::DiscoverRepository {
-                workspace_id,
-                sources,
-            })? {
-                ContextResponse::Discovered { descriptors } => descriptors,
-                _ => {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: "repository context discovery returned an unexpected response"
-                            .into(),
-                    })
-                }
-            }
-        };
-
-        if skills_auto {
-            let packaged = self.packaged_skill_sources()?;
-            if !packaged.is_empty() {
-                let ContextResponse::Discovered {
-                    descriptors: packaged_descriptors,
-                } = self.invoke_context_command(ContextCommand::DiscoverRepository {
-                    workspace_id: "harness".into(),
-                    sources: packaged,
-                })?
-                else {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: "packaged skill discovery returned an unexpected response".into(),
-                    });
-                };
-                descriptors.extend(packaged_descriptors);
-            }
-        }
-
-        descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
-        for descriptor in descriptors {
-            let mandatory_project_instruction = context_auto
-                && descriptor.kind == ContextResourceKind::ProjectInstruction
-                && descriptor.scope == ContextScope::Workspace;
-            let mandatory_skill = skills_auto
-                && descriptor.kind == ContextResourceKind::Skill
-                && self.skill_is_mandatory(&descriptor)?;
-            if !mandatory_project_instruction && !mandatory_skill {
-                continue;
-            }
-            let response = self.invoke_context_command(ContextCommand::Load {
-                execution_id: execution_id.to_owned(),
-                resource_id: descriptor.resource_id,
-                revision: descriptor.revision,
-                requester: ContextInjectionRequester::ContextPolicy,
-                lifetime: ContextInjectionLifetime::Execution,
-                reason: if mandatory_skill {
-                    "auto-load mandatory skill"
-                } else {
-                    "auto-load workspace project instruction"
-                }
-                .into(),
-            })?;
-            if !matches!(response, ContextResponse::Loaded { .. }) {
-                return Err(ApplicationError::InvalidResponse {
-                    message: "context load returned an unexpected response".into(),
-                });
-            }
-        }
-        Ok(())
-    }
 
     fn prepare_execution_context_on(
         &self,
@@ -1472,26 +1258,6 @@ impl ApplicationWorker {
         }))
     }
 
-    fn skill_is_mandatory(&self, descriptor: &ContextDescriptor) -> Result<bool, ApplicationError> {
-        let response = self.invoke_context_command(ContextCommand::Get {
-            resource_id: descriptor.resource_id.clone(),
-            revision: descriptor.revision.clone(),
-        })?;
-        let ContextResponse::Resource {
-            resource: Some(resource),
-        } = response
-        else {
-            return Ok(false);
-        };
-        let content = String::from_utf8_lossy(resource.content.as_ref()).to_lowercase();
-        let mut lines = content.lines();
-        if lines.next().is_none_or(|line| line.trim() != "---") {
-            return Ok(false);
-        }
-        Ok(lines.take_while(|line| line.trim() != "---").any(|line| {
-            line.trim_start().starts_with("description:") && line.contains("must always apply")
-        }))
-    }
 
     fn create_session(
         &mut self,
@@ -1670,21 +1436,6 @@ impl ApplicationWorker {
         }
     }
 
-    fn append_execution_change(
-        &mut self,
-        session_id: &SessionId,
-        execution_id: &str,
-        update: ExecutionChange,
-    ) -> Result<SessionUpdate, ApplicationError> {
-        let session = self.require_open_application_session(session_id)?;
-        self.append_session_change(
-            &session,
-            SessionChange::Execution {
-                execution_id: execution_id.to_owned(),
-                update,
-            },
-        )
-    }
 
     fn append_session_change(
         &mut self,
@@ -1702,6 +1453,7 @@ impl ApplicationWorker {
         self.project_journal_entry(application_session_info(session)?, entry)
     }
 
+    #[cfg(test)]
     fn allocate_root_execution(&mut self) -> Result<String, ApplicationError> {
         let response = self.invoke_execution(ExecutionCommand::AllocateExecution {
             prefix: "execution-".to_owned(),
@@ -1749,6 +1501,7 @@ impl ApplicationWorker {
         Ok(execution_id)
     }
 
+    #[cfg(test)]
     fn finish_root_execution(
         &mut self,
         execution_id: &str,
@@ -1767,6 +1520,7 @@ impl ApplicationWorker {
         }
     }
 
+    #[cfg(test)]
     fn invoke_execution(
         &mut self,
         command: ExecutionCommand,
@@ -1774,6 +1528,7 @@ impl ApplicationWorker {
         self.invoke_runtime(execution_service(), command)
     }
 
+    #[cfg(test)]
     fn invoke_execution_resource(
         &mut self,
         command: ExecutionResourceCommand,
@@ -1781,6 +1536,7 @@ impl ApplicationWorker {
         self.invoke_runtime(execution_resource_service(), command)
     }
 
+    #[cfg(test)]
     fn invoke_runtime<C, R>(
         &mut self,
         service: phenix_core::ServiceId,
@@ -4321,41 +4077,6 @@ fn complete_prompt_output_on(
     })
 }
 
-fn complete_prompt_output(
-    worker: &mut ApplicationWorker,
-    session_id: &SessionId,
-    execution_id: &str,
-    text: String,
-) -> Result<PromptResult, ApplicationError> {
-    let session = worker.require_open_application_session(session_id)?;
-    worker.append_session_change(
-        &session,
-        SessionChange::TextDelta {
-            execution_id: execution_id.to_owned(),
-            text: text.clone(),
-        },
-    )?;
-    worker.append_session_change(
-        &session,
-        SessionChange::Message {
-            message: Message {
-                role: MessageRole::Assistant,
-                content: vec![Content::Text { text }],
-            },
-        },
-    )?;
-    worker.append_execution_change(
-        session_id,
-        execution_id,
-        ExecutionChange::State {
-            state: ExecutionState::Completed,
-        },
-    )?;
-    Ok(PromptResult {
-        execution_id: execution_id.to_owned(),
-        stop_reason: StopReason::EndTurn,
-    })
-}
 
 fn ensure_session_projection_on(
     worker: &mut ApplicationWorker,
@@ -4381,6 +4102,7 @@ fn ensure_session_projection_on(
         .map(|_| ())
 }
 
+#[cfg(test)]
 fn ensure_session_projection(
     worker: &mut ApplicationWorker,
     session_id: &SessionId,
@@ -7732,7 +7454,11 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker, service, receiver, 2,
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
         ));
         let created = invoke_transport_operation::<CreateSession>(
             &transport,
@@ -7861,7 +7587,11 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker, service, receiver, 4,
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            4,
         ));
 
         let controller = invoke_transport_operation::<CreateSession>(
@@ -8033,7 +7763,11 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker, service, receiver, 4,
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            4,
         ));
 
         let controller = invoke_transport_operation::<CreateSession>(
@@ -8278,7 +8012,11 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker, service, receiver, 2,
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
         ));
         let created = invoke_transport_operation::<CreateSession>(
             &transport,
@@ -8420,7 +8158,11 @@ mod tests {
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
-            worker, service, receiver, 2,
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
         ));
 
         let created = invoke_transport_operation::<CreateSession>(
