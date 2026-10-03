@@ -1101,7 +1101,9 @@ mod tests {
                 .unwrap(),
             b"trial"
         );
-        assert!(harness.selectable_generations().contains(&active_generation));
+        assert!(harness
+            .selectable_generations()
+            .contains(&active_generation));
         assert_eq!(
             harness
                 .invoke_in_generation(&active_generation, &service, b"input", &constraints, None,)
