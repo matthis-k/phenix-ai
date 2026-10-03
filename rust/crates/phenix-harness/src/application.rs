@@ -6727,12 +6727,14 @@ mod tests {
             host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
             if service.as_str() != "fixture.memory-debug@1" {
-                return Err(format!("unsupported memory-debug fixture service: {service}"));
+                return Err(format!(
+                    "unsupported memory-debug fixture service: {service}"
+                ));
             }
             let value: PhenixValue =
                 serde_json::from_slice(input).map_err(|error| error.to_string())?;
-            let request = MemoryDebugRequest::from_value(&value)
-                .map_err(|error| error.to_string())?;
+            let request =
+                MemoryDebugRequest::from_value(&value).map_err(|error| error.to_string())?;
             let response = match request.operation.as_str() {
                 "write" => {
                     let value = request
@@ -6955,7 +6957,11 @@ mod tests {
                         value: write.then(|| "Helios".to_owned()),
                     };
                     Ok(orchestration_response(
-                        if write { "store durable memory" } else { "recall durable memory" },
+                        if write {
+                            "store durable memory"
+                        } else {
+                            "recall durable memory"
+                        },
                         vec![ModelToolCall {
                             call_id: if write {
                                 "memory-debug-write"
@@ -7009,7 +7015,11 @@ mod tests {
                         return Err("controller G1 unexpectedly exposed memory.debug".into());
                     }
                     for tool in ["phenix.plugin", "phenix.session", "phenix.inspect"] {
-                        if !request.tools.iter().any(|candidate| candidate.id.as_str() == tool) {
+                        if !request
+                            .tools
+                            .iter()
+                            .any(|candidate| candidate.id.as_str() == tool)
+                        {
                             return Err(format!("controller did not receive {tool}"));
                         }
                     }
@@ -7039,10 +7049,8 @@ mod tests {
                     )],
                 )),
                 2 => {
-                    let writer = SessionInfo::from_value(
-                        &orchestration_result(request, 1)?.output,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    let writer = SessionInfo::from_value(&orchestration_result(request, 1)?.output)
+                        .map_err(|error| error.to_string())?;
                     Ok(orchestration_response(
                         "write memory through G2",
                         vec![orchestration_operation_call(
@@ -7054,10 +7062,7 @@ mod tests {
                                     "session_id".into(),
                                     PhenixValue::String(writer.session_id.to_string()),
                                 ),
-                                (
-                                    "text".into(),
-                                    PhenixValue::String("store Helios".into()),
-                                ),
+                                ("text".into(), PhenixValue::String("store Helios".into())),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
                         )],
@@ -7079,10 +7084,8 @@ mod tests {
                     )],
                 )),
                 4 => {
-                    let reader = SessionInfo::from_value(
-                        &orchestration_result(request, 3)?.output,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    let reader = SessionInfo::from_value(&orchestration_result(request, 3)?.output)
+                        .map_err(|error| error.to_string())?;
                     Ok(orchestration_response(
                         "recall memory through independent G2 session",
                         vec![orchestration_operation_call(
@@ -7094,10 +7097,7 @@ mod tests {
                                     "session_id".into(),
                                     PhenixValue::String(reader.session_id.to_string()),
                                 ),
-                                (
-                                    "text".into(),
-                                    PhenixValue::String("recall Helios".into()),
-                                ),
+                                ("text".into(), PhenixValue::String("recall Helios".into())),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
                         )],
@@ -7148,10 +7148,7 @@ mod tests {
                             "orchestration-promote",
                             "phenix.plugin",
                             "promote",
-                            BTreeMap::from([(
-                                "generation".into(),
-                                PhenixValue::String(g2()?),
-                            )]),
+                            BTreeMap::from([("generation".into(), PhenixValue::String(g2()?))]),
                         )],
                     ))
                 }
@@ -7184,10 +7181,7 @@ mod tests {
                             "orchestration-retire",
                             "phenix.plugin",
                             "retire",
-                            BTreeMap::from([(
-                                "generation".into(),
-                                PhenixValue::String(g2()?),
-                            )]),
+                            BTreeMap::from([("generation".into(), PhenixValue::String(g2()?))]),
                         )],
                     ))
                 }
@@ -7258,11 +7252,9 @@ mod tests {
             let response = if request.session_id.as_ref() == Some(&controller) {
                 self.controller_response(
                     &request,
-                    initial_generation
-                        .as_deref()
-                        .ok_or_else(|| {
-                            "runtime orchestration initial generation is not configured".to_owned()
-                        })?,
+                    initial_generation.as_deref().ok_or_else(|| {
+                        "runtime orchestration initial generation is not configured".to_owned()
+                    })?,
                     trial_request.ok_or_else(|| {
                         "runtime orchestration trial request is not configured".to_owned()
                     })?,
@@ -7960,8 +7952,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn model_can_trial_plugin_test_memory_across_sessions_and_roll_back() {
-        let namespace =
-            ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
+        let namespace = ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
         let first_manifest = memory_debug_manifest(1, namespace.clone());
         let second_manifest = memory_debug_manifest(2, namespace.clone());
         let component = memory_debug_component();
@@ -7971,8 +7962,7 @@ mod tests {
             entry_triggers: vec![memory_debug_trigger()],
             expected_active_revision: None,
         };
-        let trial_request =
-            PhenixValue::from(serde_json::to_value(&trial_request).unwrap());
+        let trial_request = PhenixValue::from(serde_json::to_value(&trial_request).unwrap());
 
         let state = Arc::new(StdMutex::new(RuntimeOrchestrationModelState::default()));
         let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
@@ -8035,10 +8025,8 @@ mod tests {
             callbacks,
             ClientCapabilityIdentity::new(
                 ClientConnectionId::parse("fixture-runtime-orchestration-client").unwrap(),
-                CapabilityGenerationId::parse(
-                    "fixture-runtime-orchestration-client-generation",
-                )
-                .unwrap(),
+                CapabilityGenerationId::parse("fixture-runtime-orchestration-client-generation")
+                    .unwrap(),
             ),
         )
         .unwrap();

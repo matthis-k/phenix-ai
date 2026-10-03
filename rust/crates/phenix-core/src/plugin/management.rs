@@ -1,9 +1,9 @@
 use crate::{
     ArtifactRevision, Authority, ComponentEntryTrigger, ComponentId, ComponentManifest,
-    GraphGenerationId, GraphReconciler, Kernel,
-    KernelError, LiveReconciliationError, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
-    PluginBuildEvidence, PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution,
-    PluginId, PluginManifest, ReconciliationPreview, ReconciliationResult, ResolvedHarness,
+    GraphGenerationId, GraphReconciler, Kernel, KernelError, LiveReconciliationError,
+    PluginArtifact, PluginArtifactInput, PluginArtifactStore, PluginBuildEvidence,
+    PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginId,
+    PluginManifest, ReconciliationPreview, ReconciliationResult, ResolvedHarness,
     ResolvedHarnessError, RootExecutionConstraints, RuntimeId,
 };
 use serde::{Deserialize, Serialize};
@@ -249,8 +249,7 @@ impl GraphReconciler {
                 (plugins, components, entry_triggers, build)
             }
             PluginManagementRequest::Unload(request) => {
-                let (plugins, components, entry_triggers) =
-                    apply_unload(self.active(), request)?;
+                let (plugins, components, entry_triggers) = apply_unload(self.active(), request)?;
                 (plugins, components, entry_triggers, None)
             }
             PluginManagementRequest::Reconcile(request) => {

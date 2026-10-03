@@ -181,16 +181,28 @@ impl Display for MetadataReconciliationError {
                 graph.as_str()
             ),
             Self::DrainRequired { component } => {
-                write!(f, "component {component} requires drain before reconciliation")
+                write!(
+                    f,
+                    "component {component} requires drain before reconciliation"
+                )
             }
             Self::MigrationRequired { component } => {
-                write!(f, "component {component} requires migration before reconciliation")
+                write!(
+                    f,
+                    "component {component} requires migration before reconciliation"
+                )
             }
             Self::ResourceDrainRequired { resource } => {
-                write!(f, "resource {resource} requires drain before reconciliation")
+                write!(
+                    f,
+                    "resource {resource} requires drain before reconciliation"
+                )
             }
             Self::ResourceMigrationRequired { resource } => {
-                write!(f, "resource {resource} requires migration before reconciliation")
+                write!(
+                    f,
+                    "resource {resource} requires migration before reconciliation"
+                )
             }
         }
     }
