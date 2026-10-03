@@ -87,7 +87,21 @@ mod tests {
 
     #[test]
     fn default_scheduler_has_no_parallel_limit() {
-        assert_eq!(ToolScheduler::default().max_parallel_calls(), None);
+        let scheduler = ToolScheduler::default();
+        assert_eq!(scheduler.max_parallel_calls(), None);
+
+        assert_eq!(
+            scheduler.schedule([
+                call("a", ToolConcurrency::ParallelSafe),
+                call("b", ToolConcurrency::ParallelSafe),
+                call("c", ToolConcurrency::ParallelSafe),
+            ]),
+            vec![ScheduledToolBatch::Parallel(vec![
+                call("a", ToolConcurrency::ParallelSafe),
+                call("b", ToolConcurrency::ParallelSafe),
+                call("c", ToolConcurrency::ParallelSafe),
+            ])]
+        );
     }
 
     #[test]
