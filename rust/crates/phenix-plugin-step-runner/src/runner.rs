@@ -17,8 +17,9 @@ use phenix_sdk::{
     ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand, ModelDispatchCommand,
     ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
     ModelRoutingInterface, PlannedStepRequest, ProjectionRevision, ReacquisitionUsage,
-    ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingEstimateMode,
-    RoutingEvidence, StepAttemptCommand, StepAttemptInterface, StepAttemptRecord,
+    ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingCandidate,
+    RoutingEstimateMode, RoutingEvidence, StepAttemptCommand, StepAttemptInterface,
+    StepAttemptRecord,
     StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface, StepRunnerResponse,
     StepSettlementBasis, StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
     UsageAttemptKind, UsageAttribution, UsagePlanningInput, UsagePolicy, WorkerTaskState,
@@ -1705,10 +1706,10 @@ fn run_attempt_with_retry_route(
                 );
             }
             if failure.retryable() && retry_available(context, &attribution, &plan)? {
-                let retry_route = if let Some(route) = resolved_route.clone() {
-                    Some(route)
+                let route_available = if resolved_route.is_some() {
+                    true
                 } else {
-                    resolve_retry_route(
+                    has_untried_retry_route(
                         context,
                         RetryRouteAnchor {
                             root_execution_id: &attribution.root_execution_id,
@@ -1716,13 +1717,9 @@ fn run_attempt_with_retry_route(
                         },
                         &profile_id,
                         callable_id.as_ref(),
-                        &plan,
-                        &route_policy,
-                        RetryRouteStrategy::PreferFallback,
                     )?
-                    .map(|selection| selection.decision)
                 };
-                if let Some(retry_route) = retry_route {
+                if route_available {
                     trace_policy_stage(
                         context,
                         "dispatch_retry",
@@ -1738,7 +1735,7 @@ fn run_attempt_with_retry_route(
                         retry_template,
                         &attribution,
                         RetryRouteStrategy::PreferFallback,
-                        Some(retry_route),
+                        resolved_route.clone(),
                     );
                 }
                 trace_policy_stage(
@@ -1907,15 +1904,17 @@ struct RetryRouteAnchor<'a> {
     parent_attempt_id: &'a str,
 }
 
-fn resolve_retry_route(
+struct RetryRouteState {
+    parent_decision: RouteDecision,
+    candidates: Vec<RoutingCandidate>,
+}
+
+fn retry_route_state(
     context: &StepRunnerContext<'_, '_>,
     anchor: RetryRouteAnchor<'_>,
     profile_id: &phenix_core::RoutingProfileId,
     callable_id: Option<&phenix_core::CallableId>,
-    plan: &StepPlan,
-    route_policy: &phenix_sdk::RouteSelectionPolicy,
-    retry_route_strategy: RetryRouteStrategy,
-) -> Result<Option<RouteSelection>, String> {
+) -> Result<RetryRouteState, String> {
     let listed_attempts: StepAttemptResponse = context
         .sdk
         .attempts
@@ -1938,13 +1937,6 @@ fn resolve_retry_route(
         .route
         .clone()
         .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
-
-    if retry_route_strategy == RetryRouteStrategy::PreserveParent {
-        return Ok(Some(RouteSelection {
-            decision: parent_decision,
-            rejected: Vec::new(),
-        }));
-    }
 
     let mut tried_ordinals = BTreeSet::new();
     let mut current = Some(anchor.parent_attempt_id.to_owned());
@@ -1974,11 +1966,46 @@ fn resolve_retry_route(
         return Err("model routing returned a non-candidate response".into());
     };
     candidates.retain(|candidate| !tried_ordinals.contains(&candidate.ordinal));
-    if candidates.is_empty() {
+
+    Ok(RetryRouteState {
+        parent_decision,
+        candidates,
+    })
+}
+
+fn has_untried_retry_route(
+    context: &StepRunnerContext<'_, '_>,
+    anchor: RetryRouteAnchor<'_>,
+    profile_id: &phenix_core::RoutingProfileId,
+    callable_id: Option<&phenix_core::CallableId>,
+) -> Result<bool, String> {
+    Ok(!retry_route_state(context, anchor, profile_id, callable_id)?
+        .candidates
+        .is_empty())
+}
+
+fn resolve_retry_route(
+    context: &StepRunnerContext<'_, '_>,
+    anchor: RetryRouteAnchor<'_>,
+    profile_id: &phenix_core::RoutingProfileId,
+    callable_id: Option<&phenix_core::CallableId>,
+    plan: &StepPlan,
+    route_policy: &phenix_sdk::RouteSelectionPolicy,
+    retry_route_strategy: RetryRouteStrategy,
+) -> Result<Option<RouteSelection>, String> {
+    let state = retry_route_state(context, anchor, profile_id, callable_id)?;
+
+    if retry_route_strategy == RetryRouteStrategy::PreserveParent {
+        return Ok(Some(RouteSelection {
+            decision: state.parent_decision,
+            rejected: Vec::new(),
+        }));
+    }
+    if state.candidates.is_empty() {
         return Ok(None);
     }
 
-    select_route(&candidates, &plan.routing, route_policy)
+    select_route(&state.candidates, &plan.routing, route_policy)
         .map(Some)
         .map_err(|error| format!("retry route selection failed: {error:?}"))
 }
