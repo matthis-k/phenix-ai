@@ -122,9 +122,8 @@ pub fn default_application_root_authority() -> Authority {
     ])
 }
 
-pub fn default_suite_authority() -> Authority {
-    let application = default_application_root_authority();
-    Authority::new(application.capabilities().cloned().chain([
+pub fn runtime_orchestration_authority() -> Authority {
+    Authority::new([
         CapabilityId::parse("application.session.control").expect("static capability"),
         CapabilityId::parse("runtime.generation.select").expect("static capability"),
         CapabilityId::parse("runtime.plugin.inspect").expect("static capability"),
@@ -132,7 +131,18 @@ pub fn default_suite_authority() -> Authority {
         CapabilityId::parse("runtime.plugin.trial").expect("static capability"),
         CapabilityId::parse("runtime.plugin.promote").expect("static capability"),
         CapabilityId::parse("runtime.plugin.retire").expect("static capability"),
-    ]))
+    ])
+}
+
+pub fn default_suite_authority() -> Authority {
+    let application = default_application_root_authority();
+    let orchestration = runtime_orchestration_authority();
+    Authority::new(
+        application
+            .capabilities()
+            .cloned()
+            .chain(orchestration.capabilities().cloned()),
+    )
 }
 
 #[derive(Default)]
