@@ -1,6 +1,7 @@
 use crate::{
-    default_application_root_authority, default_suite_authority, runtime_orchestration_authority,
-    runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
+    default_application_root_authority, default_suite_authority,
+    runtime_config::publish_routing_profile_runtime_state, runtime_orchestration_authority,
+    PhenixHarness,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
@@ -960,10 +961,11 @@ impl ApplicationWorker {
         &self,
         session_id: &SessionId,
     ) -> Result<Authority, ApplicationError> {
-        let subject =
-            OptionSubjectId::parse(session_id.as_str()).map_err(|error| ApplicationError::InvalidInput {
+        let subject = OptionSubjectId::parse(session_id.as_str()).map_err(|error| {
+            ApplicationError::InvalidInput {
                 message: error.to_owned(),
-            })?;
+            }
+        })?;
         let response = self.invoke_option_command(OptionCommand::Resolve {
             key: OptionKey::parse(RUNTIME_ORCHESTRATION_OPTION).map_err(|error| {
                 ApplicationError::InvalidInput {
@@ -972,13 +974,11 @@ impl ApplicationWorker {
             })?,
             context: OptionContext {
                 session: Some(subject),
-                agent: Some(
-                    OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| {
-                        ApplicationError::InvalidInput {
-                            message: error.to_owned(),
-                        }
-                    })?,
-                ),
+                agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                    |error| ApplicationError::InvalidInput {
+                        message: error.to_owned(),
+                    },
+                )?),
             },
         })?;
         let OptionResponse::Value { option } = response else {
