@@ -632,7 +632,7 @@ impl PhenixHarness {
         self.reconciler.active().generation()
     }
 
-    pub fn resident_generations(&self) -> Vec<GraphGenerationId> {
+    pub fn selectable_generations(&self) -> Vec<GraphGenerationId> {
         self.kernel.resident_generation_ids()
     }
 
@@ -1101,7 +1101,7 @@ mod tests {
                 .unwrap(),
             b"trial"
         );
-        assert!(harness.resident_generations().contains(&active_generation));
+        assert!(harness.selectable_generations().contains(&active_generation));
         assert_eq!(
             harness
                 .invoke_in_generation(&active_generation, &service, b"input", &constraints, None,)

@@ -3860,8 +3860,7 @@ fn dispatch_application_invocation(
     });
     let result = if let Some(root) = selected_root {
         root.and_then(|root| {
-            let result = worker.invoke_session_application_operation_on(&root, &operation, input);
-            result
+            worker.invoke_session_application_operation_on(&root, &operation, input)
         })
     } else if is_sdk_operation(&operation) {
         service.invoke(&operation, input)
@@ -5576,7 +5575,7 @@ fn runtime_plugin_inspection_value(
 ) -> Result<PhenixValue, ApplicationError> {
     let active = harness.generation().clone();
     let generations = harness
-        .resident_generations()
+        .selectable_generations()
         .into_iter()
         .map(|generation| {
             let resolved = harness
