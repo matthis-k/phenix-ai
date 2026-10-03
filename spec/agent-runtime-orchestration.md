@@ -1,9 +1,12 @@
 # Agent runtime orchestration
 
-status: partial
-implementation:
-  - prerequisite in this PR: Harness owns active and resident generations through one GraphReconciler
-  - follow-up in this PR: model-facing session and plugin-development controls
+status: implemented
+coverage:
+  - rust/crates/phenix-harness/src/application.rs
+  - rust/crates/phenix-acp-stdio/src/transport.rs
+  - rust/crates/phenix-core/src/runtime/residency.rs
+  - rust/crates/phenix-core/src/plugin_management_regression.rs
+  - rust/crates/phenix-core/src/plugin_build_loading_regression.rs
 depends_on:
   - spec/application-interface.md
   - spec/selectable-harness-generations.md
@@ -525,20 +528,6 @@ Existing `Prompt` continues to mean "prompt this session using the default appli
 Generation selection is initially an agent-development operation. If external clients later need explicit resident-generation selection, add a typed application operation that reuses the same internal root request.
 
 Do not overload a durable Session record with a generation field.
-
-## Implementation sequence
-
-1. Make `PhenixHarness` own `GraphReconciler` as the single resolved-Harness owner.
-2. Add Harness methods for active/resident generation inspection and explicit root invocation.
-3. Refactor Plugin management preparation so stable activation and trial residency share build/resolution logic.
-4. Add an internal application root request carrying generation and inherited `RootExecutionConstraints`.
-5. Allow independent sessions to have active prompts concurrently.
-6. Add a reentrant application-control channel for model tools.
-7. Add `phenix.session` with create/prompt/resume/close/list.
-8. Build child model-tool catalogs from the selected generation.
-9. Add `phenix.plugin` over build/trial/promote/rollback/retire.
-10. Add end-to-end memory regression coverage.
-11. Add ACP/Lua exposure only for operations that are useful to external clients.
 
 ## Acceptance tests
 
