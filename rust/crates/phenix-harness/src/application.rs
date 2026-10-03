@@ -8356,9 +8356,9 @@ mod tests {
             ),
         )
         .unwrap();
+        let authority = worker.application_root_authority(&session_id).unwrap();
         let surface = {
             let harness = worker.harness.lock();
-            let authority = worker.application_root_authority(&session_id).unwrap();
             application_model_tool_surface(
                 &service,
                 &session_id,
@@ -8411,8 +8411,6 @@ mod tests {
             vec![
                 "bash",
                 "phenix.inspect",
-                "phenix.plugin",
-                "phenix.session",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
