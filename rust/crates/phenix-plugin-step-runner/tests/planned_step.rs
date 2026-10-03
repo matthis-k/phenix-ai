@@ -299,6 +299,38 @@ fn setup_routing(kernel: &mut Kernel, publish: bool) {
     }
 }
 
+fn setup_routing_with_fallbacks(kernel: &mut Kernel, fallback_count: usize) {
+    let profile = RoutingProfile {
+        id: phenix_core::RoutingProfileId::parse("default").unwrap(),
+        default_target: target("small"),
+        fallback_targets: (0..fallback_count)
+            .map(|index| target(&format!("fallback-{index}")))
+            .collect(),
+        callable_targets: BTreeMap::new(),
+    };
+    let _: ModelResponse = invoke(
+        kernel,
+        model_routing_service(),
+        &ModelCommand::RegisterProfile {
+            profile: profile.clone(),
+        },
+    )
+    .unwrap();
+
+    for target in std::iter::once(profile.default_target.clone())
+        .chain(profile.fallback_targets.iter().cloned())
+    {
+        let _: ModelResponse = invoke(
+            kernel,
+            model_routing_service(),
+            &ModelCommand::PublishCapabilities {
+                capabilities: capabilities(target, 8_000),
+            },
+        )
+        .unwrap();
+    }
+}
+
 fn policy(max_input: u64) -> UsagePolicy {
     UsagePolicy {
         revision: "policy-1".into(),
@@ -629,10 +661,13 @@ mod iterative_dispatch_retry {
         let path = temp_db("iterative-dispatch-retry");
         let mut kernel = kernel(&path);
         setup_root_with_limits(&mut kernel, 1_000_000, 1_000_000, Some(1_000_000), 256);
-        setup_routing(&mut kernel, true);
+        setup_routing_with_fallbacks(&mut kernel, 63);
 
         let mut request = request(1_000);
         request.input = b"provider-always-unavailable".to_vec().into();
+        request.task.context.mandatory_input_tokens = 100;
+        request.task.context.reducible_input_tokens = 100;
+        request.context_candidates[0].estimated_tokens = 100;
         request.policy.max_retries = Some(63);
 
         let error = invoke::<_, StepRunnerResponse>(
@@ -655,6 +690,47 @@ mod iterative_dispatch_retry {
             panic!("expected root attempt list");
         };
         assert_eq!(attempts.len(), 64);
+        assert!(attempts.iter().all(|attempt| {
+            attempt.phase == StepAttemptPhase::Settled
+                && attempt.outcome == Some(AttemptOutcome::Failed)
+        }));
+
+        let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn unbounded_retry_policy_stops_after_route_candidates_are_exhausted() {
+        let path = temp_db("retry-route-exhaustion");
+        let mut kernel = kernel(&path);
+        setup_root_with_limits(&mut kernel, 1_000_000, 1_000_000, Some(1_000_000), 256);
+        setup_routing(&mut kernel, true);
+
+        let mut request = request(1_000);
+        request.input = b"provider-always-unavailable".to_vec().into();
+        request.task.context.mandatory_input_tokens = 100;
+        request.task.context.reducible_input_tokens = 100;
+        request.context_candidates[0].estimated_tokens = 100;
+        request.policy.max_retries = None;
+
+        let error = invoke::<_, StepRunnerResponse>(
+            &mut kernel,
+            step_runner_service(),
+            &StepRunnerCommand::Run { request },
+        )
+        .unwrap_err();
+        assert!(error.contains("fixture provider is temporarily unavailable"));
+
+        let attempts: StepAttemptResponse = invoke(
+            &mut kernel,
+            step_attempt_service(),
+            &StepAttemptCommand::ListRoot {
+                root_execution_id: "root".into(),
+            },
+        )
+        .unwrap();
+        let StepAttemptResponse::Attempts { attempts } = attempts else {
+            panic!("expected root attempt list");
+        };
+        assert_eq!(attempts.len(), 2);
         assert!(attempts.iter().all(|attempt| {
             attempt.phase == StepAttemptPhase::Settled
                 && attempt.outcome == Some(AttemptOutcome::Failed)
