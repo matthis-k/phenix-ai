@@ -1015,7 +1015,7 @@ fn run(
 }
 
 enum AttemptRunOutcome {
-    Completed(StepRunnerResponse),
+    Completed(Box<StepRunnerResponse>),
     Retry {
         request: PlannedStepRequest,
         retry_route_strategy: RetryRouteStrategy,
@@ -1036,7 +1036,7 @@ fn run_with_retry_route(
     loop {
         match run_attempt_with_retry_route(context, request, retry_route_strategy, resolved_route)?
         {
-            AttemptRunOutcome::Completed(response) => return Ok(response),
+            AttemptRunOutcome::Completed(response) => return Ok(*response),
             AttemptRunOutcome::Retry {
                 request: next_request,
                 retry_route_strategy: next_retry_route_strategy,
@@ -1788,7 +1788,7 @@ fn run_attempt_with_retry_route(
         },
     )?;
 
-    Ok(AttemptRunOutcome::Completed(
+    Ok(AttemptRunOutcome::Completed(Box::new(
         StepRunnerResponse::Completed {
             attempt,
             output: response.output,
@@ -1796,7 +1796,7 @@ fn run_attempt_with_retry_route(
             settled,
             settlement_basis,
         },
-    ))
+    )))
 }
 
 fn record_routing_evidence(
