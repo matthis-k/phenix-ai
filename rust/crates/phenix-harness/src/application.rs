@@ -7061,9 +7061,7 @@ mod tests {
             };
             let controller = controller
                 .ok_or_else(|| "runtime orchestration controller is not configured".to_owned())?;
-            if request.session_id.as_ref() == Some(&controller)
-                && request.continuation.len() == 2
-            {
+            if request.session_id.as_ref() == Some(&controller) && request.continuation.len() == 2 {
                 let mut state = self
                     .state
                     .lock()
