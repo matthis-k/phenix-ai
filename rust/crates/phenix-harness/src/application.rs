@@ -7426,63 +7426,6 @@ mod tests {
                             fields.get("assistant_message")
                         ));
                     }
-                    let (reader, _) = reader_prompt()?;
-                    Ok(orchestration_response(
-                        "inspect the child session journal",
-                        vec![orchestration_operation_call(
-                            "orchestration-resume-reader",
-                            "phenix.session",
-                            "resume",
-                            BTreeMap::from([(
-                                "session_id".into(),
-                                PhenixValue::String(reader.to_string()),
-                            )]),
-                        )],
-                    ))
-                }
-                6 => {
-                    let (reader, execution_id) = reader_prompt()?;
-                    let snapshot =
-                        SessionSnapshot::from_value(&orchestration_result(request, 5)?.output)
-                            .map_err(|error| error.to_string())?;
-                    let observed_memory_call = snapshot.updates.iter().any(|update| {
-                        matches!(
-                            &update.update,
-                            SessionChange::Execution {
-                                execution_id: observed_execution,
-                                update: ExecutionChange::ToolCall { callable_id, .. },
-                            } if observed_execution == &execution_id
-                                && callable_id.as_str() == "memory.debug"
-                        )
-                    });
-                    if !observed_memory_call {
-                        return Err(format!(
-                            "reader session {reader} did not record memory.debug for {execution_id}"
-                        ));
-                    }
-                    Ok(orchestration_response(
-                        "inspect the child execution",
-                        vec![ModelToolCall {
-                            call_id: "orchestration-inspect-child".into(),
-                            callable_id: CallableId::parse("phenix.inspect").unwrap(),
-                            input: PhenixValue::Table(BTreeMap::from([(
-                                Key::parse("query").unwrap(),
-                                PhenixValue::String(format!("execution {execution_id}")),
-                            )])),
-                        }],
-                    ))
-                }
-                7 => {
-                    let inspected =
-                        ExecutionRecord::from_value(&orchestration_result(request, 6)?.output)
-                            .map_err(|error| error.to_string())?;
-                    if inspected.graph_generation != g2()? {
-                        return Err(format!(
-                            "child execution ran in {}, expected {}",
-                            inspected.graph_generation,
-                            g2()?
-                        ));
-                    }
                     Ok(orchestration_response(
                         "inspect orchestration diagnostics",
                         vec![ModelToolCall {
@@ -7495,9 +7438,9 @@ mod tests {
                         }],
                     ))
                 }
-                8 => {
+                6 => {
                     let (reader, execution_id) = reader_prompt()?;
-                    let trace = &orchestration_result(request, 7)?.output;
+                    let trace = &orchestration_result(request, 5)?.output;
                     let PhenixValue::List(events) = trace else {
                         return Err("runtime trace returned a non-list result".into());
                     };
@@ -7529,6 +7472,62 @@ mod tests {
                     if !observed {
                         return Err(format!(
                             "runtime trace did not correlate controller {controller_session}, reader {reader}, execution {execution_id}, and G2"
+                        ));
+                    }
+                    Ok(orchestration_response(
+                        "inspect the child session journal",
+                        vec![orchestration_operation_call(
+                            "orchestration-resume-reader",
+                            "phenix.session",
+                            "resume",
+                            BTreeMap::from([(
+                                "session_id".into(),
+                                PhenixValue::String(reader.to_string()),
+                            )]),
+                        )],
+                    ))
+                }
+                7 => {
+                    let (reader, execution_id) = reader_prompt()?;
+                    let snapshot =
+                        SessionSnapshot::from_value(&orchestration_result(request, 6)?.output)
+                            .map_err(|error| error.to_string())?;
+                    let observed_memory_call = snapshot.updates.iter().any(|update| {
+                        matches!(
+                            &update.update,
+                            SessionChange::Execution {
+                                execution_id: observed_execution,
+                                update: ExecutionChange::ToolCall { callable_id, .. },
+                            } if observed_execution == &execution_id
+                                && callable_id.as_str() == "memory.debug"
+                        )
+                    });
+                    if !observed_memory_call {
+                        return Err(format!(
+                            "reader session {reader} did not record memory.debug for {execution_id}"
+                        ));
+                    }
+                    Ok(orchestration_response(
+                        "inspect the child execution",
+                        vec![ModelToolCall {
+                            call_id: "orchestration-inspect-child".into(),
+                            callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                            input: PhenixValue::Table(BTreeMap::from([(
+                                Key::parse("query").unwrap(),
+                                PhenixValue::String(format!("execution {execution_id}")),
+                            )])),
+                        }],
+                    ))
+                }
+                8 => {
+                    let inspected =
+                        ExecutionRecord::from_value(&orchestration_result(request, 7)?.output)
+                            .map_err(|error| error.to_string())?;
+                    if inspected.graph_generation != g2()? {
+                        return Err(format!(
+                            "child execution ran in {}, expected {}",
+                            inspected.graph_generation,
+                            g2()?
                         ));
                     }
                     Ok(orchestration_response(
