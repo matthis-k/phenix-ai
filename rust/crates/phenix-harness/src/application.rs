@@ -1,5 +1,5 @@
 use crate::{
-    default_application_root_authority, default_suite_authority,
+    default_application_root_authority, default_suite_authority, runtime_orchestration_authority,
     runtime_config::publish_routing_profile_runtime_state, PhenixHarness,
 };
 use parking_lot::Mutex;
@@ -110,6 +110,7 @@ const RUNTIME_PLUGIN_BUILD_CAPABILITY: &str = "runtime.plugin.build";
 const RUNTIME_PLUGIN_TRIAL_CAPABILITY: &str = "runtime.plugin.trial";
 const RUNTIME_PLUGIN_PROMOTE_CAPABILITY: &str = "runtime.plugin.promote";
 const RUNTIME_PLUGIN_RETIRE_CAPABILITY: &str = "runtime.plugin.retire";
+const RUNTIME_ORCHESTRATION_OPTION: &str = "agent.runtime_orchestration";
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationShellToolRequest {
@@ -508,16 +509,9 @@ pub struct ApplicationWorker {
 
 impl ApplicationWorker {
     pub fn new(harness: PhenixHarness) -> Result<Self, ObservableError> {
-        Self::new_with_authority(harness, default_application_root_authority())
-    }
-
-    pub fn new_with_authority(
-        harness: PhenixHarness,
-        authority: Authority,
-    ) -> Result<Self, ObservableError> {
         Ok(Self {
             harness: Arc::new(Mutex::new(harness)),
-            authority,
+            authority: default_suite_authority(),
             projection: SessionProjectionStore::new()?,
             interaction_handlers: InteractionHandlers {
                 permission: None,
@@ -962,6 +956,57 @@ impl ApplicationWorker {
         }
     }
 
+    fn application_root_authority(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Authority, ApplicationError> {
+        let subject =
+            OptionSubjectId::parse(session_id.as_str()).map_err(|error| ApplicationError::InvalidInput {
+                message: error.to_owned(),
+            })?;
+        let response = self.invoke_option_command(OptionCommand::Resolve {
+            key: OptionKey::parse(RUNTIME_ORCHESTRATION_OPTION).map_err(|error| {
+                ApplicationError::InvalidInput {
+                    message: error.to_owned(),
+                }
+            })?,
+            context: OptionContext {
+                session: Some(subject),
+                agent: Some(
+                    OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(|error| {
+                        ApplicationError::InvalidInput {
+                            message: error.to_owned(),
+                        }
+                    })?,
+                ),
+            },
+        })?;
+        let OptionResponse::Value { option } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!(
+                    "option {RUNTIME_ORCHESTRATION_OPTION} returned a non-value response"
+                ),
+            });
+        };
+        let OptionValue::Bool(enabled) = option.value else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("{RUNTIME_ORCHESTRATION_OPTION} must be boolean"),
+            });
+        };
+
+        let application = default_application_root_authority();
+        if !enabled {
+            return Ok(application);
+        }
+        let orchestration = runtime_orchestration_authority();
+        Ok(Authority::new(
+            application
+                .capabilities()
+                .cloned()
+                .chain(orchestration.capabilities().cloned()),
+        ))
+    }
+
     fn invoke_model_command(
         &self,
         command: ModelCommand,
@@ -1343,9 +1388,10 @@ impl ApplicationWorker {
     }
 
     fn prompt(&mut self, request: PromptInput) -> Result<PromptResult, ApplicationError> {
+        let authority = self.application_root_authority(&request.session_id)?;
         let root = {
             let harness = self.harness.lock();
-            harness.root_execution_handle(&self.authority)
+            harness.root_execution_handle(&authority)
         };
         self.prompt_on(&root, request)
     }
@@ -1459,7 +1505,7 @@ impl ApplicationWorker {
         let response = self.invoke_execution(ExecutionCommand::AllocateExecution {
             prefix: "execution-".to_owned(),
             requested_authority: ExecutionAuthority::new(
-                self.authority
+                default_application_root_authority()
                     .capabilities()
                     .map(|capability| capability.as_str().to_owned()),
             ),
@@ -3711,6 +3757,17 @@ fn start_prompt(
         return;
     }
 
+    let default_authority = if invocation.root.is_none() {
+        match worker.application_root_authority(&request.session_id) {
+            Ok(authority) => Some(authority),
+            Err(error) => {
+                invocation.respond(Err(error));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let root = {
         let harness = worker.harness.lock();
         match invocation.root.as_ref() {
@@ -3719,7 +3776,11 @@ fn start_prompt(
                 .map_err(|error| ApplicationError::Failed {
                     message: error.to_string(),
                 }),
-            None => Ok(harness.root_execution_handle(&worker.authority)),
+            None => Ok(harness.root_execution_handle(
+                default_authority
+                    .as_ref()
+                    .expect("unqualified application prompt resolved root authority"),
+            )),
         }
     };
     let root = match root {
@@ -6083,6 +6144,17 @@ mod tests {
         ApplicationWorker::new(harness).unwrap()
     }
 
+    fn enable_runtime_orchestration(worker: &ApplicationWorker) {
+        let response = worker
+            .invoke_option_command(OptionCommand::Set {
+                key: OptionKey::parse(RUNTIME_ORCHESTRATION_OPTION).unwrap(),
+                scope: OptionScope::Global,
+                value: OptionValue::Bool(true),
+            })
+            .unwrap();
+        assert!(matches!(response, OptionResponse::Updated { .. }));
+    }
+
     #[test]
     fn application_log_operations_filter_and_expand_references() {
         let nonce = SystemTime::now()
@@ -7551,8 +7623,8 @@ mod tests {
             .unwrap();
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
-        let mut worker =
-            ApplicationWorker::new_with_authority(harness, default_suite_authority()).unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        enable_runtime_orchestration(&worker);
         configure_fixture_routing(
             &mut worker,
             "fixture.session-control-model",
@@ -7727,8 +7799,8 @@ mod tests {
             state.trial_request = Some(trial_request);
         }
 
-        let mut worker =
-            ApplicationWorker::new_with_authority(harness, default_suite_authority()).unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        enable_runtime_orchestration(&worker);
         configure_fixture_routing(
             &mut worker,
             "fixture.runtime-orchestration-model",
@@ -8275,16 +8347,17 @@ mod tests {
         .unwrap();
         let surface = {
             let harness = worker.harness.lock();
+            let authority = worker.application_root_authority(&session_id).unwrap();
             application_model_tool_surface(
                 &service,
                 &session_id,
                 harness.resolved_harness(),
-                &worker.authority,
+                &authority,
             )
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 6);
         assert_eq!(
             tools
                 .iter()
@@ -8293,8 +8366,6 @@ mod tests {
             vec![
                 "bash",
                 "phenix.inspect",
-                "phenix.plugin",
-                "phenix.session",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
@@ -8319,7 +8390,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 8);
+        assert_eq!(report.tools.len(), 6);
         assert_eq!(
             report
                 .tools
