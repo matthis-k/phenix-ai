@@ -6346,7 +6346,7 @@ mod tests {
             after_sequence: None,
         }
         .to_value();
-        let missing_generation = GraphGenerationId::from("fixture-missing-generation");
+        let missing_generation = GraphGenerationId::from("fixture-missing-generation".to_owned());
         let (control_transport, mut control_receiver) = ChannelTransport::new(1);
         let weak_control_transport = control_transport.downgrade();
         let caller_transport = control_transport.clone();
