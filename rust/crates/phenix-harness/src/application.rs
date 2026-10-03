@@ -6298,6 +6298,79 @@ mod tests {
         assert!(matches!(response, OptionResponse::Updated { .. }));
     }
 
+    #[tokio::test]
+    async fn root_qualified_session_operation_never_falls_back_to_default_generation() {
+        let mut worker = application_worker();
+        let created = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("qualified-root-regression".into()),
+            },
+        )
+        .unwrap();
+
+        let sdk = phenix_core::ResolvedSdkContributions::resolve(
+            &[],
+            &[],
+            Vec::<phenix_core::SdkContribution>::new(),
+        )
+        .unwrap();
+        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCapabilityRegistry::default(),
+            RuntimeId::parse("fixture-qualified-root-runtime").unwrap(),
+            CapabilityGenerationId::parse("fixture-qualified-root-generation").unwrap(),
+            callbacks,
+            ClientCapabilityIdentity::new(
+                ClientConnectionId::parse("fixture-qualified-root-client").unwrap(),
+                CapabilityGenerationId::parse("fixture-qualified-root-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let constraints = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&worker.authority).constraints().clone()
+        };
+        let (response, receive) = tokio::sync::oneshot::channel();
+        let invocation = ApplicationInvocation {
+            operation: ContractId::parse(ResumeSession::ID).unwrap(),
+            input: SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            }
+            .to_value(),
+            root: Some(ApplicationRootSelection {
+                generation: GraphGenerationId::from("fixture-missing-generation"),
+                constraints,
+            }),
+            response,
+        };
+        let (execution_sender, _execution_receiver) =
+            mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        let (control_transport, _control_receiver) = ChannelTransport::new(1);
+        let weak_control_transport = control_transport.downgrade();
+        let mut active = BTreeMap::new();
+
+        dispatch_application_invocation(
+            &mut worker,
+            &service,
+            &execution_sender,
+            &weak_control_transport,
+            &mut active,
+            invocation,
+        );
+
+        assert!(matches!(
+            receive.await.unwrap(),
+            Err(ApplicationError::Failed { message })
+                if message.contains("fixture-missing-generation")
+        ));
+    }
+
     #[test]
     fn application_log_operations_filter_and_expand_references() {
         let nonce = SystemTime::now()
