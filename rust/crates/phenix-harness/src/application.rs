@@ -3857,12 +3857,12 @@ fn dispatch_application_invocation(
                 message: error.to_string(),
             })
     });
-    let result = if is_sdk_operation(&operation) {
-        service.invoke(&operation, input)
-    } else if let Some(root) = selected_root {
+    let result = if let Some(root) = selected_root {
         root.and_then(|root| {
             worker.invoke_session_application_operation_on(&root, &operation, input)
         })
+    } else if is_sdk_operation(&operation) {
+        service.invoke(&operation, input)
     } else {
         worker.invoke_with_client_callables(&operation, input, |callable, schema| {
             service.admit_current_client_callable(callable, schema)
