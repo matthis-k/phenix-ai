@@ -170,11 +170,15 @@ impl Display for MetadataReconciliationError {
         match self {
             Self::ActiveGenerationMismatch { graph, metadata } => write!(
                 f,
-                "active metadata generation {metadata} does not match active graph generation {graph}"
+                "active metadata generation {} does not match active graph generation {}",
+                metadata.as_str(),
+                graph.as_str()
             ),
             Self::CandidateGenerationMismatch { graph, metadata } => write!(
                 f,
-                "candidate metadata generation {metadata} does not match candidate graph generation {graph}"
+                "candidate metadata generation {} does not match candidate graph generation {}",
+                metadata.as_str(),
+                graph.as_str()
             ),
             Self::DrainRequired { component } => {
                 write!(f, "component {component} requires drain before reconciliation")
