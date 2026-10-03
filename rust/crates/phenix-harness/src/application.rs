@@ -6625,6 +6625,7 @@ mod tests {
         controller: Option<SessionId>,
         initial_generation: Option<String>,
         trial_request: Option<PhenixValue>,
+        controller_turn_two_entries: usize,
     }
 
     struct RuntimeOrchestrationModel {
@@ -7060,6 +7061,22 @@ mod tests {
             };
             let controller = controller
                 .ok_or_else(|| "runtime orchestration controller is not configured".to_owned())?;
+            if request.session_id.as_ref() == Some(&controller)
+                && request.continuation.len() == 2
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
+                state.controller_turn_two_entries += 1;
+                if state.controller_turn_two_entries > 1 {
+                    return Err(format!(
+                        "controller turn 2 re-entered as session {:?} with input {:?}",
+                        request.session_id,
+                        String::from_utf8_lossy(request.input.as_ref())
+                    ));
+                }
+            }
             let response = if request.session_id.as_ref() == Some(&controller) {
                 self.controller_response(
                     &request,
