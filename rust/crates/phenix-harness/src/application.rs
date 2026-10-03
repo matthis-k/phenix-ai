@@ -1651,6 +1651,131 @@ impl ApplicationWorker {
         self.invoke_runtime_on(root, session_service(), command)
     }
 
+    fn create_session_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: SessionCreateInput,
+    ) -> Result<SessionInfo, ApplicationError> {
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::Allocate {
+                working_directory: Some(request.working_directory),
+                title: request.title,
+            },
+        )?;
+        let SessionResponse::Created { session } = response else {
+            return Err(unexpected_session_response("create", response));
+        };
+        let info = application_session_info(&session)?;
+        self.projection
+            .insert_created(info.clone())
+            .map_err(application_projection_error)?;
+        Ok(info)
+    }
+
+    fn list_sessions_on(
+        &self,
+        root: &RootExecutionHandle,
+        request: PageInput,
+    ) -> Result<SessionList, ApplicationError> {
+        if request.cursor.is_some() {
+            return Err(ApplicationError::InvalidInput {
+                message: "session list does not issue cursors".to_owned(),
+            });
+        }
+        let response = self.invoke_session_on(root, SessionCommand::List)?;
+        let SessionResponse::Sessions { sessions } = response else {
+            return Err(unexpected_session_response("list", response));
+        };
+        Ok(SessionList {
+            sessions: sessions
+                .into_iter()
+                .filter_map(|session| application_session_info(&session).ok())
+                .collect(),
+            next_cursor: None,
+        })
+    }
+
+    fn rename_session_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: SessionRenameInput,
+    ) -> Result<SessionInfo, ApplicationError> {
+        self.require_open_application_session_on(root, &request.session_id)?;
+        self.reserve_session_event_slot()?;
+        let change = SessionChange::Renamed {
+            title: request.title.clone(),
+        };
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::Transition {
+                id: request.session_id.clone(),
+                transition: SessionTransition::Rename {
+                    title: request.title,
+                },
+                journal: session_change_journal(&change),
+            },
+        )?;
+        let SessionResponse::Transitioned { session, journal } = response else {
+            return Err(unexpected_session_response("rename", response));
+        };
+        let info = application_session_info(&session)?;
+        self.project_journal_entry_on(root, info.clone(), journal)?;
+        Ok(info)
+    }
+
+    fn close_session_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        request: ApplicationSessionInput,
+    ) -> Result<Acknowledged, ApplicationError> {
+        self.require_open_application_session_on(root, &request.session_id)?;
+        self.reserve_session_event_slot()?;
+        let change = SessionChange::Closed;
+        let response = self.invoke_session_on(
+            root,
+            SessionCommand::Transition {
+                id: request.session_id.clone(),
+                transition: SessionTransition::Close,
+                journal: session_change_journal(&change),
+            },
+        )?;
+        let SessionResponse::Transitioned { session, journal } = response else {
+            return Err(unexpected_session_response("close", response));
+        };
+        let info = application_session_info(&session)?;
+        self.project_journal_entry_on(root, info, journal)?;
+        Ok(Acknowledged {})
+    }
+
+    fn invoke_session_application_operation_on(
+        &mut self,
+        root: &RootExecutionHandle,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PhenixValue, ApplicationError> {
+        match operation.as_str() {
+            CreateSession::ID => self
+                .create_session_on(root, decode(input)?)
+                .map(|value| value.to_value()),
+            ListSessions::ID => self
+                .list_sessions_on(root, decode(input)?)
+                .map(|value| value.to_value()),
+            ResumeSession::ID => self
+                .resume_session_on(root, decode(input)?)
+                .map(|value| value.to_value()),
+            RenameSession::ID => self
+                .rename_session_on(root, decode(input)?)
+                .map(|value| value.to_value()),
+            CloseSession::ID => self
+                .close_session_on(root, decode(input)?)
+                .map(|value| value.to_value()),
+            _ => Err(ApplicationError::UnsupportedCapability {
+                capability: operation.clone(),
+            }),
+        }
+    }
+
     fn invoke_execution_on(
         &self,
         root: &RootExecutionHandle,
@@ -3724,8 +3849,18 @@ fn dispatch_application_invocation(
 
     let operation = invocation.operation.clone();
     let input = invocation.input.clone();
+    let selected_root = invocation.root.as_ref().map(|selection| {
+        let harness = worker.harness.lock();
+        harness
+            .root_execution_handle_in_generation(&selection.generation, &selection.constraints)
+            .map_err(|error| ApplicationError::Failed {
+                message: error.to_string(),
+            })
+    });
     let result = if is_sdk_operation(&operation) {
         service.invoke(&operation, input)
+    } else if let Some(root) = selected_root {
+        root.and_then(|root| worker.invoke_session_application_operation_on(&root, &operation, input))
     } else {
         worker.invoke_with_client_callables(&operation, input, |callable, schema| {
             service.admit_current_client_callable(callable, schema)
@@ -5465,12 +5600,14 @@ fn prompt_child_session(
         }
         if run.cancellation.load(Ordering::Acquire) && !cancellation_requested {
             cancellation_requested = true;
-            let _: Acknowledged = invoke_application_control(
+            let _: Acknowledged = invoke_application_control_in_generation(
                 run,
                 Cancel::ID,
                 ApplicationSessionInput {
                     session_id: session_id.clone(),
                 },
+                generation.clone(),
+                constraints.clone(),
             )?;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -5552,9 +5689,12 @@ where
     let operation = ContractId::parse(operation).map_err(|error| ApplicationError::Failed {
         message: error.to_string(),
     })?;
-    let output = run
-        .control_transport
-        .invoke_blocking(&operation, PhenixValue::from(&command))?;
+    let output = run.control_transport.invoke_blocking_in_generation(
+        &operation,
+        PhenixValue::from(&command),
+        run.root_generation.clone(),
+        run.root_constraints.clone(),
+    )?;
     R::try_from(Project(&output)).map_err(|error| ApplicationError::InvalidResponse {
         message: error.to_string(),
     })
@@ -8019,7 +8159,12 @@ mod tests {
             .expect("parent cancellation must request child cancellation")
             .expect("child cancel application invocation");
         assert_eq!(child_cancel.operation.as_str(), Cancel::ID);
-        assert!(child_cancel.root.is_none());
+        let cancel_root = child_cancel
+            .root
+            .as_ref()
+            .expect("child cancellation stays in the selected generation");
+        assert_eq!(cancel_root.generation, root_generation);
+        assert_eq!(cancel_root.constraints, root_constraints);
         let cancel_input = ApplicationSessionInput::from_value(&child_cancel.input).unwrap();
         assert_eq!(cancel_input.session_id, child);
         child_cancel.respond(Ok(Acknowledged {}.to_value()));
