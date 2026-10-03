@@ -1702,7 +1702,7 @@ fn run_attempt_with_retry_route(
                     recovery_request,
                     &attribution,
                     RetryRouteStrategy::PreserveParent,
-                    Some(decision.clone()),
+                    None,
                 );
             }
             if failure.retryable() && retry_available(context, &attribution, &plan)? {
