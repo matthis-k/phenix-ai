@@ -9348,6 +9348,24 @@ mod tests {
         assert!(!host_tools
             .iter()
             .any(|tool| tool.id.as_str() == "phenix.plugin"));
+
+        enable_runtime_orchestration(&worker);
+        let enabled = worker
+            .application_root_authority(&SessionId::parse("session-orchestration").unwrap())
+            .unwrap();
+        for capability in runtime_orchestration_authority().capabilities() {
+            assert!(
+                enabled.permits(capability),
+                "enabled application root is missing {capability}"
+            );
+        }
+        let host_tools = host_model_tools(&enabled);
+        assert!(host_tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "phenix.session"));
+        assert!(host_tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "phenix.plugin"));
     }
 
     #[test]
