@@ -4544,7 +4544,10 @@ mod tests {
         ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
         ListSessions, Prompt, RenameSession, ResumeSession,
     };
-    use phenix_core::{Bytes, LocalPersistence, ModelId, ModelToolTurn, SessionId, ValueAddress};
+    use phenix_core::{
+        Bytes, InvocationOutcome, LocalPersistence, ModelId, ModelInferenceFailure, ModelToolTurn,
+        SessionId, ValueAddress,
+    };
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
