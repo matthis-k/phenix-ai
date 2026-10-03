@@ -6807,8 +6807,9 @@ mod tests {
             trial_request: PhenixValue,
         ) -> Result<ModelInferenceResponse, String> {
             eprintln!(
-                "runtime-orchestration: controller turn {}",
-                request.continuation.len()
+                "runtime-orchestration: controller turn {} session={:?}",
+                request.continuation.len(),
+                request.session_id
             );
             let g2 = || orchestration_string_field(request, 0, "generation");
             match request.continuation.len() {
@@ -6857,6 +6858,11 @@ mod tests {
                 2 => {
                     let writer = SessionInfo::from_value(&orchestration_result(request, 1)?.output)
                         .map_err(|error| error.to_string())?;
+                    eprintln!(
+                        "runtime-orchestration: writer session={} controller={:?}",
+                        writer.session_id,
+                        request.session_id
+                    );
                     Ok(orchestration_response(
                         "write memory through G2",
                         vec![orchestration_operation_call(
