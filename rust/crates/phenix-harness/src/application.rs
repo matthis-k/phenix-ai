@@ -7123,6 +7123,18 @@ mod tests {
                 request.session_id
             );
             let g2 = || orchestration_string_field(request, 0, "generation");
+            let reader_prompt = || -> Result<(SessionId, String), String> {
+                let reader = SessionInfo::from_value(&orchestration_result(request, 3)?.output)
+                    .map_err(|error| error.to_string())?;
+                let prompt = orchestration_result(request, 4)?;
+                let PhenixValue::Map(fields) = &prompt.output else {
+                    return Err("reader prompt returned a non-map result".into());
+                };
+                let Some(PhenixValue::String(execution_id)) = fields.get("execution_id") else {
+                    return Err("reader prompt did not return an execution id".into());
+                };
+                Ok((reader.session_id, execution_id.clone()))
+            };
             match request.continuation.len() {
                 0 => {
                     if request
@@ -7238,9 +7250,40 @@ mod tests {
                             fields.get("assistant_message")
                         ));
                     }
-                    let Some(PhenixValue::String(execution_id)) = fields.get("execution_id") else {
-                        return Err("reader prompt did not return an execution id".into());
-                    };
+                    let (reader, _) = reader_prompt()?;
+                    Ok(orchestration_response(
+                        "inspect the child session journal",
+                        vec![orchestration_operation_call(
+                            "orchestration-resume-reader",
+                            "phenix.session",
+                            "resume",
+                            BTreeMap::from([(
+                                "session_id".into(),
+                                PhenixValue::String(reader.to_string()),
+                            )]),
+                        )],
+                    ))
+                }
+                6 => {
+                    let (reader, execution_id) = reader_prompt()?;
+                    let snapshot =
+                        SessionSnapshot::from_value(&orchestration_result(request, 5)?.output)
+                            .map_err(|error| error.to_string())?;
+                    let observed_memory_call = snapshot.updates.iter().any(|update| {
+                        matches!(
+                            &update.update,
+                            SessionChange::Execution {
+                                execution_id: observed_execution,
+                                update: ExecutionChange::ToolCall { callable_id, .. },
+                            } if observed_execution == &execution_id
+                                && callable_id.as_str() == "memory.debug"
+                        )
+                    });
+                    if !observed_memory_call {
+                        return Err(format!(
+                            "reader session {reader} did not record memory.debug for {execution_id}"
+                        ));
+                    }
                     Ok(orchestration_response(
                         "inspect the child execution",
                         vec![ModelToolCall {
@@ -7253,15 +7296,61 @@ mod tests {
                         }],
                     ))
                 }
-                6 => {
+                7 => {
                     let inspected =
-                        ExecutionRecord::from_value(&orchestration_result(request, 5)?.output)
+                        ExecutionRecord::from_value(&orchestration_result(request, 6)?.output)
                             .map_err(|error| error.to_string())?;
                     if inspected.graph_generation != g2()? {
                         return Err(format!(
                             "child execution ran in {}, expected {}",
                             inspected.graph_generation,
                             g2()?
+                        ));
+                    }
+                    Ok(orchestration_response(
+                        "inspect orchestration diagnostics",
+                        vec![ModelToolCall {
+                            call_id: "orchestration-inspect-trace".into(),
+                            callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                            input: PhenixValue::Table(BTreeMap::from([(
+                                Key::parse("query").unwrap(),
+                                PhenixValue::String("trace".into()),
+                            )])),
+                        }],
+                    ))
+                }
+                8 => {
+                    let (reader, execution_id) = reader_prompt()?;
+                    let trace = &orchestration_result(request, 7)?.output;
+                    let PhenixValue::List(events) = trace else {
+                        return Err("runtime trace returned a non-list result".into());
+                    };
+                    let controller_session = request
+                        .session_id
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .ok_or_else(|| "controller request has no session id".to_owned())?;
+                    let observed = events.iter().any(|event| {
+                        session_control_field(event, "event")
+                            == Some(&PhenixValue::String("orchestration".into()))
+                            && session_control_field(event, "kind")
+                                == Some(&PhenixValue::String("session".into()))
+                            && session_control_field(event, "operation")
+                                == Some(&PhenixValue::String("prompt".into()))
+                            && session_control_field(event, "controller_session")
+                                == Some(&PhenixValue::String(controller_session.clone()))
+                            && session_control_field(event, "target_session")
+                                == Some(&PhenixValue::String(reader.to_string()))
+                            && session_control_field(event, "child_execution")
+                                == Some(&PhenixValue::String(execution_id.clone()))
+                            && session_control_field(event, "selected_generation")
+                                == Some(&PhenixValue::String(g2().unwrap_or_default()))
+                            && session_control_field(event, "success")
+                                == Some(&PhenixValue::Bool(true))
+                    });
+                    if !observed {
+                        return Err(format!(
+                            "runtime trace did not correlate controller {controller_session}, reader {reader}, execution {execution_id}, and G2"
                         ));
                     }
                     Ok(orchestration_response(
@@ -7274,8 +7363,8 @@ mod tests {
                         )],
                     ))
                 }
-                7 => {
-                    let active = orchestration_string_field(request, 6, "active_generation")?;
+                9 => {
+                    let active = orchestration_string_field(request, 8, "active_generation")?;
                     if active != g2()? {
                         return Err(format!("promotion selected unexpected generation {active}"));
                     }
@@ -7292,8 +7381,8 @@ mod tests {
                         )],
                     ))
                 }
-                8 => {
-                    let active = orchestration_string_field(request, 7, "active_generation")?;
+                10 => {
+                    let active = orchestration_string_field(request, 9, "active_generation")?;
                     if active != initial_generation {
                         return Err(format!("rollback selected unexpected generation {active}"));
                     }
@@ -7307,8 +7396,8 @@ mod tests {
                         )],
                     ))
                 }
-                9 => {
-                    let retired = orchestration_string_field(request, 8, "retired_generation")?;
+                11 => {
+                    let retired = orchestration_string_field(request, 10, "retired_generation")?;
                     if retired != g2()? {
                         return Err(format!("retired unexpected generation {retired}"));
                     }
@@ -7322,8 +7411,8 @@ mod tests {
                         )],
                     ))
                 }
-                10 => {
-                    let active = orchestration_string_field(request, 9, "active_generation")?;
+                12 => {
+                    let active = orchestration_string_field(request, 11, "active_generation")?;
                     if active != initial_generation {
                         return Err(format!(
                             "final active generation is {active}, expected {initial_generation}"
