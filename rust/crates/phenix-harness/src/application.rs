@@ -6335,24 +6335,30 @@ mod tests {
             let harness = worker.harness.lock();
             harness.root_execution_handle(&worker.authority).constraints().clone()
         };
-        let (response, receive) = tokio::sync::oneshot::channel();
-        let invocation = ApplicationInvocation {
-            operation: ContractId::parse(ResumeSession::ID).unwrap(),
-            input: SessionResumeInput {
-                session_id: created.session_id,
-                after_sequence: None,
-            }
-            .to_value(),
-            root: Some(ApplicationRootSelection {
-                generation: GraphGenerationId::from("fixture-missing-generation"),
+        let operation = ContractId::parse(ResumeSession::ID).unwrap();
+        let input = SessionResumeInput {
+            session_id: created.session_id,
+            after_sequence: None,
+        }
+        .to_value();
+        let missing_generation = GraphGenerationId::from("fixture-missing-generation");
+        let (control_transport, mut control_receiver) = ChannelTransport::new(1);
+        let weak_control_transport = control_transport.downgrade();
+        let caller_transport = control_transport.clone();
+        let call = tokio::task::spawn_blocking(move || {
+            caller_transport.invoke_blocking_in_generation(
+                &operation,
+                input,
+                missing_generation,
                 constraints,
-            }),
-            response,
-        };
+            )
+        });
+        let invocation = control_receiver
+            .recv()
+            .await
+            .expect("qualified application invocation");
         let (execution_sender, _execution_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
-        let (control_transport, _control_receiver) = ChannelTransport::new(1);
-        let weak_control_transport = control_transport.downgrade();
         let mut active = BTreeMap::new();
 
         dispatch_application_invocation(
@@ -6365,7 +6371,7 @@ mod tests {
         );
 
         assert!(matches!(
-            receive.await.unwrap(),
+            call.await.unwrap(),
             Err(ApplicationError::Failed { message })
                 if message.contains("fixture-missing-generation")
         ));
