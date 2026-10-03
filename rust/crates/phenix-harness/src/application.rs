@@ -7325,6 +7325,7 @@ mod tests {
                     let PhenixValue::List(events) = trace else {
                         return Err("runtime trace returned a non-list result".into());
                     };
+                    let expected_g2 = g2()?;
                     let controller_session = request
                         .session_id
                         .as_ref()
@@ -7344,7 +7345,7 @@ mod tests {
                             && session_control_field(event, "child_execution")
                                 == Some(&PhenixValue::String(execution_id.clone()))
                             && session_control_field(event, "selected_generation")
-                                == Some(&PhenixValue::String(g2().unwrap_or_default()))
+                                == Some(&PhenixValue::String(expected_g2.clone()))
                             && session_control_field(event, "success")
                                 == Some(&PhenixValue::Bool(true))
                     });
