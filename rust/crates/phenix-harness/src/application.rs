@@ -7677,6 +7677,12 @@ mod tests {
                     .lock()
                     .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
                 state.controller_turn_one_entries += 1;
+                if state.controller_turn_one_entries == 2 {
+                    eprintln!(
+                        "runtime-orchestration: second controller turn 1 backtrace:\n{:?}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
                 if state.controller_turn_one_entries > 2 {
                     return Err(format!(
                         "controller turn 1 re-entered {} times for session {:?}",
