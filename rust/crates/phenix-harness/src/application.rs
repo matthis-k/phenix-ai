@@ -3860,7 +3860,9 @@ fn dispatch_application_invocation(
     let result = if is_sdk_operation(&operation) {
         service.invoke(&operation, input)
     } else if let Some(root) = selected_root {
-        root.and_then(|root| worker.invoke_session_application_operation_on(&root, &operation, input))
+        root.and_then(|root| {
+            worker.invoke_session_application_operation_on(&root, &operation, input)
+        })
     } else {
         worker.invoke_with_client_callables(&operation, input, |callable, schema| {
             service.admit_current_client_callable(callable, schema)
@@ -6333,7 +6335,10 @@ mod tests {
 
         let constraints = {
             let harness = worker.harness.lock();
-            harness.root_execution_handle(&worker.authority).constraints().clone()
+            harness
+                .root_execution_handle(&worker.authority)
+                .constraints()
+                .clone()
         };
         let operation = ContractId::parse(ResumeSession::ID).unwrap();
         let input = SessionResumeInput {
