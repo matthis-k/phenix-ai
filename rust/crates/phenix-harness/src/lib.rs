@@ -108,7 +108,7 @@ impl From<phenix_core::PersistenceCandidateError> for HarnessBuildError {
     }
 }
 
-pub fn default_suite_authority() -> Authority {
+pub fn default_application_root_authority() -> Authority {
     Authority::new([
         CapabilityId::parse("kernel.persistence.schema").expect("static capability"),
         CapabilityId::parse("kernel.persistence.read").expect("static capability"),
@@ -119,6 +119,12 @@ pub fn default_suite_authority() -> Authority {
         CapabilityId::parse("workspace.write").expect("static capability"),
         CapabilityId::parse("workspace.shell").expect("static capability"),
         CapabilityId::parse("workspace.git").expect("static capability"),
+    ])
+}
+
+pub fn default_suite_authority() -> Authority {
+    let application = default_application_root_authority();
+    Authority::new(application.capabilities().cloned().chain([
         CapabilityId::parse("application.session.control").expect("static capability"),
         CapabilityId::parse("runtime.generation.select").expect("static capability"),
         CapabilityId::parse("runtime.plugin.inspect").expect("static capability"),
@@ -126,7 +132,7 @@ pub fn default_suite_authority() -> Authority {
         CapabilityId::parse("runtime.plugin.trial").expect("static capability"),
         CapabilityId::parse("runtime.plugin.promote").expect("static capability"),
         CapabilityId::parse("runtime.plugin.retire").expect("static capability"),
-    ])
+    ]))
 }
 
 #[derive(Default)]
