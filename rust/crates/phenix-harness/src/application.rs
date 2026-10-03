@@ -9271,8 +9271,12 @@ mod tests {
         }
 
         let host_tools = host_model_tools(&default_application_root_authority());
-        assert!(!host_tools.iter().any(|tool| tool.id.as_str() == "phenix.session"));
-        assert!(!host_tools.iter().any(|tool| tool.id.as_str() == "phenix.plugin"));
+        assert!(!host_tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "phenix.session"));
+        assert!(!host_tools
+            .iter()
+            .any(|tool| tool.id.as_str() == "phenix.plugin"));
     }
 
     #[test]
