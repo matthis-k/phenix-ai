@@ -3030,7 +3030,7 @@ enum ExecutionWorkerEvent {
 #[derive(Clone)]
 struct ApplicationAgentToolRun {
     service: SdkApplicationService,
-    control_transport: ChannelTransport,
+    control_transport: WeakChannelTransport,
     harness: Weak<Mutex<PhenixHarness>>,
     session_id: SessionId,
     execution_id: String,
@@ -3760,14 +3760,6 @@ fn start_prompt(
         return;
     }
 
-    let application_control = match control_transport.upgrade() {
-        Some(transport) => transport,
-        None => {
-            invocation.respond(Err(ApplicationError::Disconnected));
-            return;
-        }
-    };
-
     let default_authority = if invocation.root.is_none() {
         match worker.application_root_authority(&request.session_id) {
             Ok(authority) => Some(authority),
@@ -3883,6 +3875,7 @@ fn start_prompt(
     let permission_handler = worker.interaction_handlers().permission.clone();
     let harness = Arc::downgrade(&worker.harness);
     let application_service = service.clone();
+    let application_control = control_transport.clone();
     let session_id = request.session_id;
     let execution_id = prompt.execution_id;
     let runtime_execution_id = execution_id.clone();
@@ -4277,7 +4270,7 @@ fn run_agent_execution(
     root: RootExecutionHandle,
     harness: Weak<Mutex<PhenixHarness>>,
     service: SdkApplicationService,
-    control_transport: ChannelTransport,
+    control_transport: WeakChannelTransport,
     context: AgentExecutionContext,
     cancellation: Arc<AtomicBool>,
 ) -> Result<String, ApplicationError> {
@@ -7952,7 +7945,7 @@ mod tests {
         let (control_transport, mut control_receiver) = ChannelTransport::new(4);
         let run = ApplicationAgentToolRun {
             service,
-            control_transport,
+            control_transport: control_transport.downgrade(),
             harness: Arc::downgrade(&worker.harness),
             session_id: controller,
             execution_id: "execution-controller".into(),
@@ -8440,7 +8433,7 @@ mod tests {
                 execution_id.clone(),
                 ApplicationAgentToolRun {
                     service,
-                    control_transport,
+                    control_transport: control_transport.downgrade(),
                     harness: Arc::downgrade(&worker.harness),
                     session_id: session_id.clone(),
                     execution_id: execution_id.clone(),
