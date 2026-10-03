@@ -18,6 +18,7 @@ pub struct UsagePolicy {
     #[serde(default)]
     pub max_output_tokens: Option<u64>,
     pub max_cost_microunits: Option<u64>,
+    /// Number of automatic retries. None disables automatic retries.
     #[serde(default)]
     pub max_retries: Option<u32>,
     #[serde(default)]
@@ -278,11 +279,9 @@ impl UsagePolicy {
             required_capabilities: planned_context.required_capabilities.clone(),
         };
 
-        let max_attempts = self
-            .max_retries
-            .map_or(input.remaining.attempts, |retries| {
-                retries.saturating_add(1).min(input.remaining.attempts)
-            });
+        let max_attempts = self.max_retries.map_or(1, |retries| {
+            retries.saturating_add(1).min(input.remaining.attempts)
+        });
         let reserved_attempts = max_attempts;
 
         Ok(StepPlan {
@@ -424,6 +423,17 @@ mod tests {
         assert_eq!(plan.reservation.input_tokens, 1_000);
         assert_eq!(plan.reservation.output_tokens, 250);
         assert_eq!(plan.retry.reserved_attempts, 2);
+    }
+
+    #[test]
+    fn absent_retry_configuration_disables_automatic_retries() {
+        let mut policy = policy();
+        policy.max_retries = None;
+
+        let plan = policy().plan(&input(ContextDemand::default())).unwrap();
+
+        assert_eq!(plan.retry.max_attempts, 1);
+        assert_eq!(plan.retry.reserved_attempts, 1);
     }
 
     #[test]
