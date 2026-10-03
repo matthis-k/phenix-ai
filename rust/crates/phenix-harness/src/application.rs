@@ -8322,6 +8322,23 @@ mod tests {
             .await
             .unwrap();
 
+        let duplicate = tokio::time::timeout(
+            Duration::from_secs(2),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "this must conflict with the active prompt".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("duplicate prompt must be rejected without waiting for the active prompt")
+        .unwrap_err();
+        assert!(matches!(duplicate, ApplicationError::Conflict { .. }));
+
         let cancellation = tokio::time::timeout(
             Duration::from_secs(2),
             invoke_transport_operation::<Cancel>(
