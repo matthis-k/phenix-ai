@@ -537,7 +537,7 @@ Regression coverage proves:
 - retirement cannot remove the active generation.
 - incompatible durable schemas reject shared-store trial residency.
 - memory written through S1/G2 can be recalled through independent S2/G2 when memory scope permits it.
-- execution inspection shows the expected memory and tool path for the child execution.
+- the child session journal shows the expected memory tool path for the child execution, and execution inspection reports that execution's selected generation.
 - cancelling S0 cancels a synchronous child orchestration request without corrupting either session journal.
 
 ## Non-goals
