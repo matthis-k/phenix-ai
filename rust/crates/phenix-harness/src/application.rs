@@ -5575,9 +5575,8 @@ fn runtime_plugin_inspection_value(
     harness: &PhenixHarness,
 ) -> Result<PhenixValue, ApplicationError> {
     let active = harness.generation().clone();
-    let mut generation_ids = vec![active.clone()];
-    generation_ids.extend(harness.resident_generations());
-    let generations = generation_ids
+    let generations = harness
+        .resident_generations()
         .into_iter()
         .map(|generation| {
             let resolved = harness
@@ -7592,10 +7591,34 @@ mod tests {
                     ))
                 }
                 12 => {
+                    let result = orchestration_result(request, 11)?;
+                    let PhenixValue::Map(fields) = &result.output else {
+                        return Err("final plugin inspection returned a non-map result".into());
+                    };
                     let active = orchestration_string_field(request, 11, "active_generation")?;
                     if active != initial_generation {
                         return Err(format!(
                             "final active generation is {active}, expected {initial_generation}"
+                        ));
+                    }
+                    let Some(PhenixValue::List(generations)) = fields.get("generations") else {
+                        return Err("final plugin inspection returned no generation list".into());
+                    };
+                    if generations.len() != 1 {
+                        return Err(format!(
+                            "final plugin inspection returned {} generations, expected one",
+                            generations.len()
+                        ));
+                    }
+                    let Some(PhenixValue::Map(generation)) = generations.first() else {
+                        return Err("final plugin inspection generation was not a map".into());
+                    };
+                    if generation.get("generation")
+                        != Some(&PhenixValue::String(initial_generation.to_owned()))
+                        || generation.get("default") != Some(&PhenixValue::Bool(true))
+                    {
+                        return Err(format!(
+                            "final plugin inspection returned unexpected generation: {generation:?}"
                         ));
                     }
                     Ok(orchestration_response("orchestration complete", Vec::new()))
