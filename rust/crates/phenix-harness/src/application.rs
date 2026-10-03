@@ -3860,7 +3860,21 @@ fn dispatch_application_invocation(
     });
     let result = if let Some(root) = selected_root {
         root.and_then(|root| {
-            worker.invoke_session_application_operation_on(&root, &operation, input)
+            if operation.as_str() == CreateSession::ID {
+                eprintln!(
+                    "runtime-orchestration: worker dispatch create generation={:?}",
+                    root.generation()
+                );
+            }
+            let result =
+                worker.invoke_session_application_operation_on(&root, &operation, input);
+            if operation.as_str() == CreateSession::ID {
+                eprintln!(
+                    "runtime-orchestration: worker create finished success={}",
+                    result.is_ok()
+                );
+            }
+            result
         })
     } else if is_sdk_operation(&operation) {
         service.invoke(&operation, input)
@@ -5715,6 +5729,10 @@ fn execute_application_session_control(
                 let working_directory =
                     session_control_required_string(arguments, "working_directory")?;
                 let title = session_control_optional_string(arguments, "title")?;
+                eprintln!(
+                    "runtime-orchestration: create send execution={} controller={}",
+                    run.execution_id, run.session_id
+                );
                 let response: SessionInfo = invoke_application_control(
                     run,
                     CreateSession::ID,
@@ -5723,6 +5741,10 @@ fn execute_application_session_control(
                         title,
                     },
                 )?;
+                eprintln!(
+                    "runtime-orchestration: create response execution={} created={}",
+                    run.execution_id, response.session_id
+                );
                 target_session = Some(response.session_id.clone());
                 Ok(response.to_value())
             }
@@ -7099,6 +7121,7 @@ mod tests {
         controller: Option<SessionId>,
         initial_generation: Option<String>,
         trial_request: Option<PhenixValue>,
+        controller_turn_one_entries: usize,
         controller_turn_two_entries: usize,
     }
 
@@ -7649,6 +7672,19 @@ mod tests {
             };
             let controller = controller
                 .ok_or_else(|| "runtime orchestration controller is not configured".to_owned())?;
+            if request.session_id.as_ref() == Some(&controller) && request.continuation.len() == 1 {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
+                state.controller_turn_one_entries += 1;
+                if state.controller_turn_one_entries > 2 {
+                    return Err(format!(
+                        "controller turn 1 re-entered {} times for session {:?}",
+                        state.controller_turn_one_entries, request.session_id
+                    ));
+                }
+            }
             if request.session_id.as_ref() == Some(&controller) && request.continuation.len() == 2 {
                 let mut state = self
                     .state
