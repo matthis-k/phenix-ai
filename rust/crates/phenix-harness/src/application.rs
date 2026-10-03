@@ -7757,7 +7757,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    #[ignore = "temporary isolation for CI stack-overflow diagnosis"]
     async fn model_can_trial_plugin_test_memory_across_sessions_and_roll_back() {
         let namespace = ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
         let first_manifest = memory_debug_manifest(1, namespace.clone());
@@ -8041,7 +8040,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn cancel_remains_live_while_agent_execution_owns_the_harness_lock() {
+    async fn cancel_remains_live_while_agent_execution_is_running() {
         let gate = Arc::new(CancellationGate::new());
         let model_gate = Arc::clone(&gate);
         let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
