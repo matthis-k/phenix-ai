@@ -1034,12 +1034,8 @@ fn run_with_retry_route(
     let mut resolved_route = resolved_route;
 
     loop {
-        match run_attempt_with_retry_route(
-            context,
-            request,
-            retry_route_strategy,
-            resolved_route,
-        )? {
+        match run_attempt_with_retry_route(context, request, retry_route_strategy, resolved_route)?
+        {
             AttemptRunOutcome::Completed(response) => return Ok(response),
             AttemptRunOutcome::Retry {
                 request: next_request,
@@ -1792,13 +1788,15 @@ fn run_attempt_with_retry_route(
         },
     )?;
 
-    Ok(AttemptRunOutcome::Completed(StepRunnerResponse::Completed {
-        attempt,
-        output: response.output,
-        tool_calls: response.tool_calls,
-        settled,
-        settlement_basis,
-    }))
+    Ok(AttemptRunOutcome::Completed(
+        StepRunnerResponse::Completed {
+            attempt,
+            output: response.output,
+            tool_calls: response.tool_calls,
+            settled,
+            settlement_basis,
+        },
+    ))
 }
 
 fn record_routing_evidence(
