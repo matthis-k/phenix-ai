@@ -159,11 +159,32 @@ pub struct ChannelTransport {
     sender: mpsc::Sender<ApplicationInvocation>,
 }
 
+#[derive(Clone)]
+pub struct WeakChannelTransport {
+    sender: mpsc::WeakSender<ApplicationInvocation>,
+}
+
+impl WeakChannelTransport {
+    #[must_use]
+    pub fn upgrade(&self) -> Option<ChannelTransport> {
+        self.sender
+            .upgrade()
+            .map(|sender| ChannelTransport { sender })
+    }
+}
+
 impl ChannelTransport {
     #[must_use]
     pub fn new(capacity: usize) -> (Self, mpsc::Receiver<ApplicationInvocation>) {
         let (sender, receiver) = mpsc::channel(capacity);
         (Self { sender }, receiver)
+    }
+
+    #[must_use]
+    pub fn downgrade(&self) -> WeakChannelTransport {
+        WeakChannelTransport {
+            sender: self.sender.downgrade(),
+        }
     }
 
     pub fn begin_blocking(
