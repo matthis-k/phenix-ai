@@ -6324,7 +6324,9 @@ mod tests {
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
-    use phenix_sdk::{CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits};
+    use phenix_sdk::{
+        CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ExecutionRecord, ModelLimits,
+    };
     use std::{
         fs,
         path::PathBuf,
@@ -7130,7 +7132,16 @@ mod tests {
                     ))
                 }
                 6 => {
-                    orchestration_result(request, 5)?;
+                    let inspected =
+                        ExecutionRecord::from_value(&orchestration_result(request, 5)?.output)
+                            .map_err(|error| error.to_string())?;
+                    if inspected.graph_generation != g2()? {
+                        return Err(format!(
+                            "child execution ran in {}, expected {}",
+                            inspected.graph_generation,
+                            g2()?
+                        ));
+                    }
                     Ok(orchestration_response(
                         "promote G2",
                         vec![orchestration_operation_call(
