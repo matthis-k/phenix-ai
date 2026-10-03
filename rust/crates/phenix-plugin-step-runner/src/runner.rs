@@ -1353,10 +1353,10 @@ fn run_attempt_with_retry_route(
         let routed: ModelResponse = match resolve_model_route(
             context,
             &attribution,
-            profile_id,
-            callable_id,
+            profile_id.clone(),
+            callable_id.clone(),
             &plan,
-            route_policy,
+            route_policy.clone(),
             retry_route_strategy,
         ) {
             Ok(response) => response,
@@ -1703,26 +1703,50 @@ fn run_attempt_with_retry_route(
                     recovery_request,
                     &attribution,
                     RetryRouteStrategy::PreserveParent,
-                    resolved_route.clone(),
+                    Some(decision.clone()),
                 );
             }
             if failure.retryable() && retry_available(context, &attribution, &plan)? {
+                let retry_route = if let Some(route) = resolved_route.clone() {
+                    Some(route)
+                } else {
+                    resolve_retry_route(
+                        context,
+                        &attribution.root_execution_id,
+                        &attribution.attempt_id,
+                        &profile_id,
+                        callable_id.as_ref(),
+                        &plan,
+                        &route_policy,
+                        RetryRouteStrategy::PreferFallback,
+                    )?
+                    .map(|selection| selection.decision)
+                };
+                if let Some(retry_route) = retry_route {
+                    trace_policy_stage(
+                        context,
+                        "dispatch_retry",
+                        "allowed",
+                        Some(&plan.policy_revision),
+                        Some(format!(
+                            "retrying after {:?} on candidate {}",
+                            failure.failure, decision.candidate_ordinal
+                        )),
+                    );
+                    return retry_step(
+                        context,
+                        retry_template,
+                        &attribution,
+                        RetryRouteStrategy::PreferFallback,
+                        Some(retry_route),
+                    );
+                }
                 trace_policy_stage(
                     context,
                     "dispatch_retry",
-                    "allowed",
+                    "exhausted",
                     Some(&plan.policy_revision),
-                    Some(format!(
-                        "retrying after {:?} on candidate {}",
-                        failure.failure, decision.candidate_ordinal
-                    )),
-                );
-                return retry_step(
-                    context,
-                    retry_template,
-                    &attribution,
-                    RetryRouteStrategy::PreferFallback,
-                    resolved_route.clone(),
+                    Some("no untried route candidate remains".to_owned()),
                 );
             }
             return Err(format!(
@@ -1846,81 +1870,22 @@ fn resolve_model_route(
     retry_route_strategy: RetryRouteStrategy,
 ) -> Result<ModelResponse, String> {
     if attribution.kind == UsageAttemptKind::Retry {
-        let listed_attempts: StepAttemptResponse = context
-            .sdk
-            .attempts
-            .invoke_projected(&StepAttemptCommand::ListRoot {
-                root_execution_id: attribution.root_execution_id.clone(),
-            })
-            .map_err(|error| error.to_string())?;
-        let StepAttemptResponse::Attempts { attempts } = listed_attempts else {
-            return Err("step attempt service returned a non-list response".into());
-        };
-        let attempts = attempts
-            .into_iter()
-            .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
-            .collect::<BTreeMap<_, _>>();
-
         let parent_attempt_id = attribution
             .parent_attempt_id
-            .as_ref()
+            .as_deref()
             .ok_or_else(|| "planned retry requires a parent attempt".to_owned())?;
-        let parent = attempts
-            .get(parent_attempt_id)
-            .ok_or_else(|| format!("unknown planned retry parent: {parent_attempt_id}"))?;
-        let parent_decision = parent
-            .route
-            .clone()
-            .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
-
-        if retry_route_strategy == RetryRouteStrategy::PreserveParent {
-            return Ok(ModelResponse::Decision {
-                selection: RouteSelection {
-                    decision: parent_decision,
-                    rejected: Vec::new(),
-                },
-            });
-        }
-
-        let mut tried_ordinals = BTreeSet::new();
-        let mut current = attribution.parent_attempt_id.clone();
-        let mut seen = BTreeSet::new();
-        while let Some(attempt_id) = current {
-            if !seen.insert(attempt_id.clone()) {
-                return Err("planned retry lineage contains a cycle".into());
-            }
-            let attempt = attempts
-                .get(&attempt_id)
-                .ok_or_else(|| format!("unknown planned retry ancestor: {attempt_id}"))?;
-            if let Some(route) = &attempt.route {
-                tried_ordinals.insert(route.candidate_ordinal);
-            }
-            current = attempt.attribution.parent_attempt_id.clone();
-        }
-
-        let listed: ModelResponse = context
-            .sdk
-            .routing
-            .invoke_projected(&ModelCommand::ListCandidates {
-                profile_id: profile_id.clone(),
-                callable_id: callable_id.clone(),
-            })
-            .map_err(|error| error.to_string())?;
-        let ModelResponse::Candidates { mut candidates } = listed else {
-            return Err("model routing returned a non-candidate response".into());
-        };
-        candidates.retain(|candidate| !tried_ordinals.contains(&candidate.ordinal));
-        if !candidates.is_empty() {
-            if let Ok(selection) = select_route(&candidates, &plan.routing, &route_policy) {
-                return Ok(ModelResponse::Decision { selection });
-            }
-        }
-        return Ok(ModelResponse::Decision {
-            selection: RouteSelection {
-                decision: parent_decision,
-                rejected: Vec::new(),
-            },
-        });
+        let selection = resolve_retry_route(
+            context,
+            &attribution.root_execution_id,
+            parent_attempt_id,
+            &profile_id,
+            callable_id.as_ref(),
+            plan,
+            &route_policy,
+            retry_route_strategy,
+        )?
+        .ok_or_else(|| "planned retry has no untried route candidates".to_owned())?;
+        return Ok(ModelResponse::Decision { selection });
     }
 
     context
@@ -1933,6 +1898,83 @@ fn resolve_model_route(
             policy: route_policy,
         })
         .map_err(|error| error.to_string())
+}
+
+fn resolve_retry_route(
+    context: &StepRunnerContext<'_, '_>,
+    root_execution_id: &str,
+    parent_attempt_id: &str,
+    profile_id: &phenix_core::RoutingProfileId,
+    callable_id: Option<&phenix_core::CallableId>,
+    plan: &StepPlan,
+    route_policy: &phenix_sdk::RouteSelectionPolicy,
+    retry_route_strategy: RetryRouteStrategy,
+) -> Result<Option<RouteSelection>, String> {
+    let listed_attempts: StepAttemptResponse = context
+        .sdk
+        .attempts
+        .invoke_projected(&StepAttemptCommand::ListRoot {
+            root_execution_id: root_execution_id.to_owned(),
+        })
+        .map_err(|error| error.to_string())?;
+    let StepAttemptResponse::Attempts { attempts } = listed_attempts else {
+        return Err("step attempt service returned a non-list response".into());
+    };
+    let attempts = attempts
+        .into_iter()
+        .map(|attempt| (attempt.attribution.attempt_id.clone(), attempt))
+        .collect::<BTreeMap<_, _>>();
+
+    let parent = attempts
+        .get(parent_attempt_id)
+        .ok_or_else(|| format!("unknown planned retry parent: {parent_attempt_id}"))?;
+    let parent_decision = parent
+        .route
+        .clone()
+        .ok_or_else(|| "planned retry parent has no resolved route".to_owned())?;
+
+    if retry_route_strategy == RetryRouteStrategy::PreserveParent {
+        return Ok(Some(RouteSelection {
+            decision: parent_decision,
+            rejected: Vec::new(),
+        }));
+    }
+
+    let mut tried_ordinals = BTreeSet::new();
+    let mut current = Some(parent_attempt_id.to_owned());
+    let mut seen = BTreeSet::new();
+    while let Some(attempt_id) = current {
+        if !seen.insert(attempt_id.clone()) {
+            return Err("planned retry lineage contains a cycle".into());
+        }
+        let attempt = attempts
+            .get(&attempt_id)
+            .ok_or_else(|| format!("unknown planned retry ancestor: {attempt_id}"))?;
+        if let Some(route) = &attempt.route {
+            tried_ordinals.insert(route.candidate_ordinal);
+        }
+        current = attempt.attribution.parent_attempt_id.clone();
+    }
+
+    let listed: ModelResponse = context
+        .sdk
+        .routing
+        .invoke_projected(&ModelCommand::ListCandidates {
+            profile_id: profile_id.clone(),
+            callable_id: callable_id.cloned(),
+        })
+        .map_err(|error| error.to_string())?;
+    let ModelResponse::Candidates { mut candidates } = listed else {
+        return Err("model routing returned a non-candidate response".into());
+    };
+    candidates.retain(|candidate| !tried_ordinals.contains(&candidate.ordinal));
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    select_route(&candidates, &plan.routing, route_policy)
+        .map(Some)
+        .map_err(|error| format!("retry route selection failed: {error:?}"))
 }
 
 fn retry_available(
