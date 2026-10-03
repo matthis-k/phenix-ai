@@ -5200,15 +5200,19 @@ impl PluginArtifactStore for WorkspacePluginArtifactStore<'_, '_, '_> {
     }
 }
 
+struct RuntimeOrchestrationTrace<'a> {
+    kind: &'a str,
+    operation: &'a str,
+    target_session: Option<&'a SessionId>,
+    child_execution: Option<&'a str>,
+    selected_generation: &'a GraphGenerationId,
+    target_generation: Option<&'a GraphGenerationId>,
+}
+
 fn record_runtime_orchestration(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
-    kind: &str,
-    operation: &str,
-    target_session: Option<&SessionId>,
-    child_execution: Option<&str>,
-    selected_generation: &GraphGenerationId,
-    target_generation: Option<&GraphGenerationId>,
+    trace: RuntimeOrchestrationTrace<'_>,
     result: &Result<PhenixValue, ApplicationError>,
 ) {
     context
@@ -5216,12 +5220,13 @@ fn record_runtime_orchestration(
         .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
             controller_session: run.session_id.to_string(),
             controller_execution: run.execution_id.clone(),
-            kind: kind.to_owned(),
-            operation: operation.to_owned(),
-            target_session: target_session.map(ToString::to_string),
-            child_execution: child_execution.map(str::to_owned),
-            selected_generation: selected_generation.as_str().to_owned(),
-            target_generation: target_generation
+            kind: trace.kind.to_owned(),
+            operation: trace.operation.to_owned(),
+            target_session: trace.target_session.map(ToString::to_string),
+            child_execution: trace.child_execution.map(str::to_owned),
+            selected_generation: trace.selected_generation.as_str().to_owned(),
+            target_generation: trace
+                .target_generation
                 .map(|generation| generation.as_str().to_owned()),
             success: result.is_ok(),
             error: result.as_ref().err().map(|error| format!("{error:?}")),
@@ -5389,12 +5394,14 @@ fn execute_runtime_plugin_control(
     record_runtime_orchestration(
         context,
         run,
-        "plugin",
-        operation,
-        None,
-        None,
-        &run.root_generation,
-        target_generation.as_ref(),
+        RuntimeOrchestrationTrace {
+            kind: "plugin",
+            operation,
+            target_session: None,
+            child_execution: None,
+            selected_generation: &run.root_generation,
+            target_generation: target_generation.as_ref(),
+        },
         &result,
     );
     result
@@ -5631,12 +5638,14 @@ fn execute_application_session_control(
     record_runtime_orchestration(
         context,
         run,
-        "session",
-        operation,
-        target_session.as_ref(),
-        child_execution.as_deref(),
-        &selected_generation,
-        None,
+        RuntimeOrchestrationTrace {
+            kind: "session",
+            operation,
+            target_session: target_session.as_ref(),
+            child_execution: child_execution.as_deref(),
+            selected_generation: &selected_generation,
+            target_generation: None,
+        },
         &result,
     );
     result
