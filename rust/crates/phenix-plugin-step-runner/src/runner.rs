@@ -1014,12 +1014,52 @@ fn run(
     )
 }
 
+enum AttemptRunOutcome {
+    Completed(StepRunnerResponse),
+    Retry {
+        request: PlannedStepRequest,
+        retry_route_strategy: RetryRouteStrategy,
+        resolved_route: Option<RouteDecision>,
+    },
+}
+
 fn run_with_retry_route(
     context: &StepRunnerContext<'_, '_>,
     request: PlannedStepRequest,
     retry_route_strategy: RetryRouteStrategy,
     resolved_route: Option<RouteDecision>,
 ) -> Result<StepRunnerResponse, String> {
+    let mut request = request;
+    let mut retry_route_strategy = retry_route_strategy;
+    let mut resolved_route = resolved_route;
+
+    loop {
+        match run_attempt_with_retry_route(
+            context,
+            request,
+            retry_route_strategy,
+            resolved_route,
+        )? {
+            AttemptRunOutcome::Completed(response) => return Ok(response),
+            AttemptRunOutcome::Retry {
+                request: next_request,
+                retry_route_strategy: next_retry_route_strategy,
+                resolved_route: next_resolved_route,
+            } => {
+                request = next_request;
+                retry_route_strategy = next_retry_route_strategy;
+                resolved_route = next_resolved_route;
+            }
+        }
+    }
+}
+
+fn run_attempt_with_retry_route(
+    context: &StepRunnerContext<'_, '_>,
+    request: PlannedStepRequest,
+    retry_route_strategy: RetryRouteStrategy,
+    resolved_route: Option<RouteDecision>,
+) -> Result<AttemptRunOutcome, String> {
     let retry_template = request.clone();
     let PlannedStepRequest {
         attribution,
@@ -1752,13 +1792,13 @@ fn run_with_retry_route(
         },
     )?;
 
-    Ok(StepRunnerResponse::Completed {
+    Ok(AttemptRunOutcome::Completed(StepRunnerResponse::Completed {
         attempt,
         output: response.output,
         tool_calls: response.tool_calls,
         settled,
         settlement_basis,
-    })
+    }))
 }
 
 fn record_routing_evidence(
@@ -1960,7 +2000,7 @@ fn retry_step(
     parent: &UsageAttribution,
     retry_route_strategy: RetryRouteStrategy,
     resolved_route: Option<RouteDecision>,
-) -> Result<StepRunnerResponse, String> {
+) -> Result<AttemptRunOutcome, String> {
     let allocated: StepAttemptResponse = context
         .sdk
         .attempts
@@ -1976,7 +2016,11 @@ fn retry_step(
         return Err("step attempt service returned a non-attribution retry allocation".into());
     };
     request.attribution = attribution;
-    run_with_retry_route(context, request, retry_route_strategy, resolved_route)
+    Ok(AttemptRunOutcome::Retry {
+        request,
+        retry_route_strategy,
+        resolved_route,
+    })
 }
 
 fn is_supported_attempt_kind(kind: UsageAttemptKind) -> bool {
