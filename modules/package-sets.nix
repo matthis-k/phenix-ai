@@ -28,51 +28,19 @@ let
   mkEmbeddedPluginPackage =
     pkgs: package: pkgs.writeTextDir "share/phenix-rust-package/name" "${package}\n";
 
-  mkBinaryPackage =
-    pkgs: package: binary:
-    pkgs.rustPlatform.buildRustPackage {
-      pname = package;
-      version = "0";
-      src = pkgs.lib.cleanSource ../rust;
-      cargoLock.lockFile = ../rust/Cargo.lock;
-      cargoBuildFlags = [
-        "--package"
-        package
-        "--bin"
-        binary
-      ];
-      doCheck = false;
-      installPhase = ''
-        runHook preInstall
-        mkdir -p "$out/bin"
-        executable="$(find target -path '*/release/${binary}' -type f -print -quit)"
-        test -n "$executable"
-        cp "$executable" "$out/bin/${binary}"
-        runHook postInstall
-      '';
-    };
+  mkBinaryFromArtifacts =
+    pkgs: name: artifacts: binary:
+    pkgs.runCommand name { } ''
+      mkdir -p "$out/bin"
+      cp "${artifacts}/bin/${binary}" "$out/bin/${binary}"
+    '';
 
   mkLuaBindingPackage =
-    pkgs:
-    pkgs.rustPlatform.buildRustPackage {
-      pname = "phenix-binding-lua";
-      version = "0";
-      src = pkgs.lib.cleanSource ../rust;
-      cargoLock.lockFile = ../rust/Cargo.lock;
-      cargoBuildFlags = [
-        "--package"
-        "phenix-binding-lua"
-      ];
-      doCheck = false;
-      installPhase = ''
-        runHook preInstall
-        module="$(find target -path '*/release/libphenix.so' -type f -print -quit)"
-        test -n "$module"
-        mkdir -p "$out/lib/lua/5.1"
-        cp "$module" "$out/lib/lua/5.1/phenix.so"
-        runHook postInstall
-      '';
-    };
+    pkgs: artifacts:
+    pkgs.runCommand "phenix-binding-lua" { } ''
+      mkdir -p "$out/lib/lua/5.1"
+      cp "${artifacts}/lib/lua/5.1/phenix.so" "$out/lib/lua/5.1/phenix.so"
+    '';
 
   pluginIds = {
     adapter-acp = "phenix.adapter.acp";
@@ -189,7 +157,17 @@ in
   perSystem =
     { pkgs, system, ... }:
     let
-      luaBinding = mkLuaBindingPackage pkgs;
+      productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
+      luaRustArtifacts = self.packages.${system}.phenix-lua-rust-artifacts;
+      luaBinding = mkLuaBindingPackage pkgs luaRustArtifacts;
+      applicationInterface =
+        pkgs.runCommand "phenix-application-interface" { } ''
+          mkdir -p "$out/bin" "$out/share/phenix/interfaces"
+          cp "${productRustArtifacts}/bin/phenix-application-descriptor" \
+            "$out/bin/phenix-application-descriptor"
+          "$out/bin/phenix-application-descriptor" \
+            > "$out/share/phenix/interfaces/phenix.application@1.json"
+        '';
       pluginPackageChecks = pkgs.lib.mapAttrs' (name: package: {
         name = "phenix-plugin-${name}-package";
         value = package;
@@ -199,17 +177,10 @@ in
       packages = {
         phenix-core = mkRustPackage pkgs "phenix-core";
         phenix-client = mkRustPackage pkgs "phenix-client";
-        phenix-application-interface =
-          (mkBinaryPackage pkgs "phenix-application-interface" "phenix-application-descriptor").overrideAttrs
-            (_: {
-              postInstall = ''
-                mkdir -p "$out/share/phenix/interfaces"
-                "$out/bin/phenix-application-descriptor" \
-                  > "$out/share/phenix/interfaces/phenix.application@1.json"
-              '';
-            });
+        phenix-application-interface = applicationInterface;
         phenix-binding-lua = luaBinding;
-        phenix-runtime = mkBinaryPackage pkgs "phenix-runtime" "phenix-runtime";
+        phenix-runtime =
+          mkBinaryFromArtifacts pkgs "phenix-runtime" productRustArtifacts "phenix-runtime";
       };
 
       checks = pluginPackageChecks // {
