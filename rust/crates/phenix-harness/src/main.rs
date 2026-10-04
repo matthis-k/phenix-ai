@@ -700,7 +700,7 @@ mod tests {
         let mut harness = builder.build().unwrap();
         let arguments = resolve_process_arguments(
             &["--plugin-handled-value".into(), "7".into()],
-            harness.resolved_harness().entry_triggers(),
+            harness.resolved_harness().process_arguments(),
         )
         .unwrap();
         harness.activate().unwrap();
