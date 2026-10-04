@@ -1,5 +1,5 @@
 use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
+    ClientCapabilityCallbacks, ClientPermissionIdentity, SdkApplicationService,
 };
 use phenix_application_interface::{
     types::{CapabilityInvokeInput, Empty, SdkValue},
@@ -8,7 +8,7 @@ use phenix_application_interface::{
 use phenix_core::{
     CallableRef, CapabilityError, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
     ContractId, Key, ObservableRegistration, ObservableStore, PhenixValue, PluginId,
-    PluginManifest, ReferenceId, ResolvedSdkContributions, RuntimeId, SdkContribution,
+    PluginManifest, ReferenceId, ResolvedSdkContributions, PluginRuntimeId, SdkContribution,
     SdkNamespace, SdkObservableResource, SdkResourceId, SharedCapabilityRegistry, SnapshotPolicy,
     Type, ValueCodec, ValueId, ValuePath,
 };
@@ -68,11 +68,11 @@ fn disconnected_client_listener_retires_its_owner_generation() {
         &sdk,
         &store,
         capabilities,
-        RuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
+        PluginRuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
         CapabilityGenerationId::parse("fixture-runtime-generation")
             .expect("fixture runtime generation is valid"),
         callbacks,
-        ClientCapabilityIdentity::new(client_owner.clone(), client_generation.clone()),
+        ClientPermissionIdentity::new(client_owner.clone(), client_generation.clone()),
     )
     .expect("fixture SDK service builds");
 
