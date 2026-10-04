@@ -206,6 +206,10 @@ impl Display for PluginManagementError {
                 f,
                 "plugin {plugin} load contains an entry trigger for non-owned component {component}"
             ),
+            Self::ProcessArgumentOwnership { plugin, component } => write!(
+                f,
+                "plugin {plugin} load contains a process argument for non-owned component {component}"
+            ),
             Self::Reconciliation { error, .. } => {
                 write!(f, "plugin management reconciliation failed: {error:?}")
             }
