@@ -1,12 +1,12 @@
 use crate::{
-    Authority, CapabilityId, ConfigContribution, ConfigContributionSource, ConfigMergeError,
+    Authority, PermissionId, ConfigContribution, ConfigContributionSource, ConfigMergeError,
     ConfigNamespace, ConfigSourceClass, ConfigurationFrontendId, ConfigurationFrontendMetadata,
-    FrontendConfigContribution, FrontendConfigError, ResolvedHarness, ResolvedHarnessError,
+    FrontendConfigContribution, FrontendConfigError, ResolvedComposition, ResolvedCompositionError,
 };
 use std::collections::BTreeSet;
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn contribution(frontend: &str, source: &str, value: serde_json::Value) -> ConfigContribution {
@@ -37,9 +37,9 @@ fn equivalent_equal_precedence_frontends_converge_independent_of_registration_or
         serde_json::json!({"mode":"strict"}),
     );
 
-    let first = ResolvedHarness::resolve([], [], [nix.clone(), lua.clone()], &Authority::default())
+    let first = ResolvedComposition::resolve([], [], [nix.clone(), lua.clone()], &Authority::default())
         .unwrap();
-    let second = ResolvedHarness::resolve([], [], [lua, nix], &Authority::default()).unwrap();
+    let second = ResolvedComposition::resolve([], [], [lua, nix], &Authority::default()).unwrap();
 
     assert_eq!(first.generation(), second.generation());
     assert_eq!(first.configuration(), second.configuration());
@@ -60,8 +60,8 @@ fn conflicting_equal_precedence_frontends_fail_closed() {
     );
 
     assert_eq!(
-        ResolvedHarness::resolve([], [], [nix, lua], &Authority::default()).unwrap_err(),
-        ResolvedHarnessError::ConfigurationMerge(ConfigMergeError::ConflictingContributions {
+        ResolvedComposition::resolve([], [], [nix, lua], &Authority::default()).unwrap_err(),
+        ResolvedCompositionError::ConfigurationMerge(ConfigMergeError::ConflictingContributions {
             namespace: ConfigNamespace::parse("fixture.policy@1").unwrap(),
             contract_version: 1,
             precedence: 10,
@@ -93,7 +93,7 @@ fn third_party_frontend_can_lower_plugin_defined_configuration_without_core_chan
         requested_authority: Authority::default(),
     };
 
-    let resolved = ResolvedHarness::resolve_frontends(
+    let resolved = ResolvedComposition::resolve_frontends(
         [],
         [],
         [metadata],
@@ -147,7 +147,7 @@ fn frontend_requested_authority_cannot_bypass_resolver_policy() {
         requested_authority: Authority::new([read.clone(), write.clone()]),
     };
 
-    let resolved = ResolvedHarness::resolve_frontends(
+    let resolved = ResolvedComposition::resolve_frontends(
         [],
         [],
         [metadata],
@@ -187,7 +187,7 @@ fn stable_frontend_rejects_unmaterialized_environment_binding() {
     };
 
     assert_eq!(
-        ResolvedHarness::resolve_frontends(
+        ResolvedComposition::resolve_frontends(
             [],
             [],
             [metadata],
@@ -195,7 +195,7 @@ fn stable_frontend_rejects_unmaterialized_environment_binding() {
             &Authority::default(),
         )
         .unwrap_err(),
-        ResolvedHarnessError::ConfigurationFrontend {
+        ResolvedCompositionError::ConfigurationFrontend {
             frontend,
             error: FrontendConfigError::EnvironmentBindingChangesSemantics,
         }
@@ -230,7 +230,7 @@ fn equivalent_nix_and_lua_frontends_resolve_to_the_same_semantic_generation() {
 
     let nix_frontend = ConfigurationFrontendId::parse("phenix-config-nix").unwrap();
     let lua_frontend = ConfigurationFrontendId::parse("phenix-config-lua").unwrap();
-    let nix = ResolvedHarness::resolve_frontends(
+    let nix = ResolvedComposition::resolve_frontends(
         [],
         [],
         [frontend_metadata("phenix-config-nix", "nix")],
@@ -241,7 +241,7 @@ fn equivalent_nix_and_lua_frontends_resolve_to_the_same_semantic_generation() {
         &Authority::default(),
     )
     .unwrap();
-    let lua = ResolvedHarness::resolve_frontends(
+    let lua = ResolvedComposition::resolve_frontends(
         [],
         [],
         [frontend_metadata("phenix-config-lua", "lua")],
