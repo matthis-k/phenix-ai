@@ -62,11 +62,6 @@ pub enum EntryTriggerKind {
         callable_id: CallableId,
         description: String,
     },
-    ProcessArgument {
-        name: String,
-        takes_value: bool,
-        description: String,
-    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,6 +69,17 @@ pub struct ComponentEntryTrigger {
     pub component: ComponentId,
     pub interface: InterfaceId,
     pub trigger: EntryTriggerKind,
+    #[serde(default)]
+    pub required_authority: Authority,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ComponentProcessArgument {
+    pub component: ComponentId,
+    pub interface: InterfaceId,
+    pub name: String,
+    pub takes_value: bool,
+    pub description: String,
     #[serde(default)]
     pub required_authority: Authority,
 }
