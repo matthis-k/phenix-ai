@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, ConfigContribution, ConfigContributionSource, ConfigNamespace, ConfigurationFrontendId,
-    PhenixValue, PluginId,
+    Key, PhenixValue, PluginId,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -65,7 +65,7 @@ pub struct ProcessSurfaceMetadata {
     pub arguments: Vec<ProcessArgumentContribution>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParsedProcessArguments {
     pub values: BTreeMap<String, PhenixValue>,
     pub contributions: Vec<ConfigContribution>,
@@ -238,13 +238,18 @@ impl ProcessSurface {
                 namespace,
                 contract_version,
                 precedence: PROCESS_CLI_PRECEDENCE,
-                value: serde_json::Value::Object(
+                value: PhenixValue::Table(
                     fields
                         .into_iter()
-                        .map(|(field, value)| (field, serde_json::Value::from(value)))
+                        .map(|(field, value)| {
+                            (
+                                Key::parse(field)
+                                    .expect("validated process configuration field is a valid key"),
+                                value,
+                            )
+                        })
                         .collect(),
-                )
-                .into(),
+                ),
                 requested_authority: Authority::default(),
             })
             .collect();
