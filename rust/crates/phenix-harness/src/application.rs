@@ -4718,7 +4718,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
                 .expect("static session control callable id is valid"),
-            description: "Create, list, resume, prompt, or close another Phenix session through the canonical application operations. Prompt accepts canonical content parts plus an optional resident graph generation and waits for that session's execution to finish.".to_owned(),
+            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content contains canonical text/image/resource parts; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static session operation field is valid"),
@@ -4750,7 +4750,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.plugin")
                 .expect("static plugin management callable id is valid"),
-            description: "Inspect generations; build a Plugin artifact; trial a Plugin load/replacement in a resident generation; or promote, roll back to, and retire resident generations. Build and trial use the configured Phenix workspace backend and keep Core as the lifecycle owner.".to_owned(),
+            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static plugin operation field is valid"),
@@ -8043,6 +8043,30 @@ mod tests {
         assert!(g2_surface
             .runtime_entry_triggers
             .contains_key(&CallableId::parse("fixture.g2-only").unwrap()));
+    }
+
+    #[test]
+    fn session_control_prompt_decodes_canonical_content_parts() {
+        let content = vec![
+            Content::Text {
+                text: "hello".into(),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                data: Bytes::new(vec![1, 2, 3]),
+            },
+            Content::Resource {
+                uri: "file:///workspace/context.txt".into(),
+                mime_type: Some("text/plain".into()),
+                text: Some("context".into()),
+            },
+        ];
+        let arguments = PhenixValue::Map(BTreeMap::from([(
+            "content".into(),
+            PhenixValue::List(content.iter().map(ValueCodec::to_value).collect()),
+        )]));
+
+        assert_eq!(session_control_content(&arguments).unwrap(), content);
     }
 
     #[test]
