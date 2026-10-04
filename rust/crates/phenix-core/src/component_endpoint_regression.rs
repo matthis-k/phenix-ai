@@ -1,7 +1,7 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, Kernel, PhenixValue, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ServiceId,
+    PluginInstance, PluginManifest, ResolvedComposition, ResolvedCompositionActivation, ServiceId,
 };
 
 struct Demo;
@@ -57,7 +57,7 @@ fn typed_import_dispatches_the_exact_resolved_component_endpoint() {
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
     };
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedComposition::resolve(
         [provider.clone(), consumer.clone()],
         [
             ComponentManifest {
