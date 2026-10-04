@@ -744,6 +744,28 @@ mod tests {
     }
 
     #[test]
+    fn plugin_argument_value_is_required_when_declared() {
+        let triggers = [process_argument("--plugin-handled-value", true)];
+        let error =
+            resolve_process_arguments(&["--plugin-handled-value".into()], &triggers).unwrap_err();
+        assert!(error.contains("requires a value"));
+    }
+
+    #[test]
+    fn plugin_argument_without_value_rejects_inline_value() {
+        let triggers = [process_argument("--plugin-switch", false)];
+        let error =
+            resolve_process_arguments(&["--plugin-switch=7".into()], &triggers).unwrap_err();
+        assert!(error.contains("does not take a value"));
+    }
+
+    #[test]
+    fn plugin_arguments_cannot_shadow_core_options() {
+        let error = resolve_process_arguments(&[], &[process_argument("--mode", true)]).unwrap_err();
+        assert!(error.contains("conflicts with a core argument"));
+    }
+
+    #[test]
     fn mode_is_an_explicit_frontend_choice() {
         assert_eq!(
             parse_cli(["--mode".into(), "acp".into()]).unwrap().mode,
