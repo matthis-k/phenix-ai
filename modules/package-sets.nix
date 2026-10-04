@@ -66,6 +66,8 @@ let
       version = "0";
       src = pkgs.lib.cleanSource ../rust;
       cargoLock.lockFile = ../rust/Cargo.lock;
+      nativeBuildInputs = [ pkgs.mold ];
+      RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
       cargoBuildFlags = [
         "--package"
         "phenix-binding-lua"
