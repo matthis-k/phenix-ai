@@ -60,26 +60,11 @@ let
     '';
 
   mkLuaBindingPackage =
-    pkgs:
-    pkgs.rustPlatform.buildRustPackage {
-      pname = "phenix-binding-lua";
-      version = "0";
-      src = pkgs.lib.cleanSource ../rust;
-      cargoLock.lockFile = ../rust/Cargo.lock;
-      cargoBuildFlags = [
-        "--package"
-        "phenix-binding-lua"
-      ];
-      doCheck = false;
-      installPhase = ''
-        runHook preInstall
-        module="$(find target -path '*/release/libphenix.so' -type f -print -quit)"
-        test -n "$module"
-        mkdir -p "$out/lib/lua/5.1"
-        cp "$module" "$out/lib/lua/5.1/phenix.so"
-        runHook postInstall
-      '';
-    };
+    pkgs: artifacts:
+    pkgs.runCommand "phenix-binding-lua" { } ''
+      mkdir -p "$out/lib/lua/5.1"
+      cp "${artifacts}/lib/lua/5.1/phenix.so" "$out/lib/lua/5.1/phenix.so"
+    '';
 
   pluginIds = {
     adapter-acp = "phenix.adapter.acp";
@@ -197,7 +182,7 @@ in
     { pkgs, system, ... }:
     let
       productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
-      luaBinding = mkLuaBindingPackage pkgs;
+      luaBinding = mkLuaBindingPackage pkgs productRustArtifacts;
       pluginPackageChecks = pkgs.lib.mapAttrs' (name: package: {
         name = "phenix-plugin-${name}-package";
         value = package;
