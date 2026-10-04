@@ -3,7 +3,7 @@
 use phenix_core::{Authority, PluginExecution, PluginId, PluginManifest};
 
 pub const BASIC_AGENT_CONFIGURATION: &str = "phenix.agent.basic";
-pub const ADVANCED_AGENT_CONFIGURATION: &str = "phenix.agent.advanced";
+pub const FULL_AGENT_CONFIGURATION: &str = "phenix.agent.full";
 
 const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.agent-loop",
@@ -14,7 +14,7 @@ const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.step-runner",
 ];
 
-const ADVANCED_AGENT_EXTENSIONS: &[&str] = &[
+const FULL_AGENT_EXTENSIONS: &[&str] = &[
     "phenix.api",
     "phenix.artifacts",
     "phenix.command-toolbelt",
@@ -40,11 +40,11 @@ pub fn basic_agent_configuration_manifest() -> PluginManifest {
 }
 
 #[must_use]
-pub fn advanced_agent_configuration_manifest() -> PluginManifest {
+pub fn full_agent_configuration_manifest() -> PluginManifest {
     let dependencies = std::iter::once(BASIC_AGENT_CONFIGURATION)
-        .chain(ADVANCED_AGENT_EXTENSIONS.iter().copied())
+        .chain(FULL_AGENT_EXTENSIONS.iter().copied())
         .collect::<Vec<_>>();
-    assembly_manifest(ADVANCED_AGENT_CONFIGURATION, &dependencies)
+    assembly_manifest(FULL_AGENT_CONFIGURATION, &dependencies)
 }
 
 fn assembly_manifest(id: &str, dependencies: &[&str]) -> PluginManifest {
@@ -86,23 +86,23 @@ mod tests {
     }
 
     #[test]
-    fn advanced_agent_extends_basic_instead_of_copying_it() {
+    fn full_agent_extends_basic_instead_of_copying_it() {
         let basic = dependency_ids(basic_agent_configuration_manifest());
-        let advanced = dependency_ids(advanced_agent_configuration_manifest());
+        let full = dependency_ids(full_agent_configuration_manifest());
 
-        assert!(advanced.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(full.contains(BASIC_AGENT_CONFIGURATION));
         for dependency in basic {
             assert!(
-                !advanced.contains(&dependency),
-                "advanced configuration repeated basic dependency {dependency}"
+                !full.contains(&dependency),
+                "full configuration repeated basic dependency {dependency}"
             );
         }
     }
 
     #[test]
-    fn advanced_agent_adds_optional_agent_services() {
-        let dependencies = dependency_ids(advanced_agent_configuration_manifest());
-        for optional in [
+    fn full_agent_adds_default_first_party_services() {
+        let dependencies = dependency_ids(full_agent_configuration_manifest());
+        for default_plugin in [
             "phenix.options",
             "phenix.memory",
             "phenix.planning",
@@ -114,7 +114,10 @@ mod tests {
             "phenix.hooks",
             "phenix.debug",
         ] {
-            assert!(dependencies.contains(optional), "missing {optional}");
+            assert!(
+                dependencies.contains(default_plugin),
+                "missing {default_plugin}"
+            );
         }
     }
 }
