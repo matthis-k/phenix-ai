@@ -365,6 +365,11 @@
               name = "Phenix supported runtime journey";
             };
 
+            phenix-standalone-runtime = mkNixCheckSuite {
+              check = "phenix-product-standalone-runtime-smoke";
+              name = "Phenix standalone runtime package";
+            };
+
             phenix-lua-binding = mkNixCheckSuite {
               check = "phenix-product-lua-smoke";
               name = "Phenix Lua binding product fixture";
