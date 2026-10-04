@@ -310,14 +310,50 @@ in
         pkgs.runCommand "phenix-plugin-packaging-check" { nativeBuildInputs = [ pkgs.jq ]; }
           ''
             set -euxo pipefail
-            test -x "${defaultComposition}/bin/phenix"
-            test -x "${defaultComposition}/bin/phenix-harness"
-            test -f "${defaultComposition}/share/phenix/runtime.json"
-            test -f "${defaultComposition}/share/phenix/skills/write/SKILL.md"
-            test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
+            test -x "${kernelComposition}/bin/phenix"
+            test -x "${basicComposition}/bin/phenix"
+            test -x "${fullComposition}/bin/phenix"
+            test -x "${fullComposition}/bin/phenix-harness"
+            test ! -e "${kernelComposition}/share/phenix/runtime.json"
+            test ! -e "${basicComposition}/share/phenix/runtime.json"
+            test -f "${fullComposition}/share/phenix/runtime.json"
+            test -f "${fullComposition}/share/phenix/skills/write/SKILL.md"
+            test -f "${fullComposition}/share/phenix/skills/pstack-LICENSE"
+
+            export PHENIX_STATE_DB="$TMPDIR/kernel-composition.sqlite"
+            "${kernelComposition}/bin/phenix" --list-services > "$TMPDIR/kernel-services.json"
+            jq -e '(.plugins == []) and (.services == [])' "$TMPDIR/kernel-services.json" >/dev/null
+
+            export PHENIX_STATE_DB="$TMPDIR/basic-composition.sqlite"
+            "${basicComposition}/bin/phenix" --list-services > "$TMPDIR/basic-services.json"
+            jq -e '
+              (.plugins | index("phenix.agent.basic")) != null
+              and (.plugins | index("phenix.agent-loop")) != null
+              and (.plugins | index("phenix.context")) != null
+              and (.plugins | index("phenix.execution")) != null
+              and (.plugins | index("phenix.models")) != null
+              and (.plugins | index("phenix.step-runner")) != null
+              and (.plugins | index("phenix.agent.full")) == null
+              and (.plugins | index("phenix.memory")) == null
+              and (.plugins | index("phenix.options")) == null
+              and (.plugins | index("phenix.language")) == null
+            ' "$TMPDIR/basic-services.json" >/dev/null
+
+            export PHENIX_STATE_DB="$TMPDIR/full-composition.sqlite"
+            "${fullComposition}/bin/phenix" --list-services > "$TMPDIR/full-services.json"
+            jq -e '
+              (.plugins | index("phenix.agent.full")) != null
+              and (.plugins | index("phenix.agent.basic")) != null
+              and (.plugins | index("phenix.memory")) != null
+              and (.plugins | index("phenix.options")) != null
+              and (.plugins | index("phenix.language")) != null
+              and (.plugins | index("phenix.workspace")) != null
+              and (.plugins | index("phenix.command-toolbelt")) != null
+              and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0)
+              and (.services | index("phenix.sessions@1") != null)
+            ' "$TMPDIR/full-services.json" >/dev/null
+
             export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
-            "${defaultComposition}/bin/phenix" --list-services > "$TMPDIR/default-services.json"
-            jq -e '(.plugins | length == 18) and (.plugins | index("phenix.adapter.acp") == null) and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0) and (.services | index("phenix.sessions@1") != null)' "$TMPDIR/default-services.json" >/dev/null
 
             for policy in working-dir workdir-write; do
               export PHENIX_STATE_DB="$TMPDIR/environment-$policy.sqlite"
