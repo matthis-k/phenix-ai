@@ -636,6 +636,111 @@ mod tests {
     }
 
     #[test]
+    fn declared_plugin_argument_is_dispatched_to_its_component() {
+        use phenix_core::{
+            Authority, ComponentExport, ComponentId, ComponentManifest, InterfaceId,
+            InterfaceSchema, PhenixSchema, PluginHost, PluginInstance,
+        };
+        use std::sync::{Arc, Mutex};
+
+        struct CaptureProcessArgument(Arc<Mutex<Vec<PhenixValue>>>);
+
+        impl PluginInstance for CaptureProcessArgument {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke_component(
+                &mut self,
+                _component: &ComponentId,
+                _service: &ServiceId,
+                input: &[u8],
+                _host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                let value: PhenixValue =
+                    serde_json::from_slice(input).map_err(|error| error.to_string())?;
+                self.0.lock().unwrap().push(value);
+                serde_json::to_vec(&PhenixValue::Unit).map_err(|error| error.to_string())
+            }
+        }
+
+        let plugin_id = PluginId::parse("fixture.process-argument").unwrap();
+        let component_id = ComponentId::parse("fixture.process-argument").unwrap();
+        let interface = InterfaceId::parse("fixture.process-argument@1").unwrap();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let factory_observed = Arc::clone(&observed);
+
+        let mut builder = HarnessBuilder::new();
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: plugin_id.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                move || Box::new(CaptureProcessArgument(Arc::clone(&factory_observed))),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: component_id.clone(),
+            owner: plugin_id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: interface.clone(),
+                schema: InterfaceSchema::new(PhenixSchema::Any, PhenixSchema::Any),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_entry_trigger(ComponentEntryTrigger {
+            component: component_id,
+            interface,
+            trigger: EntryTriggerKind::ProcessArgument {
+                name: "--plugin-handled-value".into(),
+                takes_value: true,
+                description: "fixture".into(),
+            },
+            required_authority: Authority::default(),
+        });
+
+        let mut harness = builder.build().unwrap();
+        let arguments = resolve_process_arguments(
+            &["--plugin-handled-value".into(), "7".into()],
+            harness.resolved_harness().entry_triggers(),
+        )
+        .unwrap();
+        harness.activate().unwrap();
+        apply_process_arguments(&mut harness, &arguments).unwrap();
+
+        let values = observed.lock().unwrap();
+        assert_eq!(values.len(), 1);
+        let PhenixValue::Table(fields) = &values[0] else {
+            panic!("process argument input is not a table");
+        };
+        assert_eq!(
+            fields
+                .get(&Key::parse("name").unwrap())
+                .and_then(|value| match value {
+                    PhenixValue::String(value) => Some(value.as_str()),
+                    _ => None,
+                }),
+            Some("--plugin-handled-value")
+        );
+        assert_eq!(
+            fields.get(&Key::parse("value").unwrap()),
+            Some(&PhenixValue::Option(Some(Box::new(PhenixValue::String(
+                "7".into()
+            )))))
+        );
+    }
+
+    #[test]
     fn undeclared_plugin_arguments_are_rejected_after_graph_resolution() {
         let cli = parse_cli(["--not-provided".into()]).unwrap();
         let error = resolve_process_arguments(&cli.plugin_arguments, &[]).unwrap_err();
