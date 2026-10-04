@@ -34,9 +34,7 @@
           cache ? false,
         }:
         let
-          targetArgs = pkgs.lib.concatMapStringsSep " " (
-            check: ''".#checks.$system.${check}"''
-          ) checks;
+          targetArgs = pkgs.lib.concatMapStringsSep " " (check: ''".#checks.$system.${check}"'') checks;
         in
         {
           inherit
