@@ -1,4 +1,3 @@
-# Temporary measurement workflow for PR #655.
 name: CI
 
 on:
@@ -13,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  integration-plugin-packaging:
-    name: "Nix benchmark / packaging wrapper"
+  runtime-package:
+    name: "Nix benchmark / standalone runtime package"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -26,15 +25,13 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
             max-jobs = auto
-      - name: "Plugin packaging integration"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging\",\"source\":{\"job\":\"integration-plugin-packaging\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-e0dcc81ccb75 -- invoke"
+      - name: Build standalone runtime package
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          nix build --no-link --print-build-logs ".#packages.$system.phenix-runtime"
 
-  product-phenix-runtime:
-    name: "Nix benchmark / real product runtime"
+  harness-package:
+    name: "Nix benchmark / harness runtime package"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -46,29 +43,7 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
             max-jobs = auto
-      - name: "Phenix supported runtime journey"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-runtime\",\"source\":{\"job\":\"product-phenix-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-5bfe8a5b5d52 -- invoke"
-
-  product-phenix-lua-binding:
-    name: "Nix benchmark / Lua product fixture"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            max-jobs = auto
-      - name: "Phenix Lua binding product fixture"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-lua-binding\",\"source\":{\"job\":\"product-phenix-lua-binding\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-c3ad7e345430 -- invoke"
+      - name: Build harness runtime package
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          nix build --no-link --print-build-logs ".#packages.$system.phenix-harness-runtime"
