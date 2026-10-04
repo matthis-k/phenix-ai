@@ -1,24 +1,24 @@
 use crate::{
-    GraphGenerationId, Kernel, KernelError, LayerPolicy, PluginId, PluginManifest,
-    ResolvedComponentGraph, ResolvedHarness, ResolvedListenerInspection, ServiceId,
+    GenerationId, Kernel, KernelError, LayerPolicy, PluginId, PluginManifest,
+    ResolvedComponentGraph, ResolvedComposition, ResolvedListenerInspection, ServiceId,
     SkillResourceMetadata,
 };
 use std::collections::BTreeSet;
 
-/// Installs one resolved graph generation as a single runtime activation unit.
+/// Installs one resolved generation as a single runtime activation unit.
 ///
-/// Callers should activate a `ResolvedHarness` rather than setting its generation
+/// Callers should activate a `ResolvedComposition` rather than setting its generation
 /// identity and component graph independently. Stable activation is immutable:
 /// replacing an active generation belongs to development-mode reconciliation.
-pub trait ResolvedHarnessActivation {
+pub trait ResolvedCompositionActivation {
     fn activate_resolved_harness(
         &mut self,
-        resolved: &ResolvedHarness,
-    ) -> Result<(), ResolvedHarnessActivationError>;
+        resolved: &ResolvedComposition,
+    ) -> Result<(), ResolvedCompositionActivationError>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ResolvedHarnessActivationError {
+pub enum ResolvedCompositionActivationError {
     KernelConfigurationMismatch {
         kernel_plugins: Vec<PluginId>,
         resolved_plugins: Vec<PluginId>,
@@ -34,8 +34,8 @@ pub enum ResolvedHarnessActivationError {
         resolved_layers: Vec<LayerPolicy>,
     },
     DifferentGenerationAlreadyActive {
-        active: GraphGenerationId,
-        requested: GraphGenerationId,
+        active: GenerationId,
+        requested: GenerationId,
     },
     DurableSchemaPreparation(KernelError),
     AuthorityCeiling(KernelError),
@@ -43,8 +43,8 @@ pub enum ResolvedHarnessActivationError {
 
 pub(crate) fn validate_resolved_harness_configuration(
     kernel: &Kernel,
-    resolved: &ResolvedHarness,
-) -> Result<(), ResolvedHarnessActivationError> {
+    resolved: &ResolvedComposition,
+) -> Result<(), ResolvedCompositionActivationError> {
     let kernel_manifests: Vec<_> = kernel.config().manifests().cloned().collect();
     let kernel_plugins: Vec<_> = kernel_manifests
         .iter()
@@ -57,7 +57,7 @@ pub(crate) fn validate_resolved_harness_configuration(
         .collect();
     if kernel_plugins != resolved_plugins {
         return Err(
-            ResolvedHarnessActivationError::KernelConfigurationMismatch {
+            ResolvedCompositionActivationError::KernelConfigurationMismatch {
                 kernel_plugins,
                 resolved_plugins,
             },
@@ -68,7 +68,7 @@ pub(crate) fn validate_resolved_harness_configuration(
     {
         if kernel_manifest != resolved_manifest {
             return Err(
-                ResolvedHarnessActivationError::KernelPluginManifestMismatch {
+                ResolvedCompositionActivationError::KernelPluginManifestMismatch {
                     plugin: kernel_manifest.id.clone(),
                     kernel_manifest: Box::new(kernel_manifest.clone()),
                     resolved_manifest: Box::new(resolved_manifest.clone()),
@@ -96,7 +96,7 @@ pub(crate) fn validate_resolved_harness_configuration(
             .map(Vec::as_slice)
             .unwrap_or_default();
         if kernel_layers != resolved_layers {
-            return Err(ResolvedHarnessActivationError::KernelLayerPolicyMismatch {
+            return Err(ResolvedCompositionActivationError::KernelLayerPolicyMismatch {
                 service,
                 kernel_layers: kernel_layers.to_vec(),
                 resolved_layers: resolved_layers.to_vec(),
@@ -106,17 +106,17 @@ pub(crate) fn validate_resolved_harness_configuration(
     Ok(())
 }
 
-impl ResolvedHarnessActivation for Kernel {
+impl ResolvedCompositionActivation for Kernel {
     fn activate_resolved_harness(
         &mut self,
-        resolved: &ResolvedHarness,
-    ) -> Result<(), ResolvedHarnessActivationError> {
+        resolved: &ResolvedComposition,
+    ) -> Result<(), ResolvedCompositionActivationError> {
         validate_resolved_harness_configuration(self, resolved)?;
 
         if let Some(active) = self.graph_generation() {
             if active != resolved.generation() {
                 return Err(
-                    ResolvedHarnessActivationError::DifferentGenerationAlreadyActive {
+                    ResolvedCompositionActivationError::DifferentGenerationAlreadyActive {
                         active: active.clone(),
                         requested: resolved.generation().clone(),
                     },
@@ -125,9 +125,9 @@ impl ResolvedHarnessActivation for Kernel {
         }
 
         self.prepare_durable_schemas(resolved.durable_schemas())
-            .map_err(ResolvedHarnessActivationError::DurableSchemaPreparation)?;
+            .map_err(ResolvedCompositionActivationError::DurableSchemaPreparation)?;
         self.validate_generation_authority(resolved)
-            .map_err(ResolvedHarnessActivationError::AuthorityCeiling)?;
+            .map_err(ResolvedCompositionActivationError::AuthorityCeiling)?;
         self.install_runtime_generation(
             resolved.runtime_generation().clone(),
             resolved.durable_schemas().to_vec(),
@@ -139,13 +139,13 @@ impl ResolvedHarnessActivation for Kernel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveResolvedGraph {
-    pub generation: GraphGenerationId,
+    pub generation: GenerationId,
     pub component_graph: ResolvedComponentGraph,
     pub resources: Vec<SkillResourceMetadata>,
 }
 
 impl ActiveResolvedGraph {
-    pub fn from_resolved(resolved: &ResolvedHarness) -> Self {
+    pub fn from_resolved(resolved: &ResolvedComposition) -> Self {
         Self {
             generation: resolved.generation().clone(),
             component_graph: resolved.component_graph().clone(),
@@ -164,7 +164,7 @@ impl ActiveResolvedGraph {
 }
 
 impl Kernel {
-    /// Returns one coherent snapshot of the active resolved graph generation.
+    /// Returns one coherent snapshot of the active resolved generation.
     ///
     /// The snapshot is absent before activation. After activation, generation,
     /// component bindings, and selected resources come from the same resolved
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn activation_installs_generation_and_graph_from_the_same_resolved_harness() {
-        let resolved = ResolvedHarness::resolve_with_resources(
+        let resolved = ResolvedComposition::resolve_with_resources(
             [],
             [],
             [resource()],
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn activation_rejects_a_resolved_graph_for_a_different_kernel_configuration() {
         let plugin = PluginId::parse("fixture.plugin").unwrap();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedComposition::resolve(
             [PluginManifest::resource_only(plugin.clone())],
             [],
             [],
@@ -280,7 +280,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessActivationError::KernelConfigurationMismatch {
+            ResolvedCompositionActivationError::KernelConfigurationMismatch {
                 kernel_plugins: Vec::new(),
                 resolved_plugins: vec![plugin],
             }
@@ -296,7 +296,7 @@ mod tests {
         let plugin = PluginId::parse("fixture.plugin").unwrap();
         let resolved_manifest = PluginManifest::resource_only(plugin.clone());
         let resolved =
-            ResolvedHarness::resolve([resolved_manifest.clone()], [], [], &Authority::default())
+            ResolvedComposition::resolve([resolved_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let mut kernel_manifest = resolved_manifest.clone();
         kernel_manifest.version += 1;
@@ -306,7 +306,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessActivationError::KernelPluginManifestMismatch {
+            ResolvedCompositionActivationError::KernelPluginManifestMismatch {
                 plugin,
                 kernel_manifest: Box::new(kernel_manifest),
                 resolved_manifest: Box::new(resolved_manifest),
@@ -325,7 +325,7 @@ mod tests {
             required: true,
             enabled: true,
         };
-        let resolved = ResolvedHarness::resolve_with_layer_policies(
+        let resolved = ResolvedComposition::resolve_with_layer_policies(
             [plugin.clone()],
             [],
             [],
@@ -339,7 +339,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessActivationError::KernelLayerPolicyMismatch {
+            ResolvedCompositionActivationError::KernelLayerPolicyMismatch {
                 service: service(),
                 kernel_layers: Vec::new(),
                 resolved_layers: vec![layer],
@@ -361,8 +361,8 @@ mod tests {
             maximum_authority: Authority::default(),
         };
         let initial =
-            ResolvedHarness::resolve([plugin.clone()], [], [], &Authority::default()).unwrap();
-        let replacement = ResolvedHarness::resolve(
+            ResolvedComposition::resolve([plugin.clone()], [], [], &Authority::default()).unwrap();
+        let replacement = ResolvedComposition::resolve(
             [plugin.clone()],
             [ComponentManifest {
                 listeners: Vec::new(),
@@ -385,7 +385,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessActivationError::DifferentGenerationAlreadyActive {
+            ResolvedCompositionActivationError::DifferentGenerationAlreadyActive {
                 active: initial.generation().clone(),
                 requested: replacement.generation().clone(),
             }
