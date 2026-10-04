@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::PathBuf};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeSet,
+    env, fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 pub const WORKSPACE_DISCOVERY_DESCRIPTOR_VERSION: u32 = 1;
 pub const MAX_WORKSPACE_DISCOVERY_DESCRIPTOR_BYTES: usize = 64 * 1024;
@@ -8,6 +14,7 @@ pub const MAX_WORKSPACE_DISCOVERY_TERMS: usize = 256;
 pub const MAX_WORKSPACE_DISCOVERY_TERM_BYTES: usize = 64;
 pub const MAX_WORKSPACE_DISCOVERY_SCAN: usize = 4_096;
 pub const MAX_WORKSPACE_DISCOVERY_PREPARED_CANDIDATES: usize = 3;
+const DISCOVERY_FILE: &str = "discovery.json";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceDiscoveryDescriptorV1 {
@@ -78,6 +85,162 @@ impl WorkspaceDiscoveryDescriptorV1 {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceDiscoveryReadResult {
+    pub descriptors: Vec<WorkspaceDiscoveryDescriptorV1>,
+    pub invalid_descriptors: u32,
+    pub scanned_entries: u32,
+    pub truncated: bool,
+}
+
+#[must_use]
+pub fn workspace_discovery_root() -> Option<PathBuf> {
+    if let Some(root) = env::var_os("PHENIX_WORKSPACE_DISCOVERY_DIR") {
+        return Some(PathBuf::from(root));
+    }
+    if let Some(state) = env::var_os("XDG_STATE_HOME") {
+        return Some(PathBuf::from(state).join("phenix/workspaces"));
+    }
+    env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state/phenix/workspaces"))
+}
+
+#[must_use]
+pub fn workspace_key(workspace_id: &str) -> String {
+    let digest = Sha256::digest(workspace_id.as_bytes());
+    digest
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub fn observe_local_workspace(
+    root: &Path,
+    workspace_id: &str,
+    canonical_root: &Path,
+    repository_remotes: impl IntoIterator<Item = String>,
+    recall_terms: impl IntoIterator<Item = String>,
+    observed_at: u64,
+) -> io::Result<WorkspaceDiscoveryDescriptorV1> {
+    let directory = root.join(workspace_key(workspace_id));
+    let path = directory.join(DISCOVERY_FILE);
+    let mut descriptor = read_descriptor(&path).unwrap_or(WorkspaceDiscoveryDescriptorV1 {
+        version: WORKSPACE_DISCOVERY_DESCRIPTOR_VERSION,
+        workspace_id: workspace_id.to_owned(),
+        canonical_root: canonical_root.to_path_buf(),
+        repository_remotes: BTreeSet::new(),
+        recall_terms: BTreeSet::new(),
+        observation_count: 0,
+        confirmed_recoveries: 0,
+        last_observed_at: observed_at,
+    });
+
+    if descriptor.workspace_id != workspace_id || descriptor.canonical_root != canonical_root {
+        descriptor = WorkspaceDiscoveryDescriptorV1 {
+            version: WORKSPACE_DISCOVERY_DESCRIPTOR_VERSION,
+            workspace_id: workspace_id.to_owned(),
+            canonical_root: canonical_root.to_path_buf(),
+            repository_remotes: BTreeSet::new(),
+            recall_terms: BTreeSet::new(),
+            observation_count: 0,
+            confirmed_recoveries: 0,
+            last_observed_at: observed_at,
+        };
+    }
+    descriptor
+        .repository_remotes
+        .extend(repository_remotes.into_iter().filter(|value| !value.trim().is_empty()));
+    descriptor
+        .recall_terms
+        .extend(recall_terms.into_iter().filter(|value| !value.trim().is_empty()));
+    descriptor.observation_count = descriptor.observation_count.saturating_add(1);
+    descriptor.last_observed_at = observed_at;
+    descriptor
+        .validate()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, format!("{error:?}")))?;
+
+    fs::create_dir_all(&directory)?;
+    write_descriptor_atomic(&path, &descriptor)?;
+    Ok(descriptor)
+}
+
+pub fn read_workspace_descriptors(root: &Path) -> io::Result<WorkspaceDiscoveryReadResult> {
+    let mut descriptors = Vec::new();
+    let mut invalid_descriptors = 0_u32;
+    let mut scanned_entries = 0_u32;
+    let mut truncated = false;
+    let mut directories = match fs::read_dir(root) {
+        Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(WorkspaceDiscoveryReadResult {
+                descriptors,
+                invalid_descriptors,
+                scanned_entries,
+                truncated,
+            })
+        }
+        Err(error) => return Err(error),
+    };
+    directories.sort_by_key(|entry| entry.file_name());
+
+    for entry in directories {
+        if scanned_entries as usize >= MAX_WORKSPACE_DISCOVERY_SCAN {
+            truncated = true;
+            break;
+        }
+        let path = entry.path().join(DISCOVERY_FILE);
+        if !path.is_file() {
+            continue;
+        }
+        scanned_entries = scanned_entries.saturating_add(1);
+        match read_descriptor(&path) {
+            Some(descriptor) if descriptor.validate().is_ok() => descriptors.push(descriptor),
+            _ => invalid_descriptors = invalid_descriptors.saturating_add(1),
+        }
+    }
+
+    Ok(WorkspaceDiscoveryReadResult {
+        descriptors,
+        invalid_descriptors,
+        scanned_entries,
+        truncated,
+    })
+}
+
+fn read_descriptor(path: &Path) -> Option<WorkspaceDiscoveryDescriptorV1> {
+    let bytes = fs::read(path).ok()?;
+    if bytes.len() > MAX_WORKSPACE_DISCOVERY_DESCRIPTOR_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_descriptor_atomic(
+    path: &Path,
+    descriptor: &WorkspaceDiscoveryDescriptorV1,
+) -> io::Result<()> {
+    let bytes = serde_json::to_vec(descriptor)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "descriptor path has no parent"))?;
+    let temporary = parent.join(format!(".{DISCOVERY_FILE}.tmp-{}", std::process::id()));
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -252,6 +415,44 @@ mod tests {
         assert_eq!(result.candidates.len(), 1);
         assert_eq!(result.candidates[0].descriptor.workspace_id, "one");
         assert_eq!(result.completeness, WorkspaceDiscoveryCompleteness::Complete);
+    }
+
+    #[test]
+    fn descriptor_store_round_trips_bounded_local_discovery() {
+        let root = std::env::temp_dir().join(format!(
+            "phenix-workspace-discovery-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let canonical = root.join("repo");
+        fs::create_dir_all(&canonical).unwrap();
+
+        let observed = observe_local_workspace(
+            &root,
+            "workspace-phenix",
+            &canonical,
+            ["https://github.com/matthis-k/phenix-ai".to_owned()],
+            ["phenix".to_owned(), "prs".to_owned()],
+            42,
+        )
+        .unwrap();
+        assert_eq!(observed.observation_count, 1);
+
+        let read = read_workspace_descriptors(&root).unwrap();
+        assert_eq!(read.invalid_descriptors, 0);
+        assert_eq!(read.descriptors, vec![observed]);
+
+        let metadata = fs::metadata(
+            root.join(workspace_key("workspace-phenix"))
+                .join(DISCOVERY_FILE),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
