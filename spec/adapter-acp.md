@@ -53,7 +53,7 @@ The package uses the adapter role:
 - the old `phenixClients.${system}.acp` / `mkPhenixClient` public category is removed;
 - adapter selection, omission, replacement, authority, and configuration stay on the ordinary plugin path.
 
-The adapter package does not own a process or stdio lifecycle. PR #489 composes this adapter into `phenix-acp-stdio` and owns `bin/phenix-acp`.
+The adapter package does not own a process or stdio lifecycle. `phenix-acp-stdio` owns the transport implementation. The packaged `phenix` process selects that transport with `--mode acp`, so ACP runs over the same resolved product composition as the other frontend modes.
 
 ## Standard ACP mapping
 
