@@ -4718,7 +4718,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
                 .expect("static session control callable id is valid"),
-            description: "Create, list, resume, prompt, or close another Phenix session through the canonical application operations. Prompt accepts an optional resident graph generation and waits for that session's execution to finish.".to_owned(),
+            description: "Create, list, resume, prompt, or close another Phenix session through the canonical application operations. Prompt accepts canonical content parts plus an optional resident graph generation and waits for that session's execution to finish.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static session operation field is valid"),
@@ -5754,7 +5754,7 @@ fn execute_application_session_control(
                             .to_owned(),
                     });
                 }
-                let text = session_control_required_string(arguments, "text")?;
+                let content = session_control_content(arguments)?;
                 let generation = match session_control_optional_string(arguments, "generation")? {
                     Some(generation) => {
                         require_runtime_generation_select(context.call.authority)?;
@@ -5763,7 +5763,7 @@ fn execute_application_session_control(
                     None => run.root_generation.clone(),
                 };
                 selected_generation = generation.clone();
-                let output = prompt_child_session(run, session_id, text, generation)?;
+                let output = prompt_child_session(run, session_id, content, generation)?;
                 child_execution = orchestration_output_string(&output, "execution_id");
                 Ok(output)
             }
@@ -5823,7 +5823,7 @@ fn require_runtime_generation_select(authority: &Authority) -> Result<(), Applic
 fn prompt_child_session(
     run: &ApplicationAgentToolRun,
     session_id: SessionId,
-    text: String,
+    content: Vec<Content>,
     generation: GraphGenerationId,
 ) -> Result<PhenixValue, ApplicationError> {
     if run.cancellation.load(Ordering::Acquire) {
@@ -5838,7 +5838,7 @@ fn prompt_child_session(
         &operation,
         PromptInput {
             session_id: session_id.clone(),
-            content: vec![Content::Text { text }],
+            content,
         }
         .to_value(),
         generation.clone(),
@@ -5982,6 +5982,30 @@ fn session_control_session_id(arguments: &PhenixValue) -> Result<SessionId, Appl
     SessionId::parse(value).map_err(|error| ApplicationError::InvalidInput {
         message: error.to_string(),
     })
+}
+
+fn session_control_content(
+    arguments: &PhenixValue,
+) -> Result<Vec<Content>, ApplicationError> {
+    let value = session_control_field(arguments, "content").ok_or_else(|| {
+        ApplicationError::InvalidInput {
+            message: "phenix.session argument content is required".to_owned(),
+        }
+    })?;
+    let PhenixValue::List(parts) = value else {
+        return Err(ApplicationError::InvalidInput {
+            message: "phenix.session argument content must be a list of application content parts"
+                .to_owned(),
+        });
+    };
+    parts
+        .iter()
+        .map(|part| {
+            Content::from_value(part).map_err(|error| ApplicationError::InvalidInput {
+                message: format!("invalid phenix.session content part: {error}"),
+            })
+        })
+        .collect()
 }
 
 fn session_control_required_string(
@@ -6919,10 +6943,13 @@ mod tests {
                                                 PhenixValue::String(child.to_string()),
                                             ),
                                             (
-                                                "text".into(),
-                                                PhenixValue::String(
-                                                    "complete the child session".into(),
-                                                ),
+                                                "content".into(),
+                                                PhenixValue::List(vec![
+                                                    Content::Text {
+                                                        text: "complete the child session".into(),
+                                                    }
+                                                    .to_value(),
+                                                ]),
                                             ),
                                         ])),
                                     ),
@@ -7371,7 +7398,15 @@ mod tests {
                                     "session_id".into(),
                                     PhenixValue::String(writer.session_id.to_string()),
                                 ),
-                                ("text".into(), PhenixValue::String("store Helios".into())),
+                                (
+                                    "content".into(),
+                                    PhenixValue::List(vec![
+                                        Content::Text {
+                                            text: "store Helios".into(),
+                                        }
+                                        .to_value(),
+                                    ]),
+                                ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
                         )],
@@ -7406,7 +7441,15 @@ mod tests {
                                     "session_id".into(),
                                     PhenixValue::String(reader.session_id.to_string()),
                                 ),
-                                ("text".into(), PhenixValue::String("recall Helios".into())),
+                                (
+                                    "content".into(),
+                                    PhenixValue::List(vec![
+                                        Content::Text {
+                                            text: "recall Helios".into(),
+                                        }
+                                        .to_value(),
+                                    ]),
+                                ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
                         )],
