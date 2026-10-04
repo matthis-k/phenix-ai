@@ -6,6 +6,9 @@ coverage:
   - rust/crates/phenix-sdk/tests/plugin_component_authoring.rs
   - rust/crates/phenix-core/src/runtime_topology_generation_regression.rs
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Purpose
 
 Define the Core contribution data produced by Plugin authoring and runtime package loading.
@@ -18,7 +21,7 @@ This document extends `plugin-authoring-macro.md`.
 
 A Plugin may contribute generic kernel-owned metadata for:
 
-- Plugin identity, version, execution runtime, and maximum authority;
+- Plugin identity, version, plugin runtime, and maximum authority;
 - concrete Plugin dependencies;
 - Components;
 - typed Interface Imports and Exports;
@@ -29,9 +32,9 @@ A Plugin may contribute generic kernel-owned metadata for:
 - configuration metadata;
 - lifecycle callbacks;
 - public callables and values;
-- Runtime Provider requirements.
+- Plugin runtime adapter requirements.
 
-Every contribution has stable Plugin ownership. Graph Generation provenance is assigned by resolution and activation rather than by the authoring surface.
+Every contribution has stable Plugin ownership. Generation provenance is assigned by resolution and activation rather than by the authoring surface.
 
 Product meanings such as sessions, memory, models, tools, and artifacts are expressed through neutral Interface contracts and Plugin-owned data. Core contribution types do not encode those product domains.
 
@@ -69,11 +72,11 @@ Configuration contributions describe typed Plugin-owned configuration semantics.
 
 A dynamically managed Plugin candidate supplies the same semantic contribution model as a static Plugin. Execution runtime and artifact revision are packaging and execution metadata, not alternate component semantics.
 
-Runtime Providers translate an artifact into the canonical executable Plugin interface after the candidate's inspectable contributions have been validated.
+Plugin runtime adapters translate an artifact into the canonical executable Plugin interface after the candidate's inspectable contributions have been validated.
 
 ## Resolution boundary
 
-Contribution data is immutable resolver input for a candidate Graph Generation.
+Contribution data is immutable resolver input for a candidate Generation.
 
 The resolver owns:
 
