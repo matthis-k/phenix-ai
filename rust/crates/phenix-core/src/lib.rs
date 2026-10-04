@@ -104,6 +104,10 @@ pub use composition::registry::{
     ResolvedTerminalPlan, RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
 };
 pub use composition::resolver::{ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
+pub use composition::resolver::{
+    ResolvedHarness as ResolvedGeneration, ResolvedHarnessError as GenerationResolutionError,
+    RuntimeGeneration as GenerationTopology,
+};
 pub use configuration::{
     ConfigContribution, ConfigContributionSource, ConfigMergeError, ConfigNamespace,
     ConfigSourceClass, ConfigurationFrontendMetadata, FrontendConfigContribution,
@@ -161,9 +165,10 @@ pub use phenix_contract::{
     Bytes, CallableId, CallableRef, CapabilityGenerationId, CapabilityId, CapabilityOwnerId,
     ClientConnectionId, ComponentId, ComponentInterface, ConfigurationFrontendId,
     ContextResourceId, ContextRevisionId, Contract, ContractId, ContractValue, EventTypeId, Exact,
-    GraphGenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId, InterfaceSchema,
-    InterfaceSchemaMismatch, Key, ModelId, ObjectRef, PhenixContract, PhenixSchema, PhenixValue,
-    PluginId, Project, ReferenceId, ResourceNamespace, RoutingProfileId, RuntimeId,
+    GenerationId, GraphGenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId,
+    InterfaceSchema, InterfaceSchemaMismatch, Key, ModelId, ObjectRef, PermissionId,
+    PhenixContract, PhenixSchema, PhenixValue, PluginId, PluginRuntimeId, Project, ReferenceId,
+    ResourceNamespace, RoutingProfileId, RuntimeId,
     SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId, SessionId,
     SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
@@ -194,7 +199,8 @@ pub use reconciliation::inspection::CandidateResolutionInspection;
 pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
+    PluginRuntimeProvider, PluginRuntimeProvider as PluginRuntimeAdapter, PluginState,
+    ProvenanceBuffer, ProviderEndpointProvenance,
     RootExecutionConstraints, RootExecutionHandle, RuntimePluginCandidate, RuntimeTraceBuffer,
     RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
