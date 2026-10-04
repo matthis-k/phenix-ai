@@ -114,11 +114,12 @@
         ];
       };
 
-      rustUnitWorkspacePackages =
-        map builtins.baseNameOf
-          ((builtins.fromTOML (builtins.readFile ../rust/Cargo.toml)).workspace.members);
-      rustUnitExpectedPackages =
-        builtins.filter (package: package != "phenix-binding-lua") rustUnitWorkspacePackages;
+      rustUnitWorkspacePackages = map builtins.baseNameOf (builtins.fromTOML (
+        builtins.readFile ../rust/Cargo.toml
+      )).workspace.members;
+      rustUnitExpectedPackages = builtins.filter (
+        package: package != "phenix-binding-lua"
+      ) rustUnitWorkspacePackages;
       rustUnitShardedPackages = builtins.concatLists (builtins.attrValues rustUnitPackageShards);
       rustUnitShardsValid =
         if
@@ -171,203 +172,205 @@
           '';
         };
 
-      ciCommands = assert rustUnitShardsValid; maintenanceLib.mkCi {
-        ci = {
-          name = "CI";
-          timeoutMinutes = 120;
-          env = {
-            CARGO_HOME = "\${{ runner.temp }}/phenix-cargo-home";
-            CARGO_TARGET_DIR = "\${{ runner.temp }}/phenix-cargo-target";
-            CARGO_TERM_QUIET = "true";
+      ciCommands =
+        assert rustUnitShardsValid;
+        maintenanceLib.mkCi {
+          ci = {
+            name = "CI";
+            timeoutMinutes = 120;
+            env = {
+              CARGO_HOME = "\${{ runner.temp }}/phenix-cargo-home";
+              CARGO_TARGET_DIR = "\${{ runner.temp }}/phenix-cargo-target";
+              CARGO_TERM_QUIET = "true";
+            };
+            cache = {
+              paths = [
+                "\${{ runner.temp }}/phenix-cargo-home"
+                "\${{ runner.temp }}/phenix-cargo-target"
+              ];
+              key = "phenix-rust-\${{ runner.os }}-\${{ github.sha }}";
+              restoreKeys = [ "phenix-rust-\${{ runner.os }}-" ];
+              writer = "build.rust-workspace";
+            };
           };
-          cache = {
-            paths = [
-              "\${{ runner.temp }}/phenix-cargo-home"
-              "\${{ runner.temp }}/phenix-cargo-target"
-            ];
-            key = "phenix-rust-\${{ runner.os }}-\${{ github.sha }}";
-            restoreKeys = [ "phenix-rust-\${{ runner.os }}-" ];
-            writer = "build.rust-workspace";
+
+          build = {
+            rust-workspace = {
+              name = "Rust workspace";
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo build --workspace --locked --quiet
+              '';
+            };
+
+            stitch-mcp = mkNixCheckSuite {
+              check = "stitch-mcp-package";
+              name = "Stitch MCP package";
+            };
+          };
+
+          test = {
+            unit-core = mkRustUnitSuite {
+              name = "Rust unit tests / core";
+              packages = rustUnitPackageShards.core;
+            };
+
+            unit-protocol-sdk = mkRustUnitSuite {
+              name = "Rust unit tests / protocol and SDK";
+              packages = rustUnitPackageShards.protocolSdk;
+            };
+
+            unit-plugin-foundation = mkRustUnitSuite {
+              name = "Rust unit tests / plugin foundation";
+              packages = rustUnitPackageShards.pluginFoundation;
+            };
+
+            unit-plugin-state = mkRustUnitSuite {
+              name = "Rust unit tests / plugin state";
+              packages = rustUnitPackageShards.pluginState;
+            };
+
+            unit-agent-product = mkRustUnitSuite {
+              name = "Rust unit tests / agent and product";
+              packages = rustUnitPackageShards.agentProduct;
+            };
+
+            docs = {
+              name = "Rust doc tests";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --workspace --doc --locked
+              '';
+            };
+
+            sdk = {
+              name = "SDK tests";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --locked -p phenix-sdk --tests
+              '';
+            };
+
+            adapter-domain = {
+              name = "Adapter and domain tests";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --locked \
+                  -p phenix-adapter-acp \
+                  -p phenix-domain \
+                  --tests
+              '';
+            };
+
+            harness = {
+              name = "Harness code tests";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --locked -p phenix-harness \
+                  --test component_graph \
+                  --test supported_product_journeys
+              '';
+            };
+          };
+
+          runtime = {
+            process-roundtrip = {
+              name = "Harness process roundtrip";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --locked -p phenix-harness --test process_roundtrip
+              '';
+            };
+
+            stitch = mkNixCheckSuite {
+              check = "stitch-runtime-smoke";
+              name = "Stitch runtime smoke";
+            };
+          };
+
+          integration = {
+            backend-acp = {
+              name = "ACP backend integration";
+              needs = [ ];
+              runtimeInputs = pkgs: [
+                pkgs.cargo
+                pkgs.git
+                pkgs.rustc
+              ];
+              exec = ''
+                ${rustRoot}
+                cargo test --quiet --locked -p phenix-backend-acp --tests
+              '';
+            };
+
+            plugin-packaging-products = mkNixCheckSuite {
+              check = "phenix-plugin-packaging-products";
+              name = "Plugin packaging / products";
+            };
+
+            plugin-packaging-environment = mkNixCheckSuite {
+              check = "phenix-plugin-packaging-environment";
+              name = "Plugin packaging / environment";
+            };
+
+            plugin-packaging-settings = mkNixCheckSuite {
+              check = "phenix-plugin-packaging-settings";
+              name = "Plugin packaging / settings";
+            };
+
+            plugin-packaging-isolation = mkNixCheckSuite {
+              check = "phenix-plugin-packaging-isolation";
+              name = "Plugin packaging / isolation";
+            };
+          };
+
+          product = {
+            phenix-runtime = mkNixCheckSuite {
+              check = "phenix-product-runtime-smoke";
+              name = "Phenix supported runtime journey";
+            };
+
+            phenix-lua-binding = mkNixCheckSuite {
+              check = "phenix-product-lua-smoke";
+              name = "Phenix Lua binding product fixture";
+            };
           };
         };
-
-        build = {
-          rust-workspace = {
-            name = "Rust workspace";
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo build --workspace --locked --quiet
-            '';
-          };
-
-          stitch-mcp = mkNixCheckSuite {
-            check = "stitch-mcp-package";
-            name = "Stitch MCP package";
-          };
-        };
-
-        test = {
-          unit-core = mkRustUnitSuite {
-            name = "Rust unit tests / core";
-            packages = rustUnitPackageShards.core;
-          };
-
-          unit-protocol-sdk = mkRustUnitSuite {
-            name = "Rust unit tests / protocol and SDK";
-            packages = rustUnitPackageShards.protocolSdk;
-          };
-
-          unit-plugin-foundation = mkRustUnitSuite {
-            name = "Rust unit tests / plugin foundation";
-            packages = rustUnitPackageShards.pluginFoundation;
-          };
-
-          unit-plugin-state = mkRustUnitSuite {
-            name = "Rust unit tests / plugin state";
-            packages = rustUnitPackageShards.pluginState;
-          };
-
-          unit-agent-product = mkRustUnitSuite {
-            name = "Rust unit tests / agent and product";
-            packages = rustUnitPackageShards.agentProduct;
-          };
-
-          docs = {
-            name = "Rust doc tests";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --workspace --doc --locked
-            '';
-          };
-
-          sdk = {
-            name = "SDK tests";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --locked -p phenix-sdk --tests
-            '';
-          };
-
-          adapter-domain = {
-            name = "Adapter and domain tests";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --locked \
-                -p phenix-adapter-acp \
-                -p phenix-domain \
-                --tests
-            '';
-          };
-
-          harness = {
-            name = "Harness code tests";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --locked -p phenix-harness \
-                --test component_graph \
-                --test supported_product_journeys
-            '';
-          };
-        };
-
-        runtime = {
-          process-roundtrip = {
-            name = "Harness process roundtrip";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --locked -p phenix-harness --test process_roundtrip
-            '';
-          };
-
-          stitch = mkNixCheckSuite {
-            check = "stitch-runtime-smoke";
-            name = "Stitch runtime smoke";
-          };
-        };
-
-        integration = {
-          backend-acp = {
-            name = "ACP backend integration";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.cargo
-              pkgs.git
-              pkgs.rustc
-            ];
-            exec = ''
-              ${rustRoot}
-              cargo test --quiet --locked -p phenix-backend-acp --tests
-            '';
-          };
-
-          plugin-packaging-products = mkNixCheckSuite {
-            check = "phenix-plugin-packaging-products";
-            name = "Plugin packaging / products";
-          };
-
-          plugin-packaging-environment = mkNixCheckSuite {
-            check = "phenix-plugin-packaging-environment";
-            name = "Plugin packaging / environment";
-          };
-
-          plugin-packaging-settings = mkNixCheckSuite {
-            check = "phenix-plugin-packaging-settings";
-            name = "Plugin packaging / settings";
-          };
-
-          plugin-packaging-isolation = mkNixCheckSuite {
-            check = "phenix-plugin-packaging-isolation";
-            name = "Plugin packaging / isolation";
-          };
-        };
-
-        product = {
-          phenix-runtime = mkNixCheckSuite {
-            check = "phenix-product-runtime-smoke";
-            name = "Phenix supported runtime journey";
-          };
-
-          phenix-lua-binding = mkNixCheckSuite {
-            check = "phenix-product-lua-smoke";
-            name = "Phenix Lua binding product fixture";
-          };
-        };
-      };
 
       maintenance = maintenanceLib.mkMaintenance {
         name = "maintenance";
