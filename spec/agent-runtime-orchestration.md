@@ -17,7 +17,7 @@ depends_on:
 
 ## Purpose
 
-Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident Harness generation before promotion.
+Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident Generation before promotion.
 
 The supported workflow is:
 
@@ -49,7 +49,7 @@ Phenix already owns most required semantics:
 | create/list/resume/close/prompt application operations | `phenix-application-interface` and Harness application worker |
 | agent execution and tool loop | execution and agent-loop Plugins |
 | Plugin build/load/unload/reconcile | `GraphReconciler::manage` |
-| resident Harness generations | Core generation residency |
+| resident Generations | Core generation residency |
 | explicit root invocation in one generation | `Kernel::invoke_in_generation` |
 | promotion and retirement | `GraphReconciler` resident operations |
 | authority attenuation | `Authority` and `RootExecutionConstraints` |
@@ -77,7 +77,7 @@ Phenix does not add an "agent owns session" durable relation. Session access is 
 
 ### Generation belongs to a root execution
 
-A session is not permanently bound to a Harness generation.
+A session is not permanently bound to a Generation.
 
 A session may contain executions from different generations over time:
 
@@ -245,7 +245,7 @@ The controlling root may have host-pinned bindings such as Environment.
 
 A child generation must preserve every inherited pin.
 
-Selecting a Harness generation is not an Environment switch. Testing a candidate under another Environment requires a separately authorized root.
+Selecting a Generation is not an Environment switch. Testing a candidate under another Environment requires a separately authorized root.
 
 ## Plugin development control
 
@@ -503,7 +503,7 @@ Detached child sessions can be added later as an explicit operation. They should
 
 ## Observability
 
-Orchestration actions emit metadata-only `RuntimeTraceEvent::Orchestration` records carrying the controller session and execution, operation kind, target session when present, child execution when present, selected graph generation, target Plugin generation when relevant, success, and an error descriptor on failure.
+Orchestration actions emit metadata-only `RuntimeTraceEvent::Orchestration` records carrying the controller session and execution, operation kind, target session when present, child execution when present, selected generation, target Plugin generation when relevant, success, and an error descriptor on failure.
 
 Execution inspection remains generation-aware. The orchestration trace uses the existing runtime diagnostic stream rather than creating another log format.
 
