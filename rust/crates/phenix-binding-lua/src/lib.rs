@@ -2930,7 +2930,7 @@ mod tests {
             .unwrap();
         let stop = CallableRef::new(
             ContractId::parse("phenix.observable-stop@1").unwrap(),
-            CapabilityOwnerId::Runtime(phenix_core::RuntimeId::parse("fixture-runtime").unwrap()),
+            CapabilityOwnerId::Runtime(phenix_core::PluginRuntimeId::parse("fixture-runtime").unwrap()),
             CapabilityGenerationId::parse("runtime-generation").unwrap(),
             ReferenceId::parse("stop").unwrap(),
         );
