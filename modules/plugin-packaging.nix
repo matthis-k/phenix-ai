@@ -266,6 +266,149 @@ in
         plugins = [ self.phenixPlugins.${pkgs.system}.adapter-acp ];
       };
 
+      fixtureHarnessProgram = pkgs.writeShellScriptBin "phenix-harness" ''
+        exec ${pkgs.jq}/bin/jq -cn \
+          --arg default_config "''${PHENIX_DEFAULT_CONFIG_DIR:-}" \
+          --arg config "''${PHENIX_CONFIG_DIR:-}" \
+          --arg settings "''${PHENIX_NIX_SETTINGS:-}" \
+          --arg settings_precedence "''${PHENIX_SETTINGS_PRECEDENCE:-}" \
+          --arg plugin_packages "''${PHENIX_PLUGIN_PACKAGES:-}" \
+          --arg enabled_plugins "''${PHENIX_ENABLED_PLUGINS:-}" \
+          --arg layer_policy "''${PHENIX_LAYER_POLICY:-}" \
+          --arg skill_path "''${PHENIX_SKILL_PATH:-}" \
+          --arg path "''${PATH:-}" \
+          '{
+            default_config: $default_config,
+            config: $config,
+            settings: $settings,
+            settings_precedence: $settings_precedence,
+            plugin_packages: $plugin_packages,
+            enabled_plugins: $enabled_plugins,
+            layer_policy: $layer_policy,
+            skill_path: $skill_path,
+            path: $path
+          }'
+      '';
+      fixtureBase = pkgs.runCommand "phenix-composition-fixture-base" { } ''
+        mkdir -p "$out/bin"
+        ln -s ${fixtureHarnessProgram}/bin/phenix-harness "$out/bin/phenix-harness"
+        ln -s phenix-harness "$out/bin/phenix"
+      '';
+      fixtureRuntimeBase = pkgs.writeShellScriptBin "phenix-runtime" ''
+        exit 0
+      '';
+      mkFixturePhenix =
+        args:
+        mkPhenixWithBase (
+          args
+          // {
+            inherit pkgs;
+            base = fixtureBase;
+          }
+        );
+
+      fullFixtureComposition = mkFixturePhenix {
+        enabledPlugins = [ "phenix.product.full" ];
+        resources = [ harnessResources ];
+      };
+      basicFixtureComposition = mkFixturePhenix {
+        enabledPlugins = [ "phenix.product.basic" ];
+        resources = [ harnessResources ];
+      };
+      settingsFixtureComposition = mkFixturePhenix {
+        enabledPlugins = [ "phenix.product.full" ];
+        resources = [ harnessResources ];
+        configDirectory = settingsConfigDirectory;
+        settings = {
+          global = {
+            "session.auto_create" = false;
+          };
+          agents = {
+            "agent.scout" = {
+              "agent.max_parallel_tasks" = 4;
+            };
+          };
+        };
+      };
+      filePrecedenceFixtureComposition = mkFixturePhenix {
+        enabledPlugins = [ "phenix.product.full" ];
+        resources = [ harnessResources ];
+        configDirectory = settingsConfigDirectory;
+        settingsPrecedence = "file";
+        settings = {
+          global = {
+            "session.auto_create" = false;
+          };
+        };
+      };
+      resourceFixtureComposition = mkFixturePhenix {
+        plugins = [ resourcePlugin ];
+        enabledPlugins = [ "phenix.product.full" ];
+        resources = [ harnessResources ];
+      };
+      adapterFixtureComposition = mkFixturePhenix {
+        plugins = [ self.phenixPlugins.${pkgs.system}.adapter-acp ];
+      };
+      runtimeFixtureComposition = mkPhenixWithBase {
+        inherit pkgs;
+        base = fixtureRuntimeBase;
+        runtimeOnly = true;
+      };
+
+      pluginPackagingWrapper =
+        pkgs.runCommand "phenix-plugin-packaging-wrapper-check" { nativeBuildInputs = [ pkgs.jq ]; }
+          ''
+            set -euo pipefail
+
+            test -x "${fullFixtureComposition}/bin/phenix"
+            test -x "${fullFixtureComposition}/bin/phenix-harness"
+            test -f "${fullFixtureComposition}/share/phenix/runtime.json"
+            test -f "${fullFixtureComposition}/share/phenix/skills/write/SKILL.md"
+            test -f "${fullFixtureComposition}/share/phenix/skills/pstack-LICENSE"
+
+            "${fullFixtureComposition}/bin/phenix" > "$TMPDIR/full.json"
+            jq -e '
+              .enabled_plugins == "phenix.product.full"
+              and (.default_config | length > 0)
+              and (.config | length > 0)
+              and (.skill_path | length > 0)
+              and (.path | contains("${pkgs.bubblewrap}/bin"))
+            ' "$TMPDIR/full.json" >/dev/null
+
+            "${basicFixtureComposition}/bin/phenix" > "$TMPDIR/basic.json"
+            jq -e '.enabled_plugins == "phenix.product.basic"' "$TMPDIR/basic.json" >/dev/null
+
+            "${settingsFixtureComposition}/bin/phenix" > "$TMPDIR/settings.json"
+            jq -e '
+              .settings_precedence == "nix"
+              and (.settings | length > 0)
+              and (.config | length > 0)
+            ' "$TMPDIR/settings.json" >/dev/null
+            settings_path="$(jq -r '.settings' "$TMPDIR/settings.json")"
+            jq -e '
+              .global["session.auto_create"] == false
+              and .agents["agent.scout"]["agent.max_parallel_tasks"] == 4
+            ' "$settings_path" >/dev/null
+
+            "${filePrecedenceFixtureComposition}/bin/phenix" > "$TMPDIR/settings-file-first.json"
+            jq -e '.settings_precedence == "file" and (.config | length > 0)'               "$TMPDIR/settings-file-first.json" >/dev/null
+            config_path="$(jq -r '.config' "$TMPDIR/settings-file-first.json")/settings.json"
+            jq -e '.global["session.auto_create"] == true' "$config_path" >/dev/null
+
+            test -e "${resourceFixtureComposition}/share/phenix-plugin/resources/README.txt"
+            "${resourceFixtureComposition}/bin/phenix" > "$TMPDIR/resource.json"
+            jq -e '(.plugin_packages | length > 0) and .enabled_plugins == "phenix.product.full"'               "$TMPDIR/resource.json" >/dev/null
+
+            "${adapterFixtureComposition}/bin/phenix" > "$TMPDIR/adapter.json"
+            jq -e '.enabled_plugins == "phenix.adapter.acp"' "$TMPDIR/adapter.json" >/dev/null
+
+            test -x "${runtimeFixtureComposition}/bin/phenix-runtime"
+            test ! -e "${runtimeFixtureComposition}/bin/phenix"
+            test ! -e "${runtimeFixtureComposition}/bin/phenix-harness"
+
+            touch "$out"
+          '';
+
       pluginPackagingProducts =
         pkgs.runCommand "phenix-plugin-packaging-products-check" { nativeBuildInputs = [ pkgs.jq ]; }
           ''
@@ -395,13 +538,7 @@ in
         phenix-plugin-packaging-settings = pluginPackagingSettings;
         phenix-plugin-packaging-isolation = pluginPackagingIsolation;
 
-        phenix-plugin-packaging = pkgs.runCommand "phenix-plugin-packaging-check" { } ''
-          test -e ${pluginPackagingProducts}
-          test -e ${pluginPackagingEnvironment}
-          test -e ${pluginPackagingSettings}
-          test -e ${pluginPackagingIsolation}
-          touch "$out"
-        '';
+        phenix-plugin-packaging = pluginPackagingWrapper;
       };
     };
 }
