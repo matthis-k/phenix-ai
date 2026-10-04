@@ -180,33 +180,18 @@ in
         };
         resources = fixtureResources;
       };
-      defaultPluginNames = [
-        "artifacts"
-        "api"
-        "command-toolbelt"
-        "context"
-        "debug"
-        "execution"
-        "environment-local"
-        "frontend"
-        "hooks"
-        "jobs"
-        "language"
-        "models"
-        "options"
-        "planning"
-        "repository-workers"
-        "session-tree"
-        "sessions"
-        "workspace"
-      ];
-      defaultPlugins = map (name: self.phenixPlugins.${pkgs.system}.${name}) defaultPluginNames;
       harnessResources = self.packages.${pkgs.system}.phenix-harness-resources;
-      defaultComposition = mkPhenix {
+      basicComposition = mkPhenix {
         inherit pkgs;
-        plugins = defaultPlugins;
+        enabledPlugins = [ "phenix.product.basic" ];
         resources = [ harnessResources ];
       };
+      fullComposition = mkPhenix {
+        inherit pkgs;
+        enabledPlugins = [ "phenix.product.full" ];
+        resources = [ harnessResources ];
+      };
+      defaultComposition = fullComposition;
       settingsConfigDirectory = pkgs.writeTextDir "settings.json" (
         builtins.toJSON {
           global = {
@@ -221,7 +206,7 @@ in
       );
       settingsComposition = mkPhenix {
         inherit pkgs;
-        plugins = defaultPlugins;
+        enabledPlugins = [ "phenix.product.full" ];
         resources = [ harnessResources ];
         configDirectory = settingsConfigDirectory;
         settings = {
@@ -237,7 +222,7 @@ in
       };
       filePrecedenceComposition = mkPhenix {
         inherit pkgs;
-        plugins = defaultPlugins;
+        enabledPlugins = [ "phenix.product.full" ];
         resources = [ harnessResources ];
         configDirectory = settingsConfigDirectory;
         settingsPrecedence = "file";
@@ -249,7 +234,8 @@ in
       };
       resourceComposition = mkPhenix {
         inherit pkgs;
-        plugins = defaultPlugins ++ [ resourcePlugin ];
+        plugins = [ resourcePlugin ];
+        enabledPlugins = [ "phenix.product.full" ];
         resources = [ harnessResources ];
       };
       runtimeComposition = mkPhenix {
@@ -271,14 +257,18 @@ in
     in
     {
       packages = {
-        phenix-harness = defaultComposition;
-        phenix = defaultComposition;
-        default = defaultComposition;
+        phenix-basic = basicComposition;
+        phenix-full = fullComposition;
+        phenix-harness = fullComposition;
+        phenix = fullComposition;
+        default = fullComposition;
       };
       apps = {
-        phenix-harness.program = "${defaultComposition}/bin/phenix-harness";
-        phenix.program = "${defaultComposition}/bin/phenix";
-        default.program = "${defaultComposition}/bin/phenix";
+        phenix-basic.program = "${basicComposition}/bin/phenix";
+        phenix-full.program = "${fullComposition}/bin/phenix";
+        phenix-harness.program = "${fullComposition}/bin/phenix-harness";
+        phenix.program = "${fullComposition}/bin/phenix";
+        default.program = "${fullComposition}/bin/phenix";
         phenix-runtime.program = "${self.packages.${pkgs.system}.phenix-runtime}/bin/phenix-runtime";
       };
       checks.phenix-plugin-packaging =
@@ -291,8 +281,35 @@ in
             test -f "${defaultComposition}/share/phenix/skills/write/SKILL.md"
             test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
             export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
-            "${defaultComposition}/bin/phenix" --list-services > "$TMPDIR/default-services.json"
-            jq -e '(.plugins | length == 18) and (.plugins | index("phenix.adapter.acp") == null) and ([.plugins[] | select(startswith("phenix.basic-"))] | length == 0) and (.services | index("phenix.sessions@1") != null)' "$TMPDIR/default-services.json" >/dev/null
+            "${fullComposition}/bin/phenix" --mode=jsonl --list-services > "$TMPDIR/full-services.json"
+            jq -e '
+              (.plugins | index("phenix.product.full") != null)
+              and (.plugins | index("phenix.agent.advanced") != null)
+              and (.plugins | index("phenix.agent.basic") != null)
+              and (.plugins | index("phenix.providers") != null)
+              and (.plugins | index("openai-api") != null)
+              and (.plugins | index("openai-codex") != null)
+              and (.plugins | index("phenix.workspace") != null)
+              and (.services | index("phenix.sessions@1") != null)
+              and (.services | index("phenix.models.routing@1") != null)
+            ' "$TMPDIR/full-services.json" >/dev/null
+
+            export PHENIX_STATE_DB="$TMPDIR/basic.sqlite"
+            "${basicComposition}/bin/phenix" --mode=jsonl --list-services > "$TMPDIR/basic-services.json"
+            jq -e '
+              (.plugins | index("phenix.product.basic") != null)
+              and (.plugins | index("phenix.agent.basic") != null)
+              and (.plugins | index("phenix.agent.advanced") == null)
+              and (.plugins | index("phenix.api") != null)
+              and (.plugins | index("phenix.options") != null)
+              and (.plugins | index("phenix.providers") != null)
+              and (.plugins | index("openai-api") != null)
+              and (.plugins | index("openai-codex") != null)
+              and (.plugins | index("phenix.sessions") != null)
+              and (.plugins | index("phenix.memory") == null)
+              and (.plugins | index("phenix.planning") == null)
+              and (.plugins | index("phenix.workspace") == null)
+            ' "$TMPDIR/basic-services.json" >/dev/null
 
             for policy in working-dir workdir-write; do
               export PHENIX_STATE_DB="$TMPDIR/environment-$policy.sqlite"
