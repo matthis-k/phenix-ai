@@ -19,6 +19,8 @@ _: {
           cargo build --release --locked \
             --package phenix-runtime \
             --bin phenix-runtime
+          cargo build --release --locked \
+            --package phenix-binding-lua
           runHook postBuild
         '';
 
@@ -30,6 +32,10 @@ _: {
             test -n "$built_binary"
             cp "$built_binary" "$out/bin/$binary"
           done
+          lua_module="$(find target -path "*/release/libphenix.so" -type f -print -quit)"
+          test -n "$lua_module"
+          mkdir -p "$out/lib/lua/5.1"
+          cp "$lua_module" "$out/lib/lua/5.1/phenix.so"
           runHook postInstall
         '';
       };
