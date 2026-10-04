@@ -1,5 +1,5 @@
 use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
+    ClientCapabilityCallbacks, ClientPermissionIdentity, SdkApplicationService,
 };
 use phenix_application_interface::{
     types::{
@@ -10,7 +10,7 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     CallableRef, CapabilityError, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-    ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
+    ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, PluginRuntimeId,
     SdkContribution, SharedCapabilityRegistry, Type, ValueCodec,
 };
 
@@ -38,10 +38,10 @@ fn service(
         &sdk,
         &ObservableStore::default(),
         capabilities,
-        RuntimeId::parse("fixture.runtime").unwrap(),
+        PluginRuntimeId::parse("fixture.runtime").unwrap(),
         CapabilityGenerationId::parse("fixture.runtime-generation").unwrap(),
         callbacks,
-        ClientCapabilityIdentity::new(owner, generation),
+        ClientPermissionIdentity::new(owner, generation),
     )
     .unwrap()
 }
