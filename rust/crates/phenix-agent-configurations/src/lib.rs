@@ -4,6 +4,8 @@ use phenix_core::{Authority, PluginExecution, PluginId, PluginManifest};
 
 pub const BASIC_AGENT_CONFIGURATION: &str = "phenix.agent.basic";
 pub const ADVANCED_AGENT_CONFIGURATION: &str = "phenix.agent.advanced";
+pub const BASIC_PRODUCT_CONFIGURATION: &str = "phenix.product.basic";
+pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
 const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.agent-loop",
@@ -12,6 +14,14 @@ const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.harness.invocation-defaults",
     "phenix.models",
     "phenix.step-runner",
+];
+
+const BASIC_PRODUCT_DEPENDENCIES: &[&str] = &[
+    BASIC_AGENT_CONFIGURATION,
+    "phenix.api",
+    "phenix.options",
+    "phenix.providers",
+    "openai-codex",
 ];
 
 const ADVANCED_AGENT_EXTENSIONS: &[&str] = &[
@@ -40,11 +50,24 @@ pub fn basic_agent_configuration_manifest() -> PluginManifest {
 }
 
 #[must_use]
+pub fn basic_product_configuration_manifest() -> PluginManifest {
+    assembly_manifest(BASIC_PRODUCT_CONFIGURATION, BASIC_PRODUCT_DEPENDENCIES)
+}
+
+#[must_use]
 pub fn advanced_agent_configuration_manifest() -> PluginManifest {
     let dependencies = std::iter::once(BASIC_AGENT_CONFIGURATION)
         .chain(ADVANCED_AGENT_EXTENSIONS.iter().copied())
         .collect::<Vec<_>>();
     assembly_manifest(ADVANCED_AGENT_CONFIGURATION, &dependencies)
+}
+
+#[must_use]
+pub fn full_product_configuration_manifest() -> PluginManifest {
+    assembly_manifest(
+        FULL_PRODUCT_CONFIGURATION,
+        &[ADVANCED_AGENT_CONFIGURATION, "phenix.providers", "openai-codex"],
+    )
 }
 
 fn assembly_manifest(id: &str, dependencies: &[&str]) -> PluginManifest {
@@ -97,6 +120,25 @@ mod tests {
                 "advanced configuration repeated basic dependency {dependency}"
             );
         }
+    }
+
+    #[test]
+    fn product_configurations_add_frontend_and_provider_capabilities() {
+        let basic = dependency_ids(basic_product_configuration_manifest());
+        for required in [
+            BASIC_AGENT_CONFIGURATION,
+            "phenix.api",
+            "phenix.options",
+            "phenix.providers",
+            "openai-codex",
+        ] {
+            assert!(basic.contains(required), "basic product missed {required}");
+        }
+
+        let full = dependency_ids(full_product_configuration_manifest());
+        assert!(full.contains(ADVANCED_AGENT_CONFIGURATION));
+        assert!(full.contains("phenix.providers"));
+        assert!(full.contains("openai-codex"));
     }
 
     #[test]
