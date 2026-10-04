@@ -4,17 +4,21 @@ use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    default_suite_authority, invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
+    application::serve_configured_application, default_suite_authority,
+    invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
 };
 use phenix_plugin_catalog::{
     adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
     artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
+    basic_product_configuration_manifest,
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
     cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
     execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
     local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
-    planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
+    planning_manifest, providers_manifest, repository_worker_manifest, sdk_manifest,
+    session_manifest, session_tree_manifest, step_runner_manifest, workspace_manifest,
+    common_provider_definitions, full_product_configuration_manifest, openai_codex_manifest,
+    OptionStartupPrecedence,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -27,22 +31,41 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Mode {
+    Acp,
+    #[default]
+    Jsonl,
+}
+
+impl Mode {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "acp" => Ok(Self::Acp),
+            "jsonl" => Ok(Self::Jsonl),
+            _ => Err(format!("unknown mode: {value}; expected acp or jsonl")),
+        }
+    }
+}
+
 #[derive(Debug, Default, Eq, PartialEq)]
 struct Cli {
     help: bool,
     list_services: bool,
+    mode: Mode,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
 }
 
-fn main() {
-    if let Err(error) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
         eprintln!("phenix-harness: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<(), Box<dyn Error>> {
     let cli = parse_cli(env::args().skip(1))?;
     if cli.help {
         print_help();
@@ -115,21 +138,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut stdout = io::BufWriter::new(stdout.lock());
-    serve_jsonl(
-        harness.kernel_mut(),
-        &default_suite_authority(),
-        stdin.lock(),
-        &mut stdout,
-    )?;
+    match cli.mode {
+        Mode::Acp => serve_configured_application(harness).await?,
+        Mode::Jsonl => {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let mut stdout = io::BufWriter::new(stdout.lock());
+            serve_jsonl(
+                harness.kernel_mut(),
+                &default_suite_authority(),
+                stdin.lock(),
+                &mut stdout,
+            )?;
+        }
+    }
     Ok(())
 }
 
 fn print_help() {
     println!(
-        "phenix-harness [OPTIONS]\n\nWithout arguments, reads JSONL service requests from stdin and writes JSONL responses.\n\nOptions:\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help"
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help"
     );
 }
 
@@ -140,6 +168,19 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
         match argument.as_str() {
             "--help" | "-h" => cli.help = true,
             "--list-services" => cli.list_services = true,
+            "--mode" => {
+                let mode = args
+                    .next()
+                    .ok_or_else(|| "--mode requires acp or jsonl".to_owned())?;
+                cli.mode = Mode::parse(&mode)?;
+            }
+            _ if argument.starts_with("--mode=") => {
+                let mode = argument.strip_prefix("--mode=").expect("prefix checked");
+                if mode.is_empty() {
+                    return Err("--mode requires acp or jsonl".into());
+                }
+                cli.mode = Mode::parse(mode)?;
+            }
             "--enable-plugin" => {
                 let plugin = args
                     .next()
@@ -184,9 +225,13 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
 
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     let authority = default_suite_authority();
-    vec![
+    let mut plugins = vec![
         (advanced_agent_configuration_manifest(), false),
         (basic_agent_configuration_manifest(), false),
+        (basic_product_configuration_manifest(), false),
+        (full_product_configuration_manifest(), false),
+        (providers_manifest(), false),
+        (openai_codex_manifest(), true),
         (adapter_acp_manifest(), false),
         (repository_worker_manifest(), true),
         (session_manifest(), true),
@@ -216,7 +261,13 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (basic_tools_manifest(), false),
         (basic_skills_manifest(), false),
         (basic_context_manifest(), false),
-    ]
+    ];
+    plugins.extend(
+        common_provider_definitions()
+            .into_iter()
+            .map(|provider| (provider.manifest(), true)),
+    );
+    plugins
 }
 
 fn configured_first_party_plugins(cli: &Cli) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
@@ -416,6 +467,16 @@ mod tests {
     }
 
     #[test]
+    fn mode_is_an_explicit_frontend_choice() {
+        assert_eq!(parse_cli(["--mode".into(), "acp".into()]).unwrap().mode, Mode::Acp);
+        assert_eq!(
+            parse_cli(["--mode=jsonl".into()]).unwrap().mode,
+            Mode::Jsonl
+        );
+        assert!(parse_cli(["--mode=unknown".into()]).is_err());
+    }
+
+    #[test]
     fn no_selection_preserves_default_suite() {
         assert_eq!(
             resolve_first_party_plugins(&Cli::default(), None).unwrap(),
@@ -458,6 +519,34 @@ mod tests {
         assert!(enabled.contains("phenix.options"));
         assert!(enabled.contains("phenix.memory"));
         assert!(enabled.contains("phenix.planning"));
+    }
+
+    #[test]
+    fn configured_full_product_closes_over_model_providers() {
+        let full = full_product_configuration_manifest().id.as_str().to_owned();
+        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&full))
+            .unwrap()
+            .unwrap();
+
+        for required in [
+            "phenix.product.full",
+            "phenix.agent.advanced",
+            "phenix.providers",
+            "openai-api",
+            "openai-codex",
+            "phenix.workspace",
+        ] {
+            assert!(enabled.contains(required), "full product missed {required}");
+        }
+    }
+
+    #[test]
+    fn cli_override_keeps_default_model_providers() {
+        let cli = parse_cli(["--disable-plugin=phenix.debug".into()]).unwrap();
+        let enabled = resolve_first_party_plugins(&cli, None).unwrap().unwrap();
+        assert!(enabled.contains("openai-api"));
+        assert!(enabled.contains("openai-codex"));
+        assert!(!enabled.contains("phenix.debug"));
     }
 
     #[test]
