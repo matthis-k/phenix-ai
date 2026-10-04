@@ -53,9 +53,9 @@ mod provider_rebind_generation_regression;
 #[cfg(test)]
 mod runtime_component_parity_regression;
 #[cfg(test)]
-mod runtime_provider_host_regression;
+mod runtime_adapter_host_regression;
 #[cfg(test)]
-mod runtime_provider_regression;
+mod runtime_adapter_regression;
 #[cfg(test)]
 mod runtime_topology_generation_regression;
 #[cfg(test)]
@@ -80,14 +80,14 @@ pub use capability::{
     CapabilityRegistry, SharedCapabilityRegistry,
 };
 pub use composition::activation::{
-    ActiveResolvedGraph, ResolvedHarnessActivation, ResolvedHarnessActivationError,
+    ActiveResolvedGraph, ResolvedCompositionActivation, ResolvedCompositionActivationError,
 };
 pub use composition::component::{
     ComponentGraphError, ResolvedComponent, ResolvedComponentGraph, ResolvedImport,
     ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
 };
 pub use composition::component_invocation::ComponentInvocationError;
-pub use composition::inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
+pub use composition::inspection::{ResolvedCompositionInspection, ResolvedListenerInspection};
 pub use composition::manifest::{
     ComponentEntryTrigger, ComponentExport, ComponentImport, ComponentListener, ComponentManifest,
     ComponentProcessArgument, EntryTriggerKind, ListenerProjection, PluginArtifact,
@@ -98,12 +98,12 @@ pub use composition::provider_resolution::{
     ProviderSelectionReason,
 };
 pub use composition::registry::{
-    runtime_provider_runtime, runtime_provider_service, KernelConfig, KernelError,
+    runtime_adapter_runtime, runtime_adapter_service, KernelConfig, KernelError,
     KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedComponentDispatchPlan,
     ResolvedDispatchTopology, ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan,
     ResolvedTerminalPlan, RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
 };
-pub use composition::resolver::{ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
+pub use composition::resolver::{ResolvedComposition, ResolvedCompositionError, GenerationState};
 pub use configuration::{
     ConfigContribution, ConfigContributionSource, ConfigMergeError, ConfigNamespace,
     ConfigSourceClass, ConfigurationFrontendMetadata, FrontendConfigContribution,
@@ -158,12 +158,12 @@ pub use persistence::provider::{
     PersistenceProviderError, PreparedPersistence,
 };
 pub use phenix_contract::{
-    Bytes, CallableId, CallableRef, CapabilityGenerationId, CapabilityId, CapabilityOwnerId,
+    Bytes, CallableId, CallableRef, CapabilityGenerationId, PermissionId, CapabilityOwnerId,
     ClientConnectionId, ComponentId, ComponentInterface, ConfigurationFrontendId,
     ContextResourceId, ContextRevisionId, Contract, ContractId, ContractValue, EventTypeId, Exact,
-    GraphGenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId, InterfaceSchema,
+    GenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId, InterfaceSchema,
     InterfaceSchemaMismatch, Key, ModelId, ObjectRef, PhenixContract, PhenixSchema, PhenixValue,
-    PluginId, Project, ReferenceId, ResourceNamespace, RoutingProfileId, RuntimeId,
+    PluginId, Project, ReferenceId, ResourceNamespace, RoutingProfileId, PluginRuntimeId,
     SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId, SessionId,
     SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
@@ -194,7 +194,7 @@ pub use reconciliation::inspection::CandidateResolutionInspection;
 pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
+    PluginRuntimeAdapter, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
     RootExecutionConstraints, RootExecutionHandle, RuntimePluginCandidate, RuntimeTraceBuffer,
     RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
