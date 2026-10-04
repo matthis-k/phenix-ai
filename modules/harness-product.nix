@@ -47,6 +47,7 @@
       '';
 
       supportedPhenix = self.packages.${system}.phenix;
+      standaloneRuntime = self.packages.${system}.phenix-runtime;
       phenixProductRuntimeSmoke =
         pkgs.runCommand "phenix-product-runtime-smoke"
           {
@@ -86,6 +87,23 @@
             touch "$out"
           '';
 
+      phenixStandaloneRuntimeSmoke =
+        pkgs.runCommand "phenix-product-standalone-runtime-smoke"
+          {
+            nativeBuildInputs = [
+              standaloneRuntime
+              pkgs.jq
+            ];
+          }
+          ''
+            phenix-runtime --list-services > "$TMPDIR/runtime-services.json"
+            jq -e '
+              (.plugins | type == "array")
+              and (.services | type == "array")
+            ' "$TMPDIR/runtime-services.json" >/dev/null
+            touch "$out"
+          '';
+
       phenixProductLuaSmoke = pkgs.runCommand "phenix-product-lua-smoke" { } ''
         test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
         touch "$out"
@@ -100,6 +118,7 @@
 
       checks = {
         phenix-product-runtime-smoke = phenixProductRuntimeSmoke;
+        phenix-product-standalone-runtime-smoke = phenixStandaloneRuntimeSmoke;
         phenix-product-lua-smoke = phenixProductLuaSmoke;
       };
     };
