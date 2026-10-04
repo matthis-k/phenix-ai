@@ -4939,6 +4939,16 @@ fn normalize_model_tool_input(
     }
 
     let normalized = match (schema, value) {
+        (PhenixSchema::Variant(variants), PhenixValue::Map(values)) => {
+            normalize_model_tool_variant(variants, values)?
+        }
+        (PhenixSchema::Variant(variants), PhenixValue::Table(values)) => {
+            let values = values
+                .into_iter()
+                .map(|(key, value)| (key.as_str().to_owned(), value))
+                .collect();
+            normalize_model_tool_variant(variants, values)?
+        }
         (PhenixSchema::Table(fields), PhenixValue::Map(values)) => {
             normalize_model_tool_table(fields, values)?
         }
@@ -4997,6 +5007,38 @@ fn normalize_model_tool_input(
         .parse(&normalized)
         .map_err(|error| format!("{error:?}"))?;
     Ok(normalized)
+}
+
+fn normalize_model_tool_variant(
+    variants: &BTreeMap<Key, PhenixSchema>,
+    mut values: BTreeMap<String, PhenixValue>,
+) -> Result<PhenixValue, String> {
+    if let Some(key) = values
+        .keys()
+        .find(|key| key.as_str() != "tag" && key.as_str() != "value")
+    {
+        return Err(format!("unexpected variant field {key}"));
+    }
+
+    let tag = values
+        .remove("tag")
+        .ok_or_else(|| "missing variant field tag".to_owned())?;
+    let PhenixValue::String(tag) = tag else {
+        return Err(format!("variant tag must be a string, got {}", tag.kind()));
+    };
+    let tag = Key::parse(tag).map_err(str::to_owned)?;
+    let schema = variants
+        .get(&tag)
+        .ok_or_else(|| format!("unknown variant {tag}"))?;
+    let value = values
+        .remove("value")
+        .ok_or_else(|| "missing variant field value".to_owned())?;
+    let value = normalize_model_tool_input(schema, value)?;
+
+    Ok(PhenixValue::Variant {
+        tag,
+        value: Box::new(value),
+    })
 }
 
 fn normalize_model_tool_table(
@@ -9493,6 +9535,41 @@ mod tests {
 
         drop(transport);
         worker_task.await.unwrap();
+    }
+
+    #[test]
+    fn model_tool_input_normalizes_provider_variant_encoding() {
+        let schema = PhenixSchema::Variant(BTreeMap::from([
+            (
+                Key::parse("named").unwrap(),
+                PhenixSchema::Table(BTreeMap::from([(
+                    Key::parse("name").unwrap(),
+                    PhenixSchema::String,
+                )])),
+            ),
+            (Key::parse("all").unwrap(), PhenixSchema::Unit),
+        ]));
+        let input = PhenixValue::Map(BTreeMap::from([
+            ("tag".to_owned(), PhenixValue::String("named".to_owned())),
+            (
+                "value".to_owned(),
+                PhenixValue::Map(BTreeMap::from([(
+                    "name".to_owned(),
+                    PhenixValue::String("symbol".to_owned()),
+                )])),
+            ),
+        ]));
+
+        assert_eq!(
+            normalize_model_tool_input(&schema, input).unwrap(),
+            PhenixValue::Variant {
+                tag: Key::parse("named").unwrap(),
+                value: Box::new(PhenixValue::Table(BTreeMap::from([(
+                    Key::parse("name").unwrap(),
+                    PhenixValue::String("symbol".to_owned()),
+                )]))),
+            }
+        );
     }
 
     #[test]
