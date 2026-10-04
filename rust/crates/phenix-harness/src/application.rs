@@ -5984,9 +5984,7 @@ fn session_control_session_id(arguments: &PhenixValue) -> Result<SessionId, Appl
     })
 }
 
-fn session_control_content(
-    arguments: &PhenixValue,
-) -> Result<Vec<Content>, ApplicationError> {
+fn session_control_content(arguments: &PhenixValue) -> Result<Vec<Content>, ApplicationError> {
     let value = session_control_field(arguments, "content").ok_or_else(|| {
         ApplicationError::InvalidInput {
             message: "phenix.session argument content is required".to_owned(),
@@ -6944,12 +6942,10 @@ mod tests {
                                             ),
                                             (
                                                 "content".into(),
-                                                PhenixValue::List(vec![
-                                                    Content::Text {
-                                                        text: "complete the child session".into(),
-                                                    }
-                                                    .to_value(),
-                                                ]),
+                                                PhenixValue::List(vec![Content::Text {
+                                                    text: "complete the child session".into(),
+                                                }
+                                                .to_value()]),
                                             ),
                                         ])),
                                     ),
@@ -7400,12 +7396,10 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "store Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![Content::Text {
+                                        text: "store Helios".into(),
+                                    }
+                                    .to_value()]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -7443,12 +7437,10 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "recall Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![Content::Text {
+                                        text: "recall Helios".into(),
+                                    }
+                                    .to_value()]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
