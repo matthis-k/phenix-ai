@@ -26,8 +26,8 @@ use phenix_application_interface::{
 use phenix_core::{
     CallableRef, CapabilityError, CapabilityGenerationId,
     CapabilityInvokeInput as CoreCapabilityInvokeInput, CapabilityOwnerId, ClientConnectionId,
-    ContractId, GraphGenerationId, ObservableStore, PhenixValue, ResolvedSdkContributions,
-    RootExecutionConstraints, RuntimeId, SharedCapabilityRegistry, Type, ValueAddress, ValueCodec,
+    ContractId, GenerationId, ObservableStore, PhenixValue, ResolvedSdkContributions,
+    RootExecutionConstraints, PluginRuntimeId, SharedCapabilityRegistry, Type, ValueAddress, ValueCodec,
     ValueId, ValuePath,
 };
 use phenix_domain::{
@@ -43,7 +43,7 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApplicationRootSelection {
-    pub generation: GraphGenerationId,
+    pub generation: GenerationId,
     pub constraints: RootExecutionConstraints,
 }
 
@@ -84,12 +84,12 @@ pub struct ClientCapabilityCallbacks {
 
 /// The authenticated identity represented by one ACP callback queue.
 #[derive(Clone)]
-pub struct ClientCapabilityIdentity {
+pub struct ClientPermissionIdentity {
     owner: ClientConnectionId,
     generation: CapabilityGenerationId,
 }
 
-impl ClientCapabilityIdentity {
+impl ClientPermissionIdentity {
     #[must_use]
     pub fn new(owner: ClientConnectionId, generation: CapabilityGenerationId) -> Self {
         Self { owner, generation }
@@ -186,7 +186,7 @@ impl WeakChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PendingApplicationInvocation, ApplicationError> {
         self.upgrade()
@@ -206,7 +206,7 @@ impl WeakChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PhenixValue, ApplicationError> {
         self.begin_blocking_in_generation(operation, input, generation, constraints)?
@@ -249,7 +249,7 @@ impl ChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PendingApplicationInvocation, ApplicationError> {
         let (response, receive) = oneshot::channel();
@@ -279,7 +279,7 @@ impl ChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PhenixValue, ApplicationError> {
         self.begin_blocking_in_generation(operation, input, generation, constraints)?
@@ -332,10 +332,10 @@ impl SdkApplicationService {
         sdk: &ResolvedSdkContributions,
         store: &ObservableStore,
         capabilities: SharedCapabilityRegistry,
-        runtime: RuntimeId,
+        runtime: PluginRuntimeId,
         generation: CapabilityGenerationId,
         client_callbacks: ClientCapabilityCallbacks,
-        client: ClientCapabilityIdentity,
+        client: ClientPermissionIdentity,
     ) -> Result<Self, phenix_core::SdkResolutionError> {
         let sdk = sdk.value_with_observables(store, &capabilities, &runtime, generation)?;
         Ok(Self {
@@ -1913,7 +1913,7 @@ mod tests {
             .unwrap();
         let capabilities = SharedCapabilityRegistry::default();
         let (client_callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
-        let runtime = RuntimeId::parse("phenix.application-runtime").unwrap();
+        let runtime = PluginRuntimeId::parse("phenix.application-runtime").unwrap();
         let generation = CapabilityGenerationId::parse("application-generation-1").unwrap();
         let service = SdkApplicationService::new(
             &resolved,
@@ -1922,7 +1922,7 @@ mod tests {
             runtime.clone(),
             generation.clone(),
             client_callbacks,
-            ClientCapabilityIdentity::new(
+            ClientPermissionIdentity::new(
                 ClientConnectionId::parse("fixture-client").unwrap(),
                 CapabilityGenerationId::parse("fixture-generation").unwrap(),
             ),
