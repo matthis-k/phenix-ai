@@ -9540,7 +9540,7 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 10);
         assert_eq!(
             tools
                 .iter()
@@ -9548,7 +9548,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "bash",
+                "code.query",
+                "memory.recall",
+                "memory.record",
                 "phenix.inspect",
+                "workspace.discover",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
@@ -9573,7 +9577,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 6);
+        assert_eq!(report.tools.len(), 10);
         assert_eq!(
             report
                 .tools
