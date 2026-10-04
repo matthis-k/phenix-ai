@@ -1,8 +1,34 @@
-{ self, ... }: {
+_: {
   perSystem =
-    { pkgs, system, ... }:
+    { pkgs, ... }:
     let
-      productFixture = self.packages.${system}.phenix-lua-rust-artifacts;
+      productFixture = pkgs.rustPlatform.buildRustPackage {
+        pname = "phenix-lua-product-fixture";
+        version = "0";
+        src = pkgs.lib.cleanSource ../rust;
+        cargoLock.lockFile = ../rust/Cargo.lock;
+        doCheck = false;
+
+        buildPhase = ''
+          runHook preBuild
+          cargo build --release --locked --package phenix-binding-lua
+          cargo build --release --locked --package phenix-acp-stdio \
+            --example observable_callback_fixture
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          runHook preInstall
+          module="$(find target -path '*/release/libphenix.so' -type f -print -quit)"
+          fixture="$(find target -path '*/release/examples/observable_callback_fixture' -type f -print -quit)"
+          test -n "$module"
+          test -n "$fixture"
+          mkdir -p "$out/lib/lua/5.1" "$out/bin"
+          cp "$module" "$out/lib/lua/5.1/phenix.so"
+          cp "$fixture" "$out/bin/observable_callback_fixture"
+          runHook postInstall
+        '';
+      };
     in
     {
       checks.phenix-binding-lua-observable-callback =
