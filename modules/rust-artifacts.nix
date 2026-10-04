@@ -9,6 +9,8 @@ _: {
         version = "0";
         src = rustSource;
         cargoLock.lockFile = ../rust/Cargo.lock;
+        nativeBuildInputs = [ pkgs.mold ];
+        RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         doCheck = false;
 
         buildPhase = ''
