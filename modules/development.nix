@@ -26,13 +26,18 @@
         timeoutMinutes = 60;
       };
 
-      mkNixCheckSuite =
+      mkNixChecksSuite =
         {
-          check,
+          checks,
           name,
           needs ? [ ],
           cache ? false,
         }:
+        let
+          targetArgs = pkgs.lib.concatMapStringsSep " " (
+            check: ''".#checks.$system.${check}"''
+          ) checks;
+        in
         {
           inherit
             cache
@@ -46,7 +51,7 @@
           exec = ''
             ${repositoryRoot}
             system="$(nix eval --impure --raw --expr builtins.currentSystem)"
-            nix build --no-link --print-build-logs ".#checks.$system.${check}"
+            nix build --no-link --print-build-logs ${targetArgs}
           '';
         };
 
@@ -208,10 +213,6 @@
               '';
             };
 
-            stitch-mcp = mkNixCheckSuite {
-              check = "stitch-mcp-package";
-              name = "Stitch MCP package";
-            };
           };
 
           test = {
@@ -317,10 +318,6 @@
               '';
             };
 
-            stitch = mkNixCheckSuite {
-              check = "stitch-runtime-smoke";
-              name = "Stitch runtime smoke";
-            };
           };
 
           integration = {
@@ -338,36 +335,21 @@
               '';
             };
 
-            plugin-packaging-products = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-products";
-              name = "Plugin packaging / products";
-            };
-
-            plugin-packaging-environment = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-environment";
-              name = "Plugin packaging / environment";
-            };
-
-            plugin-packaging-settings = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-settings";
-              name = "Plugin packaging / settings";
-            };
-
-            plugin-packaging-isolation = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-isolation";
-              name = "Plugin packaging / isolation";
-            };
           };
 
           product = {
-            phenix-runtime = mkNixCheckSuite {
-              check = "phenix-product-runtime-smoke";
-              name = "Phenix supported runtime journey";
-            };
-
-            phenix-lua-binding = mkNixCheckSuite {
-              check = "phenix-product-lua-smoke";
-              name = "Phenix Lua binding product fixture";
+            nix-checks = mkNixChecksSuite {
+              name = "Nix integration and product checks";
+              checks = [
+                "stitch-mcp-package"
+                "stitch-runtime-smoke"
+                "phenix-plugin-packaging-products"
+                "phenix-plugin-packaging-environment"
+                "phenix-plugin-packaging-settings"
+                "phenix-plugin-packaging-isolation"
+                "phenix-product-runtime-smoke"
+                "phenix-product-lua-smoke"
+              ];
             };
           };
         };
