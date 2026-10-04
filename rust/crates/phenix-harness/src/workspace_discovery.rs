@@ -84,7 +84,7 @@ impl WorkspaceDiscoveryDescriptorV1 {
             });
         }
         for term in &self.recall_terms {
-            let length = term.as_bytes().len();
+            let length = term.len();
             if length > MAX_WORKSPACE_DISCOVERY_TERM_BYTES {
                 return Err(WorkspaceDiscoveryDescriptorError::RecallTermTooLarge {
                     term: term.clone(),
