@@ -1,8 +1,8 @@
 mod runtime_config;
 
 use phenix_core::{
-    ComponentEntryTrigger, EntryTriggerKind, Key, LayerPolicy, LocalPersistence, PhenixValue,
-    PluginExecution, PluginId, PluginManifest, ServiceId,
+    ComponentProcessArgument, Key, LayerPolicy, LocalPersistence, PhenixValue, PluginExecution,
+    PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
     application::serve_configured_application, default_suite_authority,
@@ -89,7 +89,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     apply_configured_layer_policy(&mut builder)?;
     let mut harness = builder.build_with_persistence(persistence)?;
     let process_arguments =
-        resolve_process_arguments(&cli.plugin_arguments, harness.resolved_harness().entry_triggers())
+        resolve_process_arguments(&cli.plugin_arguments, harness.resolved_harness().process_arguments())
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     harness.activate()?;
     if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
@@ -230,13 +230,13 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
 
 #[derive(Clone, Debug)]
 struct ProcessArgumentInvocation {
-    trigger: ComponentEntryTrigger,
+    argument: ComponentProcessArgument,
     value: Option<String>,
 }
 
 fn resolve_process_arguments(
     raw: &[String],
-    triggers: &[ComponentEntryTrigger],
+    arguments: &[ComponentProcessArgument],
 ) -> Result<Vec<ProcessArgumentInvocation>, String> {
     const CORE_ARGUMENTS: &[&str] = &[
         "--help",
@@ -247,19 +247,17 @@ fn resolve_process_arguments(
     ];
 
     let mut declared = BTreeMap::new();
-    for trigger in triggers {
-        let EntryTriggerKind::ProcessArgument {
-            name, takes_value, ..
-        } = &trigger.trigger
-        else {
-            continue;
-        };
-        if CORE_ARGUMENTS.contains(&name.as_str()) {
+    for argument in arguments {
+        if CORE_ARGUMENTS.contains(&argument.name.as_str()) {
             return Err(format!(
-                "plugin process argument {name} conflicts with a core argument"
+                "plugin process argument {} conflicts with a core argument",
+                argument.name
             ));
         }
-        declared.insert(name.as_str(), (trigger, *takes_value));
+        declared.insert(
+            argument.name.as_str(),
+            (argument, argument.takes_value),
+        );
     }
 
     let mut resolved = Vec::new();
@@ -270,7 +268,7 @@ fn resolve_process_arguments(
             Some((name, value)) => (name, Some(value.to_owned())),
             None => (argument.as_str(), None),
         };
-        let Some((trigger, takes_value)) = declared.get(name).copied() else {
+        let Some((process_argument, takes_value)) = declared.get(name).copied() else {
             return Err(format!("unknown argument: {argument}"));
         };
 
@@ -290,7 +288,7 @@ fn resolve_process_arguments(
         };
 
         resolved.push(ProcessArgumentInvocation {
-            trigger: trigger.clone(),
+            argument: process_argument.clone(),
             value,
         });
         index += 1;
@@ -308,26 +306,19 @@ fn apply_process_arguments(
             .resolved_harness()
             .components()
             .iter()
-            .find(|component| component.id == argument.trigger.component)
+            .find(|component| component.id == argument.argument.component)
             .ok_or_else(|| {
                 format!(
                     "plugin process argument targets missing component {}",
-                    argument.trigger.component
+                    argument.argument.component
                 )
             })?;
         let owner = component.owner.clone();
-        let service = ServiceId::parse(argument.trigger.interface.as_str())?;
+        let service = ServiceId::parse(argument.argument.interface.as_str())?;
         let input = PhenixValue::Table(BTreeMap::from([
             (
                 Key::parse("name").expect("static process argument field is valid"),
-                match &argument.trigger.trigger {
-                    EntryTriggerKind::ProcessArgument { name, .. } => {
-                        PhenixValue::String(name.clone())
-                    }
-                    EntryTriggerKind::ToolCall { .. } => {
-                        return Err("process argument invocation contains a tool trigger".into())
-                    }
-                },
+                PhenixValue::String(argument.argument.name.clone()),
             ),
             (
                 Key::parse("value").expect("static process argument field is valid"),
@@ -342,10 +333,10 @@ fn apply_process_arguments(
         ]));
         let encoded = serde_json::to_vec(&input)?;
         harness.kernel_mut().invoke_component_abi(
-            &argument.trigger.component,
+            &argument.argument.component,
             &service,
             &encoded,
-            &argument.trigger.required_authority,
+            &argument.argument.required_authority,
             &owner,
         )?;
     }
@@ -595,15 +586,13 @@ mod tests {
         );
     }
 
-    fn process_argument_trigger(name: &str, takes_value: bool) -> ComponentEntryTrigger {
-        ComponentEntryTrigger {
+    fn process_argument(name: &str, takes_value: bool) -> ComponentProcessArgument {
+        ComponentProcessArgument {
             component: phenix_core::ComponentId::parse("fixture.cli").unwrap(),
             interface: phenix_core::InterfaceId::parse("fixture.cli@1").unwrap(),
-            trigger: EntryTriggerKind::ProcessArgument {
-                name: name.to_owned(),
-                takes_value,
-                description: "fixture".into(),
-            },
+            name: name.to_owned(),
+            takes_value,
+            description: "fixture".into(),
             required_authority: phenix_core::Authority::default(),
         }
     }
@@ -626,8 +615,8 @@ mod tests {
         );
 
         let triggers = [
-            process_argument_trigger("--plugin-handled-value", true),
-            process_argument_trigger("--plugin-switch", false),
+            process_argument("--plugin-handled-value", true),
+            process_argument("--plugin-switch", false),
         ];
         let resolved = resolve_process_arguments(&cli.plugin_arguments, &triggers).unwrap();
         assert_eq!(resolved.len(), 2);
@@ -698,14 +687,12 @@ mod tests {
             listeners: Vec::new(),
             maximum_authority: Authority::default(),
         });
-        builder.add_entry_trigger(ComponentEntryTrigger {
+        builder.add_process_argument(ComponentProcessArgument {
             component: component_id,
             interface,
-            trigger: EntryTriggerKind::ProcessArgument {
-                name: "--plugin-handled-value".into(),
-                takes_value: true,
-                description: "fixture".into(),
-            },
+            name: "--plugin-handled-value".into(),
+            takes_value: true,
+            description: "fixture".into(),
             required_authority: Authority::default(),
         });
 
@@ -750,7 +737,7 @@ mod tests {
     #[test]
     fn plugin_argument_inline_values_are_supported() {
         let cli = parse_cli(["--plugin-handled-value=7".into()]).unwrap();
-        let triggers = [process_argument_trigger("--plugin-handled-value", true)];
+        let triggers = [process_argument("--plugin-handled-value", true)];
         let resolved = resolve_process_arguments(&cli.plugin_arguments, &triggers).unwrap();
         assert_eq!(resolved[0].value.as_deref(), Some("7"));
     }
