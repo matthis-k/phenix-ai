@@ -358,6 +358,15 @@
         ci.github = {
           enable = true;
           outputName = "phenix-maintenance";
+          nixCache = {
+            enable = true;
+            jobs = [ "product-nix-checks" ];
+            primaryKey = "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock') }}-${{ github.sha }}";
+            restorePrefixesFirstMatch = [
+              "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock') }}-"
+            ];
+            gcMaxStoreSizeLinux = "4G";
+          };
         };
         gitHooks = {
           enable = true;
