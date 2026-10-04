@@ -111,7 +111,8 @@ identifier!(PluginId);
 identifier!(ComponentId);
 identifier!(ConfigurationFrontendId);
 identifier!(ServiceId);
-identifier!(CapabilityId);
+identifier!(PermissionId);
+pub type CapabilityId = PermissionId;
 identifier!(ResourceNamespace);
 identifier!(EventTypeId);
 identifier!(SubscriptionId);
@@ -121,12 +122,15 @@ identifier!(CallableId);
 identifier!(ModelId);
 identifier!(RoutingProfileId);
 identifier!(SkillId);
-identifier!(RuntimeId);
+identifier!(PluginRuntimeId);
+pub type RuntimeId = PluginRuntimeId;
 identifier!(SessionId);
 identifier!(ContextResourceId);
 identifier!(ContextRevisionId);
 identifier!(ClientConnectionId);
 identifier!(CapabilityGenerationId);
+
+pub type GenerationId = GraphGenerationId;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String")]
