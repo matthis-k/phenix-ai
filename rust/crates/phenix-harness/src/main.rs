@@ -7,7 +7,7 @@ use phenix_harness::{
     default_suite_authority, invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
+    adapter_acp_manifest, full_agent_configuration_manifest, agent_loop_manifest,
     artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
     basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
     cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
@@ -185,7 +185,7 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     let authority = default_suite_authority();
     vec![
-        (advanced_agent_configuration_manifest(), false),
+        (full_agent_configuration_manifest(), false),
         (basic_agent_configuration_manifest(), false),
         (adapter_acp_manifest(), false),
         (repository_worker_manifest(), true),
@@ -442,17 +442,17 @@ mod tests {
     }
 
     #[test]
-    fn configured_advanced_agent_closes_through_basic_configuration() {
-        let advanced = advanced_agent_configuration_manifest()
+    fn configured_full_agent_closes_through_basic_configuration() {
+        let full = full_agent_configuration_manifest()
             .id
             .as_str()
             .to_owned();
         let basic = basic_agent_configuration_manifest().id.as_str().to_owned();
-        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&advanced))
+        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&full))
             .unwrap()
             .unwrap();
 
-        assert!(enabled.contains(&advanced));
+        assert!(enabled.contains(&full));
         assert!(enabled.contains(&basic));
         assert!(enabled.contains("phenix.agent-loop"));
         assert!(enabled.contains("phenix.options"));
