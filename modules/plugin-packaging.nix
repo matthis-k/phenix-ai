@@ -254,25 +254,9 @@ in
         inherit pkgs;
         plugins = [ self.phenixPlugins.${pkgs.system}.adapter-acp ];
       };
-    in
-    {
-      packages = {
-        phenix-basic = basicComposition;
-        phenix-full = fullComposition;
-        phenix-harness = fullComposition;
-        phenix = fullComposition;
-        default = fullComposition;
-      };
-      apps = {
-        phenix-basic.program = "${basicComposition}/bin/phenix";
-        phenix-full.program = "${fullComposition}/bin/phenix";
-        phenix-harness.program = "${fullComposition}/bin/phenix-harness";
-        phenix.program = "${fullComposition}/bin/phenix";
-        default.program = "${fullComposition}/bin/phenix";
-        phenix-runtime.program = "${self.packages.${pkgs.system}.phenix-runtime}/bin/phenix-runtime";
-      };
-      checks.phenix-plugin-packaging =
-        pkgs.runCommand "phenix-plugin-packaging-check" { nativeBuildInputs = [ pkgs.jq ]; }
+
+      pluginPackagingProducts =
+        pkgs.runCommand "phenix-plugin-packaging-products-check" { nativeBuildInputs = [ pkgs.jq ]; }
           ''
             set -euxo pipefail
             test -x "${defaultComposition}/bin/phenix"
@@ -280,6 +264,7 @@ in
             test -f "${defaultComposition}/share/phenix/runtime.json"
             test -f "${defaultComposition}/share/phenix/skills/write/SKILL.md"
             test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
+
             export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
             "${fullComposition}/bin/phenix" --mode=jsonl --list-services > "$TMPDIR/full-services.json"
             jq -e '
@@ -311,6 +296,17 @@ in
               and (.plugins | index("phenix.workspace") == null)
             ' "$TMPDIR/basic-services.json" >/dev/null
 
+            export PHENIX_STATE_DB="$TMPDIR/resource.sqlite"
+            test -e "${resourceComposition}/share/phenix-plugin/resources/README.txt"
+            "${resourceComposition}/bin/phenix" --list-services > "$TMPDIR/resource-services.json"
+            jq -e '(.plugins | index("fixture.resources")) != null' "$TMPDIR/resource-services.json" >/dev/null
+            touch "$out"
+          '';
+
+      pluginPackagingEnvironment =
+        pkgs.runCommand "phenix-plugin-packaging-environment-check" { nativeBuildInputs = [ pkgs.jq ]; }
+          ''
+            set -euxo pipefail
             for policy in working-dir workdir-write; do
               export PHENIX_STATE_DB="$TMPDIR/environment-$policy.sqlite"
               PHENIX_LOCAL_FILESYSTEM_POLICY="$policy" \
@@ -319,7 +315,13 @@ in
               jq -e '(.plugins | index("phenix.environment.local")) != null' \
                 "$TMPDIR/environment-$policy.json" >/dev/null
             done
+            touch "$out"
+          '';
 
+      pluginPackagingSettings =
+        pkgs.runCommand "phenix-plugin-packaging-settings-check" { nativeBuildInputs = [ pkgs.jq ]; }
+          ''
+            set -euxo pipefail
             export PHENIX_STATE_DB="$TMPDIR/settings.sqlite"
             printf '%s\n' '{"id":1,"service":"phenix.api.sessions@1","input":{"type":"variant","value":{"tag":"Open","value":{"type":"table","value":{"id":{"type":"string","value":"settings-nix-disabled"},"agent":{"type":"option","value":null}}}}}}' \
               | "${settingsComposition}/bin/phenix" > "$TMPDIR/settings-session.json"
@@ -333,7 +335,13 @@ in
             printf '%s\n' '{"id":1,"service":"phenix.api.sessions@1","input":{"type":"variant","value":{"tag":"Open","value":{"type":"table","value":{"id":{"type":"string","value":"settings-file-created"},"agent":{"type":"option","value":null}}}}}}' \
               | "${filePrecedenceComposition}/bin/phenix" > "$TMPDIR/settings-file-first.json"
             jq -e '.status == "ok" and .output.type == "variant" and .output.value.tag == "Opened" and .output.value.value.value.created.type == "bool" and .output.value.value.value.created.value == true' "$TMPDIR/settings-file-first.json" >/dev/null
+            touch "$out"
+          '';
 
+      pluginPackagingIsolation =
+        pkgs.runCommand "phenix-plugin-packaging-isolation-check" { nativeBuildInputs = [ pkgs.jq ]; }
+          ''
+            set -euxo pipefail
             export PHENIX_STATE_DB="$TMPDIR/session-only.sqlite"
             "${sessionOnlyComposition}/bin/phenix" --list-services > "$TMPDIR/session-only.json"
             jq -e '(.plugins == ["phenix.sessions"]) and (.services | index("phenix.sessions@1") != null) and (.services | index("phenix.context@1") == null)' "$TMPDIR/session-only.json" >/dev/null
@@ -346,11 +354,6 @@ in
             "${adapterOnlyComposition}/bin/phenix" --list-services > "$TMPDIR/adapter-only.json"
             jq -e '(.plugins == ["phenix.adapter.acp"]) and (.services == [])' "$TMPDIR/adapter-only.json" >/dev/null
 
-            export PHENIX_STATE_DB="$TMPDIR/resource.sqlite"
-            test -e "${resourceComposition}/share/phenix-plugin/resources/README.txt"
-            "${resourceComposition}/bin/phenix" --list-services > "$TMPDIR/resource-services.json"
-            jq -e '(.plugins | index("fixture.resources")) != null' "$TMPDIR/resource-services.json" >/dev/null
-
             test -x "${runtimeComposition}/bin/phenix-runtime"
             test ! -e "${runtimeComposition}/bin/phenix"
             test ! -e "${runtimeComposition}/bin/phenix-harness"
@@ -358,5 +361,36 @@ in
             jq -e '(.plugins == []) and (.services == [])' "$TMPDIR/runtime-services.json" >/dev/null
             touch "$out"
           '';
+    in
+    {
+      packages = {
+        phenix-basic = basicComposition;
+        phenix-full = fullComposition;
+        phenix-harness = fullComposition;
+        phenix = fullComposition;
+        default = fullComposition;
+      };
+      apps = {
+        phenix-basic.program = "${basicComposition}/bin/phenix";
+        phenix-full.program = "${fullComposition}/bin/phenix";
+        phenix-harness.program = "${fullComposition}/bin/phenix-harness";
+        phenix.program = "${fullComposition}/bin/phenix";
+        default.program = "${fullComposition}/bin/phenix";
+        phenix-runtime.program = "${self.packages.${pkgs.system}.phenix-runtime}/bin/phenix-runtime";
+      };
+      checks = {
+        phenix-plugin-packaging-products = pluginPackagingProducts;
+        phenix-plugin-packaging-environment = pluginPackagingEnvironment;
+        phenix-plugin-packaging-settings = pluginPackagingSettings;
+        phenix-plugin-packaging-isolation = pluginPackagingIsolation;
+
+        phenix-plugin-packaging = pkgs.runCommand "phenix-plugin-packaging-check" { } ''
+          test -e ${pluginPackagingProducts}
+          test -e ${pluginPackagingEnvironment}
+          test -e ${pluginPackagingSettings}
+          test -e ${pluginPackagingIsolation}
+          touch "$out"
+        '';
+      };
     };
 }

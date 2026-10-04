@@ -50,6 +50,48 @@
           '';
         };
 
+      rustUnitRuntimeInputs = pkgs: [
+        pkgs.bash
+        pkgs.bubblewrap
+        pkgs.cargo
+        pkgs.coreutils
+        pkgs.git
+        pkgs.iproute2
+        pkgs.ripgrep
+        pkgs.rsync
+        pkgs.rustc
+        pkgs.slirp4netns
+        pkgs.socat
+        pkgs.util-linux
+      ];
+
+      mkRustUnitSuite =
+        {
+          name,
+          packages,
+        }:
+        let
+          packageFlags = pkgs.lib.concatMapStringsSep " " (package: "-p ${package}") packages;
+        in
+        {
+          inherit name;
+          needs = [ ];
+          runtimeInputs = rustUnitRuntimeInputs;
+          exec = ''
+            ${rustRoot}
+
+            if [ "''${GITHUB_ACTIONS:-}" = "true" ] \
+              && [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] \
+              && [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "1" ]; then
+              /usr/bin/sudo -n /usr/sbin/sysctl \
+                -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null
+            fi
+
+            timeout --signal=KILL 900 \
+              cargo test --quiet --locked ${packageFlags} --lib --bins -- --nocapture
+          '';
+        };
+
       ciCommands = maintenanceLib.mkCi {
         ci = {
           name = "CI";
@@ -66,6 +108,7 @@
             ];
             key = "phenix-rust-\${{ runner.os }}-\${{ github.sha }}";
             restoreKeys = [ "phenix-rust-\${{ runner.os }}-" ];
+            writer = "build.rust-workspace";
           };
         };
 
@@ -90,39 +133,81 @@
         };
 
         test = {
-          unit = {
-            name = "Rust unit tests";
-            needs = [ ];
-            runtimeInputs = pkgs: [
-              pkgs.bash
-              pkgs.bubblewrap
-              pkgs.cargo
-              pkgs.coreutils
-              pkgs.git
-              pkgs.iproute2
-              pkgs.ripgrep
-              pkgs.rsync
-              pkgs.rustc
-              pkgs.slirp4netns
-              pkgs.socat
-              pkgs.util-linux
+          unit-core = mkRustUnitSuite {
+            name = "Rust unit tests / core";
+            packages = [
+              "phenix-application-interface"
+              "phenix-backend"
+              "phenix-client"
+              "phenix-contract"
+              "phenix-core"
+              "phenix-domain"
+              "phenix-provider-sdk"
+              "phenix-runtime"
             ];
-            exec = ''
-              ${rustRoot}
+          };
 
-              if [ "''${GITHUB_ACTIONS:-}" = "true" ] \
-                && [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] \
-                && [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "1" ]; then
-                /usr/bin/sudo -n /usr/sbin/sysctl \
-                  -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null
-              fi
+          unit-protocol-sdk = mkRustUnitSuite {
+            name = "Rust unit tests / protocol and SDK";
+            packages = [
+              "phenix-acp-stdio"
+              "phenix-adapter-acp"
+              "phenix-backend-acp"
+              "phenix-backend-native"
+              "phenix-binding-generator"
+              "phenix-client-acp"
+              "phenix-sdk"
+              "phenix-sdk-macros"
+            ];
+          };
 
-              # `phenix-binding-lua-load` covers the host-linked LuaJIT module.
-              # Keep a deadlock guard, but leave enough room for a cold/shared CI runner.
-              # Uncaptured output identifies the current phenix-harness stack-overflow site.
-              timeout --signal=KILL 900 \
-                cargo test --quiet --workspace --lib --bins --exclude phenix-binding-lua --locked -- --nocapture
-            '';
+          unit-plugin-foundation = mkRustUnitSuite {
+            name = "Rust unit tests / plugin foundation";
+            packages = [
+              "phenix-plugin-artifacts"
+              "phenix-plugin-basic-context"
+              "phenix-plugin-basic-model"
+              "phenix-plugin-basic-skills"
+              "phenix-plugin-basic-tools"
+              "phenix-plugin-catalog"
+              "phenix-plugin-command-toolbelt"
+              "phenix-plugin-debug"
+              "phenix-plugin-environment-local"
+              "phenix-plugin-frontend"
+              "phenix-plugin-hooks"
+              "phenix-plugin-invocation-defaults"
+            ];
+          };
+
+          unit-plugin-state = mkRustUnitSuite {
+            name = "Rust unit tests / plugin state";
+            packages = [
+              "phenix-plugin-api"
+              "phenix-plugin-context"
+              "phenix-plugin-execution"
+              "phenix-plugin-jobs"
+              "phenix-plugin-options"
+              "phenix-plugin-session-tree"
+              "phenix-plugin-sessions"
+              "phenix-plugin-step-runner"
+              "phenix-plugin-workspace"
+            ];
+          };
+
+          unit-agent-product = mkRustUnitSuite {
+            name = "Rust unit tests / agent and product";
+            packages = [
+              "phenix-agent-configurations"
+              "phenix-harness"
+              "phenix-plugin-basic-agent"
+              "phenix-plugin-efficiency-evaluation"
+              "phenix-plugin-memory"
+              "phenix-plugin-models"
+              "phenix-plugin-openai-codex"
+              "phenix-plugin-planning"
+              "phenix-plugin-providers"
+              "phenix-plugin-repository-workers"
+            ];
           };
 
           docs = {
@@ -223,9 +308,24 @@
             '';
           };
 
-          plugin-packaging = mkNixCheckSuite {
-            check = "phenix-plugin-packaging";
-            name = "Plugin packaging integration";
+          plugin-packaging-products = mkNixCheckSuite {
+            check = "phenix-plugin-packaging-products";
+            name = "Plugin packaging / products";
+          };
+
+          plugin-packaging-environment = mkNixCheckSuite {
+            check = "phenix-plugin-packaging-environment";
+            name = "Plugin packaging / environment";
+          };
+
+          plugin-packaging-settings = mkNixCheckSuite {
+            check = "phenix-plugin-packaging-settings";
+            name = "Plugin packaging / settings";
+          };
+
+          plugin-packaging-isolation = mkNixCheckSuite {
+            check = "phenix-plugin-packaging-isolation";
+            name = "Plugin packaging / isolation";
           };
         };
 
