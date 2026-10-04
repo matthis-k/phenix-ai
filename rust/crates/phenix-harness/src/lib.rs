@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentEntryTrigger, ComponentId, ComponentManifest,
-    ConfigContribution, DurableSchemaRegistration, GraphGenerationId, GraphReconciler, InterfaceId,
+    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration, GraphGenerationId, GraphReconciler, InterfaceId,
     Kernel, KernelError, LayerPolicy, LiveReconciliationError, PersistenceBackend, PluginBuildPlan,
     PluginBuildReport, PluginExecution, PluginId, PluginInstance, PluginManagementContext,
     PluginManagementError, PluginManagementRequest, PluginManifest, PluginTrialResult,
