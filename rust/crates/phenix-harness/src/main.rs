@@ -10,15 +10,14 @@ use phenix_harness::{
 use phenix_plugin_catalog::{
     adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
     artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
-    basic_product_configuration_manifest,
-    basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
-    cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
-    local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
-    planning_manifest, providers_manifest, repository_worker_manifest, sdk_manifest,
-    session_manifest, session_tree_manifest, step_runner_manifest, workspace_manifest,
-    common_provider_definitions, full_product_configuration_manifest, openai_codex_manifest,
-    OptionStartupPrecedence,
+    basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
+    basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
+    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
+    frontend_manifest, full_product_configuration_manifest, hook_manifest, job_manifest,
+    language_manifest, local_environment_manifest, memory_manifest, model_routing_manifest,
+    openai_codex_manifest, options_manifest, planning_manifest, providers_manifest,
+    repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
+    step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -468,7 +467,10 @@ mod tests {
 
     #[test]
     fn mode_is_an_explicit_frontend_choice() {
-        assert_eq!(parse_cli(["--mode".into(), "acp".into()]).unwrap().mode, Mode::Acp);
+        assert_eq!(
+            parse_cli(["--mode".into(), "acp".into()]).unwrap().mode,
+            Mode::Acp
+        );
         assert_eq!(
             parse_cli(["--mode=jsonl".into()]).unwrap().mode,
             Mode::Jsonl

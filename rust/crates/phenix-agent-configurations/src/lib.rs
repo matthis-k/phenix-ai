@@ -66,7 +66,11 @@ pub fn advanced_agent_configuration_manifest() -> PluginManifest {
 pub fn full_product_configuration_manifest() -> PluginManifest {
     assembly_manifest(
         FULL_PRODUCT_CONFIGURATION,
-        &[ADVANCED_AGENT_CONFIGURATION, "phenix.providers", "openai-codex"],
+        &[
+            ADVANCED_AGENT_CONFIGURATION,
+            "phenix.providers",
+            "openai-codex",
+        ],
     )
 }
 

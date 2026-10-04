@@ -13,18 +13,18 @@ use phenix_plugin_catalog::{
     agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
     artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
-    basic_product_configuration_manifest,
     basic_context_manifest, basic_model_component_manifest, basic_model_factory,
-    basic_model_manifest, basic_skills_component_manifest, basic_skills_factory,
-    basic_skills_manifest, basic_tools_component_manifest, basic_tools_factory,
-    basic_tools_manifest, benchmark_outcome_component_manifest, benchmark_outcome_factory,
-    benchmark_outcome_manifest, cli_component_manifest, cli_factory, cli_manifest,
-    common_provider_definitions, context_component_manifest, context_factory, context_manifest,
-    debug_component_manifest, debug_factory, debug_manifest, debug_runtime_trace_sink,
-    efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
-    efficiency_evaluation_manifest, execution_component_manifest, execution_factory,
-    execution_manifest, first_party_durable_schema_registrations, frontend_component_manifest,
-    frontend_factory, frontend_manifest, helper_invocation_component_manifest,
+    basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,
+    basic_skills_factory, basic_skills_manifest, basic_tools_component_manifest,
+    basic_tools_factory, basic_tools_manifest, benchmark_outcome_component_manifest,
+    benchmark_outcome_factory, benchmark_outcome_manifest, cli_component_manifest, cli_factory,
+    cli_manifest, common_provider_definitions, context_component_manifest, context_factory,
+    context_manifest, debug_component_manifest, debug_factory, debug_manifest,
+    debug_runtime_trace_sink, efficiency_evaluation_component_manifest,
+    efficiency_evaluation_factory, efficiency_evaluation_manifest, execution_component_manifest,
+    execution_factory, execution_manifest, first_party_durable_schema_registrations,
+    frontend_component_manifest, frontend_factory, frontend_manifest,
+    full_product_configuration_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     local_environment_component_manifest, local_environment_factory, local_environment_manifest,
@@ -32,12 +32,12 @@ use phenix_plugin_catalog::{
     model_routing_factory, model_routing_manifest, openai_codex_component_manifest,
     openai_codex_factory, openai_codex_manifest, options_component_manifest, options_factory,
     options_manifest, planning_component_manifest, planning_factory, planning_manifest,
-    full_product_configuration_manifest, providers_manifest, repository_worker_component_manifest,
-    repository_worker_factory, repository_worker_manifest,
-    sdk_component_manifest, sdk_factory, sdk_manifest, session_component_manifest, session_factory,
-    session_manifest, session_tree_component_manifest, session_tree_factory, session_tree_manifest,
-    step_runner_component_manifest, step_runner_factory, step_runner_manifest,
-    workspace_component_manifest, workspace_factory, workspace_manifest, AGENT_LOOP_PLUGIN,
+    providers_manifest, repository_worker_component_manifest, repository_worker_factory,
+    repository_worker_manifest, sdk_component_manifest, sdk_factory, sdk_manifest,
+    session_component_manifest, session_factory, session_manifest, session_tree_component_manifest,
+    session_tree_factory, session_tree_manifest, step_runner_component_manifest,
+    step_runner_factory, step_runner_manifest, workspace_component_manifest, workspace_factory,
+    workspace_manifest, AGENT_LOOP_PLUGIN,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -805,8 +805,7 @@ mod tests {
         artifact_manifest, artifact_service, context_manifest, context_service,
         efficiency_evaluation_service, memory_service, planning_manifest, planning_service,
         repository_work_queue_service, sdk_contribution, session_manifest, session_service,
-        ArtifactCommand,
-        ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
+        ArtifactCommand, ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
         ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
         EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
         SessionCommand, SessionResponse, ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
@@ -1053,8 +1052,17 @@ mod tests {
             })
             .collect::<BTreeSet<_>>();
 
-        for required in ["bash", "workspace.read", "workspace.search", "workspace.write", "workspace.git"] {
-            assert!(callables.contains(required), "full product missed {required}");
+        for required in [
+            "bash",
+            "workspace.read",
+            "workspace.search",
+            "workspace.write",
+            "workspace.git",
+        ] {
+            assert!(
+                callables.contains(required),
+                "full product missed {required}"
+            );
         }
     }
 
