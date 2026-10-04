@@ -15,6 +15,9 @@ depends_on:
   - spec/runtime-inspection.md
   - spec/environment-workspace-boundary.md
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Purpose
 
 Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident Generation before promotion.
