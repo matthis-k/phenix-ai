@@ -247,6 +247,12 @@ impl HarnessBuilder {
         for trigger in application::application_workspace_tool_triggers() {
             builder.add_entry_trigger(trigger);
         }
+        for trigger in application::application_code_tool_triggers() {
+            builder.add_entry_trigger(trigger);
+        }
+        for trigger in application::application_memory_tool_triggers() {
+            builder.add_entry_trigger(trigger);
+        }
         Ok(builder)
     }
 
