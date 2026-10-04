@@ -1,10 +1,10 @@
 use crate::{
     Authority, BackendFeature, CapabilityId, ComponentEntryTrigger, ComponentGraphError,
-    ComponentManifest, ComponentProcessArgument, CompositionMetadataError, ConfigContribution, ConfigMergeError,
-    ConfigurationFrontendId, ConfigurationFrontendMetadata, DurableSchemaRegistration,
-    EntryTriggerKind, FrontendConfigContribution, FrontendConfigError, GraphGenerationId,
-    InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId, PluginManifest,
-    ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
+    ComponentManifest, ComponentProcessArgument, CompositionMetadataError, ConfigContribution,
+    ConfigMergeError, ConfigurationFrontendId, ConfigurationFrontendMetadata,
+    DurableSchemaRegistration, EntryTriggerKind, FrontendConfigContribution, FrontendConfigError,
+    GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
+    PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
 use serde::Serialize;

@@ -1,12 +1,12 @@
 use phenix_core::{
     Authority, CapabilityId, ComponentEntryTrigger, ComponentId, ComponentManifest,
-    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration, GraphGenerationId, GraphReconciler, InterfaceId,
-    Kernel, KernelError, LayerPolicy, LiveReconciliationError, PersistenceBackend, PluginBuildPlan,
-    PluginBuildReport, PluginExecution, PluginId, PluginInstance, PluginManagementContext,
-    PluginManagementError, PluginManagementRequest, PluginManifest, PluginTrialResult,
-    ReconciliationResult, ResolvedHarness, ResolvedHarnessActivation,
-    ResolvedHarnessActivationError, ResolvedHarnessError, RootExecutionConstraints,
-    RootExecutionHandle, ServiceId,
+    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration, GraphGenerationId,
+    GraphReconciler, InterfaceId, Kernel, KernelError, LayerPolicy, LiveReconciliationError,
+    PersistenceBackend, PluginBuildPlan, PluginBuildReport, PluginExecution, PluginId,
+    PluginInstance, PluginManagementContext, PluginManagementError, PluginManagementRequest,
+    PluginManifest, PluginTrialResult, ReconciliationResult, ResolvedHarness,
+    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError,
+    RootExecutionConstraints, RootExecutionHandle, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,

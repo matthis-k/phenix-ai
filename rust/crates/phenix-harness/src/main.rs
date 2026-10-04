@@ -88,9 +88,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     apply_configured_layer_policy(&mut builder)?;
     let mut harness = builder.build_with_persistence(persistence)?;
-    let process_arguments =
-        resolve_process_arguments(&cli.plugin_arguments, harness.resolved_harness().process_arguments())
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let process_arguments = resolve_process_arguments(
+        &cli.plugin_arguments,
+        harness.resolved_harness().process_arguments(),
+    )
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     harness.activate()?;
     if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
         runtime_config::apply_default_config_directory(&mut harness, Path::new(&path))?;
@@ -254,10 +256,7 @@ fn resolve_process_arguments(
                 argument.name
             ));
         }
-        declared.insert(
-            argument.name.as_str(),
-            (argument, argument.takes_value),
-        );
+        declared.insert(argument.name.as_str(), (argument, argument.takes_value));
     }
 
     let mut resolved = Vec::new();
@@ -274,7 +273,9 @@ fn resolve_process_arguments(
 
         let value = match (takes_value, inline_value) {
             (false, Some(_)) => {
-                return Err(format!("plugin process argument {name} does not take a value"));
+                return Err(format!(
+                    "plugin process argument {name} does not take a value"
+                ));
             }
             (false, None) => None,
             (true, Some(value)) => Some(value),
