@@ -2,6 +2,9 @@
 
 status: specification-only
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Purpose
 
 Give plugin authors one typed call API while keeping target binding explicit at the call site.
@@ -28,19 +31,19 @@ The mode belongs to one invocation edge. A plugin may mix runtime and compile-ti
 
 The member represents the contract. It does not represent a specific provider instance.
 
-A caller may therefore contain `ctx.sessions` before any Sessions provider is active. A later Graph Generation may add, replace, or remove the provider without changing the caller's Rust type.
+A caller may therefore contain `ctx.sessions` before any Sessions provider is active. A later Generation may add, replace, or remove the provider without changing the caller's Rust type.
 
-A normal runtime call resolves through the active Graph Generation:
+A normal runtime call resolves through the active Generation:
 
 ```text
 caller -> resolved callable edge -> Layer -> Layer -> terminal provider
 ```
 
-If no provider is available, the call returns the canonical unavailable or resolution error. The client must not retain a stale provider pointer across Graph Generations.
+If no provider is available, the call returns the canonical unavailable or resolution error. The client must not retain a stale provider pointer across Generations.
 
 ## Runtime binding
 
-`Runtime` means the callable contract is known to the caller but the implementation is selected by the active Graph Generation.
+`Runtime` means the callable contract is known to the caller but the implementation is selected by the active Generation.
 
 Runtime calls preserve canonical kernel behavior:
 
@@ -50,9 +53,9 @@ Runtime calls preserve canonical kernel behavior:
 - cancellation;
 - provenance;
 - schema compatibility checks;
-- Graph Generation pinning for an invocation already in progress.
+- Generation pinning for an invocation already in progress.
 
-A runtime call started under one Graph Generation stays pinned to that generation. A later call uses the then-active generation.
+A runtime call started under one Generation stays pinned to that generation. A later call uses the then-active generation.
 
 Loading or unloading a provider therefore affects future calls without changing existing typed clients.
 
@@ -104,7 +107,7 @@ let sessions = ctx.get::<Sessions>(binding_id)?;
 sessions.new(request)?;
 ```
 
-The returned typed handle represents a logical runtime binding. It must resolve through the active Graph Generation on each new invocation and must not retain a provider implementation pointer.
+The returned typed handle represents a logical runtime binding. It must resolve through the active Generation on each new invocation and must not retain a provider implementation pointer.
 
 When the contract itself is not known to the compiled caller:
 
@@ -182,7 +185,7 @@ The compiler must not silently fall back from `CompileTime` to `Runtime`.
 
 Runtime-loaded callers may use both modes.
 
-Loading time does not determine binding mode. A plugin artifact loaded later can make compile-time calls to implementations compiled into its own static closure and runtime calls to capabilities resolved from the host Graph Generation.
+Loading time does not determine binding mode. A plugin artifact loaded later can make compile-time calls to implementations compiled into its own static closure and runtime calls to capabilities resolved from the host Generation.
 
 Provider changes have these effects:
 
@@ -192,22 +195,22 @@ Provider changes have these effects:
 | Provider replaced | Future calls use new resolution | No effect |
 | Provider unloaded | Future calls fail or resolve elsewhere | Target may not be independently unloadable |
 | Layer added or removed | Future calls use new chain | Future calls use the new chain |
-| Graph Generation changes during call | Started call remains pinned | No graph dependency |
+| Generation changes during call | Started call remains pinned | No graph dependency |
 
 ## Dynamic handle lifetime
 
 A typed handle returned by `ctx.get::<T>(...)` carries logical identity, caller identity, and contract identity. It does not own the provider.
 
-If the provider is replaced after the handle is obtained, a later call through the handle resolves against the new active Graph Generation.
+If the provider is replaced after the handle is obtained, a later call through the handle resolves against the new active Generation.
 
 If no compatible provider remains, the later call fails canonically.
 
-An invocation already started before replacement remains pinned to its starting Graph Generation.
+An invocation already started before replacement remains pinned to its starting Generation.
 
 ## Failure rules
 
-- Missing required runtime provider fails graph construction when the import is required by the active composition.
-- Missing optional runtime provider produces the existing optional or unavailable behavior when invoked.
+- Missing required plugin runtime adapter fails graph construction when the import is required by the active composition.
+- Missing optional plugin runtime adapter produces the existing optional or unavailable behavior when invoked.
 - Dynamic lookup of an unknown binding returns a lookup error.
 - Dynamic lookup with a known contract but incompatible schema returns a typed compatibility error.
 - `PhenixValue` conversion failure is a value/schema error and does not trigger provider fallback.
@@ -221,7 +224,7 @@ An invocation already started before replacement remains pinned to its starting 
 - Binding mode is selected per invocation edge.
 - `ctx.x` is generated only for contracts known when the caller artifact is compiled.
 - Runtime clients represent contracts and logical bindings, never durable provider pointers.
-- Runtime calls use canonical Graph Generation resolution and Layer interposition.
+- Runtime calls use canonical Generation resolution and Layer interposition.
 - Compile-time calls retain canonical Layer interposition.
 - Compile-time calls require a concrete target type known to the compiler.
 - Compile-time targets cannot disappear independently while the caller survives.
