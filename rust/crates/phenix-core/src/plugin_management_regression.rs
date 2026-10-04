@@ -1,6 +1,7 @@
 use crate::{
     runtime_provider_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
-    ComponentExport, ComponentId, ComponentImport, ComponentManifest, EntryTriggerKind,
+    ComponentExport, ComponentId, ComponentImport, ComponentManifest, ComponentProcessArgument,
+    EntryTriggerKind,
     GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact, PluginArtifactInput,
     PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution, PluginBuildExecutor,
     PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost, PluginId, PluginInstance,
@@ -458,6 +459,14 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
         },
         required_authority: Authority::default(),
     };
+    let process_argument = ComponentProcessArgument {
+        component: component.id.clone(),
+        interface: trigger.interface.clone(),
+        name: "--fixture-trial-value".into(),
+        takes_value: true,
+        description: "Generation-local trial process argument".into(),
+        required_authority: Authority::default(),
+    };
     let constraints = kernel
         .capture_root_execution_constraints(&Authority::default(), [])
         .unwrap();
@@ -469,7 +478,7 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
             manifest: ready(second),
             components: vec![component],
             entry_triggers: vec![trigger.clone()],
-            process_arguments: Vec::new(),
+            process_arguments: vec![process_argument.clone()],
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -485,6 +494,14 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
             .expect("trial generation remains resident")
             .entry_triggers(),
         &[trigger]
+    );
+    assert!(reconciler.active().process_arguments().is_empty());
+    assert_eq!(
+        reconciler
+            .resident(&result.generation)
+            .expect("trial generation remains resident")
+            .process_arguments(),
+        &[process_argument]
     );
     assert_eq!(starts.load(Ordering::Relaxed), 2);
     assert_eq!(stops.load(Ordering::Relaxed), 0);
