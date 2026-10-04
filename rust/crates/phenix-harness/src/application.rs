@@ -4651,7 +4651,10 @@ fn application_model_tool_surface(
         let EntryTriggerKind::ToolCall {
             callable_id,
             description,
-        } = &trigger.trigger;
+        } = &trigger.trigger
+        else {
+            continue;
+        };
         let component = resolved
             .components()
             .iter()
@@ -6393,10 +6396,21 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
         .entry_triggers()
         .iter()
         .map(|trigger| {
-            let (kind, callable) = match &trigger.trigger {
+            let (kind, callable, process_argument) = match &trigger.trigger {
                 EntryTriggerKind::ToolCall { callable_id, .. } => (
                     "tool_call".to_owned(),
                     Some(PhenixValue::String(callable_id.to_string())),
+                    None,
+                ),
+                EntryTriggerKind::ProcessArgument {
+                    name, takes_value, ..
+                } => (
+                    "process_argument".to_owned(),
+                    None,
+                    Some(PhenixValue::Map(BTreeMap::from([
+                        ("name".to_owned(), PhenixValue::String(name.clone())),
+                        ("takes_value".to_owned(), PhenixValue::Bool(*takes_value)),
+                    ]))),
                 ),
             };
             let mut value = BTreeMap::from([
@@ -6422,6 +6436,9 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
             ]);
             if let Some(callable) = callable {
                 value.insert("callable".to_owned(), callable);
+            }
+            if let Some(process_argument) = process_argument {
+                value.insert("process_argument".to_owned(), process_argument);
             }
             PhenixValue::Map(value)
         })
