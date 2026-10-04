@@ -200,6 +200,14 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: "phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock') }}-${{ github.sha }}"
+          restore-prefixes-first-match: |
+            phenix-nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock') }}-
+          gc-max-store-size-linux: "4G"
+
       - name: "Nix integration and product checks"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
