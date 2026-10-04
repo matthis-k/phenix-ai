@@ -9,18 +9,20 @@ _: {
         cargoLock.lockFile = ../rust/Cargo.lock;
         doCheck = false;
 
+        # This is a behavioral CI fixture, not a shipped artifact. Avoid release
+        # optimization on the critical path; public Phenix packages stay release builds.
         buildPhase = ''
           runHook preBuild
-          cargo build --release --locked --package phenix-binding-lua
-          cargo build --release --locked --package phenix-acp-stdio \
+          cargo build --locked --package phenix-binding-lua
+          cargo build --locked --package phenix-acp-stdio \
             --example observable_callback_fixture
           runHook postBuild
         '';
 
         installPhase = ''
           runHook preInstall
-          module="$(find target -path '*/release/libphenix.so' -type f -print -quit)"
-          fixture="$(find target -path '*/release/examples/observable_callback_fixture' -type f -print -quit)"
+          module="$(find target -path '*/debug/libphenix.so' -type f -print -quit)"
+          fixture="$(find target -path '*/debug/examples/observable_callback_fixture' -type f -print -quit)"
           test -n "$module"
           test -n "$fixture"
           mkdir -p "$out/lib/lua/5.1" "$out/bin"
