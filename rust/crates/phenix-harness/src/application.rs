@@ -7101,6 +7101,7 @@ mod tests {
         trial_request: Option<PhenixValue>,
         controller_turn_one_entries: usize,
         controller_turn_two_entries: usize,
+        model_entries: usize,
     }
 
     struct RuntimeOrchestrationModel {
@@ -7661,6 +7662,20 @@ mod tests {
             };
             let controller = controller
                 .ok_or_else(|| "runtime orchestration controller is not configured".to_owned())?;
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "runtime orchestration model state lock poisoned".to_owned())?;
+                state.model_entries += 1;
+                if state.model_entries > 32 {
+                    return Err(format!(
+                        "runtime orchestration exceeded 32 model entries at session {:?}, turn {}",
+                        request.session_id,
+                        request.continuation.len()
+                    ));
+                }
+            }
             if request.session_id.as_ref() == Some(&controller) && request.continuation.len() == 1 {
                 let mut state = self
                     .state
@@ -8500,20 +8515,30 @@ mod tests {
         .unwrap();
         state.lock().unwrap().controller = Some(controller.session_id.clone());
 
-        let result = tokio::time::timeout(
-            Duration::from_secs(10),
-            invoke_transport_operation::<Prompt>(
-                &transport,
-                PromptInput {
-                    session_id: controller.session_id.clone(),
-                    content: vec![Content::Text {
-                        text: "trial the changed memory plugin and verify it".into(),
-                    }],
-                },
-            ),
-        )
-        .await
-        .expect("runtime orchestration must not deadlock")
+        let prompt = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "trial the changed memory plugin and verify it".into(),
+                }],
+            },
+        );
+        tokio::pin!(prompt);
+        let mut observed_model_entries = state.lock().unwrap().model_entries;
+        let result = loop {
+            match tokio::time::timeout(Duration::from_secs(10), &mut prompt).await {
+                Ok(result) => break result,
+                Err(_) => {
+                    let model_entries = state.lock().unwrap().model_entries;
+                    assert!(
+                        model_entries > observed_model_entries,
+                        "runtime orchestration made no model progress for 10s after {model_entries} entries"
+                    );
+                    observed_model_entries = model_entries;
+                }
+            }
+        }
         .unwrap();
         assert_eq!(result.stop_reason, StopReason::EndTurn);
 
