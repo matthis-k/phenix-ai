@@ -3101,9 +3101,7 @@ fn discover_workspaces(
             .into_iter()
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty())
-            .filter(|value| {
-                value.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
-            })
+            .filter(|value| value.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
             .collect(),
     };
     let Some(root) = workspace_discovery::workspace_discovery_root() else {
