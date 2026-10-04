@@ -1,7 +1,7 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
     Kernel, KernelConfig, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
-    ResolvedHarness, ResolvedHarnessActivation,
+    ResolvedComposition, ResolvedCompositionActivation,
 };
 
 fn plugin() -> PluginManifest {
@@ -19,7 +19,7 @@ fn plugin() -> PluginManifest {
 #[test]
 fn invalid_candidate_resolution_leaves_active_generation_unchanged() {
     let plugin = plugin();
-    let active = ResolvedHarness::resolve([plugin.clone()], [], [], &Authority::default()).unwrap();
+    let active = ResolvedComposition::resolve([plugin.clone()], [], [], &Authority::default()).unwrap();
     let mut kernel = Kernel::new(KernelConfig::new([plugin.clone()]).unwrap());
     kernel.activate_resolved_harness(&active).unwrap();
     let active_generation = kernel.graph_generation().cloned().unwrap();
@@ -40,7 +40,7 @@ fn invalid_candidate_resolution_leaves_active_generation_unchanged() {
     };
 
     assert!(
-        ResolvedHarness::resolve([plugin], [invalid_component], [], &Authority::default(),)
+        ResolvedComposition::resolve([plugin], [invalid_component], [], &Authority::default(),)
             .is_err()
     );
     assert_eq!(kernel.graph_generation(), Some(&active_generation));
@@ -78,7 +78,7 @@ fn removing_a_required_live_provider_rejects_the_candidate_and_retains_the_activ
         maximum_authority: Authority::default(),
     };
 
-    let active = ResolvedHarness::resolve(
+    let active = ResolvedComposition::resolve(
         [plugin.clone()],
         [provider, consumer.clone()],
         [],
@@ -90,7 +90,7 @@ fn removing_a_required_live_provider_rejects_the_candidate_and_retains_the_activ
     let active_generation = kernel.graph_generation().cloned().unwrap();
     let active_graph: ResolvedComponentGraph = kernel.component_graph().clone();
 
-    let candidate = ResolvedHarness::resolve([plugin], [consumer], [], &Authority::default());
+    let candidate = ResolvedComposition::resolve([plugin], [consumer], [], &Authority::default());
 
     assert!(candidate.is_err());
     assert_eq!(kernel.graph_generation(), Some(&active_generation));
