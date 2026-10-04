@@ -2,6 +2,9 @@
 
 status: partial
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Status
 
 Partially implemented architecture contract for graph-owned execution ingress.
