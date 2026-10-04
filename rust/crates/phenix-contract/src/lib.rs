@@ -15,9 +15,9 @@ pub use contract::{
     ValueMatch,
 };
 pub use identity::{
-    CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId, ComponentId,
-    ConfigurationFrontendId, ContextResourceId, ContextRevisionId, EventTypeId, GraphGenerationId,
-    InterfaceId, ModelId, PluginId, ResourceNamespace, RoutingProfileId, RuntimeId, SdkNamespace,
+    CallableId, CapabilityGenerationId, PermissionId, ClientConnectionId, ComponentId,
+    ConfigurationFrontendId, ContextResourceId, ContextRevisionId, EventTypeId, GenerationId,
+    InterfaceId, ModelId, PluginId, ResourceNamespace, RoutingProfileId, PluginRuntimeId, SdkNamespace,
     SdkResourceId, ServiceId, SessionId, SkillId, SubscriptionId,
 };
 pub use interface::{
