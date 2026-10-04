@@ -108,9 +108,9 @@ impl ResolvedImportHandle {
 mod tests {
     use super::*;
     use crate::{
-        Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentManifest,
+        Authority, PermissionId, ComponentExport, ComponentId, ComponentImport, ComponentManifest,
         KernelConfig, Key, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
-        PluginManifest, ResolvedComponentGraph, ResolvedHarness, ResolvedHarnessActivation,
+        PluginManifest, ResolvedComponentGraph, ResolvedComposition, ResolvedCompositionActivation,
         ServiceContribution, ServiceRole,
     };
     use std::collections::BTreeMap;
@@ -180,8 +180,8 @@ mod tests {
         ComponentId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn plugin_manifest(id: &str, service_priority: i32, authority: Authority) -> PluginManifest {
@@ -265,7 +265,7 @@ mod tests {
             ),
         ];
         let resolved =
-            ResolvedHarness::resolve(manifests.clone(), components, [], &authority).unwrap();
+            ResolvedComposition::resolve(manifests.clone(), components, [], &authority).unwrap();
         let handle = resolved
             .component_graph()
             .import_handle(&component("consumer"), &EchoInterface::interface_id())
