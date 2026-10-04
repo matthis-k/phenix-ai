@@ -1,6 +1,6 @@
 use crate::{
     Authority, ComponentId, ComponentRuntimeMetadata, CompositionMetadataError, ConfigContribution,
-    LayerPolicy, PluginId, PluginPackageMetadata, ResolvedHarness, ResolvedHarnessError, ServiceId,
+    LayerPolicy, PluginId, PluginPackageMetadata, ResolvedComposition, ResolvedCompositionError, ServiceId,
     SkillResourceMetadata,
 };
 use std::{
@@ -54,7 +54,7 @@ pub enum MetadataResolutionError {
         resource: String,
         plugin: PluginId,
     },
-    Resolver(ResolvedHarnessError),
+    Resolver(ResolvedCompositionError),
 }
 
 impl Display for MetadataResolutionError {
@@ -124,8 +124,8 @@ impl Display for MetadataResolutionError {
 
 impl Error for MetadataResolutionError {}
 
-impl From<ResolvedHarnessError> for MetadataResolutionError {
-    fn from(error: ResolvedHarnessError) -> Self {
+impl From<ResolvedCompositionError> for MetadataResolutionError {
+    fn from(error: ResolvedCompositionError) -> Self {
         Self::Resolver(error)
     }
 }
@@ -142,7 +142,7 @@ impl CompositionMetadataInput {
     pub fn resolve(
         self,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, MetadataResolutionError> {
+    ) -> Result<ResolvedComposition, MetadataResolutionError> {
         self.resolve_with_layer_policies(BTreeMap::new(), authority_ceiling)
     }
 
@@ -150,7 +150,7 @@ impl CompositionMetadataInput {
         self,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, MetadataResolutionError> {
+    ) -> Result<ResolvedComposition, MetadataResolutionError> {
         let mut packages = BTreeMap::new();
         for package in self.packages {
             package.validate_pre_activation().map_err(|error| {
@@ -266,7 +266,7 @@ impl CompositionMetadataInput {
 
         let package_metadata: Vec<_> = packages.into_values().collect();
         let component_metadata: Vec<_> = components.into_values().collect();
-        let mut resolved = ResolvedHarness::resolve_with_resources_and_layer_policies(
+        let mut resolved = ResolvedComposition::resolve_with_resources_and_layer_policies(
             package_metadata
                 .iter()
                 .map(|package| package.manifest.clone()),
