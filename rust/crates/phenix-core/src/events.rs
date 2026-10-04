@@ -1,4 +1,4 @@
-use crate::{Authority, EventTypeId, GraphGenerationId, PluginId, SubscriptionId};
+use crate::{Authority, EventTypeId, GenerationId, PluginId, SubscriptionId};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -70,7 +70,7 @@ pub trait EventHandler: Send + Sync {
         bus: &EventBus,
         event: &EventEnvelope,
         authority: &Authority,
-        _graph_generation: Option<&GraphGenerationId>,
+        _graph_generation: Option<&GenerationId>,
     ) -> Result<(), String> {
         self.handle_with_bus(bus, event, authority)
     }
@@ -96,7 +96,7 @@ pub struct EventDispatchReport {
     pub delivered: Vec<SubscriptionId>,
     pub failures: Vec<(SubscriptionId, String)>,
     pub warnings: Vec<(SubscriptionId, String)>,
-    pub graph_generation: Option<GraphGenerationId>,
+    pub graph_generation: Option<GenerationId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -234,8 +234,8 @@ const DEFAULT_DELIVERY_CAPACITY: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 struct PendingDelivery {
     event: EventEnvelope,
     emitter_authority: Authority,
-    graph_generation: Option<GraphGenerationId>,
-    subscription_generation: Option<GraphGenerationId>,
+    graph_generation: Option<GenerationId>,
+    subscription_generation: Option<GenerationId>,
     subscriptions: BTreeMap<SubscriptionId, EventSubscription>,
     levels: Vec<Vec<SubscriptionId>>,
     ancestry: BTreeSet<SubscriptionId>,
@@ -247,8 +247,8 @@ pub struct EventBus {
     kernel_subscribers: Arc<Mutex<Vec<Sender<KernelEvent>>>>,
     subscriptions: Arc<Mutex<BTreeMap<SubscriptionId, EventSubscription>>>,
     generation_subscriptions:
-        Arc<Mutex<BTreeMap<GraphGenerationId, BTreeMap<SubscriptionId, EventSubscription>>>>,
-    generation_subscription_revisions: Arc<Mutex<BTreeMap<GraphGenerationId, u64>>>,
+        Arc<Mutex<BTreeMap<GenerationId, BTreeMap<SubscriptionId, EventSubscription>>>>,
+    generation_subscription_revisions: Arc<Mutex<BTreeMap<GenerationId, u64>>>,
     active_causality: Arc<Mutex<BTreeMap<u64, BTreeSet<SubscriptionId>>>>,
     next_root_causality: Arc<AtomicU64>,
     next_delivery: Arc<AtomicU64>,
@@ -337,7 +337,7 @@ impl EventBus {
 
     pub fn replace_generation_subscriptions(
         &self,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         subscriptions: impl IntoIterator<Item = EventSubscription>,
     ) -> Result<(), EventError> {
         let indexed = index_subscriptions(subscriptions)?;
@@ -357,7 +357,7 @@ impl EventBus {
 
     pub fn install_generation_subscriptions(
         &self,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         subscriptions: impl IntoIterator<Item = EventSubscription>,
     ) -> Result<Vec<SubscriptionId>, EventError> {
         let mut generations = self
@@ -387,7 +387,7 @@ impl EventBus {
         Ok(installed)
     }
 
-    pub fn remove_generation_subscriptions(&self, generation: &GraphGenerationId) {
+    pub fn remove_generation_subscriptions(&self, generation: &GenerationId) {
         self.generation_subscriptions
             .lock()
             .expect("generation event subscription lock poisoned")
@@ -453,7 +453,7 @@ impl EventBus {
         &self,
         event: &EventEnvelope,
         emitter_authority: &Authority,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> Result<EventDispatchReport, EventError> {
         match self
             .admit_in_generation(event, emitter_authority, graph_generation)?
@@ -478,7 +478,7 @@ impl EventBus {
         &self,
         event: &EventEnvelope,
         emitter_authority: &Authority,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> Result<EventAdmissionReceipt, EventError> {
         let _ambient_transition = graph_generation
             .is_none()
@@ -633,11 +633,11 @@ impl EventBus {
 
     fn subscription_snapshot(
         &self,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> (
         BTreeMap<SubscriptionId, EventSubscription>,
         u64,
-        Option<GraphGenerationId>,
+        Option<GenerationId>,
     ) {
         if let Some(generation) = graph_generation {
             let current = self
@@ -668,7 +668,7 @@ impl EventBus {
         )
     }
 
-    fn subscription_revision_for(&self, generation: Option<&GraphGenerationId>) -> u64 {
+    fn subscription_revision_for(&self, generation: Option<&GenerationId>) -> u64 {
         match generation {
             Some(generation) => self
                 .generation_subscription_revisions
@@ -871,7 +871,7 @@ fn dependency_order(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CapabilityId, ResolvedHarness};
+    use crate::{PermissionId, ResolvedComposition};
     use std::{
         sync::{Condvar, Mutex},
         time::Duration,
@@ -889,8 +889,8 @@ mod tests {
         SubscriptionId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn envelope(causality_id: u64) -> EventEnvelope {
@@ -966,7 +966,7 @@ mod tests {
 
     #[test]
     fn dispatch_report_records_graph_generation() {
-        let generation = ResolvedHarness::resolve([], [], [], &Authority::default())
+        let generation = ResolvedComposition::resolve([], [], [], &Authority::default())
             .unwrap()
             .generation()
             .clone();
@@ -979,7 +979,7 @@ mod tests {
 
     #[test]
     fn unknown_generation_never_falls_back_to_ambient_subscriptions() {
-        let generation = ResolvedHarness::resolve(
+        let generation = ResolvedComposition::resolve(
             [],
             [],
             [],
@@ -1010,11 +1010,11 @@ mod tests {
 
     #[test]
     fn generation_scoped_subscriptions_select_the_matching_generation() {
-        let first_generation = ResolvedHarness::resolve([], [], [], &Authority::default())
+        let first_generation = ResolvedComposition::resolve([], [], [], &Authority::default())
             .unwrap()
             .generation()
             .clone();
-        let second_generation = ResolvedHarness::resolve(
+        let second_generation = ResolvedComposition::resolve(
             [],
             [],
             [],
@@ -1074,11 +1074,11 @@ mod tests {
 
     #[test]
     fn replacing_another_generation_does_not_invalidate_selected_subscriptions() {
-        let first_generation = ResolvedHarness::resolve([], [], [], &Authority::default())
+        let first_generation = ResolvedComposition::resolve([], [], [], &Authority::default())
             .unwrap()
             .generation()
             .clone();
-        let second_generation = ResolvedHarness::resolve(
+        let second_generation = ResolvedComposition::resolve(
             [],
             [],
             [],
