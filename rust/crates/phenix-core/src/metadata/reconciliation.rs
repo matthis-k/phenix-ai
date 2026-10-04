@@ -3,7 +3,11 @@ use crate::{
     ReconciliationAction, ReconciliationPreview, ReloadPolicy, ResolvedCompositionMetadata,
     ResolvedHarness,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataChangeKind {
@@ -160,6 +164,51 @@ pub enum MetadataReconciliationError {
         resource: String,
     },
 }
+
+impl Display for MetadataReconciliationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveGenerationMismatch { graph, metadata } => write!(
+                f,
+                "active metadata generation {} does not match active graph generation {}",
+                metadata.as_str(),
+                graph.as_str()
+            ),
+            Self::CandidateGenerationMismatch { graph, metadata } => write!(
+                f,
+                "candidate metadata generation {} does not match candidate graph generation {}",
+                metadata.as_str(),
+                graph.as_str()
+            ),
+            Self::DrainRequired { component } => {
+                write!(
+                    f,
+                    "component {component} requires drain before reconciliation"
+                )
+            }
+            Self::MigrationRequired { component } => {
+                write!(
+                    f,
+                    "component {component} requires migration before reconciliation"
+                )
+            }
+            Self::ResourceDrainRequired { resource } => {
+                write!(
+                    f,
+                    "resource {resource} requires drain before reconciliation"
+                )
+            }
+            Self::ResourceMigrationRequired { resource } => {
+                write!(
+                    f,
+                    "resource {resource} requires migration before reconciliation"
+                )
+            }
+        }
+    }
+}
+
+impl Error for MetadataReconciliationError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetadataReconciliationPreview {

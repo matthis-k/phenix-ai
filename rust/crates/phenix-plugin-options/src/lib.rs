@@ -557,6 +557,11 @@ pub fn default_option_definitions() -> Vec<OptionDefinition> {
             OptionValue::Integer(1),
             [Global, Agent],
         ),
+        builtin_definition(
+            "agent.runtime_orchestration",
+            OptionValue::Bool(false),
+            [Global, Session, Agent],
+        ),
     ]
 }
 

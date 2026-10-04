@@ -126,6 +126,10 @@ pub enum KernelError {
     ResolvedGenerationMissing,
     UnknownGeneration(GraphGenerationId),
     DefaultGenerationCannotRetire(GraphGenerationId),
+    GenerationInUse {
+        generation: GraphGenerationId,
+        active_roots: usize,
+    },
     ResidentGenerationDurableMismatch {
         active: GraphGenerationId,
         candidate: GraphGenerationId,
@@ -287,6 +291,14 @@ impl Display for KernelError {
                     generation.as_str()
                 )
             }
+            Self::GenerationInUse {
+                generation,
+                active_roots,
+            } => write!(
+                f,
+                "graph generation {} has {active_roots} active root execution(s)",
+                generation.as_str()
+            ),
             Self::ResidentGenerationDurableMismatch { active, candidate } => write!(
                 f,
                 "graph generation {} cannot reside beside {}: durable schemas differ",

@@ -4,6 +4,7 @@ use phenix_core::{
 };
 use phenix_sdk_macros::PhenixValue;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const WORKSPACE_SERVICE: &str = "phenix.workspace@1";
 
@@ -129,6 +130,20 @@ pub enum WorkspaceCommand {
         path: Option<String>,
         recursive: bool,
     },
+    ReadBytes {
+        path: String,
+    },
+    WriteBytes {
+        path: String,
+        content: Vec<u8>,
+        expected_version: WorkspaceFileVersion,
+    },
+    Exec {
+        program: String,
+        arguments: Vec<String>,
+        working_directory: Option<String>,
+        environment: BTreeMap<String, String>,
+    },
     Shell {
         command: String,
     },
@@ -177,6 +192,11 @@ pub enum WorkspaceResponse {
     },
     List {
         entries: Vec<WorkspaceEntry>,
+    },
+    ReadBytes {
+        path: String,
+        content: Vec<u8>,
+        version: WorkspaceFileVersion,
     },
     Process {
         exit_code: i32,

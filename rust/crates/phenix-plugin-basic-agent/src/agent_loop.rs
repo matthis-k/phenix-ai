@@ -3,7 +3,7 @@ use phenix_core::{
     ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
-    SessionId, ValueCodec,
+    SessionId, SharedPluginInvocation, ValueCodec,
 };
 use phenix_sdk::{
     agent_diagnostic_event_type, AgentDiagnosticEvent, DefaultInvocationCommand,
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     num::{NonZeroU32, NonZeroU64},
+    sync::Arc,
 };
 
 pub const AGENT_LOOP_PLUGIN: &str = "phenix.agent-loop";
@@ -371,9 +372,31 @@ struct AgentLoopPlugin {
     policy: AgentLoopPolicy,
 }
 
+#[derive(Clone, Copy)]
+struct AgentLoopInvocation {
+    policy: AgentLoopPolicy,
+}
+
+impl SharedPluginInvocation for AgentLoopInvocation {
+    fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        host: &PluginHost<'_>,
+    ) -> Result<Vec<u8>, String> {
+        invoke_agent_loop(self.policy, service, input, host)
+    }
+}
+
 impl PluginInstance for AgentLoopPlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         Ok(())
+    }
+
+    fn shared_invocation(&self) -> Option<Arc<dyn SharedPluginInvocation>> {
+        Some(Arc::new(AgentLoopInvocation {
+            policy: self.policy,
+        }))
     }
 
     fn invoke(
@@ -382,21 +405,30 @@ impl PluginInstance for AgentLoopPlugin {
         input: &[u8],
         host: &PluginHost<'_>,
     ) -> Result<Vec<u8>, String> {
-        if service != &agent_loop_service() {
-            return Err(format!("unsupported agent loop service: {service}"));
-        }
-        let context = context(host);
-        let interface = AgentLoopInterface::interface_id();
-        let command = context
-            .kernel
-            .decode_projected::<AgentLoopCommand>(&interface, input)
-            .map_err(|error| error.to_string())?;
-        let response = handle(&context, self.policy, command)?;
-        context
-            .kernel
-            .encode_value(&response)
-            .map_err(|error| error.to_string())
+        invoke_agent_loop(self.policy, service, input, host)
     }
+}
+
+fn invoke_agent_loop(
+    policy: AgentLoopPolicy,
+    service: &ServiceId,
+    input: &[u8],
+    host: &PluginHost<'_>,
+) -> Result<Vec<u8>, String> {
+    if service != &agent_loop_service() {
+        return Err(format!("unsupported agent loop service: {service}"));
+    }
+    let context = context(host);
+    let interface = AgentLoopInterface::interface_id();
+    let command = context
+        .kernel
+        .decode_projected::<AgentLoopCommand>(&interface, input)
+        .map_err(|error| error.to_string())?;
+    let response = handle(&context, policy, command)?;
+    context
+        .kernel
+        .encode_value(&response)
+        .map_err(|error| error.to_string())
 }
 
 fn handle(

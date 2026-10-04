@@ -123,9 +123,13 @@ pub trait PluginArtifactStore {
 
     fn verify_ready(&mut self, artifact: &PluginArtifact) -> Result<(), PluginArtifactStoreError>;
 
+    /// Store exact built bytes and return the canonical immutable locator.
+    ///
+    /// Core owns revision and configuration identity. The store may relocate
+    /// staging output, but it cannot change those facts.
     fn store_built(
         &mut self,
         artifact: &PluginArtifact,
         content: &[u8],
-    ) -> Result<(), PluginArtifactStoreError>;
+    ) -> Result<String, PluginArtifactStoreError>;
 }
