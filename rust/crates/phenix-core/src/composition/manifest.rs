@@ -62,6 +62,11 @@ pub enum EntryTriggerKind {
         callable_id: CallableId,
         description: String,
     },
+    ProcessArgument {
+        name: String,
+        takes_value: bool,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
