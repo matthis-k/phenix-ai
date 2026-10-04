@@ -1068,10 +1068,8 @@ mod tests {
         let callables = builder
             .entry_triggers
             .iter()
-            .filter_map(|trigger| match &trigger.trigger {
-                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
-                    Some(callable_id.as_str())
-                }
+            .map(|trigger| match &trigger.trigger {
+                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
             })
             .collect::<BTreeSet<_>>();
 
