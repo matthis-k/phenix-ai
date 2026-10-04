@@ -698,22 +698,15 @@ impl ResolvedHarness {
         &self,
         plugins: Vec<PluginManifest>,
         components: Vec<ComponentManifest>,
+        entry_triggers: Vec<ComponentEntryTrigger>,
         authority_ceiling: &Authority,
     ) -> Result<Self, ResolvedHarnessError> {
         let mut plugins = plugins;
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components = components;
         components.sort_by(|left, right| left.id.cmp(&right.id));
-        let component_ids = components
-            .iter()
-            .map(|component| component.id.clone())
-            .collect::<BTreeSet<_>>();
-        let entry_triggers = self
-            .entry_triggers
-            .iter()
-            .filter(|trigger| component_ids.contains(&trigger.component))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut entry_triggers = entry_triggers;
+        entry_triggers.sort_by(entry_trigger_order);
         validate_entry_triggers(&components, &entry_triggers, authority_ceiling)?;
         let mut kernel_config = KernelConfig::new(plugins.clone())?;
         for (service, layers) in &self.layer_policies {
@@ -1589,6 +1582,7 @@ mod tests {
             .with_plugin_set(
                 resolved.plugins().to_vec(),
                 resolved.components().to_vec(),
+                resolved.entry_triggers().to_vec(),
                 &Authority::default(),
             )
             .unwrap();

@@ -115,6 +115,28 @@ impl Kernel {
         Ok(candidate_generation)
     }
 
+    /// Capture one root handle against an explicitly selected resident generation.
+    ///
+    /// The returned handle owns a generation lease and can execute after the
+    /// caller releases any mutable Kernel or Harness lock.
+    pub fn root_execution_handle_in_generation(
+        &self,
+        generation: &GraphGenerationId,
+        constraints: &RootExecutionConstraints,
+    ) -> Result<RootExecutionHandle, KernelError> {
+        let state = if self.graph_generation() == Some(generation) {
+            &self.generation_state
+        } else {
+            self.resident_generations
+                .get(generation)
+                .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
+        };
+        Self::validate_root_execution_constraints(state, generation, constraints)?;
+        let authority = state.constrain_root_authority(constraints.authority());
+        let constraints = constraints.with_authority(authority);
+        Ok(self.root_execution_handle_from_state(state, constraints))
+    }
+
     /// Invoke one root against an explicitly selected resident generation.
     ///
     /// Nested calls remain pinned because the selected RuntimeGeneration and
@@ -127,36 +149,8 @@ impl Kernel {
         constraints: &RootExecutionConstraints,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        let state = if self.graph_generation() == Some(generation) {
-            &self.generation_state
-        } else {
-            self.resident_generations
-                .get(generation)
-                .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
-        };
-        Self::validate_root_execution_constraints(state, generation, constraints)?;
-        let effective_constraints = RootExecutionConstraints {
-            authority: state.constrain_root_authority(constraints.authority()),
-            pinned_bindings: constraints.pinned_bindings.clone(),
-        };
-
-        let prepared_mutations = PreparedMutationScope::new(Some(generation));
-        let runtime = RuntimeServices {
-            states: &state.states,
-            instances: &state.instances,
-            invocations: &state.invocations,
-            events: &self.events,
-            tasks: &self.tasks,
-            persistence: &self.persistence,
-            prepared_mutations: &prepared_mutations,
-            trace_sink: self.trace_sink.as_ref(),
-            provenance: &self.provenance,
-        };
-        let scope = CallScope::external_with_constraints(
-            Arc::new(state.runtime.clone()),
-            &effective_constraints,
-        );
-        dispatch::invoke_service_with(runtime, service, input, binding, scope)
+        self.root_execution_handle_in_generation(generation, constraints)?
+            .invoke(service, input, binding)
     }
 
     fn validate_root_execution_constraints(
@@ -289,6 +283,19 @@ impl Kernel {
                 .get(generation)
                 .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?;
             Self::validate_root_execution_constraints(state, generation, constraints)?;
+        }
+
+        let active_roots = self
+            .resident_generations
+            .get(generation)
+            .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))?
+            .root_leases
+            .load(Ordering::Acquire);
+        if active_roots > 0 {
+            return Err(KernelError::GenerationInUse {
+                generation: generation.clone(),
+                active_roots,
+            });
         }
 
         let state = self
@@ -586,6 +593,7 @@ impl Kernel {
             states,
             instances,
             invocations,
+            root_leases: Arc::new(AtomicUsize::new(0)),
             active: true,
         })
     }
@@ -1248,6 +1256,47 @@ mod tests {
             kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
             Err(KernelError::UnknownGeneration(second_generation))
         );
+    }
+
+    #[test]
+    fn leased_root_survives_promotion_and_blocks_retirement() {
+        let first_manifest = manifest("fixture.residency.leased-first");
+        let second_manifest = manifest("fixture.residency.leased-second");
+        let first =
+            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let second =
+            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+                .unwrap();
+        let first_generation = first.generation().clone();
+        let second_generation = second.generation().clone();
+
+        let mut kernel = Kernel::new(first.kernel_config().clone());
+        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.preload_embedded_factory(first_manifest.id, || Box::new(Echo(b"first")));
+        kernel.preload_embedded_factory(second_manifest.id, || Box::new(Echo(b"second")));
+        kernel.activate_all().unwrap();
+        kernel.make_generation_resident(&second).unwrap();
+
+        let root = kernel.root_execution_handle(&Authority::default());
+        assert_eq!(root.generation(), Some(&first_generation));
+        assert_eq!(root.invoke(&service(), &[], None).unwrap(), b"first");
+
+        kernel.promote_generation(&second_generation).unwrap();
+
+        assert_eq!(kernel.graph_generation(), Some(&second_generation));
+        assert_eq!(root.invoke(&service(), &[], None).unwrap(), b"first");
+        assert_eq!(
+            kernel.retire_generation(&first_generation),
+            Err(KernelError::GenerationInUse {
+                generation: first_generation.clone(),
+                active_roots: 1,
+            })
+        );
+
+        drop(root);
+        kernel.retire_generation(&first_generation).unwrap();
+        assert!(!kernel.resident_generation_ids().contains(&first_generation));
     }
 
     #[test]

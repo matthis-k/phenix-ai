@@ -226,6 +226,18 @@ fn handle(
             case_sensitive,
         } => search(context, needle, path, case_sensitive),
         WorkspaceCommand::List { path, recursive } => list(context, path, recursive),
+        WorkspaceCommand::ReadBytes { path } => read_bytes(context, path),
+        WorkspaceCommand::WriteBytes {
+            path,
+            content,
+            expected_version,
+        } => write_bytes(context, path, content, expected_version),
+        WorkspaceCommand::Exec {
+            program,
+            arguments,
+            working_directory,
+            environment,
+        } => exec(context, program, arguments, working_directory, environment),
         WorkspaceCommand::Shell { command } => {
             if command.trim().is_empty() {
                 return Err("shell command must not be empty".into());
@@ -337,6 +349,32 @@ fn read(context: &WorkspaceContext<'_, '_, '_>, path: String) -> Result<Workspac
     })
 }
 
+fn read_bytes(
+    context: &WorkspaceContext<'_, '_, '_>,
+    path: String,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_READ)?;
+    let resolved = resolve(context, &path)?;
+    let response = environment(
+        context,
+        EnvironmentCommand::ReadFile {
+            path: environment_path(&resolved),
+        },
+    )?;
+    let EnvironmentResponse::File {
+        content: Some(content),
+    } = response
+    else {
+        return Err(format!("read {path}: file not found"));
+    };
+    let version = version_for_bytes(&content);
+    Ok(WorkspaceResponse::ReadBytes {
+        path,
+        content,
+        version,
+    })
+}
+
 fn write(
     context: &WorkspaceContext<'_, '_, '_>,
     path: String,
@@ -355,6 +393,34 @@ fn write(
     Ok(WorkspaceResponse::Written {
         path,
         version: version_for_bytes(content.as_bytes()),
+    })
+}
+
+fn write_bytes(
+    context: &WorkspaceContext<'_, '_, '_>,
+    path: String,
+    content: Vec<u8>,
+    expected_version: WorkspaceFileVersion,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_WRITE)?;
+    let resolved = resolve(context, &path)?;
+    let observed = inspect_version(context, &resolved, &path)?;
+    let desired = version_for_bytes(&content);
+    if observed != expected_version && observed != desired {
+        return Ok(WorkspaceResponse::VersionConflict {
+            conflicts: vec![WorkspaceVersionConflict {
+                path,
+                expected_version,
+                observed_version: observed,
+            }],
+        });
+    }
+    if observed != desired {
+        write_resolved_bytes(context, &resolved, &path, &content)?;
+    }
+    Ok(WorkspaceResponse::Written {
+        path,
+        version: desired,
     })
 }
 
@@ -605,11 +671,20 @@ fn write_resolved(
     path: &str,
     content: &str,
 ) -> Result<(), String> {
+    write_resolved_bytes(context, resolved, path, content.as_bytes())
+}
+
+fn write_resolved_bytes(
+    context: &WorkspaceContext<'_, '_, '_>,
+    resolved: &Path,
+    path: &str,
+    content: &[u8],
+) -> Result<(), String> {
     match environment(
         context,
         EnvironmentCommand::WriteFile {
             path: environment_path(resolved),
-            content: content.as_bytes().to_vec(),
+            content: content.to_vec(),
             create_parents: true,
         },
     )? {
@@ -884,10 +959,52 @@ fn workspace_directory_child(
     Ok(child)
 }
 
+fn exec(
+    context: &WorkspaceContext<'_, '_, '_>,
+    program: String,
+    arguments: Vec<String>,
+    working_directory: Option<String>,
+    environment_values: BTreeMap<String, String>,
+) -> Result<WorkspaceResponse, String> {
+    if program.trim().is_empty() {
+        return Err("workspace exec program must not be empty".into());
+    }
+    let working_directory = match working_directory {
+        Some(path) => resolve(context, &path)?,
+        None => context.plugin.state.to_path_buf(),
+    };
+    process_in(
+        context,
+        &program,
+        &arguments,
+        &working_directory,
+        environment_values,
+        WORKSPACE_SHELL,
+    )
+}
+
 fn process(
     context: &WorkspaceContext<'_, '_, '_>,
     program: &str,
     args: &[String],
+    capability: &str,
+) -> Result<WorkspaceResponse, String> {
+    process_in(
+        context,
+        program,
+        args,
+        context.plugin.state,
+        BTreeMap::new(),
+        capability,
+    )
+}
+
+fn process_in(
+    context: &WorkspaceContext<'_, '_, '_>,
+    program: &str,
+    args: &[String],
+    working_directory: &Path,
+    environment_values: BTreeMap<String, String>,
     capability: &str,
 ) -> Result<WorkspaceResponse, String> {
     require(context, capability)?;
@@ -896,8 +1013,8 @@ fn process(
         EnvironmentCommand::Exec {
             program: program.to_owned(),
             arguments: args.to_vec(),
-            working_directory: Some(environment_path(context.plugin.state)),
-            environment: BTreeMap::new(),
+            working_directory: Some(environment_path(working_directory)),
+            environment: environment_values,
         },
     )? {
         EnvironmentResponse::Process {
@@ -1384,6 +1501,46 @@ mod tests {
             .unwrap(),
             WorkspaceResponse::Written { .. }
         ));
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::ReadBytes {
+                    path: "input.txt".into(),
+                },
+                &authority(&[WORKSPACE_READ]),
+            )
+            .unwrap(),
+            WorkspaceResponse::ReadBytes { content, .. }
+                if content == b"virtual-content"
+        ));
+        let binary = vec![0, 0xff, b'P', b'H', b'X'];
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::WriteBytes {
+                    path: "artifact.bin".into(),
+                    content: binary.clone(),
+                    expected_version: WorkspaceFileVersion::Absent,
+                },
+                &authority(&[WORKSPACE_WRITE]),
+            )
+            .unwrap(),
+            WorkspaceResponse::Written { .. }
+        ));
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::Exec {
+                    program: "builder".into(),
+                    arguments: vec!["--literal".into(), "a b;$(not-shell)".into()],
+                    working_directory: Some("build/stage".into()),
+                    environment: BTreeMap::from([("BUILD_MODE".into(), "release;literal".into())]),
+                },
+                &authority(&[WORKSPACE_SHELL]),
+            )
+            .unwrap(),
+            WorkspaceResponse::Process { exit_code: 0, .. }
+        ));
 
         let shell = invoke(
             &mut kernel,
@@ -1437,6 +1594,24 @@ mod tests {
             command,
             EnvironmentCommand::ReadContentReference { reference }
                 if reference == &recovery_reference
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::WriteFile { path, content, .. }
+                if path == "/phenix-fixture-environment-only/project/artifact.bin"
+                    && content == &binary
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Exec {
+                program,
+                arguments,
+                working_directory: Some(working_directory),
+                environment,
+            } if program == "builder"
+                && arguments == &vec!["--literal".to_owned(), "a b;$(not-shell)".to_owned()]
+                && working_directory == "/phenix-fixture-environment-only/project/build/stage"
+                && environment.get("BUILD_MODE").map(String::as_str) == Some("release;literal")
         )));
         assert!(commands.iter().any(|command| matches!(
             command,

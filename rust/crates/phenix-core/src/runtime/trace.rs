@@ -46,6 +46,18 @@ pub enum RuntimeTraceEvent {
         outcome: String,
         error: Option<String>,
     },
+    Orchestration {
+        controller_session: String,
+        controller_execution: String,
+        kind: String,
+        operation: String,
+        target_session: Option<String>,
+        child_execution: Option<String>,
+        selected_generation: String,
+        target_generation: Option<String>,
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 /// Infallible destination for kernel runtime diagnostics.

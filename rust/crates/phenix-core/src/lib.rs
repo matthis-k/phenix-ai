@@ -182,7 +182,7 @@ pub use plugin::context::{
 pub use plugin::management::{
     PluginBuildReport, PluginLoadRequest, PluginManagementContext, PluginManagementError,
     PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginSetRequest,
-    PluginUnloadRequest,
+    PluginTrialResult, PluginUnloadRequest, PreparedPluginManagement,
 };
 pub use plugin::prepared_mutation::PreparedMutationHandle;
 pub use reconciliation::graph::{
@@ -195,8 +195,8 @@ pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
     PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
-    RootExecutionConstraints, RuntimePluginCandidate, RuntimeTraceBuffer, RuntimeTraceEvent,
-    RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
+    RootExecutionConstraints, RootExecutionHandle, RuntimePluginCandidate, RuntimeTraceBuffer,
+    RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
     DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
 };

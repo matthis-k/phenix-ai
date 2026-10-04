@@ -525,6 +525,37 @@ impl Kernel {
         )
     }
 
+    pub fn root_execution_handle(&self, caller_authority: &Authority) -> RootExecutionHandle {
+        let constraints = RootExecutionConstraints {
+            authority: self
+                .generation_state
+                .constrain_root_authority(caller_authority),
+            pinned_bindings: BTreeMap::new(),
+        };
+        self.root_execution_handle_from_state(&self.generation_state, constraints)
+    }
+
+    pub(super) fn root_execution_handle_from_state(
+        &self,
+        state: &GenerationRuntimeState,
+        constraints: RootExecutionConstraints,
+    ) -> RootExecutionHandle {
+        state.root_leases.fetch_add(1, Ordering::AcqRel);
+        RootExecutionHandle {
+            runtime: Arc::new(state.runtime.clone()),
+            constraints,
+            states: state.states.clone(),
+            instances: state.instances.clone(),
+            invocations: state.invocations.clone(),
+            events: Arc::clone(&self.events),
+            tasks: Arc::clone(&self.tasks),
+            persistence: Arc::clone(&self.persistence),
+            trace_sink: Arc::clone(&self.trace_sink),
+            provenance: Arc::clone(&self.provenance),
+            root_leases: Arc::clone(&state.root_leases),
+        }
+    }
+
     pub fn invoke(
         &mut self,
         service: &ServiceId,
@@ -532,28 +563,37 @@ impl Kernel {
         caller_authority: &Authority,
         binding: Option<&PluginId>,
     ) -> Result<Vec<u8>, KernelError> {
-        let prepared_mutations = PreparedMutationScope::new(self.graph_generation());
+        self.root_execution_handle(caller_authority)
+            .invoke(service, input, binding)
+    }
+}
+
+impl RootExecutionHandle {
+    pub fn invoke(
+        &self,
+        service: &ServiceId,
+        input: &[u8],
+        binding: Option<&PluginId>,
+    ) -> Result<Vec<u8>, KernelError> {
+        let prepared_mutations = PreparedMutationScope::new(self.generation());
         let runtime = RuntimeServices {
-            states: &self.generation_state.states,
-            instances: &self.generation_state.instances,
-            invocations: &self.generation_state.invocations,
-            events: &self.events,
-            tasks: &self.tasks,
-            persistence: &self.persistence,
+            states: &self.states,
+            instances: &self.instances,
+            invocations: &self.invocations,
+            events: self.events.as_ref(),
+            tasks: self.tasks.as_ref(),
+            persistence: self.persistence.as_ref(),
             prepared_mutations: &prepared_mutations,
             trace_sink: self.trace_sink.as_ref(),
-            provenance: &self.provenance,
+            provenance: self.provenance.as_ref(),
         };
-        let root_authority = self
-            .generation_state
-            .constrain_root_authority(caller_authority);
-        let scope = CallScope::external(
-            Arc::new(self.generation_state.runtime.clone()),
-            &root_authority,
-        );
+        let scope =
+            CallScope::external_with_constraints(Arc::clone(&self.runtime), &self.constraints);
         invoke_service_with(runtime, service, input, binding, scope)
     }
+}
 
+impl Kernel {
     pub fn stop(&mut self, plugin: &PluginId) -> Result<(), KernelError> {
         let manifest = self
             .config()

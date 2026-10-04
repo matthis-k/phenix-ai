@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -747,6 +747,7 @@ struct GenerationRuntimeState {
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
+    root_leases: Arc<AtomicUsize>,
     active: bool,
 }
 
@@ -765,6 +766,7 @@ impl GenerationRuntimeState {
             states,
             instances: BTreeMap::new(),
             invocations: BTreeMap::new(),
+            root_leases: Arc::new(AtomicUsize::new(0)),
             active: false,
         }
     }
@@ -788,6 +790,69 @@ fn constrain_authority_to_ceiling(
     authority: &Authority,
 ) -> Authority {
     authority_ceiling.map_or_else(|| authority.clone(), |ceiling| authority.attenuate(ceiling))
+}
+
+/// One leased root execution view of a resolved runtime generation.
+///
+/// The handle owns immutable routing metadata and shared Plugin endpoints. It
+/// therefore keeps root execution independent from later default-generation
+/// changes while allowing the Kernel to admit other roots or stage resident
+/// generations concurrently.
+pub struct RootExecutionHandle {
+    runtime: Arc<RuntimeGeneration>,
+    constraints: RootExecutionConstraints,
+    states: BTreeMap<PluginId, PluginState>,
+    instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
+    invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
+    events: Arc<EventBus>,
+    tasks: Arc<TaskRuntime>,
+    persistence: Arc<Mutex<Box<dyn PersistenceBackend>>>,
+    trace_sink: Arc<dyn RuntimeTraceSink>,
+    provenance: Arc<ProvenanceBuffer>,
+    root_leases: Arc<AtomicUsize>,
+}
+
+impl Clone for RootExecutionHandle {
+    fn clone(&self) -> Self {
+        self.root_leases.fetch_add(1, Ordering::AcqRel);
+        Self {
+            runtime: Arc::clone(&self.runtime),
+            constraints: self.constraints.clone(),
+            states: self.states.clone(),
+            instances: self.instances.clone(),
+            invocations: self.invocations.clone(),
+            events: Arc::clone(&self.events),
+            tasks: Arc::clone(&self.tasks),
+            persistence: Arc::clone(&self.persistence),
+            trace_sink: Arc::clone(&self.trace_sink),
+            provenance: Arc::clone(&self.provenance),
+            root_leases: Arc::clone(&self.root_leases),
+        }
+    }
+}
+
+impl RootExecutionHandle {
+    #[must_use]
+    pub fn generation(&self) -> Option<&GraphGenerationId> {
+        self.runtime.generation()
+    }
+
+    #[must_use]
+    pub fn authority(&self) -> &Authority {
+        self.constraints.authority()
+    }
+
+    #[must_use]
+    pub fn constraints(&self) -> &RootExecutionConstraints {
+        &self.constraints
+    }
+}
+
+impl Drop for RootExecutionHandle {
+    fn drop(&mut self) {
+        let previous = self.root_leases.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "root execution lease count underflow");
+    }
 }
 
 pub struct Kernel {

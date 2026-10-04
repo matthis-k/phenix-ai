@@ -199,10 +199,31 @@ impl PluginArtifactStore for RecordingStore {
         &mut self,
         artifact: &PluginArtifact,
         content: &[u8],
-    ) -> Result<(), PluginArtifactStoreError> {
+    ) -> Result<String, PluginArtifactStoreError> {
         self.events.lock().unwrap().push("cas_store");
         assert_eq!(artifact.revision, ArtifactRevision::from_content(content));
+        Ok(artifact.locator.clone())
+    }
+}
+
+struct RelocatingStore;
+
+impl PluginArtifactStore for RelocatingStore {
+    fn preflight(&mut self) -> Result<(), PluginArtifactStoreError> {
         Ok(())
+    }
+
+    fn verify_ready(&mut self, _artifact: &PluginArtifact) -> Result<(), PluginArtifactStoreError> {
+        Ok(())
+    }
+
+    fn store_built(
+        &mut self,
+        artifact: &PluginArtifact,
+        content: &[u8],
+    ) -> Result<String, PluginArtifactStoreError> {
+        assert_eq!(artifact.revision, ArtifactRevision::from_content(content));
+        Ok(format!("cas://{}", artifact.revision.as_ref()))
     }
 }
 
@@ -220,6 +241,7 @@ fn manage(
         PluginManagementRequest::load(PluginLoadRequest {
             manifest,
             components: Vec::new(),
+            entry_triggers: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::new([capability("plugin.runtime")]),
@@ -234,6 +256,58 @@ fn manage(
 
 fn policy(build_authority: Authority) -> PluginManagementPolicy {
     PluginManagementPolicy::new(Authority::default(), build_authority)
+}
+
+#[test]
+fn built_artifact_uses_the_store_canonical_locator_before_candidate_resolution() {
+    let caller = Authority::new([capability("plugin.runtime")]);
+    let policy = policy(Authority::default());
+    let (reconciler, _kernel) = active_fixture([]);
+    let mut store = RelocatingStore;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let content = b"relocated immutable wasm".to_vec();
+    let mut executor = RecordingExecutor {
+        events,
+        outcome: ExecutorOutcome::Output(content.clone()),
+        effective_authority: Arc::new(Mutex::new(None)),
+    };
+
+    let error = reconciler
+        .prepare_management(
+            PluginManagementRequest::load(PluginLoadRequest {
+                manifest: build_manifest(plan(Authority::default())),
+                components: Vec::new(),
+                entry_triggers: Vec::new(),
+                expected_active_revision: None,
+            }),
+            &caller,
+            &mut PluginManagementContext {
+                caller_authority: &caller,
+                policy: &policy,
+                artifact_store: &mut store,
+                build_executor: &mut executor,
+            },
+        )
+        .unwrap_err();
+
+    let PluginManagementError::RuntimeUnavailable {
+        build: Some(report),
+        ..
+    } = error
+    else {
+        panic!("unknown runtime should fail after storing the built artifact");
+    };
+    assert_eq!(
+        report.artifact.locator,
+        format!(
+            "cas://{}",
+            ArtifactRevision::from_content(&content).as_ref()
+        )
+    );
+    assert_eq!(
+        report.artifact.revision,
+        ArtifactRevision::from_content(&content)
+    );
 }
 
 #[test]
@@ -541,6 +615,7 @@ fn stale_expected_revision_prevents_build_execution() {
             PluginManagementRequest::load(PluginLoadRequest {
                 manifest: build_manifest(plan(Authority::default())),
                 components: Vec::new(),
+                entry_triggers: Vec::new(),
                 expected_active_revision: Some(ArtifactRevision::from_content(b"stale")),
             }),
             &Authority::new([capability("plugin.runtime")]),
@@ -583,6 +658,7 @@ fn authorization_denial_precedes_cas_and_build() {
             PluginManagementRequest::load(PluginLoadRequest {
                 manifest: build_manifest(plan(Authority::default())),
                 components: Vec::new(),
+                entry_triggers: Vec::new(),
                 expected_active_revision: None,
             }),
             &Authority::new([capability("plugin.runtime")]),

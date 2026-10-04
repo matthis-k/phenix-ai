@@ -26,8 +26,9 @@ use phenix_application_interface::{
 use phenix_core::{
     CallableRef, CapabilityError, CapabilityGenerationId,
     CapabilityInvokeInput as CoreCapabilityInvokeInput, CapabilityOwnerId, ClientConnectionId,
-    ContractId, ObservableStore, PhenixValue, ResolvedSdkContributions, RuntimeId,
-    SharedCapabilityRegistry, Type, ValueAddress, ValueCodec, ValueId, ValuePath,
+    ContractId, GraphGenerationId, ObservableStore, PhenixValue, ResolvedSdkContributions,
+    RootExecutionConstraints, RuntimeId, SharedCapabilityRegistry, Type, ValueAddress, ValueCodec,
+    ValueId, ValuePath,
 };
 use phenix_domain::{
     CallableDescriptor, CallableKind, CallablePolicy, CapabilitySet, ClientToolAdmissionId,
@@ -40,9 +41,16 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplicationRootSelection {
+    pub generation: GraphGenerationId,
+    pub constraints: RootExecutionConstraints,
+}
+
 pub struct ApplicationInvocation {
     pub operation: ContractId,
     pub input: PhenixValue,
+    pub root: Option<ApplicationRootSelection>,
     response: oneshot::Sender<Result<PhenixValue, ApplicationError>>,
 }
 
@@ -126,9 +134,84 @@ impl ApplicationInvocation {
     }
 }
 
+pub struct PendingApplicationInvocation {
+    response: oneshot::Receiver<Result<PhenixValue, ApplicationError>>,
+}
+
+impl PendingApplicationInvocation {
+    pub fn try_recv(&mut self) -> Result<Option<PhenixValue>, ApplicationError> {
+        match self.response.try_recv() {
+            Ok(response) => response.map(Some),
+            Err(oneshot::error::TryRecvError::Empty) => Ok(None),
+            Err(oneshot::error::TryRecvError::Closed) => Err(ApplicationError::Disconnected),
+        }
+    }
+
+    pub fn blocking_recv(self) -> Result<PhenixValue, ApplicationError> {
+        self.response
+            .blocking_recv()
+            .map_err(|_| ApplicationError::Disconnected)?
+    }
+}
+
 #[derive(Clone)]
 pub struct ChannelTransport {
     sender: mpsc::Sender<ApplicationInvocation>,
+}
+
+#[derive(Clone)]
+pub struct WeakChannelTransport {
+    sender: mpsc::WeakSender<ApplicationInvocation>,
+}
+
+impl WeakChannelTransport {
+    #[must_use]
+    pub fn upgrade(&self) -> Option<ChannelTransport> {
+        self.sender
+            .upgrade()
+            .map(|sender| ChannelTransport { sender })
+    }
+
+    pub fn begin_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        self.upgrade()
+            .ok_or(ApplicationError::Disconnected)?
+            .begin_blocking(operation, input)
+    }
+
+    pub fn begin_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        self.upgrade()
+            .ok_or(ApplicationError::Disconnected)?
+            .begin_blocking_in_generation(operation, input, generation, constraints)
+    }
+
+    pub fn invoke_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking(operation, input)?.blocking_recv()
+    }
+
+    pub fn invoke_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking_in_generation(operation, input, generation, constraints)?
+            .blocking_recv()
+    }
 }
 
 impl ChannelTransport {
@@ -136,6 +219,71 @@ impl ChannelTransport {
     pub fn new(capacity: usize) -> (Self, mpsc::Receiver<ApplicationInvocation>) {
         let (sender, receiver) = mpsc::channel(capacity);
         (Self { sender }, receiver)
+    }
+
+    #[must_use]
+    pub fn downgrade(&self) -> WeakChannelTransport {
+        WeakChannelTransport {
+            sender: self.sender.downgrade(),
+        }
+    }
+
+    pub fn begin_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        let (response, receive) = oneshot::channel();
+        self.sender
+            .blocking_send(ApplicationInvocation {
+                operation: operation.clone(),
+                input,
+                root: None,
+                response,
+            })
+            .map_err(|_| ApplicationError::Disconnected)?;
+        Ok(PendingApplicationInvocation { response: receive })
+    }
+
+    pub fn begin_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PendingApplicationInvocation, ApplicationError> {
+        let (response, receive) = oneshot::channel();
+        self.sender
+            .blocking_send(ApplicationInvocation {
+                operation: operation.clone(),
+                input,
+                root: Some(ApplicationRootSelection {
+                    generation,
+                    constraints,
+                }),
+                response,
+            })
+            .map_err(|_| ApplicationError::Disconnected)?;
+        Ok(PendingApplicationInvocation { response: receive })
+    }
+
+    pub fn invoke_blocking(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking(operation, input)?.blocking_recv()
+    }
+
+    pub fn invoke_blocking_in_generation(
+        &self,
+        operation: &ContractId,
+        input: PhenixValue,
+        generation: GraphGenerationId,
+        constraints: RootExecutionConstraints,
+    ) -> Result<PhenixValue, ApplicationError> {
+        self.begin_blocking_in_generation(operation, input, generation, constraints)?
+            .blocking_recv()
     }
 }
 
@@ -153,6 +301,7 @@ impl ApplicationTransport for ChannelTransport {
                 .send(ApplicationInvocation {
                     operation,
                     input,
+                    root: None,
                     response,
                 })
                 .await
@@ -1089,6 +1238,21 @@ mod tests {
         )
     }
 
+    #[test]
+    fn weak_channel_transport_does_not_keep_the_application_queue_open() {
+        let (transport, mut receiver) = ChannelTransport::new(1);
+        let weak = transport.downgrade();
+
+        assert!(weak.upgrade().is_some());
+        drop(transport);
+
+        assert!(weak.upgrade().is_none());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
     #[tokio::test]
     async fn channel_transport_preserves_typed_operation_and_response() {
         let (transport, mut receiver) = ChannelTransport::new(1);
@@ -1107,6 +1271,55 @@ mod tests {
             .unwrap();
         assert_eq!(output, PhenixValue::String("output".to_owned()));
         worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_blocking_invocation_can_be_polled_before_completion() {
+        let (transport, mut receiver) = ChannelTransport::new(1);
+        let operation = ContractId::parse("phenix.application.prompt@1").unwrap();
+        let expected_operation = operation.clone();
+        let (polled, observed_poll) = tokio::sync::oneshot::channel();
+        let caller = tokio::task::spawn_blocking(move || {
+            let mut pending = transport
+                .begin_blocking(&operation, PhenixValue::String("input".to_owned()))
+                .unwrap();
+            assert_eq!(pending.try_recv().unwrap(), None);
+            let _ = polled.send(());
+            loop {
+                if let Some(value) = pending.try_recv().unwrap() {
+                    return value;
+                }
+                std::thread::yield_now();
+            }
+        });
+
+        let invocation = receiver.recv().await.unwrap();
+        assert_eq!(invocation.operation, expected_operation);
+        assert_eq!(invocation.input, PhenixValue::String("input".to_owned()));
+        observed_poll.await.unwrap();
+        invocation.respond(Ok(PhenixValue::String("output".to_owned())));
+
+        assert_eq!(
+            caller.await.unwrap(),
+            PhenixValue::String("output".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_blocking_invocation_reports_closed_response_channel() {
+        let (transport, mut receiver) = ChannelTransport::new(1);
+        let operation = ContractId::parse("phenix.application.prompt@1").unwrap();
+        let caller = tokio::task::spawn_blocking(move || {
+            let pending = transport
+                .begin_blocking(&operation, PhenixValue::Unit)
+                .unwrap();
+            pending.blocking_recv()
+        });
+
+        let invocation = receiver.recv().await.unwrap();
+        drop(invocation);
+
+        assert_eq!(caller.await.unwrap(), Err(ApplicationError::Disconnected));
     }
 
     #[tokio::test]
