@@ -19,6 +19,11 @@ impl<'a> PluginHost<'a> {
         self.scope.generation.entry_triggers()
     }
 
+    /// Read the canonical configuration pinned to this call generation.
+    pub fn configuration(&self) -> &crate::ResolvedConfigContributions {
+        self.scope.generation.configuration()
+    }
+
     pub fn plugin(&self) -> &PluginId {
         self.plugin
     }
