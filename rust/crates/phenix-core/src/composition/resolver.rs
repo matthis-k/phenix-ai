@@ -1737,6 +1737,7 @@ mod tests {
                 resolved.plugins().to_vec(),
                 resolved.components().to_vec(),
                 resolved.entry_triggers().to_vec(),
+                resolved.process_arguments().to_vec(),
                 &Authority::default(),
             )
             .unwrap();
