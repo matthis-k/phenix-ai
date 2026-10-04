@@ -1,33 +1,29 @@
 _: {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
-      productFixture = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-lua-product-fixture";
+      luaBinding = config.packages.phenix-binding-lua;
+      observableCallbackFixture = pkgs.rustPlatform.buildRustPackage {
+        pname = "phenix-observable-callback-fixture";
         version = "0";
         src = pkgs.lib.cleanSource ../rust;
         cargoLock.lockFile = ../rust/Cargo.lock;
         doCheck = false;
 
-        # This is a behavioral CI fixture, not a shipped artifact. Avoid release
-        # optimization on the critical path; public Phenix packages stay release builds.
+        # This host is a test fixture, not a shipped artifact. Build it without
+        # release optimization while keeping the public Lua package unchanged.
         buildPhase = ''
           runHook preBuild
-          cargo build --locked --package phenix-binding-lua
-          cargo build --locked --package phenix-acp-stdio \
+          cargo build --locked --package phenix-acp-stdio \\
             --example observable_callback_fixture
           runHook postBuild
         '';
-
         installPhase = ''
           runHook preInstall
-          module="$(find target -path '*/debug/libphenix.so' -type f -print -quit)"
-          fixture="$(find target -path '*/debug/examples/observable_callback_fixture' -type f -print -quit)"
-          test -n "$module"
-          test -n "$fixture"
-          mkdir -p "$out/lib/lua/5.1" "$out/bin"
-          cp "$module" "$out/lib/lua/5.1/phenix.so"
-          cp "$fixture" "$out/bin/observable_callback_fixture"
+          executable="$(find target -path '*/debug/examples/observable_callback_fixture' -type f -print -quit)"
+          test -n "$executable"
+          mkdir -p "$out/bin"
+          cp "$executable" "$out/bin/observable_callback_fixture"
           runHook postInstall
         '';
       };
@@ -38,15 +34,16 @@ _: {
           {
             nativeBuildInputs = [
               pkgs.luajit
-              productFixture
+              luaBinding
+              observableCallbackFixture
             ];
           }
           ''
-            export LUA_CPATH="${productFixture}/lib/lua/5.1/?.so;;"
+            export LUA_CPATH="${luaBinding}/lib/lua/5.1/?.so;;"
             luajit - <<'LUA'
             local phenix = require("phenix")
             local client = phenix.connect({
-              command = "${productFixture}/bin/observable_callback_fixture",
+              command = "${observableCallbackFixture}/bin/observable_callback_fixture",
             })
 
             local function pack(...)
