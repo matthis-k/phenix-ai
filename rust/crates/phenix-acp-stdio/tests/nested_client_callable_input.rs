@@ -1,5 +1,5 @@
 use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
+    ClientCapabilityCallbacks, ClientPermissionIdentity, SdkApplicationService,
 };
 use phenix_application_interface::{
     types::{CapabilityInvokeInput, CapabilityInvokeResult},
@@ -7,7 +7,7 @@ use phenix_application_interface::{
 };
 use phenix_core::{
     CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, Key,
-    ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
+    ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, PluginRuntimeId,
     SdkContribution, SharedCapabilityRegistry, Type, ValueCodec,
 };
 use std::collections::BTreeMap;
@@ -23,10 +23,10 @@ fn capability_invocation_admits_client_callables_nested_in_its_input() {
         &sdk,
         &ObservableStore::default(),
         capabilities.clone(),
-        RuntimeId::parse("fixture-sdk-runtime").unwrap(),
+        PluginRuntimeId::parse("fixture-sdk-runtime").unwrap(),
         CapabilityGenerationId::parse("fixture-sdk-generation").unwrap(),
         callbacks,
-        ClientCapabilityIdentity::new(owner.clone(), client_generation.clone()),
+        ClientPermissionIdentity::new(owner.clone(), client_generation.clone()),
     )
     .unwrap();
 
@@ -43,7 +43,7 @@ fn capability_invocation_admits_client_callables_nested_in_its_input() {
     };
     let outer = CallableRef::new(
         ContractId::parse("fixture.outer-capability@1").unwrap(),
-        CapabilityOwnerId::Runtime(RuntimeId::parse("fixture-runtime").unwrap()),
+        CapabilityOwnerId::Runtime(PluginRuntimeId::parse("fixture-runtime").unwrap()),
         CapabilityGenerationId::parse("fixture-runtime-generation").unwrap(),
         ReferenceId::parse("outer").unwrap(),
     );
