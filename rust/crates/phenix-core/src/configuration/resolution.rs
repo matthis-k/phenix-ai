@@ -335,10 +335,10 @@ impl ResolvedConfigContributions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CapabilityId;
+    use crate::PermissionId;
 
-    fn cap(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn cap(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn resolve(
