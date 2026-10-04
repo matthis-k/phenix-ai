@@ -1,18 +1,18 @@
 # ACP stdio application
 
-status: partial
+status: implemented
 
-The crate provides an ACP server over stdio and a bounded channel transport for a configured application runtime. It does not yet provide `bin/phenix-acp`, package that binary, or connect the channel to a configured Phenix runtime. It is therefore not spawnable and cannot yet serve an editor.
+The crate provides the ACP server over stdio and a bounded channel transport for a configured application runtime. The supported product exposes this transport through `phenix --mode acp`, so ACP uses the same resolved product composition as other frontend modes.
 
 Canonical application-integration terminology is defined by #442. ACP adapter semantics are defined by #437.
 
 ## Goal
 
-Provide a spawnable ACP stdio entrypoint for applications that want to launch Phenix as an ACP agent process.
+Provide a spawnable ACP stdio mode for applications that want to launch Phenix as an ACP agent process.
 
-The package is `phenix-acp-stdio`. It will own the `phenix-acp` executable.
+`phenix-acp-stdio` owns the transport implementation. The supported `phenix` executable selects it with `--mode acp`; there is no separate ACP product executable.
 
-It is not a new protocol, runtime plugin, Client SDK, or application UI. It is a concrete composition of the ACP adapter with stdio transport and a configured Phenix runtime boundary.
+It is not a new protocol, runtime plugin, Client SDK, or application UI. It is a frontend mode over the configured Phenix runtime boundary.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Application
         | ACP JSON-RPC
         | stdin / stdout
         v
-phenix-acp
+phenix --mode acp
   phenix-acp-stdio
         |
         v
@@ -33,7 +33,7 @@ phenix-adapter-acp
 configured Phenix runtime
 ```
 
-The executable reuses `phenix-adapter-acp`. It must not implement a second ACP translation layer.
+The ACP mode reuses `phenix-adapter-acp`. It must not implement a second ACP translation layer.
 
 ## Stdio contract
 
@@ -50,9 +50,9 @@ Stdio framing follows the pinned ACP specification. Do not introduce Phenix-spec
 
 ## Runtime boundary
 
-The stdio executable must construct or connect to the configured Phenix product through an `ApplicationTransport`. The channel transport in this crate is only the hand-off point. A runtime bridge must receive each invocation, dispatch the matching typed application operation, and return its typed result.
+The ACP mode must use the configured Phenix product through an `ApplicationTransport`. The channel transport in this crate is only the hand-off point. A runtime bridge must receive each invocation, dispatch the matching typed application operation, and return its typed result.
 
-The executable owns no parallel session, transcript, routing, authentication, permission, tool, execution, or persistence state.
+The ACP frontend owns no parallel session, transcript, routing, authentication, permission, tool, execution, or persistence state.
 
 All durable semantics remain in Phenix. The stdio process keeps only connection and protocol state.
 
@@ -70,22 +70,22 @@ This is the preferred simple process integration for editors that already suppor
 
 For example, `phenix-nvim` may either:
 
-- spawn `phenix-acp` and speak ACP over stdio directly; or
+- spawn `phenix --mode acp` and speak ACP over stdio directly; or
 - use `phenix-binding-lua` / `phenix-client-acp` when it wants an in-process application API.
 
 Both paths must expose equivalent ACP and Phenix-extension semantics.
 
 ## Packaging
 
-Expose an independently buildable `phenix-acp-stdio` package containing `bin/phenix-acp`.
+`phenix-acp-stdio` remains independently buildable as the transport crate. Product packaging exposes it through `phenix --mode acp` rather than a second executable.
 
-Do not require the socket transport package for the basic stdio build.
+Do not require the socket transport package for the stdio path.
 
-Do not add a runtime plugin identity for the stdio executable. Runtime adapter identity remains `phenix.adapter.acp` from #437.
+Do not add a runtime plugin identity for the frontend mode. Runtime adapter identity remains `phenix.adapter.acp` from #437.
 
 ## Regression coverage
 
-- spawning `phenix-acp` completes ACP `initialize` over stdin/stdout;
+- spawning `phenix --mode acp` completes ACP `initialize` over stdin/stdout;
 - session creation, prompt streaming, cancellation, list, and resume behave the same as the shared ACP adapter contract;
 - negotiated Phenix extensions match `phenix-adapter-acp`;
 - logs never appear on stdout;
@@ -97,12 +97,4 @@ Do not add a runtime plugin identity for the stdio executable. Runtime adapter i
 
 ## Completion
 
-- [x] `phenix-acp-stdio` is independently buildable;
-- [ ] a runtime bridge dispatches typed application operations to configured Phenix services;
-- [ ] `phenix-acp` is the stdio executable entrypoint;
-- [x] ACP translation is reused from `phenix-adapter-acp`;
-- [ ] stdout is protocol-only and stderr is diagnostic-only;
-- [ ] no duplicate durable or domain state is introduced;
-- [ ] stdio requires no socket dependency;
-- [ ] standard ACP and Phenix extension behavior matches #437;
-- [ ] exact-head Source, Rust, Product, and Maintenance validation passes.
+The product path is `phenix --mode acp`. It reuses the configured Harness graph, the application worker, `phenix-adapter-acp`, and the stdio transport. Product validation must prove initialization, protocol-only stdout, durable session resume, and parity with the shared application contract.
