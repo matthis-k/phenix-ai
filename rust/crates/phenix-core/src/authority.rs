@@ -1,21 +1,21 @@
-use crate::CapabilityId;
+use crate::PermissionId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Authority {
-    capabilities: BTreeSet<CapabilityId>,
+    capabilities: BTreeSet<PermissionId>,
 }
 
 impl Authority {
-    pub fn new(capabilities: impl IntoIterator<Item = CapabilityId>) -> Self {
+    pub fn new(capabilities: impl IntoIterator<Item = PermissionId>) -> Self {
         Self {
             capabilities: capabilities.into_iter().collect(),
         }
     }
 
-    pub fn permits(&self, capability: &CapabilityId) -> bool {
+    pub fn permits(&self, capability: &PermissionId) -> bool {
         self.capabilities.contains(capability)
     }
 
@@ -36,7 +36,7 @@ impl Authority {
         }
     }
 
-    pub fn capabilities(&self) -> impl Iterator<Item = &CapabilityId> {
+    pub fn capabilities(&self) -> impl Iterator<Item = &PermissionId> {
         self.capabilities.iter()
     }
 }
@@ -45,8 +45,8 @@ impl Authority {
 mod tests {
     use super::*;
 
-    fn cap(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn cap(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     #[test]
