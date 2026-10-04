@@ -3,31 +3,13 @@
     { pkgs, system, ... }:
     let
       rustSource = pkgs.lib.cleanSource ../rust;
+      productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
 
-      phenixHarnessRuntime = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-harness-runtime";
-        version = "0";
-        src = rustSource;
-
-        cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-harness"
-          "--bin"
-          "phenix-harness"
-        ];
-        doCheck = false;
-
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out/bin"
-          harness_binary="$(find target -path '*/release/phenix-harness' -type f -print -quit)"
-          test -n "$harness_binary"
-          cp "$harness_binary" "$out/bin/phenix-harness"
-          ln -s phenix-harness "$out/bin/phenix"
-          runHook postInstall
-        '';
-      };
+      phenixHarnessRuntime = pkgs.runCommand "phenix-harness-runtime" { } ''
+        mkdir -p "$out/bin"
+        cp "${productRustArtifacts}/bin/phenix-harness" "$out/bin/phenix-harness"
+        ln -s phenix-harness "$out/bin/phenix"
+      '';
 
       phenixAcpFixture = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-acp-fixture";
@@ -70,10 +52,6 @@
           {
             nativeBuildInputs = [
               supportedPhenix
-              self.checks.${system}.phenix-plugin-packaging-products
-              self.checks.${system}.phenix-plugin-packaging-environment
-              self.checks.${system}.phenix-plugin-packaging-settings
-              self.checks.${system}.phenix-plugin-packaging-isolation
               pkgs.jq
             ];
           }

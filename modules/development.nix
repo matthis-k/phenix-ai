@@ -28,11 +28,19 @@
 
       mkNixCheckSuite =
         {
-          check,
+          check ? null,
+          checks ? [ ],
           name,
           needs ? [ ],
           cache ? false,
         }:
+        let
+          selectedChecks = if check != null then [ check ] else checks;
+          checkTargets = pkgs.lib.concatMapStringsSep " " (
+            selectedCheck: ''".#checks.$system.${selectedCheck}"''
+          ) selectedChecks;
+        in
+        assert (check != null) != (checks != [ ]);
         {
           inherit
             cache
@@ -46,7 +54,8 @@
           exec = ''
             ${repositoryRoot}
             system="$(nix eval --impure --raw --expr builtins.currentSystem)"
-            nix build --no-link --print-build-logs ".#checks.$system.${check}"
+            nix build --no-link --print-build-logs \
+              ${checkTargets}
           '';
         };
 
@@ -346,7 +355,13 @@
 
           product = {
             phenix-runtime = mkNixCheckSuite {
-              check = "phenix-product-runtime-smoke";
+              checks = [
+                "phenix-product-runtime-smoke"
+                "phenix-plugin-packaging-products"
+                "phenix-plugin-packaging-environment"
+                "phenix-plugin-packaging-settings"
+                "phenix-plugin-packaging-isolation"
+              ];
               name = "Phenix supported runtime journey";
             };
 

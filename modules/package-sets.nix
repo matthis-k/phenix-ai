@@ -52,6 +52,13 @@ let
       '';
     };
 
+  mkBinaryFromArtifacts =
+    pkgs: name: artifacts: binary:
+    pkgs.runCommand name { } ''
+      mkdir -p "$out/bin"
+      cp "${artifacts}/bin/${binary}" "$out/bin/${binary}"
+    '';
+
   mkLuaBindingPackage =
     pkgs:
     pkgs.rustPlatform.buildRustPackage {
@@ -189,6 +196,7 @@ in
   perSystem =
     { pkgs, system, ... }:
     let
+      productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
       luaBinding = mkLuaBindingPackage pkgs;
       pluginPackageChecks = pkgs.lib.mapAttrs' (name: package: {
         name = "phenix-plugin-${name}-package";
@@ -209,7 +217,7 @@ in
               '';
             });
         phenix-binding-lua = luaBinding;
-        phenix-runtime = mkBinaryPackage pkgs "phenix-runtime" "phenix-runtime";
+        phenix-runtime = mkBinaryFromArtifacts pkgs "phenix-runtime" productRustArtifacts "phenix-runtime";
       };
 
       checks = pluginPackageChecks // {
