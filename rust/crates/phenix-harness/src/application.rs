@@ -8934,6 +8934,7 @@ mod tests {
             manifest: second_manifest.map_artifact(PluginArtifactInput::Ready),
             components: vec![component.clone()],
             entry_triggers: vec![memory_debug_trigger()],
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         };
         let trial_request = PhenixValue::from(serde_json::to_value(&trial_request).unwrap());
