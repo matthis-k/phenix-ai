@@ -76,6 +76,8 @@ impl Display for HarnessBuildError {
     }
 }
 
+pub type ProductBuildError = HarnessBuildError;
+
 impl Error for HarnessBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
@@ -161,6 +163,8 @@ pub struct HarnessBuilder {
     component_authority: Authority,
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
+
+pub type ProductBuilder = HarnessBuilder;
 
 impl HarnessBuilder {
     pub fn new() -> Self {
@@ -651,6 +655,8 @@ pub struct PhenixHarness {
     reconciler: GraphReconciler,
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
+
+pub type ProductHost = PhenixHarness;
 
 impl PhenixHarness {
     pub fn kernel(&self) -> &Kernel {
