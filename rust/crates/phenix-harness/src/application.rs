@@ -6762,6 +6762,40 @@ mod tests {
         assert!(matches!(response, OptionResponse::Updated { .. }));
     }
 
+    #[test]
+    fn full_product_enables_runtime_orchestration_until_explicitly_disabled() {
+        let builder = crate::HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            "phenix.product.full".to_owned(),
+        ]))
+        .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let worker = ApplicationWorker::new(harness).unwrap();
+        let session_id = SessionId::parse("session-full-product-orchestration").unwrap();
+
+        let authority = worker.application_root_authority(&session_id).unwrap();
+        for capability in runtime_orchestration_authority().capabilities() {
+            assert!(authority.permits(capability), "full product missed {capability}");
+        }
+
+        let response = worker
+            .invoke_option_command(OptionCommand::Set {
+                key: OptionKey::parse(RUNTIME_ORCHESTRATION_OPTION).unwrap(),
+                scope: OptionScope::Global,
+                value: OptionValue::Bool(false),
+            })
+            .unwrap();
+        assert!(matches!(response, OptionResponse::Updated { .. }));
+
+        let authority = worker.application_root_authority(&session_id).unwrap();
+        for capability in runtime_orchestration_authority().capabilities() {
+            assert!(
+                !authority.permits(capability),
+                "explicit orchestration disable still granted {capability}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn root_qualified_session_operation_never_falls_back_to_default_generation() {
         let mut worker = application_worker();
