@@ -1,13 +1,13 @@
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_sdk_application,
     serve_stdio_with_events_and_callbacks, ChannelTransport, ClientCapabilityCallbacks,
-    ClientCapabilityIdentity, SdkApplicationService,
+    ClientPermissionIdentity, SdkApplicationService,
 };
 use phenix_application_interface::types::ExecutionChange;
 use phenix_core::{
     CallableId, CapabilityGenerationId, ClientConnectionId, ContractId, ModelToolCall,
     ModelToolDescriptor, ObservableRegistration, ObservableStore, PhenixValue, PluginId,
-    PluginManifest, ResolvedSdkContributions, RuntimeId, SdkContribution, SdkNamespace,
+    PluginManifest, ResolvedSdkContributions, PluginRuntimeId, SdkContribution, SdkNamespace,
     SdkObservableResource, SdkResourceId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
     Type, ValueId, ValuePath,
 };
@@ -53,11 +53,11 @@ async fn main() {
         &sdk,
         &store,
         capabilities,
-        RuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
+        PluginRuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
         CapabilityGenerationId::parse("fixture-generation")
             .expect("fixture generation id is valid"),
         client_callbacks,
-        ClientCapabilityIdentity::new(
+        ClientPermissionIdentity::new(
             ClientConnectionId::parse("lua-client-1").expect("fixture client id is valid"),
             CapabilityGenerationId::parse("connection-1")
                 .expect("fixture client generation is valid"),
