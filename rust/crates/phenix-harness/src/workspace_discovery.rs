@@ -32,13 +32,28 @@ pub struct WorkspaceDiscoveryDescriptorV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkspaceDiscoveryDescriptorError {
-    UnsupportedVersion { version: u32 },
+    UnsupportedVersion {
+        version: u32,
+    },
     EmptyWorkspaceId,
     RelativeRoot,
-    TooManyRepositoryRemotes { requested: usize, allowed: usize },
-    TooManyRecallTerms { requested: usize, allowed: usize },
-    RecallTermTooLarge { term: String, requested: usize, allowed: usize },
-    SerializedDescriptorTooLarge { requested: usize, allowed: usize },
+    TooManyRepositoryRemotes {
+        requested: usize,
+        allowed: usize,
+    },
+    TooManyRecallTerms {
+        requested: usize,
+        allowed: usize,
+    },
+    RecallTermTooLarge {
+        term: String,
+        requested: usize,
+        allowed: usize,
+    },
+    SerializedDescriptorTooLarge {
+        requested: usize,
+        allowed: usize,
+    },
 }
 
 impl WorkspaceDiscoveryDescriptorV1 {
@@ -55,10 +70,12 @@ impl WorkspaceDiscoveryDescriptorV1 {
             return Err(WorkspaceDiscoveryDescriptorError::RelativeRoot);
         }
         if self.repository_remotes.len() > MAX_WORKSPACE_DISCOVERY_REMOTES {
-            return Err(WorkspaceDiscoveryDescriptorError::TooManyRepositoryRemotes {
-                requested: self.repository_remotes.len(),
-                allowed: MAX_WORKSPACE_DISCOVERY_REMOTES,
-            });
+            return Err(
+                WorkspaceDiscoveryDescriptorError::TooManyRepositoryRemotes {
+                    requested: self.repository_remotes.len(),
+                    allowed: MAX_WORKSPACE_DISCOVERY_REMOTES,
+                },
+            );
         }
         if self.recall_terms.len() > MAX_WORKSPACE_DISCOVERY_TERMS {
             return Err(WorkspaceDiscoveryDescriptorError::TooManyRecallTerms {
@@ -78,10 +95,12 @@ impl WorkspaceDiscoveryDescriptorV1 {
         }
         let serialized = serde_json::to_vec(self).expect("workspace descriptor is serializable");
         if serialized.len() > MAX_WORKSPACE_DISCOVERY_DESCRIPTOR_BYTES {
-            return Err(WorkspaceDiscoveryDescriptorError::SerializedDescriptorTooLarge {
-                requested: serialized.len(),
-                allowed: MAX_WORKSPACE_DISCOVERY_DESCRIPTOR_BYTES,
-            });
+            return Err(
+                WorkspaceDiscoveryDescriptorError::SerializedDescriptorTooLarge {
+                    requested: serialized.len(),
+                    allowed: MAX_WORKSPACE_DISCOVERY_DESCRIPTOR_BYTES,
+                },
+            );
         }
         Ok(())
     }
@@ -149,12 +168,16 @@ pub fn observe_local_workspace(
             last_observed_at: observed_at,
         };
     }
-    descriptor
-        .repository_remotes
-        .extend(repository_remotes.into_iter().filter(|value| !value.trim().is_empty()));
-    descriptor
-        .recall_terms
-        .extend(recall_terms.into_iter().filter(|value| !value.trim().is_empty()));
+    descriptor.repository_remotes.extend(
+        repository_remotes
+            .into_iter()
+            .filter(|value| !value.trim().is_empty()),
+    );
+    descriptor.recall_terms.extend(
+        recall_terms
+            .into_iter()
+            .filter(|value| !value.trim().is_empty()),
+    );
     descriptor.observation_count = descriptor.observation_count.saturating_add(1);
     descriptor.last_observed_at = observed_at;
     descriptor
@@ -223,9 +246,9 @@ fn write_descriptor_atomic(
 ) -> io::Result<()> {
     let bytes = serde_json::to_vec(descriptor)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "descriptor path has no parent"))?;
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "descriptor path has no parent")
+    })?;
     let temporary = parent.join(format!(".{DISCOVERY_FILE}.tmp-{}", std::process::id()));
 
     let mut options = fs::OpenOptions::new();
@@ -339,7 +362,11 @@ pub fn scan_workspace_descriptors(
                     .observation_count
                     .cmp(&left.descriptor.observation_count)
             })
-            .then_with(|| left.descriptor.workspace_id.cmp(&right.descriptor.workspace_id))
+            .then_with(|| {
+                left.descriptor
+                    .workspace_id
+                    .cmp(&right.descriptor.workspace_id)
+            })
     });
 
     WorkspaceDiscoveryScanResult {
@@ -405,24 +432,30 @@ mod tests {
     #[test]
     fn lexical_descriptor_discovery_is_bounded_and_rebuildable() {
         let query = WorkspaceDiscoveryQuery {
-            recall_terms: ["phenix".to_owned(), "prs".to_owned()].into_iter().collect(),
+            recall_terms: ["phenix".to_owned(), "prs".to_owned()]
+                .into_iter()
+                .collect(),
             ..WorkspaceDiscoveryQuery::default()
         };
         let result = scan_workspace_descriptors(
-            [descriptor("one", &["phenix", "prs"]), descriptor("two", &["other"])],
+            [
+                descriptor("one", &["phenix", "prs"]),
+                descriptor("two", &["other"]),
+            ],
             &query,
         );
         assert_eq!(result.candidates.len(), 1);
         assert_eq!(result.candidates[0].descriptor.workspace_id, "one");
-        assert_eq!(result.completeness, WorkspaceDiscoveryCompleteness::Complete);
+        assert_eq!(
+            result.completeness,
+            WorkspaceDiscoveryCompleteness::Complete
+        );
     }
 
     #[test]
     fn descriptor_store_round_trips_bounded_local_discovery() {
-        let root = std::env::temp_dir().join(format!(
-            "phenix-workspace-discovery-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("phenix-workspace-discovery-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let canonical = root.join("repo");
         fs::create_dir_all(&canonical).unwrap();

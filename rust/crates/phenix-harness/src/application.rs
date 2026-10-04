@@ -65,11 +65,11 @@ use phenix_provider_sdk::{
 };
 use phenix_sdk::{
     context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
-    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
-    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    CodeQuery, CodeQueryResult, ExecutionResponse, LanguageCommand, LanguageInterface,
+    options_service, CodeQuery, CodeQueryResult, ContextCommand, ContextDescriptor,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
     LanguageResponse, MemoryCommand, MemoryInterface, MemoryRecallQuery, MemoryRecord,
     MemoryResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
     OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
@@ -109,8 +109,7 @@ const APPLICATION_WORKSPACE_GIT_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-git@1";
 const APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-discovery@1";
-const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str =
-    "phenix.application-agent-tools.code-query@1";
+const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str = "phenix.application-agent-tools.code-query@1";
 const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
@@ -3079,7 +3078,9 @@ fn workspace_recall_terms(root: &Path) -> BTreeSet<String> {
                 .collect::<Vec<_>>()
         })
         .filter(|term| !term.is_empty())
-        .filter(|term| term.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
+        .filter(|term| {
+            term.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
+        })
         .collect()
 }
 
@@ -3102,7 +3103,9 @@ fn discover_workspaces(
             .into_iter()
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty())
-            .filter(|value| value.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
+            .filter(|value| {
+                value.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
+            })
             .collect(),
     };
     let Some(root) = workspace_discovery::workspace_discovery_root() else {
@@ -3827,7 +3830,10 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
         if service.as_str() == APPLICATION_CODE_QUERY_TOOL_SERVICE {
             let query = context
                 .kernel
-                .decode_projected::<CodeQuery>(&ApplicationCodeQueryToolInterface::interface_id(), input)
+                .decode_projected::<CodeQuery>(
+                    &ApplicationCodeQueryToolInterface::interface_id(),
+                    input,
+                )
                 .map_err(|error| error.to_string())?;
             let response = context
                 .sdk
@@ -3878,9 +3884,7 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             let response = context
                 .sdk
                 .memory
-                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Recall {
-                    query,
-                })
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Recall { query })
                 .map_err(|error| error.to_string())?;
             let MemoryResponse::Recall { records } = response else {
                 return Err("memory service returned a non-recall response".into());
@@ -6976,7 +6980,10 @@ mod tests {
 
         let authority = worker.application_root_authority(&session_id).unwrap();
         for capability in runtime_orchestration_authority().capabilities() {
-            assert!(authority.permits(capability), "full product missed {capability}");
+            assert!(
+                authority.permits(capability),
+                "full product missed {capability}"
+            );
         }
 
         let response = worker
