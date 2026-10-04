@@ -333,7 +333,7 @@ fn apply_process_arguments(
             ),
         ]));
         let encoded = serde_json::to_vec(&input)?;
-        harness.kernel_mut().invoke_component_abi(
+        harness.kernel_mut().invoke_component(
             &argument.argument.component,
             &service,
             &encoded,
