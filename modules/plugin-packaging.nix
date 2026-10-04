@@ -46,9 +46,10 @@ let
         ''}
       '';
 
-  mkPhenix =
+  mkPhenixWithBase =
     {
       pkgs,
+      base,
       runtimeOnly ? false,
       plugins ? [ ],
       resources ? [ ],
@@ -60,11 +61,6 @@ let
       ...
     }:
     let
-      base =
-        if runtimeOnly then
-          self.packages.${pkgs.system}.phenix-runtime
-        else
-          self.packages.${pkgs.system}.phenix-harness-runtime;
       isEmbedded = plugin: (plugin.phenixPluginExecution or null) == "embedded";
       embeddedPlugins = builtins.filter isEmbedded plugins;
       packagedPlugins = builtins.filter (plugin: !isEmbedded plugin) plugins;
@@ -153,6 +149,21 @@ let
               done
             '';
       };
+
+  mkPhenix =
+    args@{
+      pkgs,
+      runtimeOnly ? false,
+      ...
+    }:
+    let
+      base =
+        if runtimeOnly then
+          self.packages.${pkgs.system}.phenix-runtime
+        else
+          self.packages.${pkgs.system}.phenix-harness-runtime;
+    in
+    mkPhenixWithBase (args // { inherit base; });
 in
 {
   flake = {
