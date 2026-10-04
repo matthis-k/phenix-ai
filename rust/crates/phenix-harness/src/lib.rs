@@ -1049,6 +1049,7 @@ mod tests {
                 phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
                     Some(callable_id.as_str())
                 }
+                phenix_core::EntryTriggerKind::ProcessArgument { .. } => None,
             })
             .collect::<BTreeSet<_>>();
 
