@@ -246,9 +246,9 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 
-  product-phenix-lua-binding:
+  product-phenix-products:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Product / Phenix Lua binding product fixture"
+    name: "CI / Product / Phenix supported products"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
     steps:
@@ -262,43 +262,12 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - name: "Phenix Lua binding product fixture"
+      - name: "Phenix supported products"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-lua-binding\",\"source\":{\"job\":\"product-phenix-lua-binding\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-c3ad7e345430 -- invoke"
-
-      - name: Repository remains clean
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-
-  product-phenix-runtime:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Product / Phenix supported runtime journey"
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            max-jobs = auto
-
-      - name: "Phenix supported runtime journey"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-runtime\",\"source\":{\"job\":\"product-phenix-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-5bfe8a5b5d52 -- invoke"
+        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-products\",\"source\":{\"job\":\"product-phenix-products\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-662f6907ebfc -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}
@@ -769,8 +738,7 @@ jobs:
       - build-stitch-mcp
       - integration-backend-acp
       - integration-plugin-packaging
-      - product-phenix-lua-binding
-      - product-phenix-runtime
+      - product-phenix-products
       - runtime-process-roundtrip
       - runtime-stitch
       - test-adapter-domain
@@ -793,8 +761,7 @@ jobs:
           [[ '${{ needs.build-stitch-mcp.result }}' == success ]]
           [[ '${{ needs.integration-backend-acp.result }}' == success ]]
           [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
-          [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
-          [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
+          [[ '${{ needs.product-phenix-products.result }}' == success ]]
           [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
           [[ '${{ needs.runtime-stitch.result }}' == success ]]
           [[ '${{ needs.test-adapter-domain.result }}' == success ]]
