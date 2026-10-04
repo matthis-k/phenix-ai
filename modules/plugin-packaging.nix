@@ -201,12 +201,31 @@ in
         "workspace"
       ];
       defaultPlugins = map (name: self.phenixPlugins.${pkgs.system}.${name}) defaultPluginNames;
+      defaultPluginIds = map (plugin: plugin.phenixPluginId) defaultPlugins;
       harnessResources = self.packages.${pkgs.system}.phenix-harness-resources;
-      defaultComposition = mkPhenix {
+
+      # Product packages select immutable compositions. Runtime argv selects a
+      # process mode inside the selected package; it never selects the package.
+      kernelComposition = mkPhenix {
+        inherit pkgs;
+        enabledPlugins = [ ];
+      };
+      basicComposition = mkPhenix {
+        inherit pkgs;
+        enabledPlugins = [ "phenix.agent.basic" ];
+      };
+      fullComposition = mkPhenix {
         inherit pkgs;
         plugins = defaultPlugins;
         resources = [ harnessResources ];
+        enabledPlugins = [ "phenix.agent.full" ] ++ defaultPluginIds;
+        settings = {
+          global = {
+            "agent.runtime_orchestration" = true;
+          };
+        };
       };
+      defaultComposition = fullComposition;
       settingsConfigDirectory = pkgs.writeTextDir "settings.json" (
         builtins.toJSON {
           global = {
@@ -271,14 +290,20 @@ in
     in
     {
       packages = {
-        phenix-harness = defaultComposition;
-        phenix = defaultComposition;
-        default = defaultComposition;
+        phenix-kernel = kernelComposition;
+        phenix-basic = basicComposition;
+        phenix-full = fullComposition;
+        phenix-harness = fullComposition;
+        phenix = fullComposition;
+        default = fullComposition;
       };
       apps = {
-        phenix-harness.program = "${defaultComposition}/bin/phenix-harness";
-        phenix.program = "${defaultComposition}/bin/phenix";
-        default.program = "${defaultComposition}/bin/phenix";
+        phenix-kernel.program = "${kernelComposition}/bin/phenix";
+        phenix-basic.program = "${basicComposition}/bin/phenix";
+        phenix-full.program = "${fullComposition}/bin/phenix";
+        phenix-harness.program = "${fullComposition}/bin/phenix-harness";
+        phenix.program = "${fullComposition}/bin/phenix";
+        default.program = "${fullComposition}/bin/phenix";
         phenix-runtime.program = "${self.packages.${pkgs.system}.phenix-runtime}/bin/phenix-runtime";
       };
       checks.phenix-plugin-packaging =
