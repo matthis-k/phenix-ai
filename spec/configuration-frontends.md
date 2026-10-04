@@ -1,4 +1,4 @@
-# Configuration frontends and graph generations
+# Configuration frontends and generations
 
 status: implemented
 
@@ -10,7 +10,7 @@ The architectural rule is:
 
 > Configuration frontends may expose arbitrary user-facing APIs, but they only emit canonical declarative contributions. One resolver owns runtime topology, authority, validation, and graph construction.
 
-This preserves a stable production model while allowing development mode to dynamically add, remove, or replace plugins, components, skills, resources, and configuration through validated graph generations.
+This preserves a stable production model while allowing development mode to dynamically add, remove, or replace plugins, components, skills, resources, and configuration through validated generations.
 
 ## Vocabulary
 
@@ -39,7 +39,7 @@ Graph generation
   one activated ResolvedHarness revision
 
 Reconciler
-  plans and applies safe transitions between valid graph generations in development mode
+  plans and applies safe transitions between valid generations in development mode
 ```
 
 Do not call configuration frontends `interface plugins`; `interface` is reserved for runtime component contracts.
@@ -275,7 +275,7 @@ A dynamically discovered component is subject to the same authority ceiling and 
 
 ## Stable mode
 
-Stable operation resolves once and activates one immutable graph generation:
+Stable operation resolves once and activates one immutable generation:
 
 ```text
 external config + package metadata + resources
@@ -290,7 +290,7 @@ external config + package metadata + resources
                  resolver
                     |
                     v
-        ResolvedHarness generation N
+        ResolvedGeneration N
                     |
                     v
                   runtime
@@ -307,7 +307,7 @@ A frontend must not allow ambient filesystem state, environment variables, remot
 
 ## Graph generations
 
-Each valid `ResolvedHarness` is a graph generation with its own semantic identity.
+Each valid `ResolvedHarness` is a generation with its own semantic identity.
 
 Running work is pinned to the generation whose semantics it started under unless a contract explicitly defines safe migration.
 
@@ -320,7 +320,7 @@ configuration changes
 execution C -> generation 42
 ```
 
-A model call, orchestration, task, worker, or session projection must not silently switch providers, authority, skills, or interposition policy halfway through an invocation merely because a new graph generation became available.
+A model call, orchestration, task, worker, or session projection must not silently switch providers, authority, skills, or interposition policy halfway through an invocation merely because a new generation became available.
 
 ## Development mode
 
@@ -472,7 +472,7 @@ The active system must expose enough information to explain why the runtime has 
 At minimum inspect:
 
 ```text
-active graph generation/semantic identity
+active generation/semantic identity
 configuration contribution sources and revisions
 selected plugins/components/resources/skills
 component imports and resolved providers
@@ -495,7 +495,7 @@ Diagnostics must preserve source attribution so a user can trace a resolved sett
 - Basic plugin/component metadata can be inspected before arbitrary plugin behavior is activated.
 - Requested authority can be denied or attenuated by Harness policy without changing frontend syntax.
 - Stable mode materializes all composition-relevant external input into the resolved identity or rejects the configuration as non-reproducible.
-- Each execution records/pins the graph generation that defines its semantics.
+- Each execution records/pins the generation that defines its semantics.
 - A valid dev change produces a fully validated candidate generation before activation.
 - An invalid candidate leaves the previous generation active and unchanged.
 - Adding an optional compatible plugin/component changes only the required dependency closure.
@@ -515,9 +515,9 @@ This contract is complete when:
 - arbitrary configuration frontends can extend the user-facing API without adding core-domain concepts;
 - configuration frontends cannot bypass runtime component/interface/capability semantics;
 - manifests are rich enough to validate and diff candidate compositions before activation;
-- stable mode activates one reproducible immutable graph generation;
+- stable mode activates one reproducible immutable generation;
 - development mode repeatedly produces complete candidate generations and reconciles only between valid graphs;
-- running work is pinned to explicit graph generations;
+- running work is pinned to explicit generations;
 - the active graph and proposed transitions are inspectable with source attribution;
 - Nix remains a first-class frontend but is not a privileged composition engine;
 - Lua, IPC, or another frontend/host can be added as ordinary plugins without changing the canonical resolver or core runtime semantics.
