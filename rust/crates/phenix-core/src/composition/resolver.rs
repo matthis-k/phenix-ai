@@ -537,6 +537,7 @@ impl ResolvedHarness {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
         plugin_manifests: impl IntoIterator<Item = PluginManifest>,
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
