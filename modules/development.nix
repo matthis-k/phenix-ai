@@ -50,6 +50,85 @@
           '';
         };
 
+      rustUnitPackageShards = {
+        core = [
+          "phenix-application-interface"
+          "phenix-backend"
+          "phenix-client"
+          "phenix-contract"
+          "phenix-core"
+          "phenix-domain"
+          "phenix-provider-sdk"
+          "phenix-runtime"
+        ];
+
+        protocolSdk = [
+          "phenix-acp-stdio"
+          "phenix-adapter-acp"
+          "phenix-backend-acp"
+          "phenix-backend-native"
+          "phenix-binding-generator"
+          "phenix-client-acp"
+          "phenix-sdk"
+          "phenix-sdk-macros"
+        ];
+
+        pluginFoundation = [
+          "phenix-plugin-artifacts"
+          "phenix-plugin-basic-context"
+          "phenix-plugin-basic-model"
+          "phenix-plugin-basic-skills"
+          "phenix-plugin-basic-tools"
+          "phenix-plugin-catalog"
+          "phenix-plugin-command-toolbelt"
+          "phenix-plugin-debug"
+          "phenix-plugin-environment-local"
+          "phenix-plugin-frontend"
+          "phenix-plugin-hooks"
+          "phenix-plugin-invocation-defaults"
+        ];
+
+        pluginState = [
+          "phenix-plugin-api"
+          "phenix-plugin-context"
+          "phenix-plugin-execution"
+          "phenix-plugin-jobs"
+          "phenix-plugin-options"
+          "phenix-plugin-session-tree"
+          "phenix-plugin-sessions"
+          "phenix-plugin-step-runner"
+          "phenix-plugin-workspace"
+        ];
+
+        agentProduct = [
+          "phenix-agent-configurations"
+          "phenix-harness"
+          "phenix-plugin-basic-agent"
+          "phenix-plugin-efficiency-evaluation"
+          "phenix-plugin-memory"
+          "phenix-plugin-models"
+          "phenix-plugin-openai-codex"
+          "phenix-plugin-planning"
+          "phenix-plugin-providers"
+          "phenix-plugin-repository-workers"
+        ];
+      };
+
+      rustUnitWorkspacePackages =
+        map builtins.baseNameOf
+          ((builtins.fromTOML (builtins.readFile ../rust/Cargo.toml)).workspace.members);
+      rustUnitExpectedPackages =
+        builtins.filter (package: package != "phenix-binding-lua") rustUnitWorkspacePackages;
+      rustUnitShardedPackages = builtins.concatLists (builtins.attrValues rustUnitPackageShards);
+      rustUnitShardsValid =
+        if
+          builtins.sort builtins.lessThan rustUnitShardedPackages
+          != builtins.sort builtins.lessThan rustUnitExpectedPackages
+        then
+          throw "phenix-ai: Rust unit test shards must cover every workspace package except phenix-binding-lua exactly once"
+        else
+          true;
+
       rustUnitRuntimeInputs = pkgs: [
         pkgs.bash
         pkgs.bubblewrap
@@ -92,7 +171,7 @@
           '';
         };
 
-      ciCommands = maintenanceLib.mkCi {
+      ciCommands = assert rustUnitShardsValid; maintenanceLib.mkCi {
         ci = {
           name = "CI";
           timeoutMinutes = 120;
@@ -135,79 +214,27 @@
         test = {
           unit-core = mkRustUnitSuite {
             name = "Rust unit tests / core";
-            packages = [
-              "phenix-application-interface"
-              "phenix-backend"
-              "phenix-client"
-              "phenix-contract"
-              "phenix-core"
-              "phenix-domain"
-              "phenix-provider-sdk"
-              "phenix-runtime"
-            ];
+            packages = rustUnitPackageShards.core;
           };
 
           unit-protocol-sdk = mkRustUnitSuite {
             name = "Rust unit tests / protocol and SDK";
-            packages = [
-              "phenix-acp-stdio"
-              "phenix-adapter-acp"
-              "phenix-backend-acp"
-              "phenix-backend-native"
-              "phenix-binding-generator"
-              "phenix-client-acp"
-              "phenix-sdk"
-              "phenix-sdk-macros"
-            ];
+            packages = rustUnitPackageShards.protocolSdk;
           };
 
           unit-plugin-foundation = mkRustUnitSuite {
             name = "Rust unit tests / plugin foundation";
-            packages = [
-              "phenix-plugin-artifacts"
-              "phenix-plugin-basic-context"
-              "phenix-plugin-basic-model"
-              "phenix-plugin-basic-skills"
-              "phenix-plugin-basic-tools"
-              "phenix-plugin-catalog"
-              "phenix-plugin-command-toolbelt"
-              "phenix-plugin-debug"
-              "phenix-plugin-environment-local"
-              "phenix-plugin-frontend"
-              "phenix-plugin-hooks"
-              "phenix-plugin-invocation-defaults"
-            ];
+            packages = rustUnitPackageShards.pluginFoundation;
           };
 
           unit-plugin-state = mkRustUnitSuite {
             name = "Rust unit tests / plugin state";
-            packages = [
-              "phenix-plugin-api"
-              "phenix-plugin-context"
-              "phenix-plugin-execution"
-              "phenix-plugin-jobs"
-              "phenix-plugin-options"
-              "phenix-plugin-session-tree"
-              "phenix-plugin-sessions"
-              "phenix-plugin-step-runner"
-              "phenix-plugin-workspace"
-            ];
+            packages = rustUnitPackageShards.pluginState;
           };
 
           unit-agent-product = mkRustUnitSuite {
             name = "Rust unit tests / agent and product";
-            packages = [
-              "phenix-agent-configurations"
-              "phenix-harness"
-              "phenix-plugin-basic-agent"
-              "phenix-plugin-efficiency-evaluation"
-              "phenix-plugin-memory"
-              "phenix-plugin-models"
-              "phenix-plugin-openai-codex"
-              "phenix-plugin-planning"
-              "phenix-plugin-providers"
-              "phenix-plugin-repository-workers"
-            ];
+            packages = rustUnitPackageShards.agentProduct;
           };
 
           docs = {
