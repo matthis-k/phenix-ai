@@ -2,6 +2,9 @@
 
 status: implemented
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Purpose
 
 Allow Phenix to expose arbitrary configuration APIs without making Nix, Lua, IPC, TOML, a GUI, or any other frontend part of the runtime architecture.
