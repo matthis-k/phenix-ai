@@ -242,6 +242,7 @@ fn manage(
             manifest,
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::new([capability("plugin.runtime")]),
