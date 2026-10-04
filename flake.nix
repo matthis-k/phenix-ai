@@ -32,6 +32,7 @@
       ];
 
       imports = [
+        ./modules/rust-artifacts.nix
         ./modules/harness-product.nix
         ./modules/plugin-packaging.nix
         ./modules/package-sets.nix
