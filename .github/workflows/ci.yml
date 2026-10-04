@@ -215,9 +215,9 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 
-  integration-plugin-packaging-environment:
+  integration-plugin-packaging:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Integration / Plugin packaging / environment"
+    name: "CI / Integration / Plugin packaging integration"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
     steps:
@@ -231,105 +231,12 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - name: "Plugin packaging / environment"
+      - name: "Plugin packaging integration"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging-environment\",\"source\":{\"job\":\"integration-plugin-packaging-environment\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-eab8f1c1d885 -- invoke"
-
-      - name: Repository remains clean
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-
-  integration-plugin-packaging-isolation:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Integration / Plugin packaging / isolation"
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            max-jobs = auto
-
-      - name: "Plugin packaging / isolation"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging-isolation\",\"source\":{\"job\":\"integration-plugin-packaging-isolation\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-163974e1bafa -- invoke"
-
-      - name: Repository remains clean
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-
-  integration-plugin-packaging-products:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Integration / Plugin packaging / products"
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            max-jobs = auto
-
-      - name: "Plugin packaging / products"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging-products\",\"source\":{\"job\":\"integration-plugin-packaging-products\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-0dda868c709e -- invoke"
-
-      - name: Repository remains clean
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-
-  integration-plugin-packaging-settings:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Integration / Plugin packaging / settings"
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            max-jobs = auto
-
-      - name: "Plugin packaging / settings"
-        env:
-          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
-          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
-          CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging-settings\",\"source\":{\"job\":\"integration-plugin-packaging-settings\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-e51458b9278f -- invoke"
+        run: "printf '%s\\n' '{\"command\":\"jobs/integration-plugin-packaging\",\"source\":{\"job\":\"integration-plugin-packaging\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-e0dcc81ccb75 -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}
@@ -861,10 +768,7 @@ jobs:
       - build-rust-workspace
       - build-stitch-mcp
       - integration-backend-acp
-      - integration-plugin-packaging-environment
-      - integration-plugin-packaging-isolation
-      - integration-plugin-packaging-products
-      - integration-plugin-packaging-settings
+      - integration-plugin-packaging
       - product-phenix-lua-binding
       - product-phenix-runtime
       - runtime-process-roundtrip
@@ -888,10 +792,7 @@ jobs:
           [[ '${{ needs.build-rust-workspace.result }}' == success ]]
           [[ '${{ needs.build-stitch-mcp.result }}' == success ]]
           [[ '${{ needs.integration-backend-acp.result }}' == success ]]
-          [[ '${{ needs.integration-plugin-packaging-environment.result }}' == success ]]
-          [[ '${{ needs.integration-plugin-packaging-isolation.result }}' == success ]]
-          [[ '${{ needs.integration-plugin-packaging-products.result }}' == success ]]
-          [[ '${{ needs.integration-plugin-packaging-settings.result }}' == success ]]
+          [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
           [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
           [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
           [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
