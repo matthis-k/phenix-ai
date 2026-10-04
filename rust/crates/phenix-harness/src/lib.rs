@@ -9,7 +9,7 @@ use phenix_core::{
     RootExecutionHandle, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    adapter_acp_factory, adapter_acp_manifest, full_agent_configuration_manifest,
     agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
     artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
@@ -249,7 +249,7 @@ impl HarnessBuilder {
     pub fn with_selected_suite(enabled: &BTreeSet<String>) -> Result<Self, String> {
         let authority = default_suite_authority();
         let available = [
-            advanced_agent_configuration_manifest(),
+            full_agent_configuration_manifest(),
             basic_agent_configuration_manifest(),
             adapter_acp_manifest(),
             repository_worker_manifest(),
@@ -343,7 +343,7 @@ impl HarnessBuilder {
         builder.component_authority = authority.clone();
         for manifest in [
             basic_agent_configuration_manifest(),
-            advanced_agent_configuration_manifest(),
+            full_agent_configuration_manifest(),
         ] {
             if enabled.contains(manifest.id.as_str()) {
                 builder.add_manifest(manifest);
@@ -778,7 +778,7 @@ mod tests {
         ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
         ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
         EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-        SessionCommand, SessionResponse, ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
+        SessionCommand, SessionResponse, FULL_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -909,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
+    fn full_agent_configuration_extends_basic_through_dependency_resolution() {
         let basic = HarnessBuilder::with_selected_suite(&BTreeSet::from([
             BASIC_AGENT_CONFIGURATION.to_owned(),
         ]))
@@ -942,17 +942,17 @@ mod tests {
         }
         basic.build().unwrap();
 
-        let advanced = HarnessBuilder::with_selected_suite(&BTreeSet::from([
-            ADVANCED_AGENT_CONFIGURATION.to_owned(),
+        let full = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+            FULL_AGENT_CONFIGURATION.to_owned(),
         ]))
         .unwrap();
-        let advanced_ids = advanced
+        let full_ids = full
             .manifests
             .iter()
             .map(|manifest| manifest.id.as_str())
             .collect::<BTreeSet<_>>();
         for required in [
-            ADVANCED_AGENT_CONFIGURATION,
+            FULL_AGENT_CONFIGURATION,
             BASIC_AGENT_CONFIGURATION,
             "phenix.agent-loop",
             "phenix.options",
@@ -965,11 +965,11 @@ mod tests {
             "phenix.debug",
         ] {
             assert!(
-                advanced_ids.contains(required),
-                "advanced configuration missed {required}"
+                full_ids.contains(required),
+                "full configuration missed {required}"
             );
         }
-        advanced.build().unwrap();
+        full.build().unwrap();
     }
 
     #[test]
