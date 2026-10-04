@@ -8515,27 +8515,29 @@ mod tests {
         .unwrap();
         state.lock().unwrap().controller = Some(controller.session_id.clone());
 
-        let prompt = invoke_transport_operation::<Prompt>(
-            &transport,
-            PromptInput {
-                session_id: controller.session_id.clone(),
-                content: vec![Content::Text {
-                    text: "trial the changed memory plugin and verify it".into(),
-                }],
-            },
-        );
-        tokio::pin!(prompt);
-        let mut observed_model_entries = state.lock().unwrap().model_entries;
-        let result = loop {
-            match tokio::time::timeout(Duration::from_secs(10), &mut prompt).await {
-                Ok(result) => break result,
-                Err(_) => {
-                    let model_entries = state.lock().unwrap().model_entries;
-                    assert!(
-                        model_entries > observed_model_entries,
-                        "runtime orchestration made no model progress for 10s after {model_entries} entries"
-                    );
-                    observed_model_entries = model_entries;
+        let result = {
+            let prompt = invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: controller.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "trial the changed memory plugin and verify it".into(),
+                    }],
+                },
+            );
+            tokio::pin!(prompt);
+            let mut observed_model_entries = state.lock().unwrap().model_entries;
+            loop {
+                match tokio::time::timeout(Duration::from_secs(10), &mut prompt).await {
+                    Ok(result) => break result,
+                    Err(_) => {
+                        let model_entries = state.lock().unwrap().model_entries;
+                        assert!(
+                            model_entries > observed_model_entries,
+                            "runtime orchestration made no model progress for 10s after {model_entries} entries"
+                        );
+                        observed_model_entries = model_entries;
+                    }
                 }
             }
         }
