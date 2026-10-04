@@ -35,6 +35,7 @@ pub struct RuntimeGeneration {
     dispatch_topology: ResolvedDispatchTopology,
     resources: Vec<SkillResourceMetadata>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    configuration: ResolvedConfigContributions,
 }
 
 impl RuntimeGeneration {
@@ -47,6 +48,7 @@ impl RuntimeGeneration {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            configuration: ResolvedConfigContributions::default(),
         }
     }
 
@@ -65,6 +67,7 @@ impl RuntimeGeneration {
             dispatch_topology,
             resources: Vec::new(),
             entry_triggers: Vec::new(),
+            configuration: ResolvedConfigContributions::default(),
         }
     }
 
@@ -74,6 +77,7 @@ impl RuntimeGeneration {
         component_graph: ResolvedComponentGraph,
         resources: Vec<SkillResourceMetadata>,
         entry_triggers: Vec<ComponentEntryTrigger>,
+        configuration: ResolvedConfigContributions,
     ) -> Self {
         let dispatch_topology = config
             .resolved_dispatch_topology()
@@ -85,6 +89,7 @@ impl RuntimeGeneration {
             dispatch_topology,
             resources,
             entry_triggers,
+            configuration,
         }
     }
 
@@ -124,6 +129,11 @@ impl RuntimeGeneration {
     #[must_use]
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
         &self.entry_triggers
+    }
+
+    #[must_use]
+    pub fn configuration(&self) -> &ResolvedConfigContributions {
+        &self.configuration
     }
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
@@ -319,7 +329,6 @@ pub struct ResolvedHarness {
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     durable_schemas: Vec<DurableSchemaRegistration>,
-    configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
     authority_ceiling: Authority,
@@ -583,12 +592,12 @@ impl ResolvedHarness {
                 component_graph,
                 resources,
                 entry_triggers.clone(),
+                configuration,
             ),
             plugins,
             components,
             entry_triggers,
             durable_schemas,
-            configuration,
             layer_policies: inputs.layer_policies,
             provider_policy: inputs.provider_policy,
             authority_ceiling: authority_ceiling.clone(),
@@ -663,7 +672,7 @@ impl ResolvedHarness {
     }
 
     pub fn configuration(&self) -> &ResolvedConfigContributions {
-        &self.configuration
+        self.runtime.configuration()
     }
 
     pub fn kernel_config(&self) -> &KernelConfig {
@@ -726,7 +735,7 @@ impl ResolvedHarness {
             entry_triggers: &entry_triggers,
             durable_schemas: durable_schema_payload(&durable_schemas),
             resources: self.resources(),
-            configuration: self.configuration.semantic_payload(),
+            configuration: self.configuration().semantic_payload(),
             layer_policies: layer_policy_payload(&self.layer_policies),
             provider_policy: &self.provider_policy,
             authority_ceiling,
@@ -739,12 +748,12 @@ impl ResolvedHarness {
                 component_graph,
                 self.resources().to_vec(),
                 entry_triggers.clone(),
+                self.configuration().clone(),
             ),
             plugins,
             components,
             entry_triggers,
             durable_schemas,
-            configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
             provider_policy: self.provider_policy.clone(),
             authority_ceiling: authority_ceiling.clone(),
