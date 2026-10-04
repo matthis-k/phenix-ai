@@ -155,6 +155,7 @@ pub struct HarnessBuilder {
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
     component_authority: Authority,
     application_agent_tools: application::ApplicationAgentToolRegistry,
@@ -539,6 +540,10 @@ impl HarnessBuilder {
         self.entry_triggers.push(trigger);
     }
 
+    pub fn add_process_argument(&mut self, argument: ComponentProcessArgument) {
+        self.process_arguments.push(argument);
+    }
+
     pub fn add_config_contribution(&mut self, contribution: ConfigContribution) {
         self.contributions.push(contribution);
     }
@@ -597,11 +602,12 @@ impl HarnessBuilder {
             .iter()
             .any(|manifest| manifest.id == debug_id);
         let resolved =
-            ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+            ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
                 self.manifests.clone(),
                 self.components,
                 self.durable_schemas,
                 self.entry_triggers,
+                self.process_arguments,
                 self.contributions,
                 self.layer_policies,
                 &self.component_authority,
@@ -1049,7 +1055,6 @@ mod tests {
                 phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
                     Some(callable_id.as_str())
                 }
-                phenix_core::EntryTriggerKind::ProcessArgument { .. } => None,
             })
             .collect::<BTreeSet<_>>();
 
