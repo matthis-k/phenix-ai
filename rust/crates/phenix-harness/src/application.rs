@@ -3079,7 +3079,7 @@ fn workspace_recall_terms(root: &Path) -> BTreeSet<String> {
         })
         .filter(|term| !term.is_empty())
         .filter(|term| {
-            term.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
+            term.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
         })
         .collect()
 }
@@ -3104,7 +3104,7 @@ fn discover_workspaces(
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty())
             .filter(|value| {
-                value.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
+                value.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
             })
             .collect(),
     };
@@ -9594,7 +9594,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "bash",
+                "code.query",
+                "memory.recall",
+                "memory.record",
                 "phenix.inspect",
+                "workspace.discover",
                 "workspace.git",
                 "workspace.read",
                 "workspace.search",
