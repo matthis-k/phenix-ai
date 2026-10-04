@@ -69,10 +69,12 @@ use phenix_sdk::{
     ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, RepositoryContextSource,
-    RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    CodeQuery, CodeQueryResult, ExecutionResponse, LanguageCommand, LanguageInterface,
+    LanguageResponse, MemoryCommand, MemoryInterface, MemoryRecallQuery, MemoryRecord,
+    MemoryResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
+    RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
+    WorkspaceEntryKind, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -104,6 +106,12 @@ const APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-write@1";
 const APPLICATION_WORKSPACE_GIT_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-git@1";
+const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.code-query@1";
+const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.memory-record@1";
+const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.memory-recall@1";
 const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
 const APPLICATION_SESSION_CONTROL_CAPABILITY: &str = "application.session.control";
 const RUNTIME_GENERATION_SELECT_CAPABILITY: &str = "runtime.generation.select";
@@ -148,6 +156,14 @@ struct ApplicationWorkspaceReadToolInterface;
 struct ApplicationWorkspaceSearchToolInterface;
 struct ApplicationWorkspaceWriteToolInterface;
 struct ApplicationWorkspaceGitToolInterface;
+struct ApplicationCodeQueryToolInterface;
+struct ApplicationMemoryRecordToolInterface;
+struct ApplicationMemoryRecallToolInterface;
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryRecallResponse {
+    records: Vec<MemoryRecord>,
+}
 
 impl ComponentInterface for ApplicationShellToolInterface {
     fn interface_id() -> InterfaceId {
@@ -195,6 +211,39 @@ workspace_tool_interface!(
     ApplicationWorkspaceGitToolRequest
 );
 
+impl ComponentInterface for ApplicationCodeQueryToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_CODE_QUERY_TOOL_SERVICE)
+            .expect("static code query tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<CodeQuery, CodeQueryResult>()
+    }
+}
+
+impl ComponentInterface for ApplicationMemoryRecordToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_MEMORY_RECORD_TOOL_SERVICE)
+            .expect("static memory record tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<MemoryRecord, MemoryRecord>()
+    }
+}
+
+impl ComponentInterface for ApplicationMemoryRecallToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_MEMORY_RECALL_TOOL_SERVICE)
+            .expect("static memory recall tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<MemoryRecallQuery, ApplicationMemoryRecallResponse>()
+    }
+}
+
 fn workspace_capability(value: &str) -> Authority {
     Authority::new([CapabilityId::parse(value).expect("static workspace capability is valid")])
 }
@@ -228,7 +277,7 @@ fn application_workspace_git_authority() -> Authority {
     workspace_capability("workspace.git")
 }
 
-fn application_workspace_tool_trigger(
+fn application_agent_tool_trigger(
     interface: InterfaceId,
     callable_id: &str,
     description: &str,
@@ -238,7 +287,8 @@ fn application_workspace_tool_trigger(
         component: application_agent_tool_component_id(),
         interface,
         trigger: EntryTriggerKind::ToolCall {
-            callable_id: CallableId::parse(callable_id).expect("static workspace tool id is valid"),
+            callable_id: CallableId::parse(callable_id)
+                .expect("static application agent tool id is valid"),
             description: description.to_owned(),
         },
         required_authority,
@@ -248,35 +298,63 @@ fn application_workspace_tool_trigger(
 #[must_use]
 pub(crate) fn application_workspace_tool_triggers() -> Vec<ComponentEntryTrigger> {
     vec![
-        application_workspace_tool_trigger(
+        application_agent_tool_trigger(
             ApplicationShellToolInterface::interface_id(),
             "bash",
             "Run a shell command in the configured Phenix workspace. The workspace provider owns execution, so the same tool can target local, SSH, container, or other workspace backends.",
             application_shell_authority(),
         ),
-        application_workspace_tool_trigger(
+        application_agent_tool_trigger(
             ApplicationWorkspaceReadToolInterface::interface_id(),
             "workspace.read",
             "Read one UTF-8 text file by workspace-relative path and return its exact content version.",
             application_workspace_read_authority(),
         ),
-        application_workspace_tool_trigger(
+        application_agent_tool_trigger(
             ApplicationWorkspaceSearchToolInterface::interface_id(),
             "workspace.search",
             "Search workspace text files for a string, optionally below a relative path.",
             application_workspace_read_authority(),
         ),
-        application_workspace_tool_trigger(
+        application_agent_tool_trigger(
             ApplicationWorkspaceWriteToolInterface::interface_id(),
             "workspace.write",
             "Write one UTF-8 text file. Pass the exact observed content hash, or null only when the file was observed absent.",
             application_workspace_write_authority(),
         ),
-        application_workspace_tool_trigger(
+        application_agent_tool_trigger(
             ApplicationWorkspaceGitToolInterface::interface_id(),
             "workspace.git",
             "Run Git with explicit arguments in the configured workspace.",
             application_workspace_git_authority(),
+        ),
+    ]
+}
+
+#[must_use]
+pub(crate) fn application_code_tool_triggers() -> Vec<ComponentEntryTrigger> {
+    vec![application_agent_tool_trigger(
+        ApplicationCodeQueryToolInterface::interface_id(),
+        "code.query",
+        "Run a bounded provider-neutral semantic code query over the canonical language index.",
+        Authority::default(),
+    )]
+}
+
+#[must_use]
+pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
+    vec![
+        application_agent_tool_trigger(
+            ApplicationMemoryRecordToolInterface::interface_id(),
+            "memory.record",
+            "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
+            Authority::default(),
+        ),
+        application_agent_tool_trigger(
+            ApplicationMemoryRecallToolInterface::interface_id(),
+            "memory.recall",
+            "Recall typed durable memories using bounded scope, kind, text, time, and result limits.",
+            Authority::default(),
         ),
     ]
 }
@@ -989,11 +1067,23 @@ impl ApplicationWorker {
                 ),
             });
         };
-        let OptionValue::Bool(enabled) = option.value else {
+        let OptionValue::Bool(mut enabled) = option.value else {
             return Err(ApplicationError::InvalidResponse {
                 message: format!("{RUNTIME_ORCHESTRATION_OPTION} must be boolean"),
             });
         };
+        if !enabled
+            && option.source == OptionValueSource::Default
+            && self
+                .harness
+                .lock()
+                .resolved_harness()
+                .plugins()
+                .iter()
+                .any(|plugin| plugin.id.as_str() == "phenix.product.full")
+        {
+            enabled = true;
+        }
 
         let application = default_application_root_authority();
         if !enabled {
@@ -3272,6 +3362,18 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required: true,
                 authority: agent_loop_progress_authority(),
             },
+            ComponentImport {
+                interface: LanguageInterface::interface_id(),
+                schema: LanguageInterface::schema(),
+                required: false,
+                authority: Authority::default(),
+            },
+            ComponentImport {
+                interface: MemoryInterface::interface_id(),
+                schema: MemoryInterface::schema(),
+                required: false,
+                authority: Authority::default(),
+            },
         ],
         exports: vec![
             ComponentExport {
@@ -3303,6 +3405,24 @@ pub(crate) fn application_agent_tool_component_manifest(
                 schema: ApplicationWorkspaceGitToolInterface::schema(),
                 priority: 100,
                 required_authority: application_workspace_git_authority(),
+            },
+            ComponentExport {
+                interface: ApplicationCodeQueryToolInterface::interface_id(),
+                schema: ApplicationCodeQueryToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: ApplicationMemoryRecordToolInterface::interface_id(),
+                schema: ApplicationMemoryRecordToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
+                interface: ApplicationMemoryRecallToolInterface::interface_id(),
+                schema: ApplicationMemoryRecallToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
             },
             ComponentExport {
                 interface: AgentLoopControlInterface::interface_id(),
@@ -3338,6 +3458,8 @@ struct ApplicationAgentToolSdk<'host, 'runtime> {
     workspace: SdkClient<'host, 'runtime, WorkspaceInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInspectionInterface>,
     sessions: SdkClient<'host, 'runtime, SessionInterface>,
+    language: SdkClient<'host, 'runtime, LanguageInterface>,
+    memory: SdkClient<'host, 'runtime, MemoryInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -3352,6 +3474,8 @@ fn application_agent_tool_context<'host, 'runtime>(
             workspace: SdkClient::new(host, application_agent_tool_component_id()),
             execution: SdkClient::new(host, application_agent_tool_component_id()),
             sessions: SdkClient::new(host, application_agent_tool_component_id()),
+            language: SdkClient::new(host, application_agent_tool_component_id()),
+            memory: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -3497,6 +3621,72 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             return context
                 .kernel
                 .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_CODE_QUERY_TOOL_SERVICE {
+            let query = context
+                .kernel
+                .decode_projected::<CodeQuery>(&ApplicationCodeQueryToolInterface::interface_id(), input)
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .language
+                .invoke_projected::<LanguageCommand, LanguageResponse>(&LanguageCommand::Query {
+                    query,
+                })
+                .map_err(|error| error.to_string())?;
+            let LanguageResponse::Query { result } = response else {
+                return Err("language service returned a non-query response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&result)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_MEMORY_RECORD_TOOL_SERVICE {
+            let record = context
+                .kernel
+                .decode_projected::<MemoryRecord>(
+                    &ApplicationMemoryRecordToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .memory
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Record {
+                    record,
+                })
+                .map_err(|error| error.to_string())?;
+            let MemoryResponse::Record { record } = response else {
+                return Err("memory service returned a non-record response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&record)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_MEMORY_RECALL_TOOL_SERVICE {
+            let query = context
+                .kernel
+                .decode_projected::<MemoryRecallQuery>(
+                    &ApplicationMemoryRecallToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .memory
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Recall {
+                    query,
+                })
+                .map_err(|error| error.to_string())?;
+            let MemoryResponse::Recall { records } = response else {
+                return Err("memory service returned a non-recall response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&ApplicationMemoryRecallResponse { records })
                 .map_err(|error| error.to_string());
         }
         if service == &agent_loop_control_service() {
