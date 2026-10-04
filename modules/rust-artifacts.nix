@@ -9,6 +9,9 @@ _: {
         version = "0";
         src = rustSource;
         cargoLock.lockFile = ../rust/Cargo.lock;
+        # Keep release optimization; only replace the linker for this CI timing candidate.
+        nativeBuildInputs = [ pkgs.mold ];
+        RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         doCheck = false;
 
         buildPhase = ''
