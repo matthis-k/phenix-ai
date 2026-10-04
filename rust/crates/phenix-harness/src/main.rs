@@ -761,7 +761,8 @@ mod tests {
 
     #[test]
     fn plugin_arguments_cannot_shadow_core_options() {
-        let error = resolve_process_arguments(&[], &[process_argument("--mode", true)]).unwrap_err();
+        let error =
+            resolve_process_arguments(&[], &[process_argument("--mode", true)]).unwrap_err();
         assert!(error.contains("conflicts with a core argument"));
     }
 
