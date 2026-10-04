@@ -338,24 +338,9 @@
               '';
             };
 
-            plugin-packaging-products = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-products";
-              name = "Plugin packaging / products";
-            };
-
-            plugin-packaging-environment = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-environment";
-              name = "Plugin packaging / environment";
-            };
-
-            plugin-packaging-settings = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-settings";
-              name = "Plugin packaging / settings";
-            };
-
-            plugin-packaging-isolation = mkNixCheckSuite {
-              check = "phenix-plugin-packaging-isolation";
-              name = "Plugin packaging / isolation";
+            plugin-packaging = mkNixCheckSuite {
+              check = "phenix-plugin-packaging";
+              name = "Plugin packaging integration";
             };
           };
 
