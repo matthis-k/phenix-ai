@@ -8711,7 +8711,9 @@ mod tests {
             prompt_child_session(
                 &run,
                 child_for_call,
-                "wait for cancellation".into(),
+                vec![Content::Text {
+                    text: "wait for cancellation".into(),
+                }],
                 generation_for_call,
             )
         });
