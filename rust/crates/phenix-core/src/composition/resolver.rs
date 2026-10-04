@@ -1,9 +1,9 @@
 use crate::{
-    Authority, BackendFeature, CapabilityId, ComponentEntryTrigger, ComponentGraphError,
+    Authority, BackendFeature, PermissionId, ComponentEntryTrigger, ComponentGraphError,
     ComponentManifest, ComponentProcessArgument, CompositionMetadataError, ConfigContribution,
     ConfigMergeError, ConfigurationFrontendId, ConfigurationFrontendMetadata,
     DurableSchemaRegistration, EntryTriggerKind, FrontendConfigContribution, FrontendConfigError,
-    GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
+    GenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
     PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
@@ -16,9 +16,9 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
-enum RuntimeGenerationIdentity {
+enum GenerationStateIdentity {
     Bootstrap,
-    Resolved(GraphGenerationId),
+    Resolved(GenerationId),
 }
 
 /// One coherent runtime topology.
@@ -28,8 +28,8 @@ enum RuntimeGenerationIdentity {
 /// identity, configuration, component graph, and resources always move
 /// together as one value.
 #[derive(Clone, Debug)]
-pub struct RuntimeGeneration {
-    identity: RuntimeGenerationIdentity,
+pub struct GenerationState {
+    identity: GenerationStateIdentity,
     config: KernelConfig,
     component_graph: ResolvedComponentGraph,
     dispatch_topology: ResolvedDispatchTopology,
@@ -37,11 +37,11 @@ pub struct RuntimeGeneration {
     entry_triggers: Vec<ComponentEntryTrigger>,
 }
 
-impl RuntimeGeneration {
+impl GenerationState {
     pub(crate) fn bootstrap(config: KernelConfig) -> Self {
         let dispatch_topology = config.resolved_dispatch_topology();
         Self {
-            identity: RuntimeGenerationIdentity::Bootstrap,
+            identity: GenerationStateIdentity::Bootstrap,
             config,
             component_graph: ResolvedComponentGraph::empty(),
             dispatch_topology,
@@ -59,7 +59,7 @@ impl RuntimeGeneration {
             .resolved_dispatch_topology()
             .with_component_graph(&component_graph);
         Self {
-            identity: RuntimeGenerationIdentity::Bootstrap,
+            identity: GenerationStateIdentity::Bootstrap,
             config,
             component_graph,
             dispatch_topology,
@@ -69,7 +69,7 @@ impl RuntimeGeneration {
     }
 
     fn resolved(
-        id: GraphGenerationId,
+        id: GenerationId,
         config: KernelConfig,
         component_graph: ResolvedComponentGraph,
         resources: Vec<SkillResourceMetadata>,
@@ -79,7 +79,7 @@ impl RuntimeGeneration {
             .resolved_dispatch_topology()
             .with_component_graph(&component_graph);
         Self {
-            identity: RuntimeGenerationIdentity::Resolved(id),
+            identity: GenerationStateIdentity::Resolved(id),
             config,
             component_graph,
             dispatch_topology,
@@ -89,14 +89,14 @@ impl RuntimeGeneration {
     }
 
     #[must_use]
-    pub fn generation(&self) -> Option<&GraphGenerationId> {
+    pub fn generation(&self) -> Option<&GenerationId> {
         match &self.identity {
-            RuntimeGenerationIdentity::Bootstrap => None,
-            RuntimeGenerationIdentity::Resolved(id) => Some(id),
+            GenerationStateIdentity::Bootstrap => None,
+            GenerationStateIdentity::Resolved(id) => Some(id),
         }
     }
 
-    pub(crate) fn resolved_generation(&self) -> &GraphGenerationId {
+    pub(crate) fn resolved_generation(&self) -> &GenerationId {
         self.generation()
             .expect("resolved harness runtime generation has an identity")
     }
@@ -128,20 +128,20 @@ impl RuntimeGeneration {
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
         match &mut self.identity {
-            RuntimeGenerationIdentity::Bootstrap => {
+            GenerationStateIdentity::Bootstrap => {
                 panic!("bootstrap runtime generation cannot absorb resolved semantic metadata")
             }
-            RuntimeGenerationIdentity::Resolved(id) => {
+            GenerationStateIdentity::Resolved(id) => {
                 let bytes = serde_json::to_vec(&(id.as_str(), metadata))
                     .expect("resolved composition metadata is serializable");
-                *id = GraphGenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
+                *id = GenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
             }
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResolvedHarnessError {
+pub enum ResolvedCompositionError {
     ComponentGraph(ComponentGraphError),
     Kernel(KernelError),
     CompositionMetadata {
@@ -180,7 +180,7 @@ pub enum ResolvedHarnessError {
     },
     ResourceAuthorityDenied {
         resource: String,
-        capability: CapabilityId,
+        capability: PermissionId,
     },
     MissingEntryTriggerTarget {
         component: crate::ComponentId,
@@ -211,7 +211,7 @@ pub enum ResolvedHarnessError {
     },
 }
 
-impl Display for ResolvedHarnessError {
+impl Display for ResolvedCompositionError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::ComponentGraph(error) => Display::fmt(error, f),
@@ -314,29 +314,29 @@ impl Display for ResolvedHarnessError {
     }
 }
 
-impl Error for ResolvedHarnessError {}
+impl Error for ResolvedCompositionError {}
 
-impl From<ComponentGraphError> for ResolvedHarnessError {
+impl From<ComponentGraphError> for ResolvedCompositionError {
     fn from(error: ComponentGraphError) -> Self {
         Self::ComponentGraph(error)
     }
 }
 
-impl From<ConfigMergeError> for ResolvedHarnessError {
+impl From<ConfigMergeError> for ResolvedCompositionError {
     fn from(error: ConfigMergeError) -> Self {
         Self::ConfigurationMerge(error)
     }
 }
 
-impl From<KernelError> for ResolvedHarnessError {
+impl From<KernelError> for ResolvedCompositionError {
     fn from(error: KernelError) -> Self {
         Self::Kernel(error)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct ResolvedHarness {
-    runtime: RuntimeGeneration,
+pub struct ResolvedComposition {
+    runtime: GenerationState,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
@@ -387,13 +387,13 @@ impl ResolutionInputs {
     }
 }
 
-impl ResolvedHarness {
+impl ResolvedComposition {
     pub fn resolve(
         plugin_manifests: impl IntoIterator<Item = PluginManifest>,
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -415,7 +415,7 @@ impl ResolvedHarness {
         durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -437,7 +437,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         provider_policy: ProviderCompositionPolicy,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -452,7 +452,7 @@ impl ResolvedHarness {
         resources: impl IntoIterator<Item = SkillResourceMetadata>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -474,7 +474,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -497,7 +497,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -521,7 +521,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -547,7 +547,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -571,7 +571,7 @@ impl ResolvedHarness {
         contributions: impl IntoIterator<Item = ConfigContribution>,
         layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         Self::resolve_with_inputs(
             plugin_manifests,
             component_manifests,
@@ -592,7 +592,7 @@ impl ResolvedHarness {
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
         mut inputs: ResolutionInputs,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         let mut plugins: Vec<_> = plugin_manifests.into_iter().collect();
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components: Vec<_> = component_manifests.into_iter().collect();
@@ -641,7 +641,7 @@ impl ResolvedHarness {
         .identity();
 
         Ok(Self {
-            runtime: RuntimeGeneration::resolved(
+            runtime: GenerationState::resolved(
                 generation,
                 kernel_config,
                 component_graph,
@@ -666,12 +666,12 @@ impl ResolvedHarness {
         frontend_metadata: impl IntoIterator<Item = ConfigurationFrontendMetadata>,
         contributions: impl IntoIterator<Item = (ConfigurationFrontendId, FrontendConfigContribution)>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         let mut frontends = BTreeMap::new();
         for metadata in frontend_metadata {
             let id = metadata.id.clone();
             if frontends.insert(id.clone(), metadata).is_some() {
-                return Err(ResolvedHarnessError::DuplicateConfigurationFrontend(id));
+                return Err(ResolvedCompositionError::DuplicateConfigurationFrontend(id));
             }
         }
 
@@ -679,11 +679,11 @@ impl ResolvedHarness {
             .into_iter()
             .map(|(frontend, contribution)| {
                 let metadata = frontends.get(&frontend).ok_or_else(|| {
-                    ResolvedHarnessError::UnknownConfigurationFrontend(frontend.clone())
+                    ResolvedCompositionError::UnknownConfigurationFrontend(frontend.clone())
                 })?;
                 contribution
                     .lower(metadata, authority_ceiling)
-                    .map_err(|error| ResolvedHarnessError::ConfigurationFrontend {
+                    .map_err(|error| ResolvedCompositionError::ConfigurationFrontend {
                         frontend: frontend.clone(),
                         error,
                     })
@@ -698,12 +698,12 @@ impl ResolvedHarness {
         )
     }
 
-    pub fn generation(&self) -> &GraphGenerationId {
+    pub fn generation(&self) -> &GenerationId {
         self.runtime.resolved_generation()
     }
 
     #[must_use]
-    pub fn runtime_generation(&self) -> &RuntimeGeneration {
+    pub fn runtime_generation(&self) -> &GenerationState {
         &self.runtime
     }
 
@@ -770,7 +770,7 @@ impl ResolvedHarness {
         entry_triggers: Vec<ComponentEntryTrigger>,
         process_arguments: Vec<ComponentProcessArgument>,
         authority_ceiling: &Authority,
-    ) -> Result<Self, ResolvedHarnessError> {
+    ) -> Result<Self, ResolvedCompositionError> {
         let mut plugins = plugins;
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
         let mut components = components;
@@ -807,7 +807,7 @@ impl ResolvedHarness {
         }
         .identity();
         Ok(Self {
-            runtime: RuntimeGeneration::resolved(
+            runtime: GenerationState::resolved(
                 generation,
                 kernel_config,
                 component_graph,
@@ -842,7 +842,7 @@ struct SemanticGeneration<'a> {
 }
 
 impl SemanticGeneration<'_> {
-    fn identity(&self) -> GraphGenerationId {
+    fn identity(&self) -> GenerationId {
         let encoded = serde_json::to_vec(self).expect("resolved generation metadata serializes");
         let digest = Sha256::digest(encoded);
         let mut identity = String::with_capacity(digest.len() * 2);
@@ -850,25 +850,25 @@ impl SemanticGeneration<'_> {
             use std::fmt::Write as _;
             write!(&mut identity, "{byte:02x}").expect("writing to String cannot fail");
         }
-        GraphGenerationId::from(identity)
+        GenerationId::from(identity)
     }
 }
 
 fn resolve_durable_schemas(
     durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
     kernel_config: &KernelConfig,
-) -> Result<Vec<DurableSchemaRegistration>, ResolvedHarnessError> {
+) -> Result<Vec<DurableSchemaRegistration>, ResolvedCompositionError> {
     let mut resolved = BTreeMap::new();
     for mut registration in durable_schemas {
         let namespace = registration.schema.namespace.clone();
         let Some(owner) = kernel_config.resource_owner(&namespace) else {
-            return Err(ResolvedHarnessError::UndeclaredDurableSchema {
+            return Err(ResolvedCompositionError::UndeclaredDurableSchema {
                 plugin: registration.owner,
                 namespace,
             });
         };
         if owner != &registration.owner {
-            return Err(ResolvedHarnessError::DurableSchemaOwnerMismatch {
+            return Err(ResolvedCompositionError::DurableSchemaOwnerMismatch {
                 plugin: registration.owner,
                 namespace,
                 owner: owner.clone(),
@@ -878,7 +878,7 @@ fn resolve_durable_schemas(
             .migrations
             .sort_by_key(|migration| (migration.from_version, migration.to_version));
         if resolved.insert(namespace.clone(), registration).is_some() {
-            return Err(ResolvedHarnessError::DuplicateDurableSchema(namespace));
+            return Err(ResolvedCompositionError::DuplicateDurableSchema(namespace));
         }
     }
     Ok(resolved.into_values().collect())
@@ -925,18 +925,18 @@ fn resolve_resources(
     resources: impl IntoIterator<Item = SkillResourceMetadata>,
     components: &[ComponentManifest],
     authority_ceiling: &Authority,
-) -> Result<Vec<SkillResourceMetadata>, ResolvedHarnessError> {
+) -> Result<Vec<SkillResourceMetadata>, ResolvedCompositionError> {
     let mut selected = BTreeMap::new();
     for resource in resources {
         resource.validate_pre_activation().map_err(|error| {
-            ResolvedHarnessError::CompositionMetadata {
+            ResolvedCompositionError::CompositionMetadata {
                 resource: resource.identity.clone(),
                 error,
             }
         })?;
         let identity = resource.identity.clone();
         if selected.insert(identity.clone(), resource).is_some() {
-            return Err(ResolvedHarnessError::DuplicateResource(identity));
+            return Err(ResolvedCompositionError::DuplicateResource(identity));
         }
     }
 
@@ -952,7 +952,7 @@ fn resolve_resources(
     for resource in selected.values() {
         for dependency in &resource.dependencies {
             if !selected.contains_key(dependency) {
-                return Err(ResolvedHarnessError::MissingResourceDependency {
+                return Err(ResolvedCompositionError::MissingResourceDependency {
                     resource: resource.identity.clone(),
                     dependency: dependency.clone(),
                 });
@@ -963,7 +963,7 @@ fn resolve_resources(
             .iter()
             .find(|conflict| selected.contains_key(*conflict))
         {
-            return Err(ResolvedHarnessError::ResourceConflict {
+            return Err(ResolvedCompositionError::ResourceConflict {
                 resource: resource.identity.clone(),
                 conflict: conflict.clone(),
             });
@@ -973,7 +973,7 @@ fn resolve_resources(
             .iter()
             .find(|interface| !exported_interfaces.contains(*interface))
         {
-            return Err(ResolvedHarnessError::ResourceInterfaceUnavailable {
+            return Err(ResolvedCompositionError::ResourceInterfaceUnavailable {
                 resource: resource.identity.clone(),
                 interface: interface.clone(),
             });
@@ -983,7 +983,7 @@ fn resolve_resources(
             .iter()
             .find(|capability| !authority_ceiling.permits(capability))
         {
-            return Err(ResolvedHarnessError::ResourceAuthorityDenied {
+            return Err(ResolvedCompositionError::ResourceAuthorityDenied {
                 resource: resource.identity.clone(),
                 capability: capability.clone(),
             });
@@ -1037,14 +1037,14 @@ fn validate_entry_triggers(
     components: &[ComponentManifest],
     triggers: &[ComponentEntryTrigger],
     authority_ceiling: &Authority,
-) -> Result<(), ResolvedHarnessError> {
+) -> Result<(), ResolvedCompositionError> {
     let mut tool_ids = BTreeSet::new();
     for trigger in triggers {
         let Some(component) = components
             .iter()
             .find(|component| component.id == trigger.component)
         else {
-            return Err(ResolvedHarnessError::MissingEntryTriggerTarget {
+            return Err(ResolvedCompositionError::MissingEntryTriggerTarget {
                 component: trigger.component.clone(),
                 interface: trigger.interface.clone(),
             });
@@ -1054,7 +1054,7 @@ fn validate_entry_triggers(
             .iter()
             .find(|export| export.interface == trigger.interface)
         else {
-            return Err(ResolvedHarnessError::MissingEntryTriggerTarget {
+            return Err(ResolvedCompositionError::MissingEntryTriggerTarget {
                 component: trigger.component.clone(),
                 interface: trigger.interface.clone(),
             });
@@ -1070,7 +1070,7 @@ fn validate_entry_triggers(
                 .required_authority
                 .permits_all(&export.required_authority)
         {
-            return Err(ResolvedHarnessError::EntryTriggerAuthorityDenied {
+            return Err(ResolvedCompositionError::EntryTriggerAuthorityDenied {
                 component: trigger.component.clone(),
                 interface: trigger.interface.clone(),
             });
@@ -1078,7 +1078,7 @@ fn validate_entry_triggers(
         match &trigger.trigger {
             EntryTriggerKind::ToolCall { callable_id, .. } => {
                 if !tool_ids.insert(callable_id.clone()) {
-                    return Err(ResolvedHarnessError::DuplicateToolCallTrigger(
+                    return Err(ResolvedCompositionError::DuplicateToolCallTrigger(
                         callable_id.clone(),
                     ));
                 }
@@ -1102,14 +1102,14 @@ fn validate_process_arguments(
     components: &[ComponentManifest],
     arguments: &[ComponentProcessArgument],
     authority_ceiling: &Authority,
-) -> Result<(), ResolvedHarnessError> {
+) -> Result<(), ResolvedCompositionError> {
     let mut names = BTreeSet::new();
     for argument in arguments {
         let Some(component) = components
             .iter()
             .find(|component| component.id == argument.component)
         else {
-            return Err(ResolvedHarnessError::MissingProcessArgumentTarget {
+            return Err(ResolvedCompositionError::MissingProcessArgumentTarget {
                 component: argument.component.clone(),
                 interface: argument.interface.clone(),
             });
@@ -1119,7 +1119,7 @@ fn validate_process_arguments(
             .iter()
             .find(|export| export.interface == argument.interface)
         else {
-            return Err(ResolvedHarnessError::MissingProcessArgumentTarget {
+            return Err(ResolvedCompositionError::MissingProcessArgumentTarget {
                 component: argument.component.clone(),
                 interface: argument.interface.clone(),
             });
@@ -1135,14 +1135,14 @@ fn validate_process_arguments(
                 .required_authority
                 .permits_all(&export.required_authority)
         {
-            return Err(ResolvedHarnessError::ProcessArgumentAuthorityDenied {
+            return Err(ResolvedCompositionError::ProcessArgumentAuthorityDenied {
                 component: argument.component.clone(),
                 interface: argument.interface.clone(),
             });
         }
 
         let Some(body) = argument.name.strip_prefix("--") else {
-            return Err(ResolvedHarnessError::InvalidProcessArgument(
+            return Err(ResolvedCompositionError::InvalidProcessArgument(
                 argument.name.clone(),
             ));
         };
@@ -1154,12 +1154,12 @@ fn validate_process_arguments(
                 character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
             });
         if !valid {
-            return Err(ResolvedHarnessError::InvalidProcessArgument(
+            return Err(ResolvedCompositionError::InvalidProcessArgument(
                 argument.name.clone(),
             ));
         }
         if !names.insert(argument.name.clone()) {
-            return Err(ResolvedHarnessError::DuplicateProcessArgument(
+            return Err(ResolvedCompositionError::DuplicateProcessArgument(
                 argument.name.clone(),
             ));
         }
@@ -1171,12 +1171,12 @@ fn validate_layer_policies(
     plugins: &[PluginManifest],
     layer_policies: &BTreeMap<ServiceId, Vec<LayerPolicy>>,
     authority_ceiling: &Authority,
-) -> Result<(), ResolvedHarnessError> {
+) -> Result<(), ResolvedCompositionError> {
     for (service, layers) in layer_policies {
         let mut seen = BTreeSet::new();
         for layer in layers {
             if !seen.insert(layer.plugin.clone()) {
-                return Err(ResolvedHarnessError::DuplicateLayerPolicy {
+                return Err(ResolvedCompositionError::DuplicateLayerPolicy {
                     service: service.clone(),
                     plugin: layer.plugin.clone(),
                 });
@@ -1193,7 +1193,7 @@ fn validate_layer_policies(
                     })
             });
             if !available {
-                return Err(ResolvedHarnessError::RequiredLayerUnavailable {
+                return Err(ResolvedCompositionError::RequiredLayerUnavailable {
                     service: service.clone(),
                     plugin: layer.plugin.clone(),
                 });
@@ -1208,7 +1208,7 @@ mod tests {
     use super::*;
     use crate::ComponentId;
     use crate::{
-        CapabilityId, CompatibilityMetadata, ComponentExport, ComponentImport,
+        PermissionId, CompatibilityMetadata, ComponentExport, ComponentImport,
         ConfigContributionSource, ConfigNamespace, ConfigSourceClass, DurableSchema, InterfaceId,
         PluginExecution, PluginId, ReloadPolicy,
     };
@@ -1226,8 +1226,8 @@ mod tests {
         InterfaceId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn frontend(value: &str) -> ConfigurationFrontendId {
@@ -1348,7 +1348,7 @@ mod tests {
     #[test]
     fn equivalent_frontends_and_registration_order_resolve_to_one_semantic_generation() {
         let authority = Authority::new([capability("fixture.use")]);
-        let first = ResolvedHarness::resolve(
+        let first = ResolvedComposition::resolve(
             [
                 owner("provider-owner", authority.clone()),
                 owner("consumer-owner", authority.clone()),
@@ -1358,7 +1358,7 @@ mod tests {
             &authority,
         )
         .unwrap();
-        let second = ResolvedHarness::resolve(
+        let second = ResolvedComposition::resolve(
             [
                 owner("consumer-owner", authority.clone()),
                 owner("provider-owner", authority.clone()),
@@ -1384,8 +1384,8 @@ mod tests {
         right.value = serde_json::json!({"mode":"relaxed"}).into();
 
         assert_eq!(
-            ResolvedHarness::resolve([], [], [left, right], &Authority::default()).unwrap_err(),
-            ResolvedHarnessError::ConfigurationMerge(ConfigMergeError::ConflictingContributions {
+            ResolvedComposition::resolve([], [], [left, right], &Authority::default()).unwrap_err(),
+            ResolvedCompositionError::ConfigurationMerge(ConfigMergeError::ConflictingContributions {
                 namespace: ConfigNamespace::parse("acme.engineering@1").unwrap(),
                 contract_version: 1,
                 precedence: 10,
@@ -1397,7 +1397,7 @@ mod tests {
     fn frontend_metadata_is_enforced_before_canonical_resolution() {
         let read = capability("config.read");
         let metadata = frontend_metadata("phenix-config-lua", Authority::new([read.clone()]));
-        let denied = ResolvedHarness::resolve_frontends(
+        let denied = ResolvedComposition::resolve_frontends(
             [],
             [],
             [metadata.clone()],
@@ -1407,13 +1407,13 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             denied,
-            ResolvedHarnessError::ConfigurationFrontend {
+            ResolvedCompositionError::ConfigurationFrontend {
                 frontend: frontend("phenix-config-lua"),
                 error: FrontendConfigError::SourceAuthorityDenied,
             }
         );
 
-        let resolved = ResolvedHarness::resolve_frontends(
+        let resolved = ResolvedComposition::resolve_frontends(
             [],
             [],
             [metadata],
@@ -1432,7 +1432,7 @@ mod tests {
 
     #[test]
     fn equivalent_validated_frontends_share_one_semantic_generation() {
-        let first = ResolvedHarness::resolve_frontends(
+        let first = ResolvedComposition::resolve_frontends(
             [],
             [],
             [frontend_metadata("phenix-config-nix", Authority::default())],
@@ -1440,7 +1440,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let second = ResolvedHarness::resolve_frontends(
+        let second = ResolvedComposition::resolve_frontends(
             [],
             [],
             [frontend_metadata("phenix-config-lua", Authority::default())],
@@ -1458,7 +1458,7 @@ mod tests {
 
     #[test]
     fn resolved_harness_projects_one_runtime_generation() {
-        let resolved = ResolvedHarness::resolve_with_resources(
+        let resolved = ResolvedComposition::resolve_with_resources(
             [],
             [],
             [resource("review", "sha256:one")],
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn resource_metadata_is_part_of_resolution_and_generation_identity() {
-        let baseline = ResolvedHarness::resolve_with_resources(
+        let baseline = ResolvedComposition::resolve_with_resources(
             [],
             [],
             [resource("review", "sha256:one")],
@@ -1487,7 +1487,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let changed = ResolvedHarness::resolve_with_resources(
+        let changed = ResolvedComposition::resolve_with_resources(
             [],
             [],
             [resource("review", "sha256:two")],
@@ -1506,7 +1506,7 @@ mod tests {
         let namespace = ResourceNamespace::parse("durable.state").unwrap();
         let mut manifest = owner("durable-owner", Authority::default());
         manifest.resource_namespaces.push(namespace.clone());
-        let baseline = ResolvedHarness::resolve_with_durable_schemas(
+        let baseline = ResolvedComposition::resolve_with_durable_schemas(
             [manifest.clone()],
             [],
             [DurableSchemaRegistration::new(
@@ -1517,7 +1517,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let changed = ResolvedHarness::resolve_with_durable_schemas(
+        let changed = ResolvedComposition::resolve_with_durable_schemas(
             [manifest],
             [],
             [DurableSchemaRegistration::new(
@@ -1538,7 +1538,7 @@ mod tests {
         let namespace = ResourceNamespace::parse("durable.state").unwrap();
         let mut manifest = owner("actual-owner", Authority::default());
         manifest.resource_namespaces.push(namespace.clone());
-        let error = ResolvedHarness::resolve_with_durable_schemas(
+        let error = ResolvedComposition::resolve_with_durable_schemas(
             [manifest],
             [],
             [DurableSchemaRegistration::new(
@@ -1552,7 +1552,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessError::DurableSchemaOwnerMismatch {
+            ResolvedCompositionError::DurableSchemaOwnerMismatch {
                 plugin: plugin("wrong-owner"),
                 namespace,
                 owner: plugin("actual-owner"),
@@ -1565,7 +1565,7 @@ mod tests {
         let mut missing_dependency = resource("review", "sha256:one");
         missing_dependency.dependencies.insert("tools".into());
         assert_eq!(
-            ResolvedHarness::resolve_with_resources(
+            ResolvedComposition::resolve_with_resources(
                 [],
                 [],
                 [missing_dependency],
@@ -1573,7 +1573,7 @@ mod tests {
                 &Authority::default(),
             )
             .unwrap_err(),
-            ResolvedHarnessError::MissingResourceDependency {
+            ResolvedCompositionError::MissingResourceDependency {
                 resource: "review".into(),
                 dependency: "tools".into(),
             }
@@ -1582,7 +1582,7 @@ mod tests {
         let mut review = resource("review", "sha256:one");
         review.conflicts.insert("tools".into());
         assert_eq!(
-            ResolvedHarness::resolve_with_resources(
+            ResolvedComposition::resolve_with_resources(
                 [],
                 [],
                 [review, resource("tools", "sha256:tools")],
@@ -1590,7 +1590,7 @@ mod tests {
                 &Authority::default(),
             )
             .unwrap_err(),
-            ResolvedHarnessError::ResourceConflict {
+            ResolvedCompositionError::ResourceConflict {
                 resource: "review".into(),
                 conflict: "tools".into(),
             }
@@ -1602,7 +1602,7 @@ mod tests {
             .required_interfaces
             .insert(required_interface.clone());
         assert_eq!(
-            ResolvedHarness::resolve_with_resources(
+            ResolvedComposition::resolve_with_resources(
                 [],
                 [],
                 [needs_interface],
@@ -1610,7 +1610,7 @@ mod tests {
                 &Authority::default(),
             )
             .unwrap_err(),
-            ResolvedHarnessError::ResourceInterfaceUnavailable {
+            ResolvedCompositionError::ResourceInterfaceUnavailable {
                 resource: "review".into(),
                 interface: required_interface,
             }
@@ -1622,7 +1622,7 @@ mod tests {
             .required_capabilities
             .insert(required_capability.clone());
         assert_eq!(
-            ResolvedHarness::resolve_with_resources(
+            ResolvedComposition::resolve_with_resources(
                 [],
                 [],
                 [needs_authority],
@@ -1630,7 +1630,7 @@ mod tests {
                 &Authority::default(),
             )
             .unwrap_err(),
-            ResolvedHarnessError::ResourceAuthorityDenied {
+            ResolvedCompositionError::ResourceAuthorityDenied {
                 resource: "review".into(),
                 capability: required_capability,
             }
@@ -1640,7 +1640,7 @@ mod tests {
     #[test]
     fn semantic_change_creates_a_new_generation() {
         let authority = Authority::default();
-        let baseline = ResolvedHarness::resolve(
+        let baseline = ResolvedComposition::resolve(
             [owner("consumer-owner", Authority::default())],
             [ComponentManifest {
                 listeners: Vec::new(),
@@ -1656,7 +1656,7 @@ mod tests {
         .unwrap();
         let mut changed = contribution("phenix-config-nix", "flake:acme", "b");
         changed.value = serde_json::json!({"review":"relaxed"}).into();
-        let changed = ResolvedHarness::resolve(
+        let changed = ResolvedComposition::resolve(
             [owner("consumer-owner", Authority::default())],
             [ComponentManifest {
                 listeners: Vec::new(),
@@ -1702,7 +1702,7 @@ mod tests {
             owner("provider-b-owner", Authority::default()),
         ];
         let components = vec![consumer.clone(), provider_a, provider_b];
-        let baseline = ResolvedHarness::resolve(
+        let baseline = ResolvedComposition::resolve(
             plugins.clone(),
             components.clone(),
             [],
@@ -1711,7 +1711,7 @@ mod tests {
         .unwrap();
         let policy = ProviderCompositionPolicy::new()
             .with_explicit_binding(provider_interface.clone(), component("provider-b"));
-        let resolved = ResolvedHarness::resolve_with_provider_policy(
+        let resolved = ResolvedComposition::resolve_with_provider_policy(
             plugins,
             components,
             [],
@@ -1788,7 +1788,7 @@ mod tests {
                 maximum_authority: Authority::default(),
             },
         ];
-        let error = ResolvedHarness::resolve(
+        let error = ResolvedComposition::resolve(
             [
                 owner("left-owner", Authority::default()),
                 owner("right-owner", Authority::default()),
@@ -1801,7 +1801,7 @@ mod tests {
 
         assert_eq!(
             error,
-            ResolvedHarnessError::ComponentGraph(ComponentGraphError::RequiredImportCycle {
+            ResolvedCompositionError::ComponentGraph(ComponentGraphError::RequiredImportCycle {
                 path: vec![component("left"), component("right"), component("left")]
             })
         );
@@ -1821,7 +1821,7 @@ mod tests {
             required: false,
             enabled: true,
         };
-        let error = ResolvedHarness::resolve_with_layer_policies(
+        let error = ResolvedComposition::resolve_with_layer_policies(
             [],
             [],
             [],
@@ -1831,7 +1831,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            ResolvedHarnessError::DuplicateLayerPolicy {
+            ResolvedCompositionError::DuplicateLayerPolicy {
                 service,
                 plugin: layer,
             }
@@ -1857,7 +1857,7 @@ mod tests {
             resource_namespaces: Vec::new(),
             maximum_authority: layer_authority,
         };
-        let error = ResolvedHarness::resolve_with_layer_policies(
+        let error = ResolvedComposition::resolve_with_layer_policies(
             [manifest],
             [],
             [],
@@ -1875,7 +1875,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            ResolvedHarnessError::RequiredLayerUnavailable {
+            ResolvedCompositionError::RequiredLayerUnavailable {
                 service,
                 plugin: layer,
             }
@@ -1886,7 +1886,7 @@ mod tests {
     fn required_layer_must_be_declared_for_the_same_service() {
         let service = ServiceId::parse("fixture.layered@1").unwrap();
         let layer = PluginId::parse("layer").unwrap();
-        let error = ResolvedHarness::resolve_with_layer_policies(
+        let error = ResolvedComposition::resolve_with_layer_policies(
             [],
             [],
             [],
@@ -1904,7 +1904,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            ResolvedHarnessError::RequiredLayerUnavailable {
+            ResolvedCompositionError::RequiredLayerUnavailable {
                 service,
                 plugin: layer,
             }
@@ -1925,12 +1925,12 @@ mod entry_trigger_tests {
             dependencies: Vec::new(),
             services: Vec::new(),
             resource_namespaces: Vec::new(),
-            maximum_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+            maximum_authority: Authority::new([PermissionId::parse("workspace.shell").unwrap()]),
         }
     }
 
     fn component() -> ComponentManifest {
-        let authority = Authority::new([CapabilityId::parse("workspace.shell").unwrap()]);
+        let authority = Authority::new([PermissionId::parse("workspace.shell").unwrap()]);
         ComponentManifest {
             id: ComponentId::parse("fixture.trigger.component").unwrap(),
             owner: plugin().id,
@@ -1954,7 +1954,7 @@ mod entry_trigger_tests {
                 callable_id: CallableId::parse(id).unwrap(),
                 description: "fixture".into(),
             },
-            required_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+            required_authority: Authority::new([PermissionId::parse("workspace.shell").unwrap()]),
         }
     }
 
@@ -1965,14 +1965,14 @@ mod entry_trigger_tests {
             name: name.into(),
             takes_value: true,
             description: "fixture process argument".into(),
-            required_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+            required_authority: Authority::new([PermissionId::parse("workspace.shell").unwrap()]),
         }
     }
 
     fn resolve_process_arguments(
         arguments: impl IntoIterator<Item = ComponentProcessArgument>,
-    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
-        ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+    ) -> Result<ResolvedComposition, ResolvedCompositionError> {
+        ResolvedComposition::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
             [plugin()],
             [component()],
             [],
@@ -1980,21 +1980,21 @@ mod entry_trigger_tests {
             arguments,
             [],
             BTreeMap::new(),
-            &Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+            &Authority::new([PermissionId::parse("workspace.shell").unwrap()]),
         )
     }
 
     fn resolve(
         triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
-    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
-        ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+    ) -> Result<ResolvedComposition, ResolvedCompositionError> {
+        ResolvedComposition::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
             [plugin()],
             [component()],
             [],
             triggers,
             [],
             BTreeMap::new(),
-            &Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+            &Authority::new([PermissionId::parse("workspace.shell").unwrap()]),
         )
     }
 
@@ -2014,7 +2014,7 @@ mod entry_trigger_tests {
 
         assert!(matches!(
             resolve([trigger("bash"), second]),
-            Err(ResolvedHarnessError::DuplicateToolCallTrigger(id)) if id.as_str() == "bash"
+            Err(ResolvedCompositionError::DuplicateToolCallTrigger(id)) if id.as_str() == "bash"
         ));
     }
 
@@ -2035,7 +2035,7 @@ mod entry_trigger_tests {
                 process_argument("--plugin-handled-value"),
                 process_argument("--plugin-handled-value")
             ]),
-            Err(ResolvedHarnessError::DuplicateProcessArgument(argument))
+            Err(ResolvedCompositionError::DuplicateProcessArgument(argument))
                 if argument == "--plugin-handled-value"
         ));
     }
@@ -2044,7 +2044,7 @@ mod entry_trigger_tests {
     fn malformed_process_arguments_fail_resolution() {
         assert!(matches!(
             resolve_process_arguments([process_argument("plugin-handled-value")]),
-            Err(ResolvedHarnessError::InvalidProcessArgument(argument))
+            Err(ResolvedCompositionError::InvalidProcessArgument(argument))
                 if argument == "plugin-handled-value"
         ));
     }
@@ -2056,7 +2056,7 @@ mod entry_trigger_tests {
 
         assert!(matches!(
             resolve([missing]),
-            Err(ResolvedHarnessError::MissingEntryTriggerTarget { .. })
+            Err(ResolvedCompositionError::MissingEntryTriggerTarget { .. })
         ));
     }
 
@@ -2067,7 +2067,7 @@ mod entry_trigger_tests {
 
         assert!(matches!(
             resolve([underpowered]),
-            Err(ResolvedHarnessError::EntryTriggerAuthorityDenied { .. })
+            Err(ResolvedCompositionError::EntryTriggerAuthorityDenied { .. })
         ));
     }
 }
