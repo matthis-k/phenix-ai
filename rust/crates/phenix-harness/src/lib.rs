@@ -50,7 +50,13 @@ pub use invocation_defaults::{invocation_defaults_manifest, INVOCATION_DEFAULTS_
 use phenix_plugin_invocation_defaults as invocation_defaults;
 pub mod model_surface_fixture;
 mod persistence;
+pub mod process_surface;
 pub mod runtime_config;
+
+pub use process_surface::{
+    ParsedProcessArguments, ProcessArgumentContribution, ProcessArgumentValueKind,
+    ProcessConfigBinding, ProcessSurface, ProcessSurfaceError, ProcessSurfaceMetadata,
+};
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
@@ -154,6 +160,7 @@ pub struct HarnessBuilder {
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
     contributions: Vec<ConfigContribution>,
+    process_surface: ProcessSurface,
     component_authority: Authority,
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
@@ -511,6 +518,41 @@ impl HarnessBuilder {
 
     pub fn add_config_contribution(&mut self, contribution: ConfigContribution) {
         self.contributions.push(contribution);
+    }
+
+    pub fn add_process_argument(
+        &mut self,
+        contribution: ProcessArgumentContribution,
+    ) -> Result<(), ProcessSurfaceError> {
+        self.process_surface.add(contribution)
+    }
+
+    pub fn add_process_surface_metadata(
+        &mut self,
+        metadata: ProcessSurfaceMetadata,
+    ) -> Result<(), ProcessSurfaceError> {
+        self.process_surface.extend(metadata)
+    }
+
+    pub fn process_surface(&self) -> &ProcessSurface {
+        &self.process_surface
+    }
+
+    pub fn loaded_plugin_ids(&self) -> BTreeSet<PluginId> {
+        self.manifests
+            .iter()
+            .map(|manifest| manifest.id.clone())
+            .collect()
+    }
+
+    pub fn apply_process_arguments(
+        &mut self,
+        arguments: &[String],
+    ) -> Result<ParsedProcessArguments, ProcessSurfaceError> {
+        let loaded = self.loaded_plugin_ids();
+        let parsed = self.process_surface.parse(&loaded, arguments)?;
+        self.contributions.extend(parsed.contributions.iter().cloned());
+        Ok(parsed)
     }
 
     pub fn set_component_authority(&mut self, authority: Authority) {
