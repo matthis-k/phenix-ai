@@ -1,7 +1,7 @@
 use crate::{
     default_application_root_authority, default_suite_authority,
     runtime_config::publish_routing_profile_runtime_state, runtime_orchestration_authority,
-    PhenixHarness,
+    workspace_discovery, PhenixHarness,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
@@ -86,6 +86,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Weak,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc;
 
@@ -106,6 +107,8 @@ const APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-write@1";
 const APPLICATION_WORKSPACE_GIT_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.workspace-git@1";
+const APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.workspace-discovery@1";
 const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.code-query@1";
 const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
@@ -151,11 +154,40 @@ struct ApplicationWorkspaceGitToolRequest {
     arguments: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceDiscoveryRequest {
+    workspace_ids: Vec<String>,
+    repository_remotes: Vec<String>,
+    recall_terms: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceDiscoveryCandidate {
+    workspace_id: String,
+    canonical_root: String,
+    repository_remotes: Vec<String>,
+    matched_by: String,
+    matched_terms: u32,
+    confirmed_recoveries: u32,
+    observation_count: u32,
+    last_observed_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationWorkspaceDiscoveryResponse {
+    candidates: Vec<ApplicationWorkspaceDiscoveryCandidate>,
+    scanned_descriptors: u32,
+    invalid_descriptors: u32,
+    complete: bool,
+    reason: Option<String>,
+}
+
 struct ApplicationShellToolInterface;
 struct ApplicationWorkspaceReadToolInterface;
 struct ApplicationWorkspaceSearchToolInterface;
 struct ApplicationWorkspaceWriteToolInterface;
 struct ApplicationWorkspaceGitToolInterface;
+struct ApplicationWorkspaceDiscoveryToolInterface;
 struct ApplicationCodeQueryToolInterface;
 struct ApplicationMemoryRecordToolInterface;
 struct ApplicationMemoryRecallToolInterface;
@@ -210,6 +242,20 @@ workspace_tool_interface!(
     APPLICATION_WORKSPACE_GIT_TOOL_SERVICE,
     ApplicationWorkspaceGitToolRequest
 );
+
+impl ComponentInterface for ApplicationWorkspaceDiscoveryToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE)
+            .expect("static workspace discovery tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<
+            ApplicationWorkspaceDiscoveryRequest,
+            ApplicationWorkspaceDiscoveryResponse,
+        >()
+    }
+}
 
 impl ComponentInterface for ApplicationCodeQueryToolInterface {
     fn interface_id() -> InterfaceId {
@@ -327,6 +373,12 @@ pub(crate) fn application_workspace_tool_triggers() -> Vec<ComponentEntryTrigger
             "workspace.git",
             "Run Git with explicit arguments in the configured workspace.",
             application_workspace_git_authority(),
+        ),
+        application_agent_tool_trigger(
+            ApplicationWorkspaceDiscoveryToolInterface::interface_id(),
+            "workspace.discover",
+            "Find up to three previously observed local Phenix workspaces by stable workspace id, normalized repository remote, or bounded recall terms.",
+            Authority::default(),
         ),
     ]
 }
@@ -1278,6 +1330,7 @@ impl ApplicationWorker {
         session: &SessionInfo,
         execution_id: &str,
     ) -> Result<(), ApplicationError> {
+        observe_local_workspace_discovery(session);
         let context_auto =
             self.resolve_bool_option_on(root, &session.session_id, "context.auto_load")?;
         let skills_auto =
@@ -2990,6 +3043,134 @@ mod packaged_skill_root_tests {
     }
 }
 
+fn observe_local_workspace_discovery(session: &SessionInfo) {
+    let Some(discovery_root) = workspace_discovery::workspace_discovery_root() else {
+        return;
+    };
+    let Ok(canonical_root) = fs::canonicalize(&session.working_directory) else {
+        return;
+    };
+    if !canonical_root.is_dir() {
+        return;
+    }
+    let workspace_id = workspace_context_id(&canonical_root.to_string_lossy());
+    let terms = workspace_recall_terms(&canonical_root);
+    let observed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let _ = workspace_discovery::observe_local_workspace(
+        &discovery_root,
+        &workspace_id,
+        &canonical_root,
+        Vec::<String>::new(),
+        terms,
+        observed_at,
+    );
+}
+
+fn workspace_recall_terms(root: &Path) -> BTreeSet<String> {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .into_iter()
+        .flat_map(|name| {
+            name.split(|character: char| !character.is_alphanumeric())
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>()
+        })
+        .filter(|term| !term.is_empty())
+        .filter(|term| term.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
+        .collect()
+}
+
+fn discover_workspaces(
+    request: ApplicationWorkspaceDiscoveryRequest,
+) -> Result<ApplicationWorkspaceDiscoveryResponse, String> {
+    let query = workspace_discovery::WorkspaceDiscoveryQuery {
+        workspace_ids: request
+            .workspace_ids
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+            .collect(),
+        repository_remotes: request
+            .repository_remotes
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+            .collect(),
+        recall_terms: request
+            .recall_terms
+            .into_iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .filter(|value| value.as_bytes().len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
+            .collect(),
+    };
+    let Some(root) = workspace_discovery::workspace_discovery_root() else {
+        return Ok(ApplicationWorkspaceDiscoveryResponse {
+            candidates: Vec::new(),
+            scanned_descriptors: 0,
+            invalid_descriptors: 0,
+            complete: true,
+            reason: None,
+        });
+    };
+    let read = workspace_discovery::read_workspace_descriptors(&root)
+        .map_err(|error| format!("workspace discovery read failed: {error}"))?;
+    let scan = workspace_discovery::scan_workspace_descriptors(read.descriptors, &query);
+    let mut reason = match scan.completeness {
+        workspace_discovery::WorkspaceDiscoveryCompleteness::Complete => None,
+        workspace_discovery::WorkspaceDiscoveryCompleteness::Incomplete { reason } => Some(reason),
+    };
+    if read.truncated {
+        reason = Some(format!(
+            "workspace descriptor read exceeded {} entries",
+            workspace_discovery::MAX_WORKSPACE_DISCOVERY_SCAN
+        ));
+    }
+    let candidates = scan
+        .candidates
+        .into_iter()
+        .take(workspace_discovery::MAX_WORKSPACE_DISCOVERY_PREPARED_CANDIDATES)
+        .map(|candidate| {
+            let (matched_by, matched_terms) = match candidate.evidence {
+                workspace_discovery::WorkspaceDiscoveryMatch::ExactWorkspaceId => {
+                    ("workspace_id".to_owned(), 0)
+                }
+                workspace_discovery::WorkspaceDiscoveryMatch::ExactRepositoryRemote => {
+                    ("repository_remote".to_owned(), 0)
+                }
+                workspace_discovery::WorkspaceDiscoveryMatch::LexicalTerms { matched } => {
+                    ("recall_terms".to_owned(), matched)
+                }
+            };
+            ApplicationWorkspaceDiscoveryCandidate {
+                workspace_id: candidate.descriptor.workspace_id,
+                canonical_root: candidate.descriptor.canonical_root.display().to_string(),
+                repository_remotes: candidate
+                    .descriptor
+                    .repository_remotes
+                    .into_iter()
+                    .collect(),
+                matched_by,
+                matched_terms,
+                confirmed_recoveries: candidate.descriptor.confirmed_recoveries,
+                observation_count: candidate.descriptor.observation_count,
+                last_observed_at: candidate.descriptor.last_observed_at,
+            }
+        })
+        .collect();
+
+    Ok(ApplicationWorkspaceDiscoveryResponse {
+        candidates,
+        scanned_descriptors: read.scanned_entries,
+        invalid_descriptors: read
+            .invalid_descriptors
+            .saturating_add(scan.invalid_descriptors),
+        complete: reason.is_none(),
+        reason,
+    })
+}
+
 // Keep repository context identity stable across sessions that use the same workspace.
 fn workspace_context_id(working_directory: &str) -> String {
     let digest = Sha256::digest(working_directory.as_bytes());
@@ -3407,6 +3588,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required_authority: application_workspace_git_authority(),
             },
             ComponentExport {
+                interface: ApplicationWorkspaceDiscoveryToolInterface::interface_id(),
+                schema: ApplicationWorkspaceDiscoveryToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
                 interface: ApplicationCodeQueryToolInterface::interface_id(),
                 schema: ApplicationCodeQueryToolInterface::schema(),
                 priority: 100,
@@ -3618,6 +3805,20 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                     arguments: request.arguments,
                 })
                 .map_err(|error| error.to_string())?;
+            return context
+                .kernel
+                .encode_value(&response)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationWorkspaceDiscoveryRequest>(
+                    &ApplicationWorkspaceDiscoveryToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = discover_workspaces(request)?;
             return context
                 .kernel
                 .encode_value(&response)
