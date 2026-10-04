@@ -336,15 +336,21 @@
           };
 
           product = {
-            nix-checks = mkNixChecksSuite {
-              name = "Nix integration and product checks";
+            nix-plugin-packaging = mkNixChecksSuite {
+              name = "Nix plugin packaging checks";
               checks = [
-                "stitch-mcp-package"
-                "stitch-runtime-smoke"
                 "phenix-plugin-packaging-products"
                 "phenix-plugin-packaging-environment"
                 "phenix-plugin-packaging-settings"
                 "phenix-plugin-packaging-isolation"
+              ];
+            };
+
+            nix-products = mkNixChecksSuite {
+              name = "Nix product and Stitch checks";
+              checks = [
+                "stitch-mcp-package"
+                "stitch-runtime-smoke"
                 "phenix-product-runtime-smoke"
                 "phenix-product-lua-smoke"
               ];
