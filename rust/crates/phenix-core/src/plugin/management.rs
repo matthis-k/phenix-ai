@@ -1,5 +1,6 @@
 use crate::{
     ArtifactRevision, Authority, ComponentEntryTrigger, ComponentId, ComponentManifest,
+    ComponentProcessArgument,
     GraphGenerationId, GraphReconciler, Kernel, KernelError, LiveReconciliationError,
     PluginArtifact, PluginArtifactInput, PluginArtifactStore, PluginBuildEvidence,
     PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginId,
@@ -33,6 +34,8 @@ pub struct PluginLoadRequest {
     pub components: Vec<ComponentManifest>,
     #[serde(default)]
     pub entry_triggers: Vec<ComponentEntryTrigger>,
+    #[serde(default)]
+    pub process_arguments: Vec<ComponentProcessArgument>,
     pub expected_active_revision: Option<ArtifactRevision>,
 }
 
@@ -48,6 +51,8 @@ pub struct PluginSetRequest {
     pub components: Vec<ComponentManifest>,
     #[serde(default)]
     pub entry_triggers: Vec<ComponentEntryTrigger>,
+    #[serde(default)]
+    pub process_arguments: Vec<ComponentProcessArgument>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +152,10 @@ pub enum PluginManagementError {
         plugin: PluginId,
         component: ComponentId,
     },
+    ProcessArgumentOwnership {
+        plugin: PluginId,
+        component: ComponentId,
+    },
     Reconciliation {
         error: Box<LiveReconciliationError>,
         build: Option<Box<PluginBuildReport>>,
@@ -233,33 +242,42 @@ impl GraphReconciler {
             }
         })?;
 
-        let (plugins, components, entry_triggers, build) = match request {
+        let (plugins, components, entry_triggers, process_arguments, build) = match request {
             PluginManagementRequest::Load(request) => {
                 let request = *request;
                 check_load_expected_revision(self.active(), &request)?;
                 let (manifest, build) = materialize_manifest(request.manifest, context)?;
-                let (plugins, components, entry_triggers) = apply_load(
+                let (plugins, components, entry_triggers, process_arguments) = apply_load(
                     self.active(),
                     ConcretePluginLoadRequest {
                         manifest,
                         components: request.components,
                         entry_triggers: request.entry_triggers,
+                        process_arguments: request.process_arguments,
                     },
                 )?;
-                (plugins, components, entry_triggers, build)
+                (plugins, components, entry_triggers, process_arguments, build)
             }
             PluginManagementRequest::Unload(request) => {
-                let (plugins, components, entry_triggers) = apply_unload(self.active(), request)?;
-                (plugins, components, entry_triggers, None)
+                let (plugins, components, entry_triggers, process_arguments) =
+                    apply_unload(self.active(), request)?;
+                (plugins, components, entry_triggers, process_arguments, None)
             }
             PluginManagementRequest::Reconcile(request) => {
-                let (plugins, components, entry_triggers) = apply_reconcile(request);
-                (plugins, components, entry_triggers, None)
+                let (plugins, components, entry_triggers, process_arguments) =
+                    apply_reconcile(request);
+                (plugins, components, entry_triggers, process_arguments, None)
             }
         };
         let candidate = self
             .active()
-            .with_plugin_set(plugins, components, entry_triggers, authority_ceiling)
+            .with_plugin_set(
+                plugins,
+                components,
+                entry_triggers,
+                process_arguments,
+                authority_ceiling,
+            )
             .map_err(|error| map_candidate_error(error, build.clone()))?;
         let preview = self.preview_candidate(&candidate);
         Ok(PreparedPluginManagement {
@@ -488,12 +506,14 @@ struct ConcretePluginLoadRequest {
     manifest: PluginManifest,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    process_arguments: Vec<ComponentProcessArgument>,
 }
 
 type PluginDesiredState = (
     Vec<PluginManifest>,
     Vec<ComponentManifest>,
     Vec<ComponentEntryTrigger>,
+    Vec<ComponentProcessArgument>,
 );
 
 fn apply_load(
@@ -528,6 +548,17 @@ fn apply_load(
         });
     }
 
+    if let Some(argument) = request
+        .process_arguments
+        .iter()
+        .find(|argument| !replacement_components.contains(&argument.component))
+    {
+        return Err(PluginManagementError::ProcessArgumentOwnership {
+            plugin,
+            component: argument.component.clone(),
+        });
+    }
+
     let mut plugins: Vec<_> = active.plugins().to_vec();
     match plugins.iter_mut().find(|manifest| manifest.id == plugin) {
         Some(slot) => *slot = request.manifest,
@@ -556,7 +587,15 @@ fn apply_load(
         .collect::<Vec<_>>();
     entry_triggers.extend(request.entry_triggers);
 
-    Ok((plugins, components, entry_triggers))
+    let mut process_arguments = active
+        .process_arguments()
+        .iter()
+        .filter(|argument| !replaced_components.contains(&argument.component))
+        .cloned()
+        .collect::<Vec<_>>();
+    process_arguments.extend(request.process_arguments);
+
+    Ok((plugins, components, entry_triggers, process_arguments))
 }
 
 fn check_load_expected_revision(
@@ -610,11 +649,22 @@ fn apply_unload(
         .filter(|trigger| !removed_components.contains(&trigger.component))
         .cloned()
         .collect();
-    Ok((plugins, components, entry_triggers))
+    let process_arguments = active
+        .process_arguments()
+        .iter()
+        .filter(|argument| !removed_components.contains(&argument.component))
+        .cloned()
+        .collect();
+    Ok((plugins, components, entry_triggers, process_arguments))
 }
 
 fn apply_reconcile(request: PluginSetRequest) -> PluginDesiredState {
-    (request.plugins, request.components, request.entry_triggers)
+    (
+        request.plugins,
+        request.components,
+        request.entry_triggers,
+        request.process_arguments,
+    )
 }
 
 fn check_expected_revision(
