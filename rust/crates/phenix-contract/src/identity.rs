@@ -111,7 +111,7 @@ identifier!(PluginId);
 identifier!(ComponentId);
 identifier!(ConfigurationFrontendId);
 identifier!(ServiceId);
-identifier!(CapabilityId);
+identifier!(PermissionId);
 identifier!(ResourceNamespace);
 identifier!(EventTypeId);
 identifier!(SubscriptionId);
@@ -121,7 +121,7 @@ identifier!(CallableId);
 identifier!(ModelId);
 identifier!(RoutingProfileId);
 identifier!(SkillId);
-identifier!(RuntimeId);
+identifier!(PluginRuntimeId);
 identifier!(SessionId);
 identifier!(ContextResourceId);
 identifier!(ContextRevisionId);
@@ -232,15 +232,15 @@ impl<'value> TryFrom<crate::Project<&'value PhenixValue>> for InterfaceId {
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
-pub struct GraphGenerationId(String);
+pub struct GenerationId(String);
 
-impl GraphGenerationId {
+impl GenerationId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl From<String> for GraphGenerationId {
+impl From<String> for GenerationId {
     fn from(value: String) -> Self {
         Self(value)
     }
