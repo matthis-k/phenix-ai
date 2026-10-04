@@ -5025,7 +5025,12 @@ fn normalize_model_tool_variant(
         .ok_or_else(|| "missing variant field tag".to_owned())?;
     let tag = match tag {
         PhenixValue::String(tag) => tag,
-        value => return Err(format!("variant tag must be a string, got {}", value.kind())),
+        value => {
+            return Err(format!(
+                "variant tag must be a string, got {}",
+                value.kind()
+            ))
+        }
     };
     let tag = Key::parse(tag).map_err(str::to_owned)?;
     let schema = variants
