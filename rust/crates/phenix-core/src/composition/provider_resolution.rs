@@ -2,7 +2,7 @@ use crate::{ComponentId, InterfaceId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Why the kernel selected the primary provider in a resolved graph generation.
+/// Why the kernel selected the primary provider in a resolved generation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderSelectionReason {
