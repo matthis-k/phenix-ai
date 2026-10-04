@@ -504,6 +504,16 @@ impl HarnessBuilder {
                     builder.add_entry_trigger(trigger);
                 }
             }
+            if enabled.contains("phenix.language") {
+                for trigger in application::application_code_tool_triggers() {
+                    builder.add_entry_trigger(trigger);
+                }
+            }
+            if enabled.contains("phenix.memory") {
+                for trigger in application::application_memory_tool_triggers() {
+                    builder.add_entry_trigger(trigger);
+                }
+            }
         }
         Ok(builder)
     }
@@ -1042,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn full_product_exposes_workspace_entry_triggers_from_its_resolved_composition() {
+    fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
         let builder = HarnessBuilder::with_selected_suite(&BTreeSet::from([
             FULL_PRODUCT_CONFIGURATION.to_owned(),
         ]))
@@ -1064,6 +1074,9 @@ mod tests {
             "workspace.search",
             "workspace.write",
             "workspace.git",
+            "code.query",
+            "memory.record",
+            "memory.recall",
         ] {
             assert!(
                 callables.contains(required),
