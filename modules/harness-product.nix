@@ -70,6 +70,10 @@
           {
             nativeBuildInputs = [
               supportedPhenix
+              self.checks.${system}.phenix-plugin-packaging-products
+              self.checks.${system}.phenix-plugin-packaging-environment
+              self.checks.${system}.phenix-plugin-packaging-settings
+              self.checks.${system}.phenix-plugin-packaging-isolation
               pkgs.jq
             ];
           }
