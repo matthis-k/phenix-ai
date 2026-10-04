@@ -5,8 +5,8 @@ use phenix_sdk::StaticPluginResources;
 
 pub use phenix_adapter_acp::{adapter_acp_factory, adapter_acp_manifest, ACP_ADAPTER_PLUGIN};
 pub use phenix_agent_configurations::{
-    advanced_agent_configuration_manifest, basic_agent_configuration_manifest,
-    ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
+    basic_agent_configuration_manifest, full_agent_configuration_manifest,
+    BASIC_AGENT_CONFIGURATION, FULL_AGENT_CONFIGURATION,
 };
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_api::{
