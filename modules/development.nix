@@ -36,7 +36,7 @@
         }:
         let
           selectedChecks = if check != null then [ check ] else checks;
-          checkTargets = pkgs.lib.concatMapStringsSep " \\\n              " (
+          checkTargets = pkgs.lib.concatMapStringsSep " " (
             selectedCheck: ''".#checks.$system.${selectedCheck}"''
           ) selectedChecks;
         in
