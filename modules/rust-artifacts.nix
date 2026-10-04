@@ -19,20 +19,15 @@ _: {
           cargo build --release --locked \
             --package phenix-harness \
             --bin phenix-harness
-          cargo build --release --locked \
-            --package phenix-runtime \
-            --bin phenix-runtime
           runHook postBuild
         '';
 
         installPhase = ''
           runHook preInstall
           mkdir -p "$out/bin"
-          for binary in phenix-harness phenix-runtime; do
-            built_binary="$(find target -path "*/release/$binary" -type f -print -quit)"
-            test -n "$built_binary"
-            cp "$built_binary" "$out/bin/$binary"
-          done
+          built_binary="$(find target -path '*/release/phenix-harness' -type f -print -quit)"
+          test -n "$built_binary"
+          cp "$built_binary" "$out/bin/phenix-harness"
           runHook postInstall
         '';
       };
