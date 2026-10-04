@@ -14,8 +14,7 @@ _: {
         # release optimization while keeping the public Lua package unchanged.
         buildPhase = ''
           runHook preBuild
-          cargo build --locked --package phenix-acp-stdio \\
-            --example observable_callback_fixture
+          cargo build --locked --package phenix-acp-stdio --example observable_callback_fixture
           runHook postBuild
         '';
         installPhase = ''
