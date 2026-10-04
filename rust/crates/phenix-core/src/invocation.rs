@@ -138,9 +138,9 @@ fn kernel_failure_class(error: &KernelError) -> InvocationFailureClass {
         KernelError::ContinuationUnavailable
         | KernelError::ContinuationAlreadyUsed(_)
         | KernelError::CausalServiceReentry(_) => InvocationFailureClass::Host,
-        KernelError::RuntimeProviderUnavailable(_)
-        | KernelError::RuntimeProviderNotExecutable { .. }
-        | KernelError::RuntimeProviderContractUnavailable { .. }
+        KernelError::PluginRuntimeAdapterUnavailable(_)
+        | KernelError::PluginRuntimeAdapterNotExecutable { .. }
+        | KernelError::PluginRuntimeAdapterContractUnavailable { .. }
         | KernelError::RuntimePrepare { .. } => InvocationFailureClass::Bridge,
         KernelError::UnknownDependency { .. }
         | KernelError::DependencyCycle(_)
