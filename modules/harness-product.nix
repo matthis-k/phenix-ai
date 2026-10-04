@@ -2,56 +2,18 @@
   perSystem =
     { pkgs, system, ... }:
     let
-      rustSource = pkgs.lib.cleanSource ../rust;
+      productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
 
-      phenixHarnessRuntime = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-harness-runtime";
-        version = "0";
-        src = rustSource;
+      phenixHarnessRuntime = pkgs.runCommand "phenix-harness-runtime" { } ''
+        mkdir -p "$out/bin"
+        cp "${productRustArtifacts}/bin/phenix-harness" "$out/bin/phenix-harness"
+        ln -s phenix-harness "$out/bin/phenix"
+      '';
 
-        cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-harness"
-          "--bin"
-          "phenix-harness"
-        ];
-        doCheck = false;
-
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out/bin"
-          harness_binary="$(find target -path '*/release/phenix-harness' -type f -print -quit)"
-          test -n "$harness_binary"
-          cp "$harness_binary" "$out/bin/phenix-harness"
-          ln -s phenix-harness "$out/bin/phenix"
-          runHook postInstall
-        '';
-      };
-
-      phenixAcpFixture = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-acp-fixture";
-        version = "0";
-        src = rustSource;
-
-        cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-harness"
-          "--bin"
-          "phenix-acp-fixture"
-        ];
-        doCheck = false;
-
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out/bin"
-          acp_binary="$(find target -path '*/release/phenix-acp-fixture' -type f -print -quit)"
-          test -n "$acp_binary"
-          cp "$acp_binary" "$out/bin/phenix-acp-fixture"
-          runHook postInstall
-        '';
-      };
+      phenixAcpFixture = pkgs.runCommand "phenix-acp-fixture" { } ''
+        mkdir -p "$out/bin"
+        cp "${productRustArtifacts}/bin/phenix-acp-fixture" "$out/bin/phenix-acp-fixture"
+      '';
 
       runtimeConfig = pkgs.writeText "phenix-runtime.json" (
         builtins.toJSON (import ../config/phenix/runtime.nix)
@@ -70,10 +32,6 @@
           {
             nativeBuildInputs = [
               supportedPhenix
-              self.checks.${system}.phenix-plugin-packaging-products
-              self.checks.${system}.phenix-plugin-packaging-environment
-              self.checks.${system}.phenix-plugin-packaging-settings
-              self.checks.${system}.phenix-plugin-packaging-isolation
               pkgs.jq
             ];
           }
