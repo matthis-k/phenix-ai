@@ -129,14 +129,14 @@ fn tool_failed(call_id: String, error: ApplicationError) -> ExecutionChange {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{ClientCapabilityCallbacks, ClientCapabilityIdentity};
+    use crate::transport::{ClientCapabilityCallbacks, ClientPermissionIdentity};
     use phenix_application_interface::{
         types::{CapabilityInvokeResult, ClientToolAddInput, ClientToolDefinition},
         AddClientTool,
     };
     use phenix_core::{
         CallableId, CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-        ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
+        ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, PluginRuntimeId,
         SdkContribution, SharedCapabilityRegistry, Type,
     };
 
@@ -157,10 +157,10 @@ mod tests {
             &sdk,
             &ObservableStore::default(),
             capabilities,
-            RuntimeId::parse("fixture-runtime").unwrap(),
+            PluginRuntimeId::parse("fixture-runtime").unwrap(),
             CapabilityGenerationId::parse("fixture-runtime-generation").unwrap(),
             callbacks,
-            ClientCapabilityIdentity::new(owner.clone(), generation.clone()),
+            ClientPermissionIdentity::new(owner.clone(), generation.clone()),
         )
         .unwrap();
         let session_id = SessionId::parse("session-a").unwrap();
