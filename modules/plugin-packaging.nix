@@ -7,6 +7,7 @@ let
       manifest,
       package ? null,
       resources ? null,
+      processSurface ? null,
     }:
     let
       execution = manifest.execution or null;
@@ -28,6 +29,7 @@ let
         passthru = {
           phenixPluginId = manifest.id;
           phenixPluginExecution = executionKind;
+          phenixProcessSurface = processSurface;
         };
       }
       ''
@@ -36,6 +38,11 @@ let
         jq -e 'type == "object" and (.id | type == "string" and length > 0)' \
           "$manifestJsonPath" >/dev/null
         cp "$manifestJsonPath" "$out/${metadataDirectory}/manifest.json"
+        ${pkgs.lib.optionalString (processSurface != null) ''
+          cat > "$out/${metadataDirectory}/process-surface.json" <<\'EOF\'
+          ${builtins.toJSON processSurface}
+          EOF
+        ''}
 
         ${pkgs.lib.optionalString isEmbedded ''
           ln -s "${package}" "$out/${metadataDirectory}/embedded-package"
