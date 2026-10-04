@@ -1,10 +1,12 @@
 # Phenix AI
 
-This repository owns the generic Phenix runtime, runtime, internal client wire, independently packaged first-party plugins and protocol adapters, native client bindings, and the supported Harness product.
+This repository owns the generic Phenix Kernel and Runtime, internal client wire, independently packaged first-party Plugins and protocol adapters, native client bindings, and the supported Product assembly.
 
 The canonical Neovim AI client lives in `matthis-k/phenix-ai.nvim`. The complete Neovim distribution lives in `matthis-k/phenix-nvim` and consumes that client. This repository owns frontend-neutral runtime behavior and contracts.
 
 ## Architecture
+
+Architecture terms are defined canonically in [`spec/glossary.md`](spec/glossary.md). Package names retained for compatibility do not redefine those terms.
 
 ```text
 frontends / protocol adapters
