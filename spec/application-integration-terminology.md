@@ -2,6 +2,9 @@
 
 status: implemented
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Terms
 
 **Application**
