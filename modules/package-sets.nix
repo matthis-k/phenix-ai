@@ -217,7 +217,7 @@ in
               '';
             });
         phenix-binding-lua = luaBinding;
-        phenix-runtime = mkBinaryFromArtifacts pkgs "phenix-runtime" productRustArtifacts "phenix-runtime";
+        phenix-runtime = mkBinaryPackage pkgs "phenix-runtime" "phenix-runtime";
       };
 
       checks = pluginPackageChecks // {
