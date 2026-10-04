@@ -53,6 +53,7 @@ use phenix_plugin_invocation_defaults as invocation_defaults;
 pub mod model_surface_fixture;
 mod persistence;
 pub mod runtime_config;
+pub mod workspace_discovery;
 
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
@@ -1074,6 +1075,7 @@ mod tests {
             "workspace.search",
             "workspace.write",
             "workspace.git",
+            "workspace.discover",
             "code.query",
             "memory.record",
             "memory.recall",
