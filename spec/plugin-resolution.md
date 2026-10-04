@@ -7,9 +7,12 @@ coverage:
   - rust/crates/phenix-core/src/provider_fallback_regression.rs
   - rust/crates/phenix-sdk/tests/plugin_component_authoring.rs
 
+
+Terminology follows [the architecture glossary](glossary.md).
+
 ## Purpose
 
-Resolve Interface providers before activation and pin the result to one immutable Graph Generation.
+Resolve Interface providers before activation and pin the result to one immutable Generation.
 
 Effective Authority determines eligibility. Product composition policy determines preference among eligible providers. Runtime dispatch follows the generation-owned Provider Plan rather than searching the live Plugin set again.
 
@@ -34,7 +37,7 @@ Provider resolution considers:
 - required authority and effective harness authority;
 - explicit bindings and configured priority;
 - whether fallback is allowed for the Interface;
-- the candidate Graph Generation.
+- the candidate Generation.
 
 Registration order is not provider policy.
 
@@ -52,7 +55,7 @@ Product composition may specify an explicit provider binding or priority. The se
 
 When no explicit preference changes the result, provider selection remains deterministic from the resolved candidate set rather than from registration timing.
 
-Changing provider composition produces a new Graph Generation. Existing work remains pinned to the generation under which it started.
+Changing provider composition produces a new Generation. Existing work remains pinned to the generation under which it started.
 
 ## Fallback
 
@@ -78,7 +81,7 @@ Provider selection never expands authority. Fallback providers are subject to th
 
 ## Provenance
 
-Component invocation provenance records the Graph Generation, resolved primary and fallback plan, selection reason, executed provider, and fallback reason when one was used.
+Component invocation provenance records the Generation, resolved primary and fallback plan, selection reason, executed provider, and fallback reason when one was used.
 
 This makes runtime availability decisions observable without treating them as topology mutation.
 
@@ -91,5 +94,5 @@ This makes runtime availability decisions observable without treating them as to
 - Fallback is explicit and generation-pinned.
 - Execution failure never triggers provider search.
 - Availability does not silently mutate topology.
-- Provider-policy changes create a new Graph Generation.
+- Provider-policy changes create a new Generation.
 - Selection and fallback never expand authority.
