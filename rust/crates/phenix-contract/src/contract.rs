@@ -1,5 +1,5 @@
 use crate::{
-    CapabilityGenerationId, ClientConnectionId, GraphGenerationId, InterfaceId, PluginId, RuntimeId,
+    CapabilityGenerationId, ClientConnectionId, GenerationId, InterfaceId, PluginId, PluginRuntimeId,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -156,7 +156,7 @@ impl<'de> Deserialize<'de> for ReferenceId {
 pub enum CapabilityOwnerId {
     Plugin(PluginId),
     Client(ClientConnectionId),
-    Runtime(RuntimeId),
+    Runtime(PluginRuntimeId),
 }
 
 impl CapabilityOwnerId {
@@ -178,15 +178,15 @@ impl From<ClientConnectionId> for CapabilityOwnerId {
     }
 }
 
-impl From<RuntimeId> for CapabilityOwnerId {
-    fn from(value: RuntimeId) -> Self {
+impl From<PluginRuntimeId> for CapabilityOwnerId {
+    fn from(value: PluginRuntimeId) -> Self {
         Self::Runtime(value)
     }
 }
 
-impl From<&GraphGenerationId> for CapabilityGenerationId {
-    fn from(value: &GraphGenerationId) -> Self {
-        Self::parse(value.as_str()).expect("graph generation ids are capability generation ids")
+impl From<&GenerationId> for CapabilityGenerationId {
+    fn from(value: &GenerationId) -> Self {
+        Self::parse(value.as_str()).expect("generation ids are capability generation ids")
     }
 }
 
@@ -231,7 +231,7 @@ macro_rules! capability_ref {
             pub fn for_plugin(
                 contract: ContractId,
                 provider: PluginId,
-                generation: &GraphGenerationId,
+                generation: &GenerationId,
                 id: ReferenceId,
             ) -> Self {
                 Self::new(
