@@ -90,6 +90,7 @@ pub use composition::component_invocation::ComponentInvocationError;
 pub use composition::inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
 pub use composition::manifest::{
     ComponentEntryTrigger, ComponentExport, ComponentImport, ComponentListener, ComponentManifest,
+    ComponentProcessArgument,
     EntryTriggerKind, ListenerProjection, PluginArtifact, PluginExecution, PluginManifest,
     ServiceContribution, ServiceRole,
 };
