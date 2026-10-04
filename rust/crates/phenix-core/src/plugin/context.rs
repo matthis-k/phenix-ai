@@ -83,6 +83,11 @@ impl<'host, 'runtime> KernelAccess<'host, 'runtime> {
         self.host.entry_triggers()
     }
 
+    /// Read the canonical configuration pinned to the current call generation.
+    pub fn configuration(&self) -> &crate::ResolvedConfigContributions {
+        self.host.configuration()
+    }
+
     #[doc(hidden)]
     pub fn record_runtime_trace(&self, event: crate::RuntimeTraceEvent) {
         self.host.record_runtime_trace(event);
