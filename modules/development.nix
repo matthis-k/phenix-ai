@@ -354,20 +354,16 @@
           };
 
           product = {
-            phenix-runtime = mkNixCheckSuite {
+            phenix-products = mkNixCheckSuite {
               checks = [
                 "phenix-product-runtime-smoke"
                 "phenix-plugin-packaging-products"
                 "phenix-plugin-packaging-environment"
                 "phenix-plugin-packaging-settings"
                 "phenix-plugin-packaging-isolation"
+                "phenix-product-lua-smoke"
               ];
-              name = "Phenix supported runtime journey";
-            };
-
-            phenix-lua-binding = mkNixCheckSuite {
-              check = "phenix-product-lua-smoke";
-              name = "Phenix Lua binding product fixture";
+              name = "Phenix supported products";
             };
           };
         };
