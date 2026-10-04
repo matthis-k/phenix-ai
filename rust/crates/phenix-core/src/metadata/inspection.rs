@@ -1,9 +1,9 @@
 use crate::{
     Authority, ComponentHostKind, ComponentId, ComponentRuntimeMetadata, ComponentStateClass,
     CompositionMetadataInput, ConfigurationFrontendId, ConfigurationFrontendMetadata,
-    FrontendConfigContribution, FrontendMetadataResolutionError, GraphGenerationId,
-    MetadataResolutionError, PluginPackageMetadata, ReloadPolicy, ResolvedHarness,
-    ResolvedHarnessInspection, SkillResourceMetadata,
+    FrontendConfigContribution, FrontendMetadataResolutionError, GenerationId,
+    MetadataResolutionError, PluginPackageMetadata, ReloadPolicy, ResolvedComposition,
+    ResolvedCompositionInspection, SkillResourceMetadata,
 };
 use std::collections::BTreeSet;
 
@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 /// diagnostics without activating plugin behavior.
 #[derive(Clone, Debug)]
 pub struct ResolvedCompositionMetadata {
-    generation: GraphGenerationId,
+    generation: GenerationId,
     packages: Vec<PluginPackageMetadata>,
     components: Vec<ComponentRuntimeMetadata>,
     frontends: Vec<ConfigurationFrontendMetadata>,
@@ -22,7 +22,7 @@ pub struct ResolvedCompositionMetadata {
 }
 
 impl ResolvedCompositionMetadata {
-    pub fn generation(&self) -> &GraphGenerationId {
+    pub fn generation(&self) -> &GenerationId {
         &self.generation
     }
 
@@ -74,7 +74,7 @@ impl ResolvedCompositionMetadata {
     }
 }
 
-impl ResolvedHarnessInspection {
+impl ResolvedCompositionInspection {
     pub fn component_runtime_metadata(
         &self,
         component: &ComponentId,
@@ -116,7 +116,7 @@ impl CompositionMetadataInput {
     pub fn resolve_inspectable(
         self,
         authority_ceiling: &Authority,
-    ) -> Result<(ResolvedHarness, ResolvedCompositionMetadata), MetadataResolutionError> {
+    ) -> Result<(ResolvedComposition, ResolvedCompositionMetadata), MetadataResolutionError> {
         let mut packages = self.packages.clone();
         packages.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
         let mut components = self.components.clone();
@@ -144,7 +144,7 @@ impl CompositionMetadataInput {
             Item = (ConfigurationFrontendId, FrontendConfigContribution),
         >,
         authority_ceiling: &Authority,
-    ) -> Result<(ResolvedHarness, ResolvedCompositionMetadata), FrontendMetadataResolutionError>
+    ) -> Result<(ResolvedComposition, ResolvedCompositionMetadata), FrontendMetadataResolutionError>
     {
         let mut packages = self.packages.clone();
         packages.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
@@ -286,7 +286,7 @@ mod tests {
         );
 
         let inspection =
-            ResolvedHarnessInspection::from_resolved_with_metadata(&resolved, &metadata).unwrap();
+            ResolvedCompositionInspection::from_resolved_with_metadata(&resolved, &metadata).unwrap();
         assert_eq!(
             inspection
                 .component_runtime_metadata(&component)
@@ -328,7 +328,7 @@ mod tests {
         }
         .resolve(&Authority::default())
         .unwrap();
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedCompositionInspection::from_resolved(&resolved);
 
         assert!(inspection.component_runtime_metadata(&component).is_none());
         assert!(inspection.component_package_metadata(&component).is_none());
