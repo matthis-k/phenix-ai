@@ -1,5 +1,5 @@
 use crate::{
-    CallableId, CapabilityId, ComponentId, ComponentManifest, ConfigNamespace,
+    CallableId, PermissionId, ComponentId, ComponentManifest, ConfigNamespace,
     ConfigurationFrontendId, EventTypeId, InterfaceId, PluginExecution, PluginId, PluginManifest,
     ResourceNamespace, SkillId,
 };
@@ -69,7 +69,7 @@ pub struct ComponentRuntimeMetadata {
     pub manifest: ComponentManifest,
     pub version: u64,
     pub configuration_contracts: BTreeSet<ConfigNamespace>,
-    pub requested_capabilities: BTreeSet<CapabilityId>,
+    pub requested_capabilities: BTreeSet<PermissionId>,
     pub state_class: ComponentStateClass,
     pub reload_policy: ReloadPolicy,
     pub interposition_interfaces: BTreeSet<InterfaceId>,
@@ -89,7 +89,7 @@ pub struct SkillResourceMetadata {
     pub priority: i32,
     pub required_tools: BTreeSet<CallableId>,
     pub required_interfaces: BTreeSet<InterfaceId>,
-    pub required_capabilities: BTreeSet<CapabilityId>,
+    pub required_capabilities: BTreeSet<PermissionId>,
     pub compatibility: CompatibilityMetadata,
     pub invalidation_targets: BTreeSet<String>,
     pub reload_policy: ReloadPolicy,
@@ -110,7 +110,7 @@ pub enum CompositionMetadataError {
     MissingComponentHost,
     ResourceOnlyPackageHasComponents,
     EmptyPackagedResource,
-    RequestedCapabilityExceedsMaximum(CapabilityId),
+    RequestedCapabilityExceedsMaximum(PermissionId),
     EmptyControllerContribution,
     MissingIdentity,
     MissingContentIdentity,
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn plugin_package_metadata_uses_the_canonical_runtime_manifest() {
         let metadata = package_metadata(PluginExecution::Runtime {
-            runtime: crate::RuntimeId::parse("vendor.runtime").unwrap(),
+            runtime: crate::PluginRuntimeId::parse("vendor.runtime").unwrap(),
             artifact: crate::PluginArtifact {
                 locator: "plugin.wasm".into(),
                 revision: crate::ArtifactRevision::from_content(b"fixture"),
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn component_metadata_rejects_requested_capability_above_component_ceiling() {
-        let denied = CapabilityId::parse("workspace.write").unwrap();
+        let denied = PermissionId::parse("workspace.write").unwrap();
         let mut metadata = component_metadata(Vec::new(), Vec::new());
         metadata.requested_capabilities.insert(denied.clone());
 
