@@ -3078,9 +3078,7 @@ fn workspace_recall_terms(root: &Path) -> BTreeSet<String> {
                 .collect::<Vec<_>>()
         })
         .filter(|term| !term.is_empty())
-        .filter(|term| {
-            term.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES
-        })
+        .filter(|term| term.len() <= workspace_discovery::MAX_WORKSPACE_DISCOVERY_TERM_BYTES)
         .collect()
 }
 
