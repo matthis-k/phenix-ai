@@ -191,6 +191,8 @@ pub enum ResolvedHarnessError {
         interface: InterfaceId,
     },
     DuplicateToolCallTrigger(crate::CallableId),
+    InvalidProcessArgument(String),
+    DuplicateProcessArgument(String),
     DuplicateLayerPolicy {
         service: ServiceId,
         plugin: PluginId,
@@ -275,6 +277,12 @@ impl Display for ResolvedHarnessError {
             }
             Self::DuplicateToolCallTrigger(callable) => {
                 write!(f, "duplicate tool-call trigger id: {callable}")
+            }
+            Self::InvalidProcessArgument(argument) => {
+                write!(f, "invalid process argument trigger: {argument}")
+            }
+            Self::DuplicateProcessArgument(argument) => {
+                write!(f, "duplicate process argument trigger: {argument}")
             }
             Self::DuplicateLayerPolicy { service, plugin } => {
                 write!(
@@ -954,6 +962,16 @@ fn entry_trigger_order(
                     callable_id: right, ..
                 },
             ) => left.cmp(right),
+            (
+                EntryTriggerKind::ProcessArgument { name: left, .. },
+                EntryTriggerKind::ProcessArgument { name: right, .. },
+            ) => left.cmp(right),
+            (EntryTriggerKind::ToolCall { .. }, EntryTriggerKind::ProcessArgument { .. }) => {
+                std::cmp::Ordering::Less
+            }
+            (EntryTriggerKind::ProcessArgument { .. }, EntryTriggerKind::ToolCall { .. }) => {
+                std::cmp::Ordering::Greater
+            }
         })
 }
 
@@ -963,6 +981,7 @@ fn validate_entry_triggers(
     authority_ceiling: &Authority,
 ) -> Result<(), ResolvedHarnessError> {
     let mut tool_ids = BTreeSet::new();
+    let mut process_arguments = BTreeSet::new();
     for trigger in triggers {
         let Some(component) = components
             .iter()
@@ -1005,6 +1024,24 @@ fn validate_entry_triggers(
                     return Err(ResolvedHarnessError::DuplicateToolCallTrigger(
                         callable_id.clone(),
                     ));
+                }
+            }
+            EntryTriggerKind::ProcessArgument { name, .. } => {
+                let Some(body) = name.strip_prefix("--") else {
+                    return Err(ResolvedHarnessError::InvalidProcessArgument(name.clone()));
+                };
+                let mut chars = body.chars();
+                let valid = chars
+                    .next()
+                    .is_some_and(|first| first.is_ascii_alphanumeric())
+                    && chars.all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                    });
+                if !valid {
+                    return Err(ResolvedHarnessError::InvalidProcessArgument(name.clone()));
+                }
+                if !process_arguments.insert(name.clone()) {
+                    return Err(ResolvedHarnessError::DuplicateProcessArgument(name.clone()));
                 }
             }
         }
@@ -1802,6 +1839,19 @@ mod entry_trigger_tests {
         }
     }
 
+    fn process_argument(name: &str) -> ComponentEntryTrigger {
+        ComponentEntryTrigger {
+            component: ComponentId::parse("fixture.trigger.component").unwrap(),
+            interface: InterfaceId::parse("fixture.trigger.shell@1").unwrap(),
+            trigger: EntryTriggerKind::ProcessArgument {
+                name: name.into(),
+                takes_value: true,
+                description: "fixture process argument".into(),
+            },
+            required_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+        }
+    }
+
     fn resolve(
         triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
     ) -> Result<ResolvedHarness, ResolvedHarnessError> {
@@ -1833,6 +1883,36 @@ mod entry_trigger_tests {
         assert!(matches!(
             resolve([trigger("bash"), second]),
             Err(ResolvedHarnessError::DuplicateToolCallTrigger(id)) if id.as_str() == "bash"
+        ));
+    }
+
+    #[test]
+    fn process_arguments_are_resolved_metadata() {
+        let resolved = resolve([process_argument("--plugin-handled-value")]).unwrap();
+        assert_eq!(
+            resolved.entry_triggers(),
+            &[process_argument("--plugin-handled-value")]
+        );
+    }
+
+    #[test]
+    fn duplicate_process_arguments_fail_resolution() {
+        assert!(matches!(
+            resolve([
+                process_argument("--plugin-handled-value"),
+                process_argument("--plugin-handled-value")
+            ]),
+            Err(ResolvedHarnessError::DuplicateProcessArgument(argument))
+                if argument == "--plugin-handled-value"
+        ));
+    }
+
+    #[test]
+    fn malformed_process_arguments_fail_resolution() {
+        assert!(matches!(
+            resolve([process_argument("plugin-handled-value")]),
+            Err(ResolvedHarnessError::InvalidProcessArgument(argument))
+                if argument == "plugin-handled-value"
         ));
     }
 
