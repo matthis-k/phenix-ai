@@ -7303,9 +7303,9 @@ mod tests {
         ) -> Result<ModelInferenceResponse, String> {
             let g2 = || orchestration_string_field(request, 0, "generation");
             let reader_prompt = || -> Result<(SessionId, String), String> {
-                let reader = SessionInfo::from_value(&orchestration_result(request, 3)?.output)
+                let reader = SessionInfo::from_value(&orchestration_result(request, 4)?.output)
                     .map_err(|error| error.to_string())?;
-                let prompt = orchestration_result(request, 4)?;
+                let prompt = orchestration_result(request, 5)?;
                 let PhenixValue::Map(fields) = &prompt.output else {
                     return Err("reader prompt returned a non-map result".into());
                 };
@@ -7406,23 +7406,43 @@ mod tests {
                         )],
                     ))
                 }
-                3 => Ok(orchestration_response(
-                    "create reader session",
-                    vec![orchestration_operation_call(
-                        "orchestration-create-reader",
-                        "phenix.session",
-                        "create",
-                        BTreeMap::from([
-                            (
-                                "working_directory".into(),
-                                PhenixValue::String("/workspace".into()),
-                            ),
-                            ("title".into(), PhenixValue::String("reader".into())),
-                        ]),
-                    )],
-                )),
+                3 => {
+                    orchestration_result(request, 2)?;
+                    let writer = SessionInfo::from_value(&orchestration_result(request, 1)?.output)
+                        .map_err(|error| error.to_string())?;
+                    Ok(orchestration_response(
+                        "close writer session",
+                        vec![orchestration_operation_call(
+                            "orchestration-close-writer",
+                            "phenix.session",
+                            "close",
+                            BTreeMap::from([(
+                                "session_id".into(),
+                                PhenixValue::String(writer.session_id.to_string()),
+                            )]),
+                        )],
+                    ))
+                }
                 4 => {
-                    let reader = SessionInfo::from_value(&orchestration_result(request, 3)?.output)
+                    orchestration_result(request, 3)?;
+                    Ok(orchestration_response(
+                        "create reader session",
+                        vec![orchestration_operation_call(
+                            "orchestration-create-reader",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([
+                                (
+                                    "working_directory".into(),
+                                    PhenixValue::String("/workspace".into()),
+                                ),
+                                ("title".into(), PhenixValue::String("reader".into())),
+                            ]),
+                        )],
+                    ))
+                }
+                5 => {
+                    let reader = SessionInfo::from_value(&orchestration_result(request, 4)?.output)
                         .map_err(|error| error.to_string())?;
                     Ok(orchestration_response(
                         "recall memory through independent G2 session",
@@ -7447,8 +7467,8 @@ mod tests {
                         )],
                     ))
                 }
-                5 => {
-                    let result = orchestration_result(request, 4)?;
+                6 => {
+                    let result = orchestration_result(request, 5)?;
                     let PhenixValue::Map(fields) = &result.output else {
                         return Err("reader prompt returned a non-map result".into());
                     };
@@ -7474,9 +7494,9 @@ mod tests {
                         }],
                     ))
                 }
-                6 => {
+                7 => {
                     let (reader, execution_id) = reader_prompt()?;
-                    let trace = &orchestration_result(request, 5)?.output;
+                    let trace = &orchestration_result(request, 6)?.output;
                     let PhenixValue::List(events) = trace else {
                         return Err("runtime trace returned a non-list result".into());
                     };
@@ -7523,10 +7543,10 @@ mod tests {
                         )],
                     ))
                 }
-                7 => {
+                8 => {
                     let (reader, execution_id) = reader_prompt()?;
                     let snapshot =
-                        SessionSnapshot::from_value(&orchestration_result(request, 6)?.output)
+                        SessionSnapshot::from_value(&orchestration_result(request, 7)?.output)
                             .map_err(|error| error.to_string())?;
                     let observed_memory_call = snapshot.updates.iter().any(|update| {
                         matches!(
@@ -7555,9 +7575,9 @@ mod tests {
                         }],
                     ))
                 }
-                8 => {
+                9 => {
                     let inspected =
-                        ExecutionRecord::from_value(&orchestration_result(request, 7)?.output)
+                        ExecutionRecord::from_value(&orchestration_result(request, 8)?.output)
                             .map_err(|error| error.to_string())?;
                     if inspected.graph_generation != g2()? {
                         return Err(format!(
@@ -7576,8 +7596,8 @@ mod tests {
                         )],
                     ))
                 }
-                9 => {
-                    let active = orchestration_string_field(request, 8, "active_generation")?;
+                10 => {
+                    let active = orchestration_string_field(request, 9, "active_generation")?;
                     if active != g2()? {
                         return Err(format!("promotion selected unexpected generation {active}"));
                     }
@@ -7594,8 +7614,8 @@ mod tests {
                         )],
                     ))
                 }
-                10 => {
-                    let active = orchestration_string_field(request, 9, "active_generation")?;
+                11 => {
+                    let active = orchestration_string_field(request, 10, "active_generation")?;
                     if active != initial_generation {
                         return Err(format!("rollback selected unexpected generation {active}"));
                     }
@@ -7609,8 +7629,8 @@ mod tests {
                         )],
                     ))
                 }
-                11 => {
-                    let retired = orchestration_string_field(request, 10, "retired_generation")?;
+                12 => {
+                    let retired = orchestration_string_field(request, 11, "retired_generation")?;
                     if retired != g2()? {
                         return Err(format!("retired unexpected generation {retired}"));
                     }
@@ -7624,12 +7644,12 @@ mod tests {
                         )],
                     ))
                 }
-                12 => {
-                    let result = orchestration_result(request, 11)?;
+                13 => {
+                    let result = orchestration_result(request, 12)?;
                     let PhenixValue::Map(fields) = &result.output else {
                         return Err("final plugin inspection returned a non-map result".into());
                     };
-                    let active = orchestration_string_field(request, 11, "active_generation")?;
+                    let active = orchestration_string_field(request, 12, "active_generation")?;
                     if active != initial_generation {
                         return Err(format!(
                             "final active generation is {active}, expected {initial_generation}"
