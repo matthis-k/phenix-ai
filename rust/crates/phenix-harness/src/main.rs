@@ -4,14 +4,15 @@ use phenix_core::{
     LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    default_suite_authority, invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
+    application, default_suite_authority, invocation_defaults_manifest, HarnessBuilder,
+    ProcessSurfaceMetadata,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_manifest, full_agent_configuration_manifest, agent_loop_manifest,
-    artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
-    basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
-    cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
+    adapter_acp_manifest, agent_loop_manifest, artifact_manifest, basic_agent_configuration_manifest,
+    basic_context_manifest, basic_model_manifest, basic_skills_manifest, basic_tools_manifest,
+    benchmark_outcome_manifest, cli_manifest, context_manifest, debug_manifest,
+    efficiency_evaluation_manifest, execution_manifest, frontend_manifest,
+    full_agent_configuration_manifest, hook_manifest, job_manifest, language_manifest,
     local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
     planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
     session_tree_manifest, step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
@@ -31,30 +32,21 @@ use std::{
 struct Cli {
     help: bool,
     list_services: bool,
-    enable_plugins: BTreeSet<String>,
-    disable_plugins: BTreeSet<String>,
+    mode: Option<String>,
+    plugin_arguments: Vec<String>,
 }
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("phenix-harness: {error}");
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
+        eprintln!("phenix: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<(), Box<dyn Error>> {
     let cli = parse_cli(env::args().skip(1))?;
-    if cli.help {
-        print_help();
-        return Ok(());
-    }
-
-    let state = state_path()?;
-    if let Some(parent) = state.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let persistence = LocalPersistence::open(&state)?;
-    let mut builder = match configured_first_party_plugins(&cli)? {
+    let mut builder = match configured_first_party_plugins()? {
         Some(enabled) => HarnessBuilder::with_selected_suite(&enabled)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
         None => HarnessBuilder::with_default_suite()?,
@@ -63,6 +55,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         add_packaged_plugin(&mut builder, &package)?;
     }
     apply_configured_layer_policy(&mut builder)?;
+
+    let modes = configured_modes()?;
+    if cli.help {
+        print_help(&builder, &modes)?;
+        return Ok(());
+    }
+    let mode = selected_mode(cli.mode.as_deref(), &modes)?;
+    builder.apply_process_arguments(&cli.plugin_arguments)?;
+
+    let state = state_path()?;
+    if let Some(parent) = state.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let persistence = LocalPersistence::open(&state)?;
     let mut harness = builder.build_with_persistence(persistence)?;
     harness.activate()?;
     if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
@@ -110,27 +116,54 @@ fn run() -> Result<(), Box<dyn Error>> {
         services.dedup();
         println!(
             "{}",
-            serde_json::to_string(&json!({ "plugins": plugins, "services": services }))?
+            serde_json::to_string(&json!({
+                "mode": mode,
+                "plugins": plugins,
+                "services": services,
+            }))?
         );
         return Ok(());
     }
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut stdout = io::BufWriter::new(stdout.lock());
-    serve_jsonl(
-        harness.kernel_mut(),
-        &default_suite_authority(),
-        stdin.lock(),
-        &mut stdout,
-    )?;
-    Ok(())
+    match mode.as_str() {
+        "jsonl" => {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let mut stdout = io::BufWriter::new(stdout.lock());
+            serve_jsonl(
+                harness.kernel_mut(),
+                &default_suite_authority(),
+                stdin.lock(),
+                &mut stdout,
+            )?;
+            Ok(())
+        }
+        "acp" => {
+            application::serve_configured_application(harness)
+                .await
+                .map_err(|error| -> Box<dyn Error> { Box::new(error) })
+        }
+        _ => unreachable!("selected_mode validates configured modes"),
+    }
 }
 
-fn print_help() {
-    println!(
-        "phenix-harness [OPTIONS]\n\nWithout arguments, reads JSONL service requests from stdin and writes JSONL responses.\n\nOptions:\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help"
-    );
+fn print_help(builder: &HarnessBuilder, modes: &BTreeSet<String>) -> Result<(), Box<dyn Error>> {
+    println!("phenix [OPTIONS]");
+    println!();
+    println!("Options:");
+    println!("  --mode MODE           Select process mode ({})", modes.iter().cloned().collect::<Vec<_>>().join(", "));
+    println!("  --list-services       List active plugins and services as JSON");
+    println!("  -h, --help            Print help");
+    let loaded = builder.loaded_plugin_ids();
+    let contributed = builder.process_surface().help(&loaded)?;
+    if !contributed.is_empty() {
+        println!();
+        println!("Plugin options:");
+        for line in contributed {
+            println!("  {line}");
+        }
+    }
+    Ok(())
 }
 
 fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
@@ -140,46 +173,66 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
         match argument.as_str() {
             "--help" | "-h" => cli.help = true,
             "--list-services" => cli.list_services = true,
-            "--enable-plugin" => {
-                let plugin = args
+            "--mode" => {
+                let mode = args
                     .next()
-                    .ok_or_else(|| "--enable-plugin requires a plugin id".to_owned())?;
-                if plugin.is_empty() {
-                    return Err("--enable-plugin requires a plugin id".into());
+                    .ok_or_else(|| "--mode requires a value".to_owned())?;
+                if mode.is_empty() {
+                    return Err("--mode requires a value".into());
                 }
-                cli.enable_plugins.insert(plugin);
-            }
-            "--disable-plugin" => {
-                let plugin = args
-                    .next()
-                    .ok_or_else(|| "--disable-plugin requires a plugin id".to_owned())?;
-                if plugin.is_empty() {
-                    return Err("--disable-plugin requires a plugin id".into());
+                if cli.mode.replace(mode).is_some() {
+                    return Err("--mode was provided more than once".into());
                 }
-                cli.disable_plugins.insert(plugin);
             }
-            _ if argument.starts_with("--enable-plugin=") => {
-                let plugin = argument
-                    .strip_prefix("--enable-plugin=")
+            _ if argument.starts_with("--mode=") => {
+                let mode = argument
+                    .strip_prefix("--mode=")
                     .expect("prefix checked");
-                if plugin.is_empty() {
-                    return Err("--enable-plugin requires a plugin id".into());
+                if mode.is_empty() {
+                    return Err("--mode requires a value".into());
                 }
-                cli.enable_plugins.insert(plugin.to_owned());
-            }
-            _ if argument.starts_with("--disable-plugin=") => {
-                let plugin = argument
-                    .strip_prefix("--disable-plugin=")
-                    .expect("prefix checked");
-                if plugin.is_empty() {
-                    return Err("--disable-plugin requires a plugin id".into());
+                if cli.mode.replace(mode.to_owned()).is_some() {
+                    return Err("--mode was provided more than once".into());
                 }
-                cli.disable_plugins.insert(plugin.to_owned());
             }
-            _ => return Err(format!("unknown argument: {argument}")),
+            _ => cli.plugin_arguments.push(argument),
         }
     }
     Ok(cli)
+}
+
+fn configured_modes() -> Result<BTreeSet<String>, Box<dyn Error>> {
+    let Some(value) = env::var_os("PHENIX_MODES") else {
+        return Ok(BTreeSet::from(["jsonl".to_owned()]));
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| "PHENIX_MODES must be valid UTF-8")?;
+    let modes = value
+        .split(',')
+        .filter(|mode| !mode.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if modes.is_empty() {
+        return Err("PHENIX_MODES must contain at least one mode".into());
+    }
+    Ok(modes)
+}
+
+fn selected_mode(requested: Option<&str>, modes: &BTreeSet<String>) -> Result<String, Box<dyn Error>> {
+    let selected = requested
+        .map(str::to_owned)
+        .or_else(|| modes.get("jsonl").cloned())
+        .or_else(|| modes.iter().next().cloned())
+        .ok_or("configured package exposes no process modes")?;
+    if !modes.contains(&selected) {
+        return Err(format!(
+            "process mode {selected:?} is not provided by this package; available modes: {}",
+            modes.iter().cloned().collect::<Vec<_>>().join(", ")
+        )
+        .into());
+    }
+    Ok(selected)
 }
 
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
