@@ -1,20 +1,24 @@
 mod runtime_config;
 
 use phenix_core::{
-    LayerPolicy, LocalPersistence, PluginExecution, PluginId, PluginManifest, ServiceId,
+    ComponentProcessArgument, Key, LayerPolicy, LocalPersistence, PhenixValue, PluginExecution,
+    PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    default_suite_authority, invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
+    application::serve_configured_application, default_suite_authority,
+    invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
 };
 use phenix_plugin_catalog::{
     adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
     artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
-    basic_model_manifest, basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest,
-    cli_manifest, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, frontend_manifest, hook_manifest, job_manifest, language_manifest,
-    local_environment_manifest, memory_manifest, model_routing_manifest, options_manifest,
-    planning_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
+    basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
+    basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
+    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
+    frontend_manifest, full_product_configuration_manifest, hook_manifest, job_manifest,
+    language_manifest, local_environment_manifest, memory_manifest, model_routing_manifest,
+    openai_codex_manifest, options_manifest, planning_manifest, providers_manifest,
+    repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
+    step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -27,22 +31,42 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Mode {
+    Acp,
+    #[default]
+    Jsonl,
+}
+
+impl Mode {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "acp" => Ok(Self::Acp),
+            "jsonl" => Ok(Self::Jsonl),
+            _ => Err(format!("unknown mode: {value}; expected acp or jsonl")),
+        }
+    }
+}
+
 #[derive(Debug, Default, Eq, PartialEq)]
 struct Cli {
     help: bool,
     list_services: bool,
+    mode: Mode,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
+    plugin_arguments: Vec<String>,
 }
 
-fn main() {
-    if let Err(error) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
         eprintln!("phenix-harness: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<(), Box<dyn Error>> {
     let cli = parse_cli(env::args().skip(1))?;
     if cli.help {
         print_help();
@@ -64,6 +88,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     apply_configured_layer_policy(&mut builder)?;
     let mut harness = builder.build_with_persistence(persistence)?;
+    let process_arguments = resolve_process_arguments(
+        &cli.plugin_arguments,
+        harness.resolved_harness().process_arguments(),
+    )
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     harness.activate()?;
     if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
         runtime_config::apply_default_config_directory(&mut harness, Path::new(&path))?;
@@ -91,6 +120,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             precedence,
         )?;
     }
+    apply_process_arguments(&mut harness, &process_arguments)?;
 
     if cli.list_services {
         let plugins = harness
@@ -115,21 +145,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut stdout = io::BufWriter::new(stdout.lock());
-    serve_jsonl(
-        harness.kernel_mut(),
-        &default_suite_authority(),
-        stdin.lock(),
-        &mut stdout,
-    )?;
+    match cli.mode {
+        Mode::Acp => serve_configured_application(harness).await?,
+        Mode::Jsonl => {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let mut stdout = io::BufWriter::new(stdout.lock());
+            serve_jsonl(
+                harness.kernel_mut(),
+                &default_suite_authority(),
+                stdin.lock(),
+                &mut stdout,
+            )?;
+        }
+    }
     Ok(())
 }
 
 fn print_help() {
     println!(
-        "phenix-harness [OPTIONS]\n\nWithout arguments, reads JSONL service requests from stdin and writes JSONL responses.\n\nOptions:\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help"
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -140,6 +175,19 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
         match argument.as_str() {
             "--help" | "-h" => cli.help = true,
             "--list-services" => cli.list_services = true,
+            "--mode" => {
+                let mode = args
+                    .next()
+                    .ok_or_else(|| "--mode requires acp or jsonl".to_owned())?;
+                cli.mode = Mode::parse(&mode)?;
+            }
+            _ if argument.starts_with("--mode=") => {
+                let mode = argument.strip_prefix("--mode=").expect("prefix checked");
+                if mode.is_empty() {
+                    return Err("--mode requires acp or jsonl".into());
+                }
+                cli.mode = Mode::parse(mode)?;
+            }
             "--enable-plugin" => {
                 let plugin = args
                     .next()
@@ -176,17 +224,135 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                 }
                 cli.disable_plugins.insert(plugin.to_owned());
             }
-            _ => return Err(format!("unknown argument: {argument}")),
+            _ => cli.plugin_arguments.push(argument),
         }
     }
     Ok(cli)
 }
 
+#[derive(Clone, Debug)]
+struct ProcessArgumentInvocation {
+    argument: ComponentProcessArgument,
+    value: Option<String>,
+}
+
+fn resolve_process_arguments(
+    raw: &[String],
+    arguments: &[ComponentProcessArgument],
+) -> Result<Vec<ProcessArgumentInvocation>, String> {
+    const CORE_ARGUMENTS: &[&str] = &[
+        "--help",
+        "--list-services",
+        "--mode",
+        "--enable-plugin",
+        "--disable-plugin",
+    ];
+
+    let mut declared = BTreeMap::new();
+    for argument in arguments {
+        if CORE_ARGUMENTS.contains(&argument.name.as_str()) {
+            return Err(format!(
+                "plugin process argument {} conflicts with a core argument",
+                argument.name
+            ));
+        }
+        declared.insert(argument.name.as_str(), (argument, argument.takes_value));
+    }
+
+    let mut resolved = Vec::new();
+    let mut index = 0;
+    while index < raw.len() {
+        let argument = &raw[index];
+        let (name, inline_value) = match argument.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_owned())),
+            None => (argument.as_str(), None),
+        };
+        let Some((process_argument, takes_value)) = declared.get(name).copied() else {
+            return Err(format!("unknown argument: {argument}"));
+        };
+
+        let value = match (takes_value, inline_value) {
+            (false, Some(_)) => {
+                return Err(format!(
+                    "plugin process argument {name} does not take a value"
+                ));
+            }
+            (false, None) => None,
+            (true, Some(value)) => Some(value),
+            (true, None) => {
+                index += 1;
+                let value = raw
+                    .get(index)
+                    .ok_or_else(|| format!("plugin process argument {name} requires a value"))?;
+                Some(value.clone())
+            }
+        };
+
+        resolved.push(ProcessArgumentInvocation {
+            argument: process_argument.clone(),
+            value,
+        });
+        index += 1;
+    }
+
+    Ok(resolved)
+}
+
+fn apply_process_arguments(
+    harness: &mut PhenixHarness,
+    arguments: &[ProcessArgumentInvocation],
+) -> Result<(), Box<dyn Error>> {
+    for argument in arguments {
+        let component = harness
+            .resolved_harness()
+            .components()
+            .iter()
+            .find(|component| component.id == argument.argument.component)
+            .ok_or_else(|| {
+                format!(
+                    "plugin process argument targets missing component {}",
+                    argument.argument.component
+                )
+            })?;
+        let owner = component.owner.clone();
+        let service = ServiceId::parse(argument.argument.interface.as_str())?;
+        let input = PhenixValue::Table(BTreeMap::from([
+            (
+                Key::parse("name").expect("static process argument field is valid"),
+                PhenixValue::String(argument.argument.name.clone()),
+            ),
+            (
+                Key::parse("value").expect("static process argument field is valid"),
+                PhenixValue::Option(
+                    argument
+                        .value
+                        .clone()
+                        .map(PhenixValue::String)
+                        .map(Box::new),
+                ),
+            ),
+        ]));
+        let encoded = serde_json::to_vec(&input)?;
+        harness.kernel_mut().invoke_component(
+            &argument.argument.component,
+            &service,
+            &encoded,
+            &argument.argument.required_authority,
+            &owner,
+        )?;
+    }
+    Ok(())
+}
+
 fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     let authority = default_suite_authority();
-    vec![
+    let mut plugins = vec![
         (advanced_agent_configuration_manifest(), false),
         (basic_agent_configuration_manifest(), false),
+        (basic_product_configuration_manifest(), false),
+        (full_product_configuration_manifest(), false),
+        (providers_manifest(), false),
+        (openai_codex_manifest(), true),
         (adapter_acp_manifest(), false),
         (repository_worker_manifest(), true),
         (session_manifest(), true),
@@ -216,7 +382,13 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (basic_tools_manifest(), false),
         (basic_skills_manifest(), false),
         (basic_context_manifest(), false),
-    ]
+    ];
+    plugins.extend(
+        common_provider_definitions()
+            .into_iter()
+            .map(|provider| (provider.manifest(), true)),
+    );
+    plugins
 }
 
 fn configured_first_party_plugins(cli: &Cli) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
@@ -415,6 +587,198 @@ mod tests {
         );
     }
 
+    fn process_argument(name: &str, takes_value: bool) -> ComponentProcessArgument {
+        ComponentProcessArgument {
+            component: phenix_core::ComponentId::parse("fixture.cli").unwrap(),
+            interface: phenix_core::InterfaceId::parse("fixture.cli@1").unwrap(),
+            name: name.to_owned(),
+            takes_value,
+            description: "fixture".into(),
+            required_authority: phenix_core::Authority::default(),
+        }
+    }
+
+    #[test]
+    fn plugin_arguments_are_deferred_until_the_resolved_graph_is_known() {
+        let cli = parse_cli([
+            "--plugin-handled-value".into(),
+            "7".into(),
+            "--plugin-switch".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.plugin_arguments,
+            vec![
+                "--plugin-handled-value".to_owned(),
+                "7".to_owned(),
+                "--plugin-switch".to_owned()
+            ]
+        );
+
+        let triggers = [
+            process_argument("--plugin-handled-value", true),
+            process_argument("--plugin-switch", false),
+        ];
+        let resolved = resolve_process_arguments(&cli.plugin_arguments, &triggers).unwrap();
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].value.as_deref(), Some("7"));
+        assert_eq!(resolved[1].value, None);
+    }
+
+    #[test]
+    fn declared_plugin_argument_is_dispatched_to_its_component() {
+        use phenix_core::{
+            Authority, ComponentExport, ComponentId, ComponentManifest, InterfaceId,
+            InterfaceSchema, PhenixSchema, PluginHost, PluginInstance,
+        };
+        use std::sync::{Arc, Mutex};
+
+        struct CaptureProcessArgument(Arc<Mutex<Vec<PhenixValue>>>);
+
+        impl PluginInstance for CaptureProcessArgument {
+            fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn invoke_component(
+                &mut self,
+                _component: &ComponentId,
+                _service: &ServiceId,
+                input: &[u8],
+                _host: &PluginHost<'_>,
+            ) -> Result<Vec<u8>, String> {
+                let value: PhenixValue =
+                    serde_json::from_slice(input).map_err(|error| error.to_string())?;
+                self.0.lock().unwrap().push(value);
+                serde_json::to_vec(&PhenixValue::Unit).map_err(|error| error.to_string())
+            }
+        }
+
+        let plugin_id = PluginId::parse("fixture.process-argument").unwrap();
+        let component_id = ComponentId::parse("fixture.process-argument").unwrap();
+        let interface = InterfaceId::parse("fixture.process-argument@1").unwrap();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let factory_observed = Arc::clone(&observed);
+
+        let mut builder = HarnessBuilder::new();
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: plugin_id.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                move || Box::new(CaptureProcessArgument(Arc::clone(&factory_observed))),
+            )
+            .unwrap();
+        builder.add_component(ComponentManifest {
+            id: component_id.clone(),
+            owner: plugin_id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: interface.clone(),
+                schema: InterfaceSchema::new(PhenixSchema::Any, PhenixSchema::Any),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            listeners: Vec::new(),
+            maximum_authority: Authority::default(),
+        });
+        builder.add_process_argument(ComponentProcessArgument {
+            component: component_id,
+            interface,
+            name: "--plugin-handled-value".into(),
+            takes_value: true,
+            description: "fixture".into(),
+            required_authority: Authority::default(),
+        });
+
+        let mut harness = builder.build().unwrap();
+        let arguments = resolve_process_arguments(
+            &["--plugin-handled-value".into(), "7".into()],
+            harness.resolved_harness().process_arguments(),
+        )
+        .unwrap();
+        harness.activate().unwrap();
+        apply_process_arguments(&mut harness, &arguments).unwrap();
+
+        let values = observed.lock().unwrap();
+        assert_eq!(values.len(), 1);
+        let PhenixValue::Table(fields) = &values[0] else {
+            panic!("process argument input is not a table");
+        };
+        assert_eq!(
+            fields
+                .get(&Key::parse("name").unwrap())
+                .and_then(|value| match value {
+                    PhenixValue::String(value) => Some(value.as_str()),
+                    _ => None,
+                }),
+            Some("--plugin-handled-value")
+        );
+        assert_eq!(
+            fields.get(&Key::parse("value").unwrap()),
+            Some(&PhenixValue::Option(Some(Box::new(PhenixValue::String(
+                "7".into()
+            )))))
+        );
+    }
+
+    #[test]
+    fn undeclared_plugin_arguments_are_rejected_after_graph_resolution() {
+        let cli = parse_cli(["--not-provided".into()]).unwrap();
+        let error = resolve_process_arguments(&cli.plugin_arguments, &[]).unwrap_err();
+        assert!(error.contains("--not-provided"));
+    }
+
+    #[test]
+    fn plugin_argument_inline_values_are_supported() {
+        let cli = parse_cli(["--plugin-handled-value=7".into()]).unwrap();
+        let triggers = [process_argument("--plugin-handled-value", true)];
+        let resolved = resolve_process_arguments(&cli.plugin_arguments, &triggers).unwrap();
+        assert_eq!(resolved[0].value.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn plugin_argument_value_is_required_when_declared() {
+        let triggers = [process_argument("--plugin-handled-value", true)];
+        let error =
+            resolve_process_arguments(&["--plugin-handled-value".into()], &triggers).unwrap_err();
+        assert!(error.contains("requires a value"));
+    }
+
+    #[test]
+    fn plugin_argument_without_value_rejects_inline_value() {
+        let triggers = [process_argument("--plugin-switch", false)];
+        let error =
+            resolve_process_arguments(&["--plugin-switch=7".into()], &triggers).unwrap_err();
+        assert!(error.contains("does not take a value"));
+    }
+
+    #[test]
+    fn plugin_arguments_cannot_shadow_core_options() {
+        let error =
+            resolve_process_arguments(&[], &[process_argument("--mode", true)]).unwrap_err();
+        assert!(error.contains("conflicts with a core argument"));
+    }
+
+    #[test]
+    fn mode_is_an_explicit_frontend_choice() {
+        assert_eq!(
+            parse_cli(["--mode".into(), "acp".into()]).unwrap().mode,
+            Mode::Acp
+        );
+        assert_eq!(
+            parse_cli(["--mode=jsonl".into()]).unwrap().mode,
+            Mode::Jsonl
+        );
+        assert!(parse_cli(["--mode=unknown".into()]).is_err());
+    }
+
     #[test]
     fn no_selection_preserves_default_suite() {
         assert_eq!(
@@ -458,6 +822,34 @@ mod tests {
         assert!(enabled.contains("phenix.options"));
         assert!(enabled.contains("phenix.memory"));
         assert!(enabled.contains("phenix.planning"));
+    }
+
+    #[test]
+    fn configured_full_product_closes_over_model_providers() {
+        let full = full_product_configuration_manifest().id.as_str().to_owned();
+        let enabled = resolve_first_party_plugins(&Cli::default(), Some(&full))
+            .unwrap()
+            .unwrap();
+
+        for required in [
+            "phenix.product.full",
+            "phenix.agent.advanced",
+            "phenix.providers",
+            "openai-api",
+            "openai-codex",
+            "phenix.workspace",
+        ] {
+            assert!(enabled.contains(required), "full product missed {required}");
+        }
+    }
+
+    #[test]
+    fn cli_override_keeps_default_model_providers() {
+        let cli = parse_cli(["--disable-plugin=phenix.debug".into()]).unwrap();
+        let enabled = resolve_first_party_plugins(&cli, None).unwrap().unwrap();
+        assert!(enabled.contains("openai-api"));
+        assert!(enabled.contains("openai-codex"));
+        assert!(!enabled.contains("phenix.debug"));
     }
 
     #[test]

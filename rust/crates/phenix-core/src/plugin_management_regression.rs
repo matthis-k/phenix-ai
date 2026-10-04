@@ -1,13 +1,14 @@
 use crate::{
     runtime_provider_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
-    ComponentExport, ComponentId, ComponentImport, ComponentManifest, EntryTriggerKind,
-    GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact, PluginArtifactInput,
-    PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution, PluginBuildExecutor,
-    PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginLoadRequest, PluginManagementContext, PluginManagementError, PluginManagementPolicy,
-    PluginManagementRequest, PluginManagementResult, PluginManifest, PluginRuntimeProvider,
-    PluginSetRequest, PluginState, PluginUnloadRequest, ResolvedHarness, ResolvedHarnessActivation,
-    RuntimeId, RuntimePluginCandidate, ServiceContribution, ServiceId, ServiceRole,
+    ComponentExport, ComponentId, ComponentImport, ComponentManifest, ComponentProcessArgument,
+    EntryTriggerKind, GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact,
+    PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution,
+    PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext, PluginManagementError,
+    PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginManifest,
+    PluginRuntimeProvider, PluginSetRequest, PluginState, PluginUnloadRequest, ResolvedHarness,
+    ResolvedHarnessActivation, RuntimeId, RuntimePluginCandidate, ServiceContribution, ServiceId,
+    ServiceRole,
 };
 use std::{
     collections::BTreeMap,
@@ -382,6 +383,7 @@ fn trial_management_stages_candidate_without_changing_the_active_generation() {
             manifest: ready(second),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -457,6 +459,14 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
         },
         required_authority: Authority::default(),
     };
+    let process_argument = ComponentProcessArgument {
+        component: component.id.clone(),
+        interface: trigger.interface.clone(),
+        name: "--fixture-trial-value".into(),
+        takes_value: true,
+        description: "Generation-local trial process argument".into(),
+        required_authority: Authority::default(),
+    };
     let constraints = kernel
         .capture_root_execution_constraints(&Authority::default(), [])
         .unwrap();
@@ -468,6 +478,7 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
             manifest: ready(second),
             components: vec![component],
             entry_triggers: vec![trigger.clone()],
+            process_arguments: vec![process_argument.clone()],
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -483,6 +494,14 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
             .expect("trial generation remains resident")
             .entry_triggers(),
         &[trigger]
+    );
+    assert!(reconciler.active().process_arguments().is_empty());
+    assert_eq!(
+        reconciler
+            .resident(&result.generation)
+            .expect("trial generation remains resident")
+            .process_arguments(),
+        &[process_argument]
     );
     assert_eq!(starts.load(Ordering::Relaxed), 2);
     assert_eq!(stops.load(Ordering::Relaxed), 0);
@@ -521,6 +540,7 @@ fn load_activates_a_new_guest_in_a_new_generation() {
             manifest: ready(guest.clone()),
             components: vec![guest_component.clone()],
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -614,6 +634,7 @@ fn loading_an_active_plugin_with_a_new_artifact_is_a_replacement() {
             manifest: ready(second_guest.clone()),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -660,6 +681,7 @@ fn stale_expected_revision_is_rejected_before_commit() {
             manifest: ready(candidate_guest),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: Some(ArtifactRevision::from_content(b"unexpected")),
         }),
         &Authority::default(),
@@ -697,6 +719,7 @@ fn expected_revision_rejects_load_when_plugin_is_not_active() {
             manifest: ready(guest),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: Some(ArtifactRevision::from_content(b"guest-v0")),
         }),
         &Authority::default(),
@@ -750,6 +773,7 @@ fn failed_start_keeps_the_previous_generation_active() {
             manifest: ready(candidate_guest),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -835,6 +859,7 @@ fn unknown_runtime_is_rejected_before_commit() {
             manifest: ready(invalid_guest),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),
@@ -878,6 +903,7 @@ fn runtime_provider_cycle_is_rejected_during_desired_set_reconcile() {
             plugins: vec![bridge_a, bridge_b],
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
         }),
         &Authority::default(),
     )
@@ -973,6 +999,7 @@ fn old_and_new_invocations_are_pinned_to_their_generations() {
             manifest: ready(second),
             components: Vec::new(),
             entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
             expected_active_revision: None,
         }),
         &Authority::default(),

@@ -1,10 +1,10 @@
 use crate::{
     Authority, BackendFeature, CapabilityId, ComponentEntryTrigger, ComponentGraphError,
-    ComponentManifest, CompositionMetadataError, ConfigContribution, ConfigMergeError,
-    ConfigurationFrontendId, ConfigurationFrontendMetadata, DurableSchemaRegistration,
-    EntryTriggerKind, FrontendConfigContribution, FrontendConfigError, GraphGenerationId,
-    InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId, PluginManifest,
-    ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
+    ComponentManifest, ComponentProcessArgument, CompositionMetadataError, ConfigContribution,
+    ConfigMergeError, ConfigurationFrontendId, ConfigurationFrontendMetadata,
+    DurableSchemaRegistration, EntryTriggerKind, FrontendConfigContribution, FrontendConfigError,
+    GraphGenerationId, InterfaceId, KernelConfig, KernelError, LayerPolicy, PluginId,
+    PluginManifest, ProviderCompositionPolicy, ResolvedComponentGraph, ResolvedConfigContributions,
     ResolvedDispatchTopology, ResourceNamespace, ServiceId, ServiceRole, SkillResourceMetadata,
 };
 use serde::Serialize;
@@ -191,6 +191,16 @@ pub enum ResolvedHarnessError {
         interface: InterfaceId,
     },
     DuplicateToolCallTrigger(crate::CallableId),
+    MissingProcessArgumentTarget {
+        component: crate::ComponentId,
+        interface: InterfaceId,
+    },
+    ProcessArgumentAuthorityDenied {
+        component: crate::ComponentId,
+        interface: InterfaceId,
+    },
+    InvalidProcessArgument(String),
+    DuplicateProcessArgument(String),
     DuplicateLayerPolicy {
         service: ServiceId,
         plugin: PluginId,
@@ -276,6 +286,18 @@ impl Display for ResolvedHarnessError {
             Self::DuplicateToolCallTrigger(callable) => {
                 write!(f, "duplicate tool-call trigger id: {callable}")
             }
+            Self::MissingProcessArgumentTarget { component, interface } => {
+                write!(f, "process argument targets missing export {component}:{interface}")
+            }
+            Self::ProcessArgumentAuthorityDenied { component, interface } => {
+                write!(f, "process argument authority exceeds runtime/component authority for {component}:{interface}")
+            }
+            Self::InvalidProcessArgument(argument) => {
+                write!(f, "invalid process argument trigger: {argument}")
+            }
+            Self::DuplicateProcessArgument(argument) => {
+                write!(f, "duplicate process argument trigger: {argument}")
+            }
             Self::DuplicateLayerPolicy { service, plugin } => {
                 write!(
                     f,
@@ -318,6 +340,7 @@ pub struct ResolvedHarness {
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    process_arguments: Vec<ComponentProcessArgument>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     configuration: ResolvedConfigContributions,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
@@ -329,6 +352,7 @@ struct ResolutionInputs {
     durable_schemas: Vec<DurableSchemaRegistration>,
     resources: Vec<SkillResourceMetadata>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    process_arguments: Vec<ComponentProcessArgument>,
     contributions: Vec<ConfigContribution>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
     provider_policy: ProviderCompositionPolicy,
@@ -347,10 +371,19 @@ impl ResolutionInputs {
             durable_schemas: durable_schemas.into_iter().collect(),
             resources: resources.into_iter().collect(),
             entry_triggers: entry_triggers.into_iter().collect(),
+            process_arguments: Vec::new(),
             contributions: contributions.into_iter().collect(),
             layer_policies,
             provider_policy,
         }
+    }
+
+    fn with_process_arguments(
+        mut self,
+        process_arguments: impl IntoIterator<Item = ComponentProcessArgument>,
+    ) -> Self {
+        self.process_arguments = process_arguments.into_iter().collect();
+        self
     }
 }
 
@@ -504,6 +537,33 @@ impl ResolvedHarness {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+        plugin_manifests: impl IntoIterator<Item = PluginManifest>,
+        component_manifests: impl IntoIterator<Item = ComponentManifest>,
+        durable_schemas: impl IntoIterator<Item = DurableSchemaRegistration>,
+        entry_triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
+        process_arguments: impl IntoIterator<Item = ComponentProcessArgument>,
+        contributions: impl IntoIterator<Item = ConfigContribution>,
+        layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
+        authority_ceiling: &Authority,
+    ) -> Result<Self, ResolvedHarnessError> {
+        Self::resolve_with_inputs(
+            plugin_manifests,
+            component_manifests,
+            ResolutionInputs::new(
+                durable_schemas,
+                [],
+                entry_triggers,
+                contributions,
+                layer_policies,
+                ProviderCompositionPolicy::default(),
+            )
+            .with_process_arguments(process_arguments),
+            authority_ceiling,
+        )
+    }
+
     pub fn resolve_with_resources_and_layer_policies(
         plugin_manifests: impl IntoIterator<Item = PluginManifest>,
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
@@ -540,6 +600,9 @@ impl ResolvedHarness {
         let mut entry_triggers = inputs.entry_triggers;
         entry_triggers.sort_by(entry_trigger_order);
         validate_entry_triggers(&components, &entry_triggers, authority_ceiling)?;
+        let mut process_arguments = inputs.process_arguments;
+        process_arguments.sort_by(process_argument_order);
+        validate_process_arguments(&components, &process_arguments, authority_ceiling)?;
         let resources = resolve_resources(inputs.resources, &components, authority_ceiling)?;
         validate_layer_policies(&plugins, &inputs.layer_policies, authority_ceiling)?;
         for layers in inputs.layer_policies.values_mut() {
@@ -567,6 +630,7 @@ impl ResolvedHarness {
             plugins: &plugins,
             components: &components,
             entry_triggers: &entry_triggers,
+            process_arguments: &process_arguments,
             durable_schemas: durable_schema_payload(&durable_schemas),
             resources: &resources,
             configuration: configuration.semantic_payload(),
@@ -587,6 +651,7 @@ impl ResolvedHarness {
             plugins,
             components,
             entry_triggers,
+            process_arguments,
             durable_schemas,
             configuration,
             layer_policies: inputs.layer_policies,
@@ -654,6 +719,10 @@ impl ResolvedHarness {
         &self.entry_triggers
     }
 
+    pub fn process_arguments(&self) -> &[ComponentProcessArgument] {
+        &self.process_arguments
+    }
+
     pub fn durable_schemas(&self) -> &[DurableSchemaRegistration] {
         &self.durable_schemas
     }
@@ -699,6 +768,7 @@ impl ResolvedHarness {
         plugins: Vec<PluginManifest>,
         components: Vec<ComponentManifest>,
         entry_triggers: Vec<ComponentEntryTrigger>,
+        process_arguments: Vec<ComponentProcessArgument>,
         authority_ceiling: &Authority,
     ) -> Result<Self, ResolvedHarnessError> {
         let mut plugins = plugins;
@@ -708,6 +778,9 @@ impl ResolvedHarness {
         let mut entry_triggers = entry_triggers;
         entry_triggers.sort_by(entry_trigger_order);
         validate_entry_triggers(&components, &entry_triggers, authority_ceiling)?;
+        let mut process_arguments = process_arguments;
+        process_arguments.sort_by(process_argument_order);
+        validate_process_arguments(&components, &process_arguments, authority_ceiling)?;
         let mut kernel_config = KernelConfig::new(plugins.clone())?;
         for (service, layers) in &self.layer_policies {
             kernel_config = kernel_config.with_layer_policy(service.clone(), layers.clone())?;
@@ -724,6 +797,7 @@ impl ResolvedHarness {
             plugins: &plugins,
             components: &components,
             entry_triggers: &entry_triggers,
+            process_arguments: &process_arguments,
             durable_schemas: durable_schema_payload(&durable_schemas),
             resources: self.resources(),
             configuration: self.configuration.semantic_payload(),
@@ -743,6 +817,7 @@ impl ResolvedHarness {
             plugins,
             components,
             entry_triggers,
+            process_arguments,
             durable_schemas,
             configuration: self.configuration.clone(),
             layer_policies: self.layer_policies.clone(),
@@ -757,6 +832,7 @@ struct SemanticGeneration<'a> {
     plugins: &'a [PluginManifest],
     components: &'a [ComponentManifest],
     entry_triggers: &'a [ComponentEntryTrigger],
+    process_arguments: &'a [ComponentProcessArgument],
     durable_schemas: serde_json::Value,
     resources: &'a [SkillResourceMetadata],
     configuration: serde_json::Value,
@@ -1007,6 +1083,85 @@ fn validate_entry_triggers(
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn process_argument_order(
+    left: &ComponentProcessArgument,
+    right: &ComponentProcessArgument,
+) -> std::cmp::Ordering {
+    left.component
+        .cmp(&right.component)
+        .then_with(|| left.interface.cmp(&right.interface))
+        .then_with(|| left.name.cmp(&right.name))
+}
+
+fn validate_process_arguments(
+    components: &[ComponentManifest],
+    arguments: &[ComponentProcessArgument],
+    authority_ceiling: &Authority,
+) -> Result<(), ResolvedHarnessError> {
+    let mut names = BTreeSet::new();
+    for argument in arguments {
+        let Some(component) = components
+            .iter()
+            .find(|component| component.id == argument.component)
+        else {
+            return Err(ResolvedHarnessError::MissingProcessArgumentTarget {
+                component: argument.component.clone(),
+                interface: argument.interface.clone(),
+            });
+        };
+        let Some(export) = component
+            .exports
+            .iter()
+            .find(|export| export.interface == argument.interface)
+        else {
+            return Err(ResolvedHarnessError::MissingProcessArgumentTarget {
+                component: argument.component.clone(),
+                interface: argument.interface.clone(),
+            });
+        };
+        if !authority_ceiling.permits_all(&argument.required_authority)
+            || !component
+                .maximum_authority
+                .permits_all(&argument.required_authority)
+            || !component
+                .maximum_authority
+                .permits_all(&export.required_authority)
+            || !argument
+                .required_authority
+                .permits_all(&export.required_authority)
+        {
+            return Err(ResolvedHarnessError::ProcessArgumentAuthorityDenied {
+                component: argument.component.clone(),
+                interface: argument.interface.clone(),
+            });
+        }
+
+        let Some(body) = argument.name.strip_prefix("--") else {
+            return Err(ResolvedHarnessError::InvalidProcessArgument(
+                argument.name.clone(),
+            ));
+        };
+        let mut chars = body.chars();
+        let valid = chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphanumeric())
+            && chars.all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            });
+        if !valid {
+            return Err(ResolvedHarnessError::InvalidProcessArgument(
+                argument.name.clone(),
+            ));
+        }
+        if !names.insert(argument.name.clone()) {
+            return Err(ResolvedHarnessError::DuplicateProcessArgument(
+                argument.name.clone(),
+            ));
         }
     }
     Ok(())
@@ -1583,6 +1738,7 @@ mod tests {
                 resolved.plugins().to_vec(),
                 resolved.components().to_vec(),
                 resolved.entry_triggers().to_vec(),
+                resolved.process_arguments().to_vec(),
                 &Authority::default(),
             )
             .unwrap();
@@ -1802,6 +1958,32 @@ mod entry_trigger_tests {
         }
     }
 
+    fn process_argument(name: &str) -> ComponentProcessArgument {
+        ComponentProcessArgument {
+            component: ComponentId::parse("fixture.trigger.component").unwrap(),
+            interface: InterfaceId::parse("fixture.trigger.shell@1").unwrap(),
+            name: name.into(),
+            takes_value: true,
+            description: "fixture process argument".into(),
+            required_authority: Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+        }
+    }
+
+    fn resolve_process_arguments(
+        arguments: impl IntoIterator<Item = ComponentProcessArgument>,
+    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
+        ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+            [plugin()],
+            [component()],
+            [],
+            [],
+            arguments,
+            [],
+            BTreeMap::new(),
+            &Authority::new([CapabilityId::parse("workspace.shell").unwrap()]),
+        )
+    }
+
     fn resolve(
         triggers: impl IntoIterator<Item = ComponentEntryTrigger>,
     ) -> Result<ResolvedHarness, ResolvedHarnessError> {
@@ -1833,6 +2015,37 @@ mod entry_trigger_tests {
         assert!(matches!(
             resolve([trigger("bash"), second]),
             Err(ResolvedHarnessError::DuplicateToolCallTrigger(id)) if id.as_str() == "bash"
+        ));
+    }
+
+    #[test]
+    fn process_arguments_are_resolved_metadata() {
+        let resolved =
+            resolve_process_arguments([process_argument("--plugin-handled-value")]).unwrap();
+        assert_eq!(
+            resolved.process_arguments(),
+            &[process_argument("--plugin-handled-value")]
+        );
+    }
+
+    #[test]
+    fn duplicate_process_arguments_fail_resolution() {
+        assert!(matches!(
+            resolve_process_arguments([
+                process_argument("--plugin-handled-value"),
+                process_argument("--plugin-handled-value")
+            ]),
+            Err(ResolvedHarnessError::DuplicateProcessArgument(argument))
+                if argument == "--plugin-handled-value"
+        ));
+    }
+
+    #[test]
+    fn malformed_process_arguments_fail_resolution() {
+        assert!(matches!(
+            resolve_process_arguments([process_argument("plugin-handled-value")]),
+            Err(ResolvedHarnessError::InvalidProcessArgument(argument))
+                if argument == "plugin-handled-value"
         ));
     }
 

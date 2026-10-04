@@ -317,7 +317,27 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, ProviderError> {
                 "additionalProperties": false,
             })
         }
-        PhenixSchema::Variant(_) | PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => {
+        PhenixSchema::Variant(variants) => {
+            let variants = variants
+                .iter()
+                .map(|(tag, schema)| {
+                    Ok(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "tag": {
+                                "type": "string",
+                                "enum": [tag.as_str()],
+                            },
+                            "value": json_schema(schema)?,
+                        },
+                        "required": ["tag", "value"],
+                        "additionalProperties": false,
+                    }))
+                })
+                .collect::<Result<Vec<_>, ProviderError>>()?;
+            serde_json::json!({"anyOf": variants})
+        }
+        PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => {
             return Err(ProviderError::InvalidRequest {
                 message: "model tool input schema cannot be represented as provider JSON Schema"
                     .to_owned(),
@@ -1887,6 +1907,50 @@ mod tests {
         let anthropic: Value = serde_json::from_slice(&anthropic.body).unwrap();
         assert_eq!(anthropic["tools"][0]["name"], "fixture.echo");
         assert_eq!(anthropic["tools"][0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn provider_protocols_encode_variant_model_tool_inputs() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request();
+        request.tools.push(ModelToolDescriptor {
+            id: CallableId::parse("fixture.variant").unwrap(),
+            description: "Exercise a structural variant".to_owned(),
+            input_schema: PhenixSchema::Table(BTreeMap::from([(
+                Key::parse("selection").unwrap(),
+                PhenixSchema::Variant(BTreeMap::from([
+                    (
+                        Key::parse("named").unwrap(),
+                        PhenixSchema::Table(BTreeMap::from([(
+                            Key::parse("name").unwrap(),
+                            PhenixSchema::String,
+                        )])),
+                    ),
+                    (Key::parse("all").unwrap(), PhenixSchema::Unit),
+                ])),
+            )])),
+            output_schema: PhenixSchema::Unit,
+        });
+
+        for protocol in [
+            Protocol::OpenAiResponses,
+            Protocol::OpenAiChatCompletions,
+            Protocol::AnthropicMessages,
+        ] {
+            protocol.encode(&endpoint, &request).unwrap();
+        }
+
+        let schema = json_schema(&request.tools[0].input_schema).unwrap();
+        let variants = schema["properties"]["selection"]["anyOf"]
+            .as_array()
+            .expect("variant lowers to provider JSON Schema alternatives");
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0]["properties"]["tag"]["enum"][0], "all");
+        assert_eq!(variants[1]["properties"]["tag"]["enum"][0], "named");
+        assert_eq!(
+            variants[1]["properties"]["value"]["properties"]["name"]["type"],
+            "string"
+        );
     }
 
     #[test]

@@ -128,7 +128,7 @@ phenix-nvim
    |
    | ACP JSON-RPC over stdio
    v
-phenix-acp
+phenix --mode acp
    |
 phenix-adapter-acp
    |

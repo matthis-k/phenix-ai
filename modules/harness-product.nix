@@ -29,48 +29,6 @@
         '';
       };
 
-      phenixAcp = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-acp";
-        version = "0";
-        src = rustSource;
-
-        cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-harness"
-          "--bin"
-          "phenix-acp"
-        ];
-        doCheck = false;
-
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out/bin"
-          acp_binary="$(find target -path '*/release/phenix-acp' -type f -print -quit)"
-          test -n "$acp_binary"
-          cp "$acp_binary" "$out/bin/phenix-acp"
-          runHook postInstall
-        '';
-
-        postFixup = ''
-          wrapProgram "$out/bin/phenix-acp" \
-            --set PHENIX_DEFAULT_CONFIG_DIR ${pkgs.lib.escapeShellArg "${phenixHarnessResources}/share/phenix"} \
-            --set PHENIX_CA_BUNDLE ${pkgs.lib.escapeShellArg "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"} \
-            --prefix PATH : ${
-              pkgs.lib.makeBinPath [
-                pkgs.bash
-                pkgs.coreutils
-                pkgs.git
-                pkgs.gnugrep
-                pkgs.findutils
-                pkgs.gnused
-              ]
-            }
-        '';
-      };
-
       phenixAcpFixture = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-acp-fixture";
         version = "0";
@@ -120,7 +78,7 @@
             printf '%s\n' \
               '{"id":1,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Create","value":{"type":"table","value":{"session":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"},"working_directory":{"type":"option","value":null},"title":{"type":"option","value":null},"lifecycle":{"type":"variant","value":{"tag":"Open","value":{"type":"unit"}}}}}}}}}}' \
               '{"id":2,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Get","value":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"}}}}}}' \
-              | ${supportedPhenix}/bin/phenix-harness > "$TMPDIR/product-smoke.jsonl"
+              | ${supportedPhenix}/bin/phenix --mode jsonl > "$TMPDIR/product-smoke.jsonl"
             if ! jq -se '
               length == 2
               and .[0].id == 1
@@ -153,7 +111,6 @@
     in
     {
       packages = {
-        phenix-acp = phenixAcp;
         phenix-acp-fixture = phenixAcpFixture;
         phenix-harness-runtime = phenixHarnessRuntime;
         phenix-harness-resources = phenixHarnessResources;

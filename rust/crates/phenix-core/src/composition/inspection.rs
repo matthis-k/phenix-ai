@@ -1,9 +1,10 @@
 use crate::{
     Authority, ComponentEntryTrigger, ComponentGraphError, ComponentId, ComponentManifest,
-    ComponentRuntimeMetadata, ConfigurationFrontendMetadata, GraphGenerationId, InterfaceId,
-    LayerPolicy, PluginExecution, PluginManifest, PluginPackageMetadata, ResolvedComponentGraph,
-    ResolvedCompositionMetadata, ResolvedConfigContributions, ResolvedHarness, ResolvedListener,
-    ServiceId, SkillResourceMetadata,
+    ComponentProcessArgument, ComponentRuntimeMetadata, ConfigurationFrontendMetadata,
+    GraphGenerationId, InterfaceId, LayerPolicy, PluginExecution, PluginManifest,
+    PluginPackageMetadata, ResolvedComponentGraph, ResolvedCompositionMetadata,
+    ResolvedConfigContributions, ResolvedHarness, ResolvedListener, ServiceId,
+    SkillResourceMetadata,
 };
 use std::collections::BTreeMap;
 
@@ -13,6 +14,7 @@ pub struct ResolvedHarnessInspection {
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
+    process_arguments: Vec<ComponentProcessArgument>,
     resources: Vec<SkillResourceMetadata>,
     component_graph: ResolvedComponentGraph,
     configuration: ResolvedConfigContributions,
@@ -35,6 +37,7 @@ impl ResolvedHarnessInspection {
             plugins: resolved.plugins().to_vec(),
             components: resolved.components().to_vec(),
             entry_triggers: resolved.entry_triggers().to_vec(),
+            process_arguments: resolved.process_arguments().to_vec(),
             resources: resolved.resources().to_vec(),
             component_graph: resolved.component_graph().clone(),
             configuration: resolved.configuration().clone(),
@@ -73,6 +76,10 @@ impl ResolvedHarnessInspection {
 
     pub fn entry_triggers(&self) -> &[ComponentEntryTrigger] {
         &self.entry_triggers
+    }
+
+    pub fn process_arguments(&self) -> &[ComponentProcessArgument] {
+        &self.process_arguments
     }
 
     pub fn resources(&self) -> &[SkillResourceMetadata] {
@@ -235,6 +242,7 @@ mod tests {
         assert_eq!(inspection.generation(), resolved.generation());
         assert_eq!(inspection.plugins(), &[plugin]);
         assert!(inspection.components().is_empty());
+        assert!(inspection.process_arguments().is_empty());
         assert_eq!(inspection.resources()[0].identity, "fixture.skill");
         assert_eq!(inspection.resources()[0].content_identity, "sha256:fixture");
         assert_eq!(inspection.component_graph().components().count(), 0);
@@ -243,6 +251,51 @@ mod tests {
         assert!(inspection.package_metadata().is_empty());
         assert!(inspection.component_metadata().is_empty());
         assert!(inspection.frontend_metadata().is_empty());
+    }
+
+    #[test]
+    fn inspection_exposes_process_arguments_from_the_resolved_generation() {
+        let plugin_id = PluginId::parse("fixture.process-arguments").unwrap();
+        let component_id = component("fixture.process-arguments.component");
+        let interface_id = interface("fixture.process-arguments@1");
+        let plugin = plugin("fixture.process-arguments", Authority::default());
+        let component = ComponentManifest {
+            listeners: Vec::new(),
+            id: component_id.clone(),
+            owner: plugin_id,
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: interface_id.clone(),
+                schema: Default::default(),
+                priority: 0,
+                required_authority: Authority::default(),
+            }],
+            maximum_authority: Authority::default(),
+        };
+        let argument = ComponentProcessArgument {
+            component: component_id,
+            interface: interface_id,
+            name: "--fixture-value".into(),
+            takes_value: true,
+            description: "Fixture process argument".into(),
+            required_authority: Authority::default(),
+        };
+        let resolved =
+            ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+                [plugin],
+                [component],
+                [],
+                [],
+                [argument.clone()],
+                [],
+                BTreeMap::new(),
+                &Authority::default(),
+            )
+            .unwrap();
+
+        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+
+        assert_eq!(inspection.process_arguments(), &[argument]);
     }
 
     #[test]

@@ -73,6 +73,17 @@ pub struct ComponentEntryTrigger {
     pub required_authority: Authority,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ComponentProcessArgument {
+    pub component: ComponentId,
+    pub interface: InterfaceId,
+    pub name: String,
+    pub takes_value: bool,
+    pub description: String,
+    #[serde(default)]
+    pub required_authority: Authority,
+}
+
 /// Declarative listener entry owned by a component's resolved generation.
 ///
 /// This is topology only: which event the component observes, which function

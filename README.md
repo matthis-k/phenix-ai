@@ -37,7 +37,7 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 `phenix-application-interface` owns the fixed, versioned application descriptor. Typed Rust declarations derive its `PhenixSchema` payloads. The descriptor covers editor operations, updates, callbacks, capability dependencies, and errors. It contains no runtime service topology or authority policy. Generated client bindings consume this descriptor rather than duplicating application schemas.
 
-`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The packaged `phenix-acp` executable composes that transport with the supported Harness application worker so external clients can spawn a complete runtime through one stable executable boundary.
+`phenix-acp-stdio` provides the ACP stdio server and its channel boundary. The packaged `phenix` executable selects that transport with `--mode acp`. ACP and JSONL therefore serve the same resolved product graph instead of separate product assemblies.
 
 ### Rust boundaries
 
@@ -56,7 +56,7 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 
 ## Product composition
 
-The normal `phenix` package is the supported Harness composition. It is built through the same public package interfaces available to users.
+`phenix-full` is the supported full Harness composition and is also exposed as `phenix`. `phenix-basic` uses the smaller basic product composition. Both packages use the same executable and select the frontend with `--mode`; the mode does not change the plugin graph.
 
 Nix exposes independently packaged first-party runtime plugins, including adapters, through `phenixPlugins.<system>.*`. `wrappers.phenix.wrap` and `lib.mkPhenix` assemble a runtime with an explicit plugin selection. Omitting a plugin removes its service unless another selected provider supplies the same contract.
 
@@ -87,15 +87,16 @@ The flake exposes, among other public outputs:
 - `packages.<system>.phenix-application-interface`, including `bin/phenix-application-descriptor` and `share/phenix/interfaces/phenix.application@1.json`;
 - `packages.<system>.phenix-runtime`;
 - `packages.<system>.phenix-harness`;
-- `packages.<system>.phenix`;
-- `packages.<system>.phenix-acp` for external ACP clients;
+- `packages.<system>.phenix-basic`;
+- `packages.<system>.phenix-full`;
+- `packages.<system>.phenix`, an alias of the full product;
 - `packages.<system>.phenix-binding-lua` for Lua clients;
 - `phenixPlugins.<system>.*`;
 - `wrappers.phenix.wrap`;
 - `lib.mkPhenixPlugin`;
 - `lib.mkPhenix`.
 
-Neovim-specific packaging is intentionally absent. `phenix-ai.nvim` composes the generic Lua binding and `phenix-acp` runtime with its own Neovim source.
+Neovim-specific packaging is intentionally absent. `phenix-ai.nvim` composes the generic Lua binding and launches the selected Phenix product with `--mode acp` when it uses ACP stdio.
 
 ## Protocol and provider boundaries
 
