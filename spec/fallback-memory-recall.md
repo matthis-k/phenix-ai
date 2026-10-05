@@ -153,9 +153,9 @@ Classifier input contains only the current prompt plus the structural state abov
 Classifier output rules:
 
 - `Sufficient` ends recovery immediately;
-- `Missing` must contain 1..=4 distinct needs;
-- each need query must satisfy the 512-byte rule;
-- malformed, empty, oversized, or duplicate output fails the recovery attempt and falls back to ordinary discovery;
+- `Missing` must contain distinct needs with non-empty queries;
+- `max_needs` and `max_need_query_bytes` apply only when configured by product policy;
+- malformed, empty, duplicate, or policy-oversized output fails the recovery attempt and falls back to ordinary discovery;
 - classification failure never triggers broad memory search.
 
 Classifier attempt, output, timeout, prompt-evidence, and anchor limits are
