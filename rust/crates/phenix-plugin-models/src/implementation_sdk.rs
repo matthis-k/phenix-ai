@@ -9,8 +9,8 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
-    model_diagnostic_event_type, model_dispatch_service, model_routing_service, CapabilitySupport,
-    EffectiveModelCapabilities, ModelCommand, ModelDiagnosticEvent, ModelDispatchCommand,
+    model_diagnostic_event_type, model_dispatch_service, model_routing_service, FeatureSupport,
+    EffectiveModelFeatures, ModelCommand, ModelDiagnosticEvent, ModelDispatchCommand,
     ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
     ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
     MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
@@ -38,15 +38,15 @@ fn context<'host, 'runtime>(host: &'host PluginHost<'runtime>) -> ModelContext<'
 #[must_use]
 pub fn model_routing_manifest(maximum_authority: Authority) -> PluginManifest {
     let persistence = Authority::new([
-        capability(PERSISTENCE_SCHEMA),
-        capability(PERSISTENCE_READ),
-        capability(PERSISTENCE_WRITE),
+        permission(PERSISTENCE_SCHEMA),
+        permission(PERSISTENCE_READ),
+        permission(PERSISTENCE_WRITE),
     ]);
     let maximum_authority = Authority::new(
         maximum_authority
-            .capabilities()
+            .permissions()
             .cloned()
-            .chain(persistence.capabilities().cloned()),
+            .chain(persistence.permissions().cloned()),
     );
     PluginManifest {
         id: PluginId::parse(MODEL_ROUTING_PLUGIN).expect("static plugin id is valid"),
@@ -76,8 +76,8 @@ fn model_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(MODEL_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> PermissionId {
-    PermissionId::parse(value).expect("static capability is valid")
+fn permission(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static permission is valid")
 }
 
 #[derive(Default)]
@@ -147,7 +147,7 @@ fn handle_routing(
 ) -> Result<ModelResponse, String> {
     let mutates_runtime = matches!(
         &command,
-        ModelCommand::PublishCapabilities { .. } | ModelCommand::RecordEvidence { .. }
+        ModelCommand::PublishModelFeatures { .. } | ModelCommand::RecordEvidence { .. }
     );
     let previous_runtime = if mutates_runtime {
         read_raw(context, ROUTING_RUNTIME_KEY)?
@@ -201,7 +201,7 @@ fn handle_routing(
                     .collect(),
             })
         }
-        ModelCommand::PublishCapabilities { .. }
+        ModelCommand::PublishModelFeatures { .. }
         | ModelCommand::ListCandidates { .. }
         | ModelCommand::ResolveWithRequirements { .. }
         | ModelCommand::RecordEvidence { .. } => {
@@ -226,8 +226,8 @@ fn handle_dispatch(
         } => {
             let requested_cache = cache.clone();
             let mut cache = cache;
-            cache.local_capability_generation =
-                Some(decision.capability_generation.as_str().to_owned());
+            cache.local_feature_generation =
+                Some(decision.feature_generation.as_str().to_owned());
             cache.local_authority_identity = Some(authority_identity(context.call.authority));
             emit_diagnostic(
                 context,
@@ -236,7 +236,7 @@ fn handle_dispatch(
                     model: decision.target.model.as_str().to_owned(),
                     candidate_ordinal: decision.candidate_ordinal,
                     policy_revision: decision.policy_revision.clone(),
-                    capability_generation: decision.capability_generation.as_str().to_owned(),
+                    feature_generation: decision.feature_generation.as_str().to_owned(),
                     input_bytes: input.as_ref().len(),
                     tool_count: tools.len(),
                     continuation_turns: continuation.len(),
@@ -370,22 +370,22 @@ fn emit_diagnostic(context: &ModelContext<'_, '_>, diagnostic: ModelDiagnosticEv
 fn validate_dispatch<'a>(
     routing: &'a RoutingServiceState,
     decision: &phenix_sdk::RouteDecision,
-) -> Result<&'a EffectiveModelCapabilities, ModelInferenceFailure> {
-    let capabilities = routing
+) -> Result<&'a EffectiveModelFeatures, ModelInferenceFailure> {
+    let features = routing
         .validate_decision(decision)
         .map_err(|message| ModelInferenceFailure::InvalidRequest { message })?;
-    Ok(capabilities)
+    Ok(features)
 }
 
 fn authority_identity(authority: &Authority) -> String {
-    let mut capabilities = authority
-        .capabilities()
-        .map(|capability| capability.as_str())
+    let mut permissions = authority
+        .permissions()
+        .map(|permission| permission.as_str())
         .collect::<Vec<_>>();
-    capabilities.sort_unstable();
+    permissions.sort_unstable();
     let mut material = Vec::new();
-    for capability in capabilities {
-        let bytes = capability.as_bytes();
+    for permission in permissions {
+        let bytes = permission.as_bytes();
         material.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
         material.extend_from_slice(bytes);
     }
@@ -394,14 +394,14 @@ fn authority_identity(authority: &Authority) -> String {
 
 fn effective_cache_control(
     mut cache: phenix_core::ModelCacheControl,
-    capabilities: &EffectiveModelCapabilities,
+    features: &EffectiveModelFeatures,
 ) -> Result<phenix_core::ModelCacheControl, ModelInferenceFailure> {
     use phenix_core::{ModelCacheRetention, ModelCacheWritePolicy};
 
     if cache.explicit_prefix_bytes.is_some() {
         match cache.write {
             ModelCacheWritePolicy::ProviderDefault => {
-                if capabilities.cache.breakpoint_control == CapabilitySupport::Supported {
+                if features.cache.breakpoint_control == FeatureSupport::Supported {
                     cache.write = ModelCacheWritePolicy::ExplicitPrefix;
                 } else {
                     // Keep diagnostic identity, but do not claim an enforceable provider breakpoint.
@@ -409,7 +409,7 @@ fn effective_cache_control(
                 }
             }
             ModelCacheWritePolicy::ExplicitPrefix => {
-                if capabilities.cache.breakpoint_control != CapabilitySupport::Supported {
+                if features.cache.breakpoint_control != FeatureSupport::Supported {
                     return Err(ModelInferenceFailure::InvalidRequest {
                         message: "selected target does not support explicit cache breakpoints"
                             .into(),
@@ -431,14 +431,14 @@ fn effective_cache_control(
     }
 
     if cache.write == ModelCacheWritePolicy::CacheThroughRequestEnd
-        && capabilities.cache.write_policy != CapabilitySupport::Supported
+        && features.cache.write_policy != FeatureSupport::Supported
     {
         return Err(ModelInferenceFailure::InvalidRequest {
             message: "selected target does not support explicit cache write policy".into(),
         });
     }
     if cache.retention != ModelCacheRetention::ProviderDefault
-        && capabilities.cache.retention_hints != CapabilitySupport::Supported
+        && features.cache.retention_hints != FeatureSupport::Supported
     {
         return Err(ModelInferenceFailure::InvalidRequest {
             message: "selected target does not support cache retention hints".into(),
@@ -517,9 +517,9 @@ fn kernel_model_failure(error: KernelError) -> ModelInferenceFailure {
         KernelError::NoEligibleProvider(_)
         | KernelError::BoundProviderUnavailable { .. }
         | KernelError::PluginNotActive(_)
-        | KernelError::RuntimeProviderUnavailable(_)
-        | KernelError::RuntimeProviderNotExecutable { .. }
-        | KernelError::RuntimeProviderContractUnavailable { .. }
+        | KernelError::PluginRuntimeAdapterUnavailable(_)
+        | KernelError::PluginRuntimeAdapterNotExecutable { .. }
+        | KernelError::PluginRuntimeAdapterContractUnavailable { .. }
         | KernelError::ServiceInvoke { .. } => ModelInferenceFailure::Unavailable { message },
         _ => ModelInferenceFailure::Protocol { message },
     }
