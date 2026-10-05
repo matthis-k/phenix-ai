@@ -282,11 +282,14 @@ mod profile_store {
                     },
                     TransactionOp::Put {
                         key: "configuration/packaged-v1".into(),
-                        value: serde_json::to_vec(&serde_json::json!({
-                            "owned": { desired.id.as_str(): legacy },
-                            "active": [desired.id.as_str()]
-                        }))
-                        .unwrap(),
+                        value: {
+                            let mut manifest = serde_json::json!({
+                                "owned": {},
+                                "active": [desired.id.as_str()]
+                            });
+                            manifest["owned"][desired.id.as_str()] = legacy;
+                            serde_json::to_vec(&manifest).unwrap()
+                        },
                     },
                 ],
             )
