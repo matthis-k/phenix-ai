@@ -9,14 +9,14 @@ pub const EXECUTION_INSPECTION_SERVICE: &str = "phenix.execution.inspect@1";
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 pub struct ExecutionAuthority {
     #[serde(default)]
-    pub capabilities: BTreeSet<String>,
+    pub permissions: BTreeSet<String>,
 }
 
 impl ExecutionAuthority {
     #[must_use]
-    pub fn new(capabilities: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn new(permissions: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
-            capabilities: capabilities.into_iter().map(Into::into).collect(),
+            permissions: permissions.into_iter().map(Into::into).collect(),
         }
     }
 }
