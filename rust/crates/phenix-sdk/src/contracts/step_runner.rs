@@ -86,9 +86,9 @@ impl HelperInvocationRequest {
 pub struct InvocationIntent {
     pub output_reserve_tokens: u64,
     #[serde(default)]
-    pub required_context_capabilities: BTreeSet<String>,
+    pub required_context_features: BTreeSet<String>,
     #[serde(default)]
-    pub required_capabilities: BTreeSet<String>,
+    pub required_features: BTreeSet<String>,
     #[serde(default)]
     pub required_tools: BTreeSet<CallableId>,
     #[serde(default)]
@@ -124,9 +124,9 @@ impl InvocationIntent {
                 mandatory_input_tokens,
                 reducible_input_tokens,
                 output_reserve_tokens: self.output_reserve_tokens,
-                required_features: self.required_context_capabilities.clone(),
+                required_features: self.required_context_features.clone(),
             },
-            required_capabilities: self.required_capabilities.clone(),
+            required_features: self.required_features.clone(),
             required_tools: self.required_tools.clone(),
             optional_tools: self.optional_tools.clone(),
             required_skills: self.required_skills.clone(),
