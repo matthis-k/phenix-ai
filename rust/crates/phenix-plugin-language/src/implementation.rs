@@ -641,13 +641,13 @@ fn activate_provider(
 ) -> Result<LanguageProviderEpoch, String> {
     validate_identity("workspace id", &workspace_id)?;
     validate_identity("language provider id", &provider_id)?;
-    if let Some(current) = context.plugin.state.providers.get(&workspace_id) {
-        if epoch <= current.epoch {
-            return Err(format!(
-                "language provider epoch must advance beyond {}",
-                current.epoch.get()
-            ));
-        }
+    if let Some(current) = context.plugin.state.providers.get(&workspace_id)
+        && epoch <= current.epoch
+    {
+        return Err(format!(
+            "language provider epoch must advance beyond {}",
+            current.epoch.get()
+        ));
     }
     let active = LanguageProviderEpoch {
         workspace_id: workspace_id.clone(),
@@ -980,37 +980,37 @@ fn ingest_lsp_document_symbol(
         repository_id: repository_id.to_owned(),
     };
     let current = read_entity_revision(context, repository_id, &entity.id)?;
-    if let Some(current) = current.as_ref() {
-        if current.revision == revision_id {
-            if let Some(position_encoding) = position_encoding {
-                store_entity_source_locator(
-                    context,
-                    &entity_source_locator(
-                        current,
-                        observation,
-                        position_encoding,
-                        &symbol.range,
-                        &symbol.selection_range,
-                    ),
-                )?;
-            }
-            store_document_symbol_containment(context, current, parent)?;
-            revisions.push(current.clone());
-            ingest_lsp_children(
+    if let Some(current) = current.as_ref()
+        && current.revision == revision_id
+    {
+        if let Some(position_encoding) = position_encoding {
+            store_entity_source_locator(
                 context,
-                observation,
-                repository_id,
-                document,
-                source_revision,
-                symbol,
-                current,
-                position_encoding,
-                parents,
-                seen,
-                revisions,
+                &entity_source_locator(
+                    current,
+                    observation,
+                    position_encoding,
+                    &symbol.range,
+                    &symbol.selection_range,
+                ),
             )?;
-            return Ok(());
         }
+        store_document_symbol_containment(context, current, parent)?;
+        revisions.push(current.clone());
+        ingest_lsp_children(
+            context,
+            observation,
+            repository_id,
+            document,
+            source_revision,
+            symbol,
+            current,
+            position_encoding,
+            parents,
+            seen,
+            revisions,
+        )?;
+        return Ok(());
     }
     let sequence = current.as_ref().map_or(Ok(1), |current| {
         current
@@ -2312,23 +2312,22 @@ fn read_entity_facet_reference(
         return Ok(None);
     };
 
-    if let CodeEntityFacet::Relation { name } = &facet {
-        if let Some(kind) = stored_relation_kind_from_facet(name) {
-            if let Some(relations) = read_entity_relations(
-                context,
-                repository_id,
-                entity_id,
-                &revision.revision,
-                kind,
-                u32::MAX,
-            )? {
-                return Ok(Some(phenix_sdk::CodeEntityFacetReference {
-                    entity: revision.entity,
-                    facet,
-                    revision: relation_set_revision(&relations)?,
-                }));
-            }
-        }
+    if let CodeEntityFacet::Relation { name } = &facet
+        && let Some(kind) = stored_relation_kind_from_facet(name)
+        && let Some(relations) = read_entity_relations(
+            context,
+            repository_id,
+            entity_id,
+            &revision.revision,
+            kind,
+            u32::MAX,
+        )?
+    {
+        return Ok(Some(phenix_sdk::CodeEntityFacetReference {
+            entity: revision.entity,
+            facet,
+            revision: relation_set_revision(&relations)?,
+        }));
     }
 
     Ok(revision.facet_reference(facet))
@@ -3456,13 +3455,13 @@ fn store_entity_revision(
             serde_json::from_slice::<CodeEntityRevision>(bytes).map_err(|error| error.to_string())
         })
         .transpose()?;
-    if let Some(current_revision) = &current_revision {
-        if revision.sequence <= current_revision.sequence {
-            return Err(format!(
-                "code entity revision sequence {} must advance beyond current sequence {}",
-                revision.sequence, current_revision.sequence
-            ));
-        }
+    if let Some(current_revision) = &current_revision
+        && revision.sequence <= current_revision.sequence
+    {
+        return Err(format!(
+            "code entity revision sequence {} must advance beyond current sequence {}",
+            revision.sequence, current_revision.sequence
+        ));
     }
 
     let sequence_bytes = context
