@@ -290,10 +290,10 @@ fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn
 fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
     fn normalize_target(target: &mut ModelTarget) {
         if matches!(
-            target.options.get("adapter"),
-            Some(PhenixValue::String(adapter)) if adapter == "phenix"
+            target.options.get("backend"),
+            Some(PhenixValue::String(backend)) if backend == "phenix"
         ) {
-            target.options.remove("adapter");
+            target.options.remove("backend");
         }
         if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
             target.options.remove("inference");
@@ -413,14 +413,14 @@ mod tests {
             "routing_profiles": [{
                 "id": "router.test",
                 "default_target": {
-                    "adapter": "phenix",
+                    "backend": "phenix",
                     "provider": "provider.fixture",
                     "model": "model.test",
                     "inference": {"effort": "low"}
                 },
                 "callable_targets": {
                     "agent.scout": {
-                        "adapter": "phenix",
+                        "backend": "phenix",
                         "provider": "provider.fixture",
                         "model": "model.scout",
                         "inference": {"effort": "medium"}
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn runtime_model_target_lowers_foreign_json_before_dispatch() {
         let target: RuntimeModelTarget = serde_json::from_value(json!({
-            "adapter": "phenix",
+            "backend": "phenix",
             "provider": "provider.fixture",
             "model": "model.test",
             "inference": {"effort": "low"}
@@ -494,7 +494,7 @@ mod tests {
         .unwrap();
         let target = target.into_model_target();
 
-        assert!(!target.options.contains_key("adapter"));
+        assert!(!target.options.contains_key("backend"));
         assert!(matches!(
             &target.options["inference"],
             PhenixValue::Map(values)
@@ -573,7 +573,7 @@ mod tests {
             .default_target;
         target
             .options
-            .insert("adapter".into(), PhenixValue::String("phenix".into()));
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
         target.options.insert("inference".into(), PhenixValue::Unit);
         let legacy = direct_routing_profile(target).unwrap();
         let normalized = without_legacy_runtime_metadata(legacy.clone());
@@ -634,16 +634,16 @@ mod tests {
         legacy
             .default_target
             .options
-            .insert("adapter".into(), PhenixValue::String("phenix".into()));
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
         for target in &mut legacy.fallback_targets {
             target
                 .options
-                .insert("adapter".into(), PhenixValue::String("phenix".into()));
+                .insert("backend".into(), PhenixValue::String("phenix".into()));
         }
         for target in legacy.callable_targets.values_mut() {
             target
                 .options
-                .insert("adapter".into(), PhenixValue::String("phenix".into()));
+                .insert("backend".into(), PhenixValue::String("phenix".into()));
         }
 
         let response: ModelResponse = invoke_projected(
@@ -686,7 +686,7 @@ mod tests {
                 "routing_profiles": [{
                     "id": "router.legacy-null-inference",
                     "default_target": {
-                        "adapter": "phenix",
+                        "backend": "phenix",
                         "provider": "provider.fixture",
                         "model": "model.test"
                     }
@@ -708,7 +708,7 @@ mod tests {
         legacy
             .default_target
             .options
-            .insert("adapter".into(), PhenixValue::String("phenix".into()));
+            .insert("backend".into(), PhenixValue::String("phenix".into()));
         legacy
             .default_target
             .options
