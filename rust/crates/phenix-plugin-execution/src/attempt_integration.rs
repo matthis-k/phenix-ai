@@ -1,6 +1,6 @@
 use crate::{execution_factory, execution_manifest, step_attempt_service};
 use phenix_core::{
-    Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    Authority, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
     PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
@@ -57,14 +57,14 @@ fn plan() -> StepPlan {
         mandatory_input_tokens: 500,
         reducible_input_tokens: 250,
         output_reserve_tokens: 128,
-        required_capabilities: BTreeSet::new(),
+        required_features: BTreeSet::new(),
     };
     StepPlan {
         policy_revision: "policy-1".into(),
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: true,
         },
         context,
@@ -118,7 +118,7 @@ fn route() -> RouteDecision {
             model: ModelId::parse("model.fixture").unwrap(),
             options: BTreeMap::new(),
         },
-        capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+        feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
         policy_revision: "route-policy-1".into(),
         candidate_ordinal: 0,
         estimate: None::<RoutingEstimate>,
