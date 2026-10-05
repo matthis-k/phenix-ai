@@ -925,20 +925,19 @@ fn response_values(
                 },
                 PhenixValue::Callable(stop),
             ) = (listener_to_remove, &schema, &value)
+                && contract.as_str() == "phenix.observable-stop@1"
             {
-                if contract.as_str() == "phenix.observable-stop@1" {
-                    return remote_callable(
-                        lua,
-                        Some(state),
-                        local_callables,
-                        stop.clone(),
-                        (**input).clone(),
-                        (**output).clone(),
-                        Some(listener.clone()),
-                    )
-                    .map(|value| MultiValue::from_vec(vec![value]))
-                    .map_err(lua_error);
-                }
+                return remote_callable(
+                    lua,
+                    Some(state),
+                    local_callables,
+                    stop.clone(),
+                    (**input).clone(),
+                    (**output).clone(),
+                    Some(listener.clone()),
+                )
+                .map(|value| MultiValue::from_vec(vec![value]))
+                .map_err(lua_error);
             }
             phenix_to_lua_with_state(lua, Some(state), local_callables, &schema, &value)
                 .map_err(lua_error)?
