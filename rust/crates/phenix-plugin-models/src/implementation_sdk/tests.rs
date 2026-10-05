@@ -1,10 +1,10 @@
 use super::*;
 use phenix_core::{
-    CapabilityGenerationId, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
+    ModelFeatureGenerationId, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
     PhenixValue, Project,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelCapabilities,
+    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelFeatures,
     ModelDispatchCommand, ModelDispatchResponse, ModelLimits, RouteDecision, RouteSelectionPolicy,
     RoutingEstimateMode, RoutingRequirements,
 };
@@ -92,14 +92,14 @@ fn profile() -> RoutingProfile {
     }
 }
 
-fn capabilities(
+fn features(
     target: ModelTarget,
     generation: &str,
     context_window_tokens: u64,
-) -> EffectiveModelCapabilities {
-    EffectiveModelCapabilities {
+) -> EffectiveModelFeatures {
+    EffectiveModelFeatures {
         target,
-        generation: CapabilityGenerationId::parse(generation).unwrap(),
+        generation: ModelFeatureGenerationId::parse(generation).unwrap(),
         context: ContextControl::ReplaceableTurns,
         capacity: CapacityKnowledge::Known {
             limits: ModelLimits {
@@ -426,13 +426,13 @@ mod smart_selection {
             },
         )
         .unwrap();
-        for capabilities in [
-            capabilities(profile.default_target.clone(), "generation-1", 1_500),
-            capabilities(profile.fallback_targets[0].clone(), "generation-1", 8_000),
+        for features in [
+            features(profile.default_target.clone(), "generation-1", 1_500),
+            features(profile.fallback_targets[0].clone(), "generation-1", 8_000),
         ] {
             invoke_routing(
                 &mut kernel,
-                ModelCommand::PublishCapabilities { capabilities },
+                ModelCommand::PublishModelFeatures { features },
             )
             .unwrap();
         }
@@ -446,9 +446,9 @@ mod smart_selection {
                         mandatory_input_tokens: 1_000,
                         reducible_input_tokens: 500,
                         output_reserve_tokens: 500,
-                        required_capabilities: BTreeSet::new(),
+                        required_features: BTreeSet::new(),
                     },
-                    required_capabilities: BTreeSet::new(),
+                    required_features: BTreeSet::new(),
                     require_known_capacity: true,
                 },
                 policy: RouteSelectionPolicy {
@@ -489,8 +489,8 @@ mod runtime_persistence {
             {
                 invoke_routing(
                     &mut kernel,
-                    ModelCommand::PublishCapabilities {
-                        capabilities: capabilities(target.clone(), "generation-1", 8_000),
+                    ModelCommand::PublishModelFeatures {
+                        features: features(target.clone(), "generation-1", 8_000),
                     },
                 )
                 .unwrap();
@@ -518,7 +518,7 @@ mod resolved_dispatch {
     fn decision(target: ModelTarget, generation: &str) -> RouteDecision {
         RouteDecision {
             target,
-            capability_generation: CapabilityGenerationId::parse(generation).unwrap(),
+            feature_generation: ModelFeatureGenerationId::parse(generation).unwrap(),
             policy_revision: "route-policy-1".into(),
             candidate_ordinal: 0,
             estimate: None,
@@ -552,8 +552,8 @@ mod resolved_dispatch {
     #[test]
     fn cache_prefix_boundary_activates_only_for_supported_target() {
         let target = target("provider.default", "root");
-        let mut supported = capabilities(target.clone(), "generation-1", 10_000);
-        supported.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
+        let mut supported = features(target.clone(), "generation-1", 10_000);
+        supported.cache.breakpoint_control = phenix_sdk::FeatureSupport::Supported;
 
         let requested = phenix_core::ModelCacheControl {
             explicit_prefix_bytes: Some(128),
@@ -568,7 +568,7 @@ mod resolved_dispatch {
         assert_eq!(effective.explicit_prefix_bytes, Some(128));
 
         let mut unsupported = supported;
-        unsupported.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Unsupported;
+        unsupported.cache.breakpoint_control = phenix_sdk::FeatureSupport::Unsupported;
         let effective = effective_cache_control(requested, &unsupported).unwrap();
         assert_eq!(
             effective.write,
@@ -586,12 +586,12 @@ mod resolved_dispatch {
         let path = temp_db("resolved-dispatch-cache-input");
         let mut kernel = kernel_with_provider(&path);
         let target = target("fixture.provider", "selected");
-        let mut published = capabilities(target.clone(), "generation-1", 8_000);
-        published.cache.breakpoint_control = phenix_sdk::CapabilitySupport::Supported;
+        let mut published = features(target.clone(), "generation-1", 8_000);
+        published.cache.breakpoint_control = phenix_sdk::FeatureSupport::Supported;
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: published,
+            ModelCommand::PublishModelFeatures {
+                features: published,
             },
         )
         .unwrap();
@@ -636,8 +636,8 @@ mod resolved_dispatch {
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target.clone(), "generation-1", 8_000),
             },
         )
         .unwrap();
@@ -681,7 +681,7 @@ mod resolved_dispatch {
     #[test]
     fn explicitly_required_cache_control_rejects_unsupported_target() {
         let target = target("provider.default", "root");
-        let capabilities = capabilities(target, "generation-1", 10_000);
+        let features = features(target, "generation-1", 10_000);
         let requested = phenix_core::ModelCacheControl {
             write: phenix_core::ModelCacheWritePolicy::ExplicitPrefix,
             explicit_prefix_bytes: Some(64),
@@ -689,7 +689,7 @@ mod resolved_dispatch {
         };
 
         assert!(matches!(
-            effective_cache_control(requested, &capabilities),
+            effective_cache_control(requested, &features),
             Err(ModelInferenceFailure::InvalidRequest { .. })
         ));
     }
@@ -701,8 +701,8 @@ mod resolved_dispatch {
         let target = target("fixture.provider", "selected-fallback");
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target.clone(), "generation-1", 8_000),
             },
         )
         .unwrap();
@@ -737,16 +737,16 @@ mod resolved_dispatch {
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target.clone(), "generation-1", 8_000),
             },
         )
         .unwrap();
         let decision = decision(target.clone(), "generation-1");
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target, "generation-2", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target, "generation-2", 8_000),
             },
         )
         .unwrap();
@@ -765,7 +765,7 @@ mod resolved_dispatch {
         assert!(matches!(
             failure.failure,
             ModelInferenceFailure::InvalidRequest { ref message }
-                if message.contains("StaleCapabilityGeneration")
+                if message.contains("StaleModelFeatureGeneration")
         ));
         let _ = fs::remove_file(path);
     }
@@ -777,8 +777,8 @@ mod resolved_dispatch {
         let target = target("fixture.provider", "selected");
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target.clone(), "generation-1", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target.clone(), "generation-1", 8_000),
             },
         )
         .unwrap();
@@ -786,8 +786,8 @@ mod resolved_dispatch {
         let prepared = prepare(&mut kernel, original.clone(), b"cross-boundary").unwrap();
         invoke_routing(
             &mut kernel,
-            ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target, "generation-2", 8_000),
+            ModelCommand::PublishModelFeatures {
+                features: features(target, "generation-2", 8_000),
             },
         )
         .unwrap();
