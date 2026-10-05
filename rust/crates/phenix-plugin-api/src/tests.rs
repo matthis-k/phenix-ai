@@ -270,7 +270,7 @@ fn sdk_tools_wrap_execution_callables() {
             &abi(&SdkToolCommand::Register {
                 id: "read".into(),
                 service: "fixture.read@1".into(),
-                required_capabilities: BTreeSet::new(),
+                required_permissions: BTreeSet::new(),
             }),
             &authority,
             None,
