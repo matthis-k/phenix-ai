@@ -82,8 +82,8 @@ impl DelegatedTaskStore {
         }
         if !task
             .delegated_authority
-            .capabilities
-            .is_subset(&parent_authority.capabilities)
+            .permissions
+            .is_subset(&parent_authority.permissions)
         {
             return Err(DelegatedTaskStoreError::AuthorityExpanded);
         }
