@@ -30,21 +30,20 @@ use phenix_application_interface::{
     SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    ArtifactRevision, Authority, Bytes, CallableId, ReferenceGenerationId, PermissionId,
-    ClientConnectionId, ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, ContentReference, ContractId, EntryTriggerKind,
-    GenerationId, GraphReconciler, HasPhenixSchema, InterfaceId, InterfaceSchema, Key,
-    LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
-    ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
-    PhenixValue, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
-    PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor,
-    PluginBuildFailure, PluginBuildOutput, PluginBuildPlan, PluginBuildReport, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
+    ArtifactRevision, Authority, Bytes, CallableId, ClientConnectionId, ComponentEntryTrigger,
+    ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest,
+    ContentReference, ContractId, EntryTriggerKind, GenerationId, GraphReconciler, HasPhenixSchema,
+    InterfaceId, InterfaceSchema, Key, LocalPersistence, LogSink, ModelToolCall,
+    ModelToolDescriptor, ModelToolResult, ObservableError, ObservableRegistration, ObservableStore,
+    PermissionId, PhenixContract, PhenixSchema, PhenixValue, PluginArtifact, PluginArtifactInput,
+    PluginArtifactStore, PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution,
+    PluginBuildExecutor, PluginBuildFailure, PluginBuildOutput, PluginBuildPlan, PluginBuildReport,
+    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
     PluginManagementContext, PluginManagementPolicy, PluginManagementRequest, PluginManifest,
-    Project, ReconciliationPreview, RootExecutionConstraints, RootExecutionHandle,
-    RoutingProfileId, PluginRuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCallableRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
-    ValueCodec, ValueId, ValuePath,
+    PluginRuntimeId, Project, ReconciliationPreview, ReferenceGenerationId,
+    RootExecutionConstraints, RootExecutionHandle, RoutingProfileId, SdkClient,
+    ServiceContribution, ServiceId, ServiceRole, SessionId, SharedCallableRegistry,
+    SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
     agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
@@ -6964,7 +6963,8 @@ mod tests {
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, ModelFeatureGenerationId, ModelLimits,
+        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord,
+        ModelFeatureGenerationId, ModelLimits,
     };
     use std::{
         fs,
@@ -8498,13 +8498,11 @@ mod tests {
             &ObservableStore::default(),
             SharedCallableRegistry::default(),
             PluginRuntimeId::parse("fixture-generation-tools-runtime").unwrap(),
-            ReferenceGenerationId::parse("fixture-generation-tools-capability-generation")
-                .unwrap(),
+            ReferenceGenerationId::parse("fixture-generation-tools-capability-generation").unwrap(),
             callbacks,
             ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-generation-tools-client").unwrap(),
-                ReferenceGenerationId::parse("fixture-generation-tools-client-generation")
-                    .unwrap(),
+                ReferenceGenerationId::parse("fixture-generation-tools-client-generation").unwrap(),
             ),
         )
         .unwrap();
