@@ -6956,15 +6956,15 @@ mod tests {
     };
     use phenix_core::{
         Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
-        ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, ResourceNamespace,
+        ModelFeatureGenerationId, ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput,
+        ResourceNamespace,
         SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord,
-        ModelFeatureGenerationId, ModelLimits,
+        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, ModelLimits,
     };
     use std::{
         fs,
