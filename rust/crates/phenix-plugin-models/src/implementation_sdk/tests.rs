@@ -361,8 +361,8 @@ mod profile_store {
     }
 
     #[test]
-    fn packaged_profiles_do_not_adopt_foreign_identity() {
-        let path = temp_db("routing-packaged-foreign");
+    fn first_packaged_configuration_adopts_matching_legacy_profile() {
+        let path = temp_db("routing-packaged-legacy-adoption");
         let profile = profile();
         let mut kernel = kernel_with(&path);
         invoke_routing(
@@ -373,10 +373,37 @@ mod profile_store {
         )
         .unwrap();
 
-        let error = invoke_routing(
+        let response = invoke_routing(
             &mut kernel,
             ModelCommand::PreparePackagedProfiles {
                 profiles: vec![profile],
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            ModelResponse::PreparedProfiles { .. }
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn first_packaged_configuration_rejects_conflicting_foreign_identity() {
+        let path = temp_db("routing-packaged-foreign");
+        let desired = profile();
+        let mut foreign = desired.clone();
+        foreign.default_target.model = ModelId::parse("foreign-model").unwrap();
+        let mut kernel = kernel_with(&path);
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::RegisterProfile { profile: foreign },
+        )
+        .unwrap();
+
+        let error = invoke_routing(
+            &mut kernel,
+            ModelCommand::PreparePackagedProfiles {
+                profiles: vec![desired],
             },
         )
         .unwrap_err();
