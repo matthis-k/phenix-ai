@@ -186,7 +186,9 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
                 match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
                     ModelResponse::Profile { profile: Some(_) } => {}
                     other => {
-                        return Err(format!("fixture profile registration failed: {other:?}").into());
+                        return Err(
+                            format!("fixture profile registration failed: {other:?}").into()
+                        );
                     }
                 }
             }
