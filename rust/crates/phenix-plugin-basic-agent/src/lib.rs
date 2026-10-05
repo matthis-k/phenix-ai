@@ -102,7 +102,7 @@ mod tests {
         Authority::new(
             manifests
                 .iter()
-                .flat_map(|manifest| manifest.maximum_authority.capabilities().cloned()),
+                .flat_map(|manifest| manifest.maximum_authority.permissions().cloned()),
         )
     }
 
