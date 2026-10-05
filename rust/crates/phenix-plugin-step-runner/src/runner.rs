@@ -403,8 +403,8 @@ fn run_delegated_task(
     let policy = delegated_usage_policy(&record, &parent_plan);
     let intent = InvocationIntent {
         output_reserve_tokens: record.binding.resources.budget.output_tokens,
-        required_context_capabilities: parent_plan.context.required_capabilities.clone(),
-        required_capabilities: parent_plan.routing.required_capabilities.clone(),
+        required_context_features: parent_plan.context.required_features.clone(),
+        required_features: parent_plan.routing.required_features.clone(),
         required_tools: BTreeSet::new(),
         optional_tools: BTreeSet::new(),
         required_skills: BTreeSet::new(),
