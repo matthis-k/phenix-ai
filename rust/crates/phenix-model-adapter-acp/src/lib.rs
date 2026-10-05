@@ -702,12 +702,11 @@ async fn run_persistent_session(
         .builder()
         .on_receive_notification(
             async move |notification: SessionNotification, _connection| {
-                if let Some(event) = normalize_update(notification.update) {
-                    if let Ok(events) = notification_events.lock() {
-                        if let Some(events) = events.as_ref() {
-                            let _ = events.send(WorkerMessage::Event(event));
-                        }
-                    }
+                if let Some(event) = normalize_update(notification.update)
+                    && let Ok(events_guard) = notification_events.lock()
+                    && let Some(events) = events_guard.as_ref()
+                {
+                    let _ = events.send(WorkerMessage::Event(event));
                 }
                 Ok(())
             },
@@ -833,17 +832,16 @@ async fn run_persistent_session(
                     })?;
                     *active = Some(command.events.clone());
                 }
-                if bridge_available {
-                    if let Err(error) =
+                if bridge_available
+                    && let Err(error) =
                         bridge.bind_execution(&command.tools, command.events.clone())
-                    {
-                        if let Ok(mut active) = active_events.lock() {
-                            *active = None;
-                        }
-                        let message = error.to_string();
-                        let _ = command.events.send(WorkerMessage::Done(Err(error)));
-                        return Err(agent_client_protocol::Error::internal_error().data(message));
+                {
+                    if let Ok(mut active) = active_events.lock() {
+                        *active = None;
                     }
+                    let message = error.to_string();
+                    let _ = command.events.send(WorkerMessage::Done(Err(error)));
+                    return Err(agent_client_protocol::Error::internal_error().data(message));
                 }
                 let cancel_forwarder = spawn_cancel_forwarder(
                     connection.clone(),
