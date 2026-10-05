@@ -6,7 +6,7 @@ status: implemented
 
 Run executable plugin implementations in a separate process when they need independent distribution or enforceable isolation, while preserving the same logical Plugin API used by embedded implementations.
 
-Requires `spec/plugin-host.md` and follows the runtime-provider model in `spec/plugin-runtime-bridges.md`.
+Requires `spec/plugin-host.md` and follows the plugin-runtime-adapter model in `spec/plugin-runtime-bridges.md`.
 
 ## When to use a process-backed bridge
 
@@ -23,13 +23,13 @@ First-party status does not force embedded execution. Third-party status does no
 
 ## Transport
 
-The first process-backed bridge uses a local subprocess protocol over stdio or a Unix-domain socket. The transport sits behind the canonical PluginHost/runtime-provider boundary; it does not define alternate plugin semantics.
+The first process-backed bridge uses a local subprocess protocol over stdio or a Unix-domain socket. The transport sits behind the canonical PluginHost/plugin-runtime-adapter boundary; it does not define alternate plugin semantics.
 
 The bridge transport uses blocking reads/writes on dedicated threads. It does not require an async executor.
 
 The protocol is typed and versioned. It carries only transport-safe values defined by the logical plugin contracts.
 
-Rust dynamic libraries are not a supported plugin ABI. Independently distributed Rust executable plugins use this process protocol rather than `.so`, `.dylib`, or `.dll` loading. WASM is not required for the first implementation. A later WASM runtime provider may implement the same logical contract if a concrete need justifies it.
+Rust dynamic libraries are not a supported plugin ABI. Independently distributed Rust executable plugins use this process protocol rather than `.so`, `.dylib`, or `.dll` loading. WASM is not required for the first implementation. A later WASM plugin runtime adapter may implement the same logical contract if a concrete need justifies it.
 
 ## Handshake
 
