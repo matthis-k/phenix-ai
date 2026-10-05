@@ -232,14 +232,14 @@ mod tests {
             mandatory_input_tokens: input_tokens,
             reducible_input_tokens: 0,
             output_reserve_tokens: 128,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         };
         StepPlan {
             policy_revision: "p1".into(),
             historical_estimator_snapshot: None,
             routing: RoutingRequirements {
                 context: context.clone(),
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
                 require_known_capacity: false,
             },
             context,
