@@ -308,6 +308,37 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 
+  product-phenix-standalone-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Product / Phenix standalone runtime package"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: "Phenix standalone runtime package"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-standalone-runtime\",\"source\":{\"job\":\"product-phenix-standalone-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-ef9643e1818b -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
   runtime-process-roundtrip:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: "CI / Runtime / Harness process roundtrip"
@@ -771,6 +802,7 @@ jobs:
       - integration-plugin-packaging
       - product-phenix-lua-binding
       - product-phenix-runtime
+      - product-phenix-standalone-runtime
       - runtime-process-roundtrip
       - runtime-stitch
       - test-adapter-domain
@@ -795,6 +827,7 @@ jobs:
           [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
           [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
           [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
+          [[ '${{ needs.product-phenix-standalone-runtime.result }}' == success ]]
           [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
           [[ '${{ needs.runtime-stitch.result }}' == success ]]
           [[ '${{ needs.test-adapter-domain.result }}' == success ]]
