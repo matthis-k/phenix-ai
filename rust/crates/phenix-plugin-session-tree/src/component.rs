@@ -54,12 +54,12 @@ mod tests {
         phenix_core::Authority::new(
             session_manifest()
                 .maximum_authority
-                .capabilities()
+                .permissions()
                 .cloned()
                 .chain(
                     session_tree_manifest()
                         .maximum_authority
-                        .capabilities()
+                        .permissions()
                         .cloned(),
                 ),
         )

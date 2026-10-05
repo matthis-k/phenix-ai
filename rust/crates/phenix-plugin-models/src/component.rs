@@ -131,7 +131,7 @@ mod tests {
         let network = PermissionId::parse("network.openai").unwrap();
         let package_authority = Authority::new(
             persistence_authority()
-                .capabilities()
+                .permissions()
                 .cloned()
                 .chain([network]),
         );

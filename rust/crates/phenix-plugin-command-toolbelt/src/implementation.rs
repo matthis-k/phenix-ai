@@ -396,7 +396,7 @@ mod tests {
         let environment_id = environment.id.clone();
         let cli = cli_manifest(authority.clone());
         let cli_id = cli.id.clone();
-        let harness_authority = Authority::new(authority.capabilities().cloned().chain([
+        let harness_authority = Authority::new(authority.permissions().cloned().chain([
             capability("kernel.persistence.schema"),
             capability("kernel.persistence.read"),
             capability("kernel.persistence.write"),
