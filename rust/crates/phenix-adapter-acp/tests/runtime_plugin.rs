@@ -11,7 +11,7 @@ fn generated_runtime_plugin_has_only_the_adapter_identity() {
     assert!(manifest.dependencies.is_empty());
     assert!(manifest.services.is_empty());
     assert!(manifest.resource_namespaces.is_empty());
-    assert!(manifest.maximum_authority.capabilities().next().is_none());
+    assert!(manifest.maximum_authority.permissions().next().is_none());
 
     let components = Plugin::component_manifests();
     assert_eq!(components.len(), 1);
