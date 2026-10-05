@@ -1478,7 +1478,7 @@ mod tests {
             partition_key: Some("workspace-1".into()),
             explicit_prefix_bytes: None,
             local_prefix_identity: None,
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
 
@@ -1502,7 +1502,7 @@ mod tests {
             partition_key: None,
             explicit_prefix_bytes: Some(6),
             local_prefix_identity: Some("sha256:prefix".into()),
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
 
@@ -1531,7 +1531,7 @@ mod tests {
             partition_key: None,
             explicit_prefix_bytes: Some(6),
             local_prefix_identity: Some("sha256:prefix".into()),
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
 
@@ -1564,7 +1564,7 @@ mod tests {
             partition_key: None,
             explicit_prefix_bytes: Some(1),
             local_prefix_identity: None,
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
 
@@ -1584,7 +1584,7 @@ mod tests {
             partition_key: None,
             explicit_prefix_bytes: None,
             local_prefix_identity: None,
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
 
@@ -1607,7 +1607,7 @@ mod tests {
             partition_key: None,
             explicit_prefix_bytes: None,
             local_prefix_identity: None,
-            local_capability_generation: None,
+            local_feature_generation: None,
             local_authority_identity: None,
         };
         assert!(matches!(
