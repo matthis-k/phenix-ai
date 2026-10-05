@@ -77,8 +77,21 @@ impl From<SettingValue> for OptionValue {
 struct RuntimeModelTarget {
     provider: PluginId,
     model: ModelId,
-    #[serde(default)]
-    inference: Value,
+    #[serde(default, deserialize_with = "deserialize_runtime_inference")]
+    inference: Option<Value>,
+}
+
+fn deserialize_runtime_inference<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom(
+            "inference must be omitted instead of null",
+        ));
+    }
+    Ok(Some(value))
 }
 
 impl RuntimeModelTarget {
@@ -89,7 +102,7 @@ impl RuntimeModelTarget {
             inference,
         } = self;
         let mut options = BTreeMap::new();
-        if !inference.is_null() {
+        if let Some(inference) = inference {
             options.insert("inference".into(), inference.into());
         }
         ModelTarget {
@@ -453,6 +466,29 @@ mod tests {
             PhenixValue::Map(values)
                 if values.get("effort") == Some(&PhenixValue::String("low".into()))
         ));
+    }
+
+    #[test]
+    fn runtime_model_target_allows_omitted_inference() {
+        let target: RuntimeModelTarget = serde_json::from_value(json!({
+            "provider": "provider.fixture",
+            "model": "model.test"
+        }))
+        .unwrap();
+        assert!(!target.into_model_target().options.contains_key("inference"));
+    }
+
+    #[test]
+    fn runtime_model_target_rejects_null_inference() {
+        let error = serde_json::from_value::<RuntimeModelTarget>(json!({
+            "provider": "provider.fixture",
+            "model": "model.test",
+            "inference": null
+        }))
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("inference must be omitted instead of null"));
     }
 
     #[test]
