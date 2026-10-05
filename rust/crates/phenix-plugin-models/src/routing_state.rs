@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_route_decision_is_rejected_after_capability_refresh() {
+    fn stale_route_decision_is_rejected_after_feature_refresh() {
         let mut state = RoutingRuntimeState::default();
         let target = target("primary");
         state
