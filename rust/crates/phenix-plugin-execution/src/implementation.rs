@@ -39,8 +39,8 @@ fn parse_execution_authority(value: &ExecutionAuthority) -> Result<Authority, St
 fn execution_authority_from(authority: &Authority) -> ExecutionAuthority {
     ExecutionAuthority::new(
         authority
-            .capabilities()
-            .map(|capability| capability.as_str().to_owned()),
+            .permissions()
+            .map(|permission| permission.as_str().to_owned()),
     )
 }
 
@@ -69,9 +69,9 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
     ]);
     let maximum_authority = Authority::new(
         maximum_authority
-            .capabilities()
+            .permissions()
             .cloned()
-            .chain(persistence.capabilities().cloned()),
+            .chain(persistence.permissions().cloned()),
     );
     PluginManifest {
         id: PluginId::parse(EXECUTION_PLUGIN).expect("static plugin id is valid"),

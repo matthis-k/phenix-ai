@@ -219,7 +219,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     reconciler
         .activate_candidate_on_kernel(&mut kernel, added)
         .unwrap();
-    let active = kernel.active_runtime_graph().unwrap();
+    let active = kernel.active_generation_graph().unwrap();
     assert!(active.listeners().all(|binding| {
         binding.generation == &added_generation
             && (binding.listener.owning_plugin == a.id || binding.listener.owning_plugin == b.id)

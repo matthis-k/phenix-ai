@@ -18,7 +18,7 @@ fn client() -> (Client, mpsc::UnboundedReceiver<Command>) {
         session_config_options: Mutex::new(BTreeMap::new()),
         terminal_error: Mutex::new(None),
         owner: ClientConnectionId::parse("fixture-client").unwrap(),
-        generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+        generation: ReferenceGenerationId::parse("generation-1").unwrap(),
     });
     (
         Client {
