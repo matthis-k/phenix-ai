@@ -29,7 +29,7 @@ fn context<'host, 'runtime>(
 
 fn parse_execution_authority(value: &ExecutionAuthority) -> Result<Authority, String> {
     value
-        .capabilities
+        .permissions
         .iter()
         .map(|value| PermissionId::parse(value).map_err(|error| error.to_string()))
         .collect::<Result<Vec<_>, _>>()
@@ -63,9 +63,9 @@ struct ExecutionProjection {
 #[must_use]
 pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
     let persistence = Authority::new([
-        capability(PERSISTENCE_SCHEMA),
-        capability(PERSISTENCE_READ),
-        capability(PERSISTENCE_WRITE),
+        permission(PERSISTENCE_SCHEMA),
+        permission(PERSISTENCE_READ),
+        permission(PERSISTENCE_WRITE),
     ]);
     let maximum_authority = Authority::new(
         maximum_authority
@@ -89,7 +89,7 @@ pub fn execution_manifest(maximum_authority: Authority) -> PluginManifest {
                 role: phenix_core::ServiceRole::Terminal,
                 service: execution_inspection_service(),
                 priority: 100,
-                required_authority: Authority::new([capability(PERSISTENCE_READ)]),
+                required_authority: Authority::new([permission(PERSISTENCE_READ)]),
             },
         ],
         resource_namespaces: vec![execution_namespace()],
@@ -106,8 +106,8 @@ fn execution_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(EXECUTION_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> PermissionId {
-    PermissionId::parse(value).expect("static capability is valid")
+fn permission(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static permission is valid")
 }
 
 struct ExecutionPlugin;
@@ -655,11 +655,11 @@ mod tests {
 
     fn caller_authority() -> Authority {
         Authority::new([
-            capability(PERSISTENCE_SCHEMA),
-            capability(PERSISTENCE_READ),
-            capability(PERSISTENCE_WRITE),
-            capability("fs.read"),
-            capability("fs.write"),
+            permission(PERSISTENCE_SCHEMA),
+            permission(PERSISTENCE_READ),
+            permission(PERSISTENCE_WRITE),
+            permission("fs.read"),
+            permission("fs.write"),
         ])
     }
 
