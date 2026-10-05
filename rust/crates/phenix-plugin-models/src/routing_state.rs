@@ -13,7 +13,6 @@ pub(crate) struct RoutingRuntimeState {
     #[serde(skip)]
     estimates: BTreeMap<String, RoutingEstimate>,
     evidence: BTreeMap<String, Vec<RoutingEvidence>>,
-    #[serde(default)]
     evidence_sequence: u64,
 }
 
