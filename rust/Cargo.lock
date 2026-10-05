@@ -2040,7 +2040,6 @@ dependencies = [
  "phenix-sdk-macros",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]

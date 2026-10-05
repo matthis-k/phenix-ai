@@ -15,8 +15,6 @@ use phenix_sdk::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-#[cfg(test)]
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -27,6 +25,7 @@ use std::{
 const RUNTIME_MODEL_FEATURE_GENERATION: &str = "runtime-config-v1";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeConfiguration {
     agents: Vec<AgentDefinition>,
     orchestrations: Vec<OrchestrationDefinition>,
@@ -34,6 +33,7 @@ struct RuntimeConfiguration {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeRoutingProfile {
     id: RoutingProfileId,
     default_target: RuntimeModelTarget,
@@ -73,11 +73,25 @@ impl From<SettingValue> for OptionValue {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeModelTarget {
     provider: PluginId,
     model: ModelId,
-    #[serde(default)]
-    inference: Value,
+    #[serde(default, deserialize_with = "deserialize_runtime_inference")]
+    inference: Option<Value>,
+}
+
+fn deserialize_runtime_inference<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom(
+            "inference must be omitted instead of null",
+        ));
+    }
+    Ok(Some(value))
 }
 
 impl RuntimeModelTarget {
@@ -88,7 +102,7 @@ impl RuntimeModelTarget {
             inference,
         } = self;
         let mut options = BTreeMap::new();
-        if !inference.is_null() {
+        if let Some(inference) = inference {
             options.insert("inference".into(), inference.into());
         }
         ModelTarget {
@@ -266,50 +280,6 @@ fn apply_configuration(
     }
     Ok(())
 }
-#[cfg(test)]
-fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
-    let encoded = serde_json::to_vec(&target)?;
-    let digest = Sha256::digest(encoded);
-    let suffix = digest[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let id = RoutingProfileId::parse(format!(
-        "model.{}.{}.{}",
-        target.provider_plugin, target.model, suffix
-    ))?;
-    Ok(RoutingProfile {
-        id,
-        default_target: target,
-        fallback_targets: Vec::new(),
-        callable_targets: BTreeMap::new(),
-    })
-}
-
-#[cfg(test)]
-fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
-    fn normalize_target(target: &mut ModelTarget) {
-        if matches!(
-            target.options.get("backend"),
-            Some(PhenixValue::String(backend)) if backend == "phenix"
-        ) {
-            target.options.remove("backend");
-        }
-        if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
-            target.options.remove("inference");
-        }
-    }
-
-    normalize_target(&mut profile.default_target);
-    for target in &mut profile.fallback_targets {
-        normalize_target(target);
-    }
-    for target in profile.callable_targets.values_mut() {
-        normalize_target(target);
-    }
-    profile
-}
-
 fn cache_features_for_target(target: &ModelTarget) -> CacheFeatures {
     let provider = target.provider_plugin.as_str();
     let model = target.model.as_str();
@@ -413,14 +383,12 @@ mod tests {
             "routing_profiles": [{
                 "id": "router.test",
                 "default_target": {
-                    "backend": "phenix",
                     "provider": "provider.fixture",
                     "model": "model.test",
                     "inference": {"effort": "low"}
                 },
                 "callable_targets": {
                     "agent.scout": {
-                        "backend": "phenix",
                         "provider": "provider.fixture",
                         "model": "model.scout",
                         "inference": {"effort": "medium"}
@@ -484,9 +452,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_model_target_lowers_foreign_json_before_dispatch() {
+    fn runtime_model_target_projects_inference_options() {
         let target: RuntimeModelTarget = serde_json::from_value(json!({
-            "backend": "phenix",
             "provider": "provider.fixture",
             "model": "model.test",
             "inference": {"effort": "low"}
@@ -494,12 +461,45 @@ mod tests {
         .unwrap();
         let target = target.into_model_target();
 
-        assert!(!target.options.contains_key("backend"));
         assert!(matches!(
             &target.options["inference"],
             PhenixValue::Map(values)
                 if values.get("effort") == Some(&PhenixValue::String("low".into()))
         ));
+    }
+
+    #[test]
+    fn runtime_model_target_allows_omitted_inference() {
+        let target: RuntimeModelTarget = serde_json::from_value(json!({
+            "provider": "provider.fixture",
+            "model": "model.test"
+        }))
+        .unwrap();
+        assert!(!target.into_model_target().options.contains_key("inference"));
+    }
+
+    #[test]
+    fn runtime_model_target_rejects_null_inference() {
+        let error = serde_json::from_value::<RuntimeModelTarget>(json!({
+            "provider": "provider.fixture",
+            "model": "model.test",
+            "inference": null
+        }))
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("inference must be omitted instead of null"));
+    }
+
+    #[test]
+    fn runtime_model_target_rejects_removed_backend_field() {
+        let error = serde_json::from_value::<RuntimeModelTarget>(json!({
+            "backend": "phenix",
+            "provider": "provider.fixture",
+            "model": "model.test"
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field `backend`"));
     }
 
     fn invoke_configuration(
@@ -563,186 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_migrates_legacy_generated_routes_outside_current_configuration() {
-        let mut harness = PhenixRuntime::default_suite().unwrap();
-        harness.activate().unwrap();
-        let mut target = sample_runtime()
-            .routing_profiles
-            .remove(0)
-            .into_routing_profile()
-            .default_target;
-        target
-            .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
-        target.options.insert("inference".into(), PhenixValue::Unit);
-        let legacy = direct_routing_profile(target).unwrap();
-        let normalized = without_legacy_runtime_metadata(legacy.clone());
-        let canonical = direct_routing_profile(normalized.default_target.clone()).unwrap();
-        assert_ne!(legacy.id, canonical.id);
-        invoke_projected::<_, ModelResponse>(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::RegisterProfile {
-                profile: legacy.clone(),
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        apply_configuration(&mut harness, sample_runtime()).unwrap();
-        let migrated: ModelResponse = invoke_projected(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::GetProfile {
-                id: legacy.id.clone(),
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert_eq!(
-            migrated,
-            ModelResponse::Profile {
-                profile: Some(normalized.clone())
-            }
-        );
-        let candidates: ModelResponse = invoke_projected(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::ListCandidates {
-                profile_id: legacy.id,
-                callable_id: None,
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert!(
-            matches!(candidates, ModelResponse::Candidates { candidates } if candidates.len() == 1 && candidates[0].features.target == normalized.default_target)
-        );
-    }
-
-    #[test]
-    fn runtime_configuration_migrates_legacy_backend_metadata() {
-        let mut harness = PhenixRuntime::default_suite().unwrap();
-        harness.activate().unwrap();
-
-        let desired = sample_runtime()
-            .routing_profiles
-            .into_iter()
-            .next()
-            .unwrap()
-            .into_routing_profile();
-        let mut legacy = desired.clone();
-        legacy
-            .default_target
-            .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
-        for target in &mut legacy.fallback_targets {
-            target
-                .options
-                .insert("backend".into(), PhenixValue::String("phenix".into()));
-        }
-        for target in legacy.callable_targets.values_mut() {
-            target
-                .options
-                .insert("backend".into(), PhenixValue::String("phenix".into()));
-        }
-
-        let response: ModelResponse = invoke_projected(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::RegisterProfile { profile: legacy },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert!(matches!(
-            response,
-            ModelResponse::Profile { profile: Some(_) }
-        ));
-
-        apply_configuration(&mut harness, sample_runtime()).unwrap();
-
-        let response: ModelResponse = invoke_projected(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::GetProfile {
-                id: desired.id.clone(),
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert_eq!(
-            response,
-            ModelResponse::Profile {
-                profile: Some(desired)
-            }
-        );
-    }
-
-    #[test]
-    fn runtime_configuration_migrates_legacy_null_inference_metadata() {
-        fn configuration() -> RuntimeConfiguration {
-            serde_json::from_value(json!({
-                "agents": [],
-                "orchestrations": [],
-                "routing_profiles": [{
-                    "id": "router.legacy-null-inference",
-                    "default_target": {
-                        "backend": "phenix",
-                        "provider": "provider.fixture",
-                        "model": "model.test"
-                    }
-                }]
-            }))
-            .unwrap()
-        }
-
-        let mut harness = PhenixRuntime::default_suite().unwrap();
-        harness.activate().unwrap();
-
-        let desired = configuration()
-            .routing_profiles
-            .into_iter()
-            .next()
-            .unwrap()
-            .into_routing_profile();
-        let mut legacy = desired.clone();
-        legacy
-            .default_target
-            .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
-        legacy
-            .default_target
-            .options
-            .insert("inference".into(), PhenixValue::Unit);
-
-        invoke_projected::<_, ModelResponse>(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::RegisterProfile { profile: legacy },
-            &default_suite_authority(),
-        )
-        .unwrap();
-
-        apply_configuration(&mut harness, configuration()).unwrap();
-
-        let response: ModelResponse = invoke_projected(
-            &mut harness,
-            &model_routing_service(),
-            &ModelCommand::GetProfile {
-                id: desired.id.clone(),
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        assert_eq!(
-            response,
-            ModelResponse::Profile {
-                profile: Some(desired)
-            }
-        );
-    }
-
-    #[test]
-    fn runtime_configuration_rejects_nonlegacy_profile_identity_changes() {
+    fn runtime_configuration_rejects_foreign_profile_identity_changes() {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
@@ -764,9 +585,9 @@ mod tests {
         .unwrap();
 
         let error = apply_configuration(&mut harness, sample_runtime()).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("routing profile identity is immutable: router.test"));
+        assert!(error.to_string().contains(
+            "routing profile is already owned outside packaged configuration: router.test"
+        ));
         assert!(matches!(
             invoke_configuration(
                 &mut harness,
@@ -972,7 +793,7 @@ mod tests {
     }
 
     #[test]
-    fn later_foreign_generated_profiles_and_callables_remain_visible() {
+    fn later_foreign_profiles_and_callables_remain_visible() {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         let empty = || RuntimeConfiguration {
@@ -989,16 +810,13 @@ mod tests {
                 agent: agent.clone(),
             },
         );
-        let foreign = direct_routing_profile(
-            sample
-                .routing_profiles
-                .into_iter()
-                .next()
-                .unwrap()
-                .into_routing_profile()
-                .default_target,
-        )
-        .unwrap();
+        let mut foreign = sample
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        foreign.id = RoutingProfileId::parse("user.foreign").unwrap();
         invoke_projected::<_, ModelResponse>(
             &mut harness,
             &model_routing_service(),
@@ -1028,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn migrated_runtime_configuration_is_active_and_restart_safe() {
+    fn runtime_configuration_is_active_and_idempotent() {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();

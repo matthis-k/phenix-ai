@@ -128,6 +128,15 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
+    fn snapshot_without_evidence_sequence_is_rejected() {
+        let snapshot = br#"{"features":{},"evidence":{}}"#;
+        assert!(matches!(
+            RoutingServiceState::restore(Some(snapshot)),
+            Err(RoutingServiceStateError::InvalidSnapshot(_))
+        ));
+    }
+
+    #[test]
     fn derived_estimates_are_rebuilt_instead_of_persisted_as_truth() {
         let target = ModelTarget {
             provider_plugin: PluginId::parse("provider.fixture").unwrap(),
