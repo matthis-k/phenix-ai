@@ -1010,25 +1010,25 @@ fn load_context_internal(
     let receipt = admission_id
         .as_deref()
         .map(|admission_id| injection_admission_key(&execution_id, admission_id));
-    if let Some(receipt_key) = receipt.as_deref() {
-        if let Some(existing) = read_raw(context, receipt_key)? {
-            let existing: ContextInjection =
-                serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
-            if existing.execution_id != execution_id
-                || existing.source != source
-                || existing.requester != requester
-                || existing.lifetime != lifetime
-                || existing.reason != reason
-            {
-                return Err(format!(
-                    "context admission identity reused with changed injection: {}",
-                    admission_id
-                        .as_deref()
-                        .expect("receipt implies admission id")
-                ));
-            }
-            return Ok((existing, resource));
+    if let Some(receipt_key) = receipt.as_deref()
+        && let Some(existing) = read_raw(context, receipt_key)?
+    {
+        let existing: ContextInjection =
+            serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+        if existing.execution_id != execution_id
+            || existing.source != source
+            || existing.requester != requester
+            || existing.lifetime != lifetime
+            || existing.reason != reason
+        {
+            return Err(format!(
+                "context admission identity reused with changed injection: {}",
+                admission_id
+                    .as_deref()
+                    .expect("receipt implies admission id")
+            ));
         }
+        return Ok((existing, resource));
     }
 
     let key = injections_key(&execution_id);
