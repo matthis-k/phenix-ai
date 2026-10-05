@@ -124,7 +124,7 @@ impl InvocationIntent {
                 mandatory_input_tokens,
                 reducible_input_tokens,
                 output_reserve_tokens: self.output_reserve_tokens,
-                required_capabilities: self.required_context_capabilities.clone(),
+                required_features: self.required_context_capabilities.clone(),
             },
             required_capabilities: self.required_capabilities.clone(),
             required_tools: self.required_tools.clone(),

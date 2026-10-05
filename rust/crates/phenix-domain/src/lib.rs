@@ -95,8 +95,8 @@ domain_id_type!(ExecutionId);
 domain_id_type!(OrchestrationNodeId);
 domain_id_type!(ToolCallId);
 domain_id_type!(ConfigRevisionId);
-domain_id_type!(BackendId);
-domain_id_type!(ProviderId);
+domain_id_type!(ModelAdapterId);
+domain_id_type!(ModelProviderId);
 domain_id_type!(AuthenticationMethodId);
 domain_id_type!(WorkspaceId);
 
@@ -134,8 +134,8 @@ pub struct InferenceOptions {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ModelTarget {
-    pub backend: BackendId,
-    pub provider: ProviderId,
+    pub adapter: ModelAdapterId,
+    pub provider: ModelProviderId,
     pub model: ModelId,
     pub inference: InferenceOptions,
 }
@@ -183,8 +183,8 @@ impl fmt::Debug for AuthenticationInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AuthenticationMethodDescriptor {
     pub id: AuthenticationMethodId,
-    pub backend: BackendId,
-    pub provider: ProviderId,
+    pub adapter: ModelAdapterId,
+    pub provider: ModelProviderId,
     pub kind: AuthenticationMethodKind,
     pub name: String,
     pub description: Option<String>,
@@ -200,18 +200,18 @@ pub enum AuthenticationState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct BackendCatalog {
-    pub backend: BackendId,
+pub struct ModelAdapterCatalog {
+    pub adapter: ModelAdapterId,
     pub models: Vec<ModelDescriptor>,
     pub authentication_state: AuthenticationState,
     pub authentication_methods: Vec<AuthenticationMethodDescriptor>,
 }
 
-impl BackendCatalog {
+impl ModelAdapterCatalog {
     #[must_use]
     pub fn model_descriptor(&self, target: &ModelTarget) -> Option<&ModelDescriptor> {
         self.models.iter().find(|descriptor| {
-            descriptor.target.backend == target.backend
+            descriptor.target.adapter == target.adapter
                 && descriptor.target.provider == target.provider
                 && descriptor.target.model == target.model
         })
@@ -227,7 +227,7 @@ pub enum CallableKind {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CapabilitySet(pub BTreeSet<String>);
+pub struct CallableFeatureSet(pub BTreeSet<String>);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CallablePolicy {
@@ -241,7 +241,7 @@ pub struct CallableDescriptor {
     pub description: String,
     pub input_schema: PhenixSchema,
     pub output_schema: PhenixSchema,
-    pub capabilities: CapabilitySet,
+    pub features: CallableFeatureSet,
     pub policy: CallablePolicy,
 }
 
@@ -272,7 +272,7 @@ pub struct RoutingProfile {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutingProfileDescriptor {
     pub id: RoutingProfileId,
-    pub providers: Vec<ProviderId>,
+    pub providers: Vec<ModelProviderId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -473,7 +473,7 @@ mod tests {
             description: "Example orchestration".to_owned(),
             input_schema: PhenixSchema::String,
             output_schema: PhenixSchema::String,
-            capabilities: CapabilitySet::default(),
+            features: CallableFeatureSet::default(),
             policy: CallablePolicy::default(),
         }
     }

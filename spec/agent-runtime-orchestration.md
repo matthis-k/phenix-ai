@@ -10,14 +10,14 @@ coverage:
   - rust/crates/phenix-core/src/plugin_build_loading_regression.rs
 depends_on:
   - spec/application-interface.md
-  - spec/selectable-harness-generations.md
+  - spec/selectable-generations.md
   - spec/plugin-runtime-bridges.md
   - spec/runtime-inspection.md
   - spec/environment-workspace-boundary.md
 
 ## Purpose
 
-Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident Harness generation before promotion.
+Allow one running agent execution to create and drive other Phenix sessions and to test a changed Plugin in a resident generation before promotion.
 
 The supported workflow is:
 
@@ -49,7 +49,7 @@ Phenix already owns most required semantics:
 | create/list/resume/close/prompt application operations | `phenix-application-interface` and Harness application worker |
 | agent execution and tool loop | execution and agent-loop Plugins |
 | Plugin build/load/unload/reconcile | `GraphReconciler::manage` |
-| resident Harness generations | Core generation residency |
+| resident generations | Core generation residency |
 | explicit root invocation in one generation | `Kernel::invoke_in_generation` |
 | promotion and retirement | `GraphReconciler` resident operations |
 | authority attenuation | `Authority` and `RootExecutionConstraints` |
@@ -77,7 +77,7 @@ Phenix does not add an "agent owns session" durable relation. Session access is 
 
 ### Generation belongs to a root execution
 
-A session is not permanently bound to a Harness generation.
+A session is not permanently bound to a generation.
 
 A session may contain executions from different generations over time:
 
@@ -91,7 +91,7 @@ S1
 
 Each root execution selects one generation. Every model call, tool call, nested Plugin call, task, and causal Event under that root remains pinned to the same generation.
 
-This reuses the invariant from `spec/selectable-harness-generations.md`.
+This reuses the invariant from `spec/selectable-generations.md`.
 
 ### Agent control reuses application semantics
 
@@ -245,7 +245,7 @@ The controlling root may have host-pinned bindings such as Environment.
 
 A child generation must preserve every inherited pin.
 
-Selecting a Harness generation is not an Environment switch. Testing a candidate under another Environment requires a separately authorized root.
+Selecting a generation is not an Environment switch. Testing a candidate under another Environment requires a separately authorized root.
 
 ## Plugin development control
 
@@ -366,22 +366,22 @@ Build, artifact validation, desired-set mutation, and candidate resolution remai
 
 ## Harness ownership
 
-Core already supports several resident generations, but `PhenixHarness` currently stores one separate `ResolvedHarness` value.
+Core already supports several resident generations, but `PhenixRuntime` currently stores one separate `ResolvedGeneration` value.
 
-That becomes incorrect once Harness exposes resident-generation workflows because the reconciler also owns active/resident resolved Harness values.
+That becomes incorrect once Harness exposes resident-generation workflows because the reconciler also owns active/resident resolved generation values.
 
 The Harness should own:
 
 ```text
-PhenixHarness
+PhenixRuntime
   kernel
   reconciler
   application agent-tool registry
 ```
 
-The active resolved Harness is `reconciler.active()`.
+The active resolved generation is `reconciler.active()`.
 
-This PR starts with that prerequisite. It removes the extra active `ResolvedHarness` copy before model-facing lifecycle control is added.
+This PR starts with that prerequisite. It removes the extra active `ResolvedGeneration` copy before model-facing lifecycle control is added.
 
 ## Tool visibility after Plugin changes
 

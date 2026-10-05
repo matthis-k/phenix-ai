@@ -1,10 +1,10 @@
 use super::*;
-use crate::ResolvedHarness;
+use crate::ResolvedGeneration;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
-    pub(super) runtime: &'a RuntimeGeneration,
+    pub(super) runtime: &'a GenerationTopology,
     pub(super) lifecycle_constraints: Option<&'a RootExecutionConstraints>,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -76,7 +76,7 @@ impl Kernel {
     /// start failure leaves the previously active generation untouched.
     pub(crate) fn reconcile_resolved_generation(
         &mut self,
-        candidate: &ResolvedHarness,
+        candidate: &ResolvedGeneration,
         restart_plugins: &BTreeSet<PluginId>,
     ) -> Result<(), KernelError> {
         self.validate_generation_authority(candidate)?;
@@ -116,7 +116,7 @@ impl Kernel {
         }
 
         let active_runtime = self.generation_state.active;
-        let candidate_runtime = candidate.runtime_generation();
+        let candidate_runtime = candidate.generation_topology();
         let candidate_config = candidate_runtime.config().clone();
         let old_manifests: BTreeMap<_, _> = self
             .config()
@@ -168,29 +168,32 @@ impl Kernel {
                         PluginExecution::Embedded => self.take_embedded_instance(plugin).map(Some),
                         PluginExecution::Runtime { runtime, artifact } => {
                             let binding = candidate_config
-                                .runtime_binding(plugin)
+                                .plugin_runtime_binding(plugin)
                                 .cloned()
                                 .ok_or_else(|| {
-                                    KernelError::RuntimeProviderUnavailable(runtime.clone())
+                                    KernelError::PluginRuntimeAdapterUnavailable(runtime.clone())
                                 })?;
-                            let provider_manifest = candidate_config
-                                .manifest(&binding.provider)
-                                .expect("resolved runtime provider is configured");
-                            let provider_authority = constrain_authority_to_ceiling(
+                            let adapter_manifest = candidate_config
+                                .manifest(&binding.adapter_plugin)
+                                .expect("resolved plugin runtime adapter is configured");
+                            let adapter_authority = constrain_authority_to_ceiling(
                                 Some(candidate.authority_ceiling()),
-                                &provider_manifest.maximum_authority,
+                                &adapter_manifest.maximum_authority,
                             );
                             let guest_authority = constrain_authority_to_ceiling(
                                 Some(candidate.authority_ceiling()),
                                 &manifest.maximum_authority,
                             );
-                            let provider =
-                                next_instances.get(&binding.provider).cloned().ok_or_else(
-                                    || KernelError::PluginNotActive(binding.provider.clone()),
-                                )?;
-                            let live_call = self
-                                .tasks
-                                .begin_call(&binding.provider, candidate_runtime.generation());
+                            let adapter_instance = next_instances
+                                .get(&binding.adapter_plugin)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    KernelError::PluginNotActive(binding.adapter_plugin.clone())
+                                })?;
+                            let live_call = self.tasks.begin_call(
+                                &binding.adapter_plugin,
+                                candidate_runtime.generation(),
+                            );
                             let cancellation = live_call.cancellation_token().clone();
                             let prepared_mutations =
                                 PreparedMutationScope::new(candidate_runtime.generation());
@@ -206,26 +209,28 @@ impl Kernel {
                                     trace_sink: self.trace_sink.as_ref(),
                                     provenance: &self.provenance,
                                 },
-                                plugin: &binding.provider,
+                                plugin: &binding.adapter_plugin,
                                 scope: CallScope::root(
                                     Arc::new((*candidate_runtime).clone()),
-                                    &binding.provider,
-                                    &provider_authority,
+                                    &binding.adapter_plugin,
+                                    &adapter_authority,
                                     Some(cancellation.clone()),
                                 ),
                                 continuation: None,
                             };
-                            let mut provider =
-                                provider.lock().expect("plugin instance mutex poisoned");
-                            let contract = provider.runtime_provider().ok_or_else(|| {
-                                KernelError::RuntimeProviderContractUnavailable {
-                                    runtime: runtime.clone(),
-                                    provider: binding.provider.clone(),
-                                }
-                            })?;
+                            let mut adapter_instance = adapter_instance
+                                .lock()
+                                .expect("plugin instance mutex poisoned");
+                            let contract =
+                                adapter_instance.plugin_runtime_adapter().ok_or_else(|| {
+                                    KernelError::PluginRuntimeAdapterContractUnavailable {
+                                        runtime: runtime.clone(),
+                                        adapter_plugin: binding.adapter_plugin.clone(),
+                                    }
+                                })?;
                             let prepared = catch_unwind(AssertUnwindSafe(|| {
                                 contract.prepare_with_host(
-                                    RuntimePluginCandidate {
+                                    PluginRuntimeCandidate {
                                         manifest,
                                         artifact,
                                         guest_authority: &guest_authority,
@@ -234,21 +239,21 @@ impl Kernel {
                                 )
                             }))
                             .map_err(|_| {
-                                KernelError::RuntimePrepare {
+                                KernelError::PluginRuntimePreparation {
                                     plugin: plugin.clone(),
                                     runtime: runtime.clone(),
-                                    message: "runtime provider panicked".into(),
+                                    message: "plugin runtime adapter panicked".into(),
                                 }
                             })?;
                             if cancellation.is_cancelled() {
-                                return Err(KernelError::RuntimePrepare {
+                                return Err(KernelError::PluginRuntimePreparation {
                                     plugin: plugin.clone(),
                                     runtime: runtime.clone(),
-                                    message: "runtime provider preparation cancelled".into(),
+                                    message: "plugin runtime adapter preparation cancelled".into(),
                                 });
                             }
                             prepared
-                                .map_err(|message| KernelError::RuntimePrepare {
+                                .map_err(|message| KernelError::PluginRuntimePreparation {
                                     plugin: plugin.clone(),
                                     runtime: runtime.clone(),
                                     message,
@@ -418,7 +423,7 @@ impl Kernel {
             self.generation_state.states = next_states;
             self.generation_state.instances = next_instances;
             self.generation_state.invocations = next_invocations;
-            self.install_runtime_generation(
+            self.install_generation_topology(
                 candidate_runtime.clone(),
                 candidate.durable_schemas().to_vec(),
                 candidate.authority_ceiling().clone(),
@@ -465,11 +470,11 @@ fn runtime_restart_closure(
 
     loop {
         let before = restart.len();
-        for binding in candidate.runtime_bindings() {
-            if active.runtime_binding(&binding.guest) != Some(binding) {
+        for binding in candidate.plugin_runtime_bindings() {
+            if active.plugin_runtime_binding(&binding.guest) != Some(binding) {
                 restart.insert(binding.guest.clone());
             }
-            if restart.contains(&binding.provider) {
+            if restart.contains(&binding.adapter_plugin) {
                 restart.insert(binding.guest.clone());
             }
         }
@@ -490,14 +495,14 @@ pub(super) fn cleanup_staged(staged: &[PluginId], view: StopView<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{runtime_provider_service, RuntimeId, ServiceContribution};
+    use crate::{plugin_runtime_adapter_service, PluginRuntimeId, ServiceContribution};
 
     fn plugin(value: &str) -> PluginId {
         PluginId::parse(value).unwrap()
     }
 
-    fn runtime(value: &str) -> RuntimeId {
-        RuntimeId::parse(value).unwrap()
+    fn runtime(value: &str) -> PluginRuntimeId {
+        PluginRuntimeId::parse(value).unwrap()
     }
 
     fn manifest(
@@ -517,13 +522,13 @@ mod tests {
     }
 
     #[test]
-    fn changing_guest_does_not_restart_unchanged_runtime_provider() {
+    fn changing_guest_does_not_restart_unchanged_plugin_runtime_adapter() {
         let runtime = runtime("vendor.runtime");
         let provider = manifest(
             "fixture.bridge",
             PluginExecution::Embedded,
             vec![ServiceContribution {
-                service: runtime_provider_service(&runtime),
+                service: plugin_runtime_adapter_service(&runtime),
                 role: ServiceRole::Terminal,
                 priority: 0,
                 required_authority: Authority::default(),

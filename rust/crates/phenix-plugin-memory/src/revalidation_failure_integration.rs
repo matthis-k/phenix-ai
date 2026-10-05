@@ -2,7 +2,7 @@ use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
+    PluginManifest, ResolvedGeneration, ResolvedGenerationActivation, RoutingProfileId,
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_plugin_sessions::{session_component_manifest, session_factory, session_manifest};
@@ -39,7 +39,7 @@ fn kernel_with(path: &PathBuf) -> Kernel {
     let memory = memory_manifest();
     let sessions = session_manifest();
     let provider = fixture_provider_manifest();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [memory.clone(), sessions.clone(), provider.clone()],
         [
             memory_component_manifest(),
@@ -52,7 +52,7 @@ fn kernel_with(path: &PathBuf) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
+    Authority, ComponentId, ComponentInterface, ComponentManifest, InterfaceId, PermissionId,
     PluginContext, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
     ServiceContribution, ServiceId, ServiceRole, TransactionOp,
 };
@@ -892,9 +892,9 @@ fn options_namespace() -> ResourceNamespace {
 
 fn persistence_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_READ).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
     ])
 }
 
@@ -902,8 +902,8 @@ fn persistence_authority() -> Authority {
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedHarness,
-        ResolvedHarnessActivation,
+        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use std::{
         path::PathBuf,
@@ -953,7 +953,7 @@ mod tests {
         let path = temp_db("options-service");
         let manifest = options_manifest();
         let plugin = manifest.id.clone();
-        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+        let resolved = ResolvedGeneration::resolve_with_durable_schemas(
             [manifest.clone()],
             [options_component_manifest()],
             options_durable_schema_registrations(),
@@ -964,7 +964,7 @@ mod tests {
         let persistence = LocalPersistence::open(&path).unwrap();
         let mut kernel =
             Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, options_factory)
             .unwrap();

@@ -149,28 +149,28 @@ impl From<phenix_core::ObservableError> for ApplicationError {
     }
 }
 
-impl From<phenix_core::CapabilityError> for ApplicationError {
-    fn from(error: phenix_core::CapabilityError) -> Self {
-        use phenix_core::CapabilityError;
+impl From<phenix_core::CallableError> for ApplicationError {
+    fn from(error: phenix_core::CallableError) -> Self {
+        use phenix_core::CallableError;
         match error {
-            CapabilityError::UnknownReference(reference) => Self::NotFound {
+            CallableError::UnknownReference(reference) => Self::NotFound {
                 resource: reference.id().to_string(),
             },
-            CapabilityError::StaleReference(reference) => Self::StaleReference {
+            CallableError::StaleReference(reference) => Self::StaleReference {
                 value: reference.id().to_string(),
             },
-            CapabilityError::DuplicateReference(reference) => Self::Conflict {
+            CallableError::DuplicateReference(reference) => Self::Conflict {
                 message: format!(
-                    "capability reference {} is already registered",
+                    "callable reference {} is already registered",
                     reference.id()
                 ),
             },
-            CapabilityError::SchemaMismatch { message } => Self::SchemaMismatch { message },
-            CapabilityError::ProviderFailed { message } => Self::Failed { message },
-            CapabilityError::Cancelled => Self::Cancelled,
-            CapabilityError::Disconnected => Self::Disconnected,
-            CapabilityError::QueueFull => Self::Conflict {
-                message: "capability provider queue is full".to_owned(),
+            CallableError::SchemaMismatch { message } => Self::SchemaMismatch { message },
+            CallableError::HandlerFailed { message } => Self::Failed { message },
+            CallableError::Cancelled => Self::Cancelled,
+            CallableError::Disconnected => Self::Disconnected,
+            CallableError::QueueFull => Self::Conflict {
+                message: "callable handler queue is full".to_owned(),
             },
         }
     }

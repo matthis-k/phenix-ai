@@ -227,8 +227,8 @@ impl ResolvedConfigContributions {
                 })
                 .then_with(|| {
                     left.requested_authority
-                        .capabilities()
-                        .cmp(right.requested_authority.capabilities())
+                        .permissions()
+                        .cmp(right.requested_authority.permissions())
                 })
         });
 
@@ -288,8 +288,8 @@ impl ResolvedConfigContributions {
                                 })
                                 .then_with(|| {
                                     left.requested_authority
-                                        .capabilities()
-                                        .cmp(right.requested_authority.capabilities())
+                                        .permissions()
+                                        .cmp(right.requested_authority.permissions())
                                 })
                         });
                     }
@@ -335,10 +335,10 @@ impl ResolvedConfigContributions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CapabilityId;
+    use crate::PermissionId;
 
-    fn cap(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn cap(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn resolve(

@@ -1,14 +1,14 @@
 use crate::{
-    runtime_provider_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
+    plugin_runtime_adapter_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
     ComponentExport, ComponentId, ComponentImport, ComponentManifest, ComponentProcessArgument,
     EntryTriggerKind, GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact,
     PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution,
     PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost,
     PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext, PluginManagementError,
     PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginManifest,
-    PluginRuntimeProvider, PluginSetRequest, PluginState, PluginUnloadRequest, ResolvedHarness,
-    ResolvedHarnessActivation, RuntimeId, RuntimePluginCandidate, ServiceContribution, ServiceId,
-    ServiceRole,
+    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId, PluginSetRequest, PluginState,
+    PluginUnloadRequest, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution,
+    ServiceId, ServiceRole,
 };
 use std::{
     collections::BTreeMap,
@@ -22,8 +22,8 @@ fn plugin(value: &str) -> PluginId {
     PluginId::parse(value).unwrap()
 }
 
-fn runtime(value: &str) -> RuntimeId {
-    RuntimeId::parse(value).unwrap()
+fn runtime(value: &str) -> PluginRuntimeId {
+    PluginRuntimeId::parse(value).unwrap()
 }
 
 fn service(value: &str) -> ServiceId {
@@ -144,14 +144,14 @@ fn embedded_manifest(id: &str, service: Option<ServiceId>) -> PluginManifest {
     }
 }
 
-fn bridge_manifest(id: &str, provided_runtime: &RuntimeId) -> PluginManifest {
+fn bridge_manifest(id: &str, provided_runtime: &PluginRuntimeId) -> PluginManifest {
     PluginManifest {
         id: plugin(id),
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
-            service: runtime_provider_service(provided_runtime),
+            service: plugin_runtime_adapter_service(provided_runtime),
             role: ServiceRole::Terminal,
             priority: 0,
             required_authority: Authority::default(),
@@ -161,7 +161,7 @@ fn bridge_manifest(id: &str, provided_runtime: &RuntimeId) -> PluginManifest {
     }
 }
 
-fn guest_manifest(id: &str, runtime: RuntimeId, revision: &str) -> PluginManifest {
+fn guest_manifest(id: &str, runtime: PluginRuntimeId, revision: &str) -> PluginManifest {
     PluginManifest {
         id: plugin(id),
         version: 1,
@@ -261,10 +261,10 @@ struct Bridge {
     guest_starts: Arc<AtomicUsize>,
 }
 
-impl PluginRuntimeProvider for Bridge {
+impl PluginRuntimeAdapter for Bridge {
     fn prepare(
         &mut self,
-        candidate: RuntimePluginCandidate<'_>,
+        candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         if self.fail.load(Ordering::Acquire) {
             return Err("candidate rejected".into());
@@ -281,7 +281,7 @@ impl PluginInstance for Bridge {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
@@ -303,10 +303,10 @@ struct StartFailBridge {
     fail: Arc<AtomicBool>,
 }
 
-impl PluginRuntimeProvider for StartFailBridge {
+impl PluginRuntimeAdapter for StartFailBridge {
     fn prepare(
         &mut self,
-        _candidate: RuntimePluginCandidate<'_>,
+        _candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         Ok(Box::new(StartFailGuest {
             fail: Arc::clone(&self.fail),
@@ -319,19 +319,19 @@ impl PluginInstance for StartFailBridge {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
 
 fn activate_runtime_fixture(
-    initial: &ResolvedHarness,
+    initial: &ResolvedGeneration,
     bridge: &PluginManifest,
     fail: Arc<AtomicBool>,
     guest_starts: Arc<AtomicUsize>,
 ) -> Kernel {
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(initial).unwrap();
+    kernel.activate_resolved_generation(initial).unwrap();
     let fail_for_factory = Arc::clone(&fail);
     let starts_for_factory = Arc::clone(&guest_starts);
     kernel
@@ -352,13 +352,14 @@ fn trial_management_stages_candidate_without_changing_the_active_generation() {
     let first = embedded_manifest("fixture.trial.plugin", Some(echo.clone()));
     let mut second = first.clone();
     second.version = 2;
-    let initial = ResolvedHarness::resolve([first.clone()], [], [], &Authority::default()).unwrap();
+    let initial =
+        ResolvedGeneration::resolve([first.clone()], [], [], &Authority::default()).unwrap();
     let active_generation = initial.generation().clone();
     let starts = Arc::new(AtomicUsize::new(0));
     let stops = Arc::new(AtomicUsize::new(0));
 
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let starts_for_factory = Arc::clone(&starts);
     let stops_for_factory = Arc::clone(&stops);
     kernel
@@ -422,7 +423,7 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
         Some(ServiceId::parse(tool_interface.as_str()).unwrap()),
     );
     let component = provider_component(&first.id, &tool_interface);
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [first.clone()],
         [component.clone()],
         [],
@@ -434,7 +435,7 @@ fn trial_management_can_add_plugin_owned_model_tool_triggers() {
     let stops = Arc::new(AtomicUsize::new(0));
 
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let starts_for_factory = Arc::clone(&starts);
     let stops_for_factory = Arc::clone(&stops);
     kernel
@@ -521,7 +522,7 @@ fn load_activates_a_new_guest_in_a_new_generation() {
         maximum_authority: Authority::default(),
     };
     let initial =
-        ResolvedHarness::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
     let initial_generation = initial.generation().clone();
     let guest_starts = Arc::new(AtomicUsize::new(0));
     let fail = Arc::new(AtomicBool::new(false));
@@ -566,7 +567,7 @@ fn unload_stops_an_active_guest_and_commits_a_new_generation() {
     let runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let guest = guest_manifest("fixture.guest", runtime, "sha256:guest-v1");
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [bridge.clone(), guest.clone()],
         [],
         [],
@@ -613,7 +614,7 @@ fn loading_an_active_plugin_with_a_new_artifact_is_a_replacement() {
     let first_guest = guest_manifest("fixture.guest", runtime.clone(), "sha256:guest-v1");
     let second_guest = guest_manifest("fixture.guest", runtime, "sha256:guest-v2");
     let initial =
-        ResolvedHarness::resolve([bridge.clone(), first_guest], [], [], &Authority::default())
+        ResolvedGeneration::resolve([bridge.clone(), first_guest], [], [], &Authority::default())
             .unwrap();
     let initial_generation = initial.generation().clone();
     let guest_starts = Arc::new(AtomicUsize::new(0));
@@ -656,7 +657,7 @@ fn stale_expected_revision_is_rejected_before_commit() {
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let active_guest = guest_manifest("fixture.guest", runtime.clone(), "sha256:guest-v1");
     let candidate_guest = guest_manifest("fixture.guest", runtime, "sha256:guest-v2");
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [bridge.clone(), active_guest],
         [],
         [],
@@ -706,10 +707,10 @@ fn expected_revision_rejects_load_when_plugin_is_not_active() {
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let guest = guest_manifest("fixture.guest", runtime, "sha256:guest-v1");
     let initial =
-        ResolvedHarness::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let mut reconciler = GraphReconciler::new(initial);
 
     let error = manage(
@@ -743,7 +744,7 @@ fn failed_start_keeps_the_previous_generation_active() {
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let active_guest = guest_manifest("fixture.guest", runtime.clone(), "sha256:guest-v1");
     let candidate_guest = guest_manifest("fixture.guest", runtime, "sha256:guest-v2");
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [bridge.clone(), active_guest],
         [],
         [],
@@ -753,7 +754,7 @@ fn failed_start_keeps_the_previous_generation_active() {
     let active_generation = initial.generation().clone();
     let fail = Arc::new(AtomicBool::new(false));
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let fail_for_factory = Arc::clone(&fail);
     kernel
         .register_embedded_factory(bridge.id.clone(), move || {
@@ -796,7 +797,7 @@ fn unload_is_rejected_when_required_imports_become_unsatisfied() {
     let echo_interface = interface("fixture.echo@1");
     let consumer_owner = embedded_manifest("fixture.consumer", None);
     let provider_owner = embedded_manifest("fixture.provider", None);
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [consumer_owner.clone(), provider_owner.clone()],
         [
             consumer_component(&consumer_owner.id, &echo_interface),
@@ -808,7 +809,7 @@ fn unload_is_rejected_when_required_imports_become_unsatisfied() {
     .unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let mut reconciler = GraphReconciler::new(initial);
 
     let error = manage(
@@ -827,7 +828,7 @@ fn unload_is_rejected_when_required_imports_become_unsatisfied() {
     };
     assert!(matches!(
         *error,
-        crate::ResolvedHarnessError::ComponentGraph(
+        crate::GenerationResolutionError::ComponentGraph(
             crate::ComponentGraphError::MissingRequiredImport {
                 component,
                 interface: missing_interface,
@@ -844,10 +845,10 @@ fn unknown_runtime_is_rejected_before_commit() {
     let vendor_runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.bridge", &vendor_runtime);
     let initial =
-        ResolvedHarness::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let missing = runtime("missing.runtime");
     let invalid_guest = guest_manifest("fixture.guest", missing.clone(), "sha256:guest-v1");
     let mut reconciler = GraphReconciler::new(initial);
@@ -875,7 +876,7 @@ fn unknown_runtime_is_rejected_before_commit() {
 }
 
 #[test]
-fn runtime_provider_cycle_is_rejected_during_desired_set_reconcile() {
+fn plugin_runtime_adapter_cycle_is_rejected_during_desired_set_reconcile() {
     let runtime_a = runtime("runtime.a");
     let runtime_b = runtime("runtime.b");
     let bridge_a = bridge_manifest("bridge.a", &runtime_a);
@@ -890,10 +891,10 @@ fn runtime_provider_cycle_is_rejected_during_desired_set_reconcile() {
         runtime: runtime_a,
         artifact: artifact("sha256:b"),
     };
-    let initial = ResolvedHarness::resolve([], [], [], &Authority::default()).unwrap();
+    let initial = ResolvedGeneration::resolve([], [], [], &Authority::default()).unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let mut reconciler = GraphReconciler::new(initial);
 
     let error = manage(
@@ -914,21 +915,22 @@ fn runtime_provider_cycle_is_rejected_during_desired_set_reconcile() {
     };
     assert!(matches!(
         *error,
-        crate::ResolvedHarnessError::Kernel(KernelError::DependencyCycle(_))
+        crate::GenerationResolutionError::Kernel(KernelError::DependencyCycle(_))
     ));
     assert_eq!(kernel.graph_generation(), Some(&active_generation));
 }
 
 #[test]
-fn removing_a_runtime_provider_with_dependents_is_rejected() {
+fn removing_a_plugin_runtime_adapter_with_dependents_is_rejected() {
     let runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let guest = guest_manifest("fixture.guest", runtime.clone(), "sha256:guest-v1");
     let initial =
-        ResolvedHarness::resolve([bridge.clone(), guest], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([bridge.clone(), guest], [], [], &Authority::default())
+            .unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let mut reconciler = GraphReconciler::new(initial);
 
     let error = manage(
@@ -954,7 +956,8 @@ fn removing_a_runtime_provider_with_dependents_is_rejected() {
 fn old_and_new_invocations_are_pinned_to_their_generations() {
     let service = service("fixture.echo@1");
     let first = embedded_manifest("fixture.guest", Some(service.clone()));
-    let initial = ResolvedHarness::resolve([first.clone()], [], [], &Authority::default()).unwrap();
+    let initial =
+        ResolvedGeneration::resolve([first.clone()], [], [], &Authority::default()).unwrap();
     let initial_generation = initial.generation().clone();
     let starts = Arc::new(AtomicUsize::new(0));
     let stops = Arc::new(AtomicUsize::new(0));
@@ -972,7 +975,7 @@ fn old_and_new_invocations_are_pinned_to_their_generations() {
             }
         })
         .unwrap();
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     kernel.activate_all().unwrap();
 
     assert_eq!(
@@ -1035,10 +1038,10 @@ fn unload_of_an_unknown_plugin_is_rejected() {
     let runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.bridge", &runtime);
     let initial =
-        ResolvedHarness::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([bridge.clone()], [], [], &Authority::default()).unwrap();
     let active_generation = initial.generation().clone();
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let mut reconciler = GraphReconciler::new(initial);
 
     let error = manage(

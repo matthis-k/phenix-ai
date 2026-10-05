@@ -10,28 +10,27 @@ use phenix_adapter_acp::ApplicationAdapter;
 use phenix_application_interface::{
     types::{
         normalize_elicitation_response, ApplicationError, CallableInfo as ApplicationCallableInfo,
+        CallableInvocation as ApplicationCallableInvocation,
+        CallableInvocationResult as ApplicationCallableInvocationResult,
         CallableInvokeInput as ApplicationCallableInvokeInput,
         CallableResult as ApplicationCallableResult, Callables as ApplicationCallables,
-        CapabilityInvokeInput as ApplicationCapabilityInvokeInput,
-        CapabilityInvokeResult as ApplicationCapabilityInvokeResult,
         ClientToolAddInput as ApplicationClientToolAddInput,
         ClientToolAdmission as ApplicationClientToolAdmission,
         ClientToolDefinition as ApplicationClientToolDefinition,
         ClientToolRemoveInput as ApplicationClientToolRemoveInput, ElicitationRequest,
         ElicitationResponse, Empty, SdkValue as ApplicationSdkValue, SessionInput,
     },
-    AddClientTool, ApplicationTransport, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
-    Operation, RemoveClientTool,
+    AddClientTool, ApplicationTransport, GetSdk, InvokeCallable, InvokeCallableReference,
+    ListCallables, Operation, RemoveClientTool,
 };
 use phenix_core::{
-    CallableRef, CapabilityError, CapabilityGenerationId,
-    CapabilityInvokeInput as CoreCapabilityInvokeInput, CapabilityOwnerId, ClientConnectionId,
-    ContractId, GraphGenerationId, ObservableStore, PhenixValue, ResolvedSdkContributions,
-    RootExecutionConstraints, RuntimeId, SharedCapabilityRegistry, Type, ValueAddress, ValueCodec,
-    ValueId, ValuePath,
+    CallableError, CallableInvocation as CoreCallableInvocation, CallableRef, ClientConnectionId,
+    ContractId, GenerationId, ObservableStore, PhenixValue, PluginRuntimeId, ReferenceGenerationId,
+    ReferenceOwnerId, ResolvedSdkContributions, RootExecutionConstraints, SharedCallableRegistry,
+    Type, ValueAddress, ValueCodec, ValueId, ValuePath,
 };
 use phenix_domain::{
-    CallableDescriptor, CallableKind, CallablePolicy, CapabilitySet, ClientToolAdmissionId,
+    CallableDescriptor, CallableFeatureSet, CallableKind, CallablePolicy, ClientToolAdmissionId,
     ClientToolAdmissions, ClientToolDefinition, SessionId,
 };
 use serde_json::json;
@@ -43,7 +42,7 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApplicationRootSelection {
-    pub generation: GraphGenerationId,
+    pub generation: GenerationId,
     pub constraints: RootExecutionConstraints,
 }
 
@@ -60,45 +59,45 @@ pub struct ApplicationEvent {
 }
 
 /// One generic runtime-to-client capability invocation waiting for its ACP response.
-pub struct ClientCapabilityInvocation {
-    request: ApplicationCapabilityInvokeInput,
-    response: oneshot::Sender<Result<ApplicationCapabilityInvokeResult, CapabilityError>>,
+pub struct ClientCallableInvocation {
+    request: ApplicationCallableInvocation,
+    response: oneshot::Sender<Result<ApplicationCallableInvocationResult, CallableError>>,
 }
 
-impl ClientCapabilityInvocation {
+impl ClientCallableInvocation {
     #[must_use]
-    pub fn request(&self) -> &ApplicationCapabilityInvokeInput {
+    pub fn request(&self) -> &ApplicationCallableInvocation {
         &self.request
     }
 
-    pub fn respond(self, response: Result<ApplicationCapabilityInvokeResult, CapabilityError>) {
+    pub fn respond(self, response: Result<ApplicationCallableInvocationResult, CallableError>) {
         let _ = self.response.send(response);
     }
 }
 
 /// Bounded bridge from synchronous runtime capability handlers to one ACP client.
 #[derive(Clone)]
-pub struct ClientCapabilityCallbacks {
-    sender: mpsc::Sender<ClientCapabilityInvocation>,
+pub struct ClientCallableCallbacks {
+    sender: mpsc::Sender<ClientCallableInvocation>,
 }
 
 /// The authenticated identity represented by one ACP callback queue.
 #[derive(Clone)]
-pub struct ClientCapabilityIdentity {
+pub struct ClientReferenceIdentity {
     owner: ClientConnectionId,
-    generation: CapabilityGenerationId,
+    generation: ReferenceGenerationId,
 }
 
-impl ClientCapabilityIdentity {
+impl ClientReferenceIdentity {
     #[must_use]
-    pub fn new(owner: ClientConnectionId, generation: CapabilityGenerationId) -> Self {
+    pub fn new(owner: ClientConnectionId, generation: ReferenceGenerationId) -> Self {
         Self { owner, generation }
     }
 }
 
-impl ClientCapabilityCallbacks {
+impl ClientCallableCallbacks {
     #[must_use]
-    pub fn bounded(capacity: usize) -> (Self, mpsc::Receiver<ClientCapabilityInvocation>) {
+    pub fn bounded(capacity: usize) -> (Self, mpsc::Receiver<ClientCallableInvocation>) {
         let (sender, receiver) = mpsc::channel(capacity);
         (Self { sender }, receiver)
     }
@@ -107,23 +106,23 @@ impl ClientCapabilityCallbacks {
         &self,
         callable: CallableRef,
         input: PhenixValue,
-    ) -> Result<PhenixValue, CapabilityError> {
+    ) -> Result<PhenixValue, CallableError> {
         let (response, receiver) = oneshot::channel();
         self.sender
-            .try_send(ClientCapabilityInvocation {
-                request: ApplicationCapabilityInvokeInput {
+            .try_send(ClientCallableInvocation {
+                request: ApplicationCallableInvocation {
                     callable: PhenixValue::Callable(callable),
                     input,
                 },
                 response,
             })
             .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => CapabilityError::QueueFull,
-                mpsc::error::TrySendError::Closed(_) => CapabilityError::Disconnected,
+                mpsc::error::TrySendError::Full(_) => CallableError::QueueFull,
+                mpsc::error::TrySendError::Closed(_) => CallableError::Disconnected,
             })?;
         receiver
             .blocking_recv()
-            .map_err(|_| CapabilityError::Disconnected)?
+            .map_err(|_| CallableError::Disconnected)?
             .map(|response| response.output)
     }
 }
@@ -186,7 +185,7 @@ impl WeakChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PendingApplicationInvocation, ApplicationError> {
         self.upgrade()
@@ -206,7 +205,7 @@ impl WeakChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PhenixValue, ApplicationError> {
         self.begin_blocking_in_generation(operation, input, generation, constraints)?
@@ -249,7 +248,7 @@ impl ChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PendingApplicationInvocation, ApplicationError> {
         let (response, receive) = oneshot::channel();
@@ -279,7 +278,7 @@ impl ChannelTransport {
         &self,
         operation: &ContractId,
         input: PhenixValue,
-        generation: GraphGenerationId,
+        generation: GenerationId,
         constraints: RootExecutionConstraints,
     ) -> Result<PhenixValue, ApplicationError> {
         self.begin_blocking_in_generation(operation, input, generation, constraints)?
@@ -320,10 +319,10 @@ impl ApplicationTransport for ChannelTransport {
 pub struct SdkApplicationService {
     sdk: ApplicationSdkValue,
     store: ObservableStore,
-    capabilities: SharedCapabilityRegistry,
-    client_callbacks: ClientCapabilityCallbacks,
+    capabilities: SharedCallableRegistry,
+    client_callbacks: ClientCallableCallbacks,
     client_owner: ClientConnectionId,
-    client_generation: CapabilityGenerationId,
+    client_generation: ReferenceGenerationId,
     admissions: Arc<Mutex<ClientToolAdmissions>>,
 }
 
@@ -331,11 +330,11 @@ impl SdkApplicationService {
     pub fn new(
         sdk: &ResolvedSdkContributions,
         store: &ObservableStore,
-        capabilities: SharedCapabilityRegistry,
-        runtime: RuntimeId,
-        generation: CapabilityGenerationId,
-        client_callbacks: ClientCapabilityCallbacks,
-        client: ClientCapabilityIdentity,
+        capabilities: SharedCallableRegistry,
+        runtime: PluginRuntimeId,
+        generation: ReferenceGenerationId,
+        client_callbacks: ClientCallableCallbacks,
+        client: ClientReferenceIdentity,
     ) -> Result<Self, phenix_core::SdkResolutionError> {
         let sdk = sdk.value_with_observables(store, &capabilities, &runtime, generation)?;
         Ok(Self {
@@ -353,7 +352,7 @@ impl SdkApplicationService {
     }
 
     #[must_use]
-    pub fn capabilities(&self) -> &SharedCapabilityRegistry {
+    pub fn capabilities(&self) -> &SharedCallableRegistry {
         &self.capabilities
     }
 
@@ -454,7 +453,7 @@ impl SdkApplicationService {
 
     /// Retire this ACP connection's ephemeral callables and session tool admissions.
     pub fn retire_client(&self) {
-        let owner = CapabilityOwnerId::Client(self.client_owner.clone());
+        let owner = ReferenceOwnerId::Client(self.client_owner.clone());
         self.capabilities
             .retire(owner.clone(), self.client_generation.clone());
         if let Ok(mut admissions) = self.admissions.lock() {
@@ -511,20 +510,19 @@ impl SdkApplicationService {
                 .invoke_client_tool(request)
                 .map(|result| result.to_value());
         }
-        if operation.as_str() == InvokeCapability::ID {
-            let request =
-                ApplicationCapabilityInvokeInput::from_value(&input).map_err(|error| {
-                    ApplicationError::InvalidInput {
-                        message: error.to_string(),
-                    }
-                })?;
+        if operation.as_str() == InvokeCallableReference::ID {
+            let request = ApplicationCallableInvocation::from_value(&input).map_err(|error| {
+                ApplicationError::InvalidInput {
+                    message: error.to_string(),
+                }
+            })?;
             let PhenixValue::Callable(callable) = request.callable else {
                 return Err(ApplicationError::InvalidInput {
                     message: "capability invocation requires a callable reference".to_owned(),
                 });
             };
             let schema = self.capabilities.schema(&callable)?;
-            CoreCapabilityInvokeInput {
+            CoreCallableInvocation {
                 callable: callable.clone(),
                 input: request.input.clone(),
             }
@@ -545,11 +543,11 @@ impl SdkApplicationService {
                 });
             };
             self.admit_client_callables(input_schema, &request.input)?;
-            let result = self.capabilities.invoke(CoreCapabilityInvokeInput {
+            let result = self.capabilities.invoke(CoreCallableInvocation {
                 callable,
                 input: request.input,
             })?;
-            return Ok(ApplicationCapabilityInvokeResult {
+            return Ok(ApplicationCallableInvocationResult {
                 output: result.output,
             }
             .to_value());
@@ -611,7 +609,7 @@ impl SdkApplicationService {
                 description,
                 input_schema: input,
                 output_schema: output,
-                capabilities: CapabilitySet(capabilities.into_iter().collect()),
+                features: CallableFeatureSet(capabilities.into_iter().collect()),
                 policy: CallablePolicy {
                     requires_permission,
                 },
@@ -724,7 +722,7 @@ impl SdkApplicationService {
             input: Box::new(admission.tool.descriptor.input_schema),
             output: Box::new(admission.tool.descriptor.output_schema),
         };
-        let invocation = CoreCapabilityInvokeInput {
+        let invocation = CoreCallableInvocation {
             callable: admission.tool.invoke,
             input: request.input,
         };
@@ -744,7 +742,7 @@ impl SdkApplicationService {
     ) -> Result<(), ApplicationError> {
         match (schema, value) {
             (Type::Callable { .. }, PhenixValue::Callable(callable)) => {
-                if matches!(callable.owner(), CapabilityOwnerId::Client(_)) {
+                if matches!(callable.owner(), ReferenceOwnerId::Client(_)) {
                     self.admit_current_client_callable(callable, schema.clone())?;
                 }
             }
@@ -812,7 +810,7 @@ impl SdkApplicationService {
                 let elicitation =
                     if reference.contract().as_str() == "phenix.application.elicitation@1" {
                         Some(ElicitationRequest::from_value(&input).map_err(|error| {
-                            CapabilityError::SchemaMismatch {
+                            CallableError::SchemaMismatch {
                                 message: error.to_string(),
                             }
                         })?)
@@ -824,19 +822,19 @@ impl SdkApplicationService {
                     (Some(request), Ok(output)) => {
                         let response =
                             ElicitationResponse::from_value(&output).map_err(|error| {
-                                CapabilityError::SchemaMismatch {
+                                CallableError::SchemaMismatch {
                                     message: error.to_string(),
                                 }
                             })?;
                         normalize_elicitation_response(&request, response)
                             .map(|response| response.to_value())
-                            .map_err(|error| CapabilityError::SchemaMismatch {
+                            .map_err(|error| CallableError::SchemaMismatch {
                                 message: error.to_string(),
                             })
                     }
                     (_, result) => result,
                 };
-                if matches!(result, Err(CapabilityError::Disconnected)) {
+                if matches!(result, Err(CallableError::Disconnected)) {
                     registry.retire(owner.clone(), generation.clone());
                     if let Ok(mut admissions) = admissions.lock() {
                         admissions.retire(&owner, &generation);
@@ -845,7 +843,7 @@ impl SdkApplicationService {
                 result
             }) {
             Ok(()) => Ok(()),
-            Err(CapabilityError::DuplicateReference(_)) => {
+            Err(CallableError::DuplicateReference(_)) => {
                 let registered = self.capabilities.schema(callable)?;
                 if registered == schema {
                     Ok(())
@@ -863,7 +861,7 @@ impl SdkApplicationService {
     }
 
     fn is_current_client_callable(&self, callable: &CallableRef) -> bool {
-        callable.owner() == &CapabilityOwnerId::Client(self.client_owner.clone())
+        callable.owner() == &ReferenceOwnerId::Client(self.client_owner.clone())
             && callable.generation() == &self.client_generation
     }
 }
@@ -894,7 +892,7 @@ pub async fn serve_stdio_with_events(
     advertised: impl IntoIterator<Item = ContractId>,
     events: mpsc::Receiver<ApplicationEvent>,
 ) -> Result<(), Error> {
-    let (keep_callbacks_open, callbacks) = ClientCapabilityCallbacks::bounded(1);
+    let (keep_callbacks_open, callbacks) = ClientCallableCallbacks::bounded(1);
     let result =
         serve_stdio_with_events_and_callbacks(transport, advertised, events, callbacks).await;
     drop(keep_callbacks_open);
@@ -905,7 +903,7 @@ pub async fn serve_stdio_with_events_and_callbacks(
     transport: ChannelTransport,
     advertised: impl IntoIterator<Item = ContractId>,
     mut events: mpsc::Receiver<ApplicationEvent>,
-    mut callbacks: mpsc::Receiver<ClientCapabilityInvocation>,
+    mut callbacks: mpsc::Receiver<ClientCallableInvocation>,
 ) -> Result<(), Error> {
     let adapter =
         Arc::new(ApplicationAdapter::new(transport, advertised).map_err(application_error_to_acp)?);
@@ -1054,7 +1052,7 @@ pub async fn serve_stdio_with_events_and_callbacks(
                             let callable = match &callback.request().callable {
                                 PhenixValue::Callable(callable) => callable.clone(),
                                 _ => {
-                                    callback.respond(Err(CapabilityError::SchemaMismatch {
+                                    callback.respond(Err(CallableError::SchemaMismatch {
                                         message: "client capability callback requires a callable reference".to_owned(),
                                     }));
                                     continue;
@@ -1083,7 +1081,7 @@ pub async fn serve_stdio_with_events_and_callbacks(
                             let response = match serde_json::from_value(response) {
                                 Ok(response) => response,
                                 Err(error) => {
-                                    callback.respond(Err(CapabilityError::SchemaMismatch {
+                                    callback.respond(Err(CallableError::SchemaMismatch {
                                         message: format!(
                                             "cannot decode ACP extension callback response: {error}"
                                         ),
@@ -1168,43 +1166,43 @@ fn application_error_details(error: &ApplicationError) -> serde_json::Value {
 fn application_error_to_capability(
     error: ApplicationError,
     callable: CallableRef,
-) -> CapabilityError {
+) -> CallableError {
     match error {
-        ApplicationError::Cancelled => CapabilityError::Cancelled,
-        ApplicationError::Disconnected => CapabilityError::Disconnected,
-        ApplicationError::StaleReference { .. } => CapabilityError::StaleReference(callable),
-        ApplicationError::NotFound { .. } => CapabilityError::UnknownReference(callable),
+        ApplicationError::Cancelled => CallableError::Cancelled,
+        ApplicationError::Disconnected => CallableError::Disconnected,
+        ApplicationError::StaleReference { .. } => CallableError::StaleReference(callable),
+        ApplicationError::NotFound { .. } => CallableError::UnknownReference(callable),
         ApplicationError::SchemaMismatch { message }
         | ApplicationError::InvalidInput { message }
         | ApplicationError::InvalidResponse { message } => {
-            CapabilityError::SchemaMismatch { message }
+            CallableError::SchemaMismatch { message }
         }
-        other => CapabilityError::ProviderFailed {
+        other => CallableError::HandlerFailed {
             message: other.to_string(),
         },
     }
 }
 
-fn acp_error_to_capability(error: Error, callable: CallableRef) -> CapabilityError {
+fn acp_error_to_capability(error: Error, callable: CallableRef) -> CallableError {
     let class = error
         .data
         .as_ref()
         .and_then(|data| data.get("phenix.class"))
         .and_then(serde_json::Value::as_str);
     if error.code == ErrorCode::RequestCancelled || class == Some("cancelled") {
-        return CapabilityError::Cancelled;
+        return CallableError::Cancelled;
     }
     match class {
-        Some("disconnected") => CapabilityError::Disconnected,
-        Some("queue_full") => CapabilityError::QueueFull,
-        Some("stale_reference") => CapabilityError::StaleReference(callable),
-        Some("not_found") => CapabilityError::UnknownReference(callable),
+        Some("disconnected") => CallableError::Disconnected,
+        Some("queue_full") => CallableError::QueueFull,
+        Some("stale_reference") => CallableError::StaleReference(callable),
+        Some("not_found") => CallableError::UnknownReference(callable),
         Some("schema_mismatch") | Some("invalid_input") | Some("invalid_response") => {
-            CapabilityError::SchemaMismatch {
+            CallableError::SchemaMismatch {
                 message: error.to_string(),
             }
         }
-        _ => CapabilityError::ProviderFailed {
+        _ => CallableError::HandlerFailed {
             message: error.to_string(),
         },
     }
@@ -1215,16 +1213,16 @@ mod tests {
     use super::*;
     use phenix_application_interface::types::ElicitationHandlerRef;
     use phenix_core::{
-        Authority, CapabilityOwnerId, ClientConnectionId, Key, ObservableRegistration, PhenixValue,
-        PluginExecution, PluginId, PluginManifest, ReferenceId, SdkContribution, SdkNamespace,
+        Authority, ClientConnectionId, Key, ObservableRegistration, PhenixValue, PluginExecution,
+        PluginId, PluginManifest, ReferenceId, ReferenceOwnerId, SdkContribution, SdkNamespace,
         SdkObservableResource, SdkResourceId, SnapshotPolicy, Type, ValueId, ValuePath,
     };
 
     fn client_callable() -> CallableRef {
         CallableRef::new(
             ContractId::parse("fixture.client-callback@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
-            CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
+            ReferenceGenerationId::parse("fixture-generation").unwrap(),
             ReferenceId::parse("callback").unwrap(),
         )
     }
@@ -1232,8 +1230,8 @@ mod tests {
     fn elicitation_callable() -> CallableRef {
         CallableRef::new(
             ContractId::parse("phenix.application.elicitation@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
-            CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
+            ReferenceGenerationId::parse("fixture-generation").unwrap(),
             ReferenceId::parse("elicitation-callback").unwrap(),
         )
     }
@@ -1324,7 +1322,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_capability_bridge_forwards_the_canonical_invocation() {
-        let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, mut receiver) = ClientCallableCallbacks::bounded(1);
         let callable = client_callable();
         let expected = callable.clone();
         let worker =
@@ -1336,7 +1334,7 @@ mod tests {
             PhenixValue::Callable(expected)
         );
         assert_eq!(invocation.request().input, PhenixValue::U64(7));
-        invocation.respond(Ok(ApplicationCapabilityInvokeResult {
+        invocation.respond(Ok(ApplicationCallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         }));
         assert_eq!(
@@ -1348,12 +1346,12 @@ mod tests {
     #[tokio::test]
     async fn client_capability_bridge_preserves_structural_failures() {
         let cases = [
-            CapabilityError::Cancelled,
-            CapabilityError::Disconnected,
-            CapabilityError::QueueFull,
+            CallableError::Cancelled,
+            CallableError::Disconnected,
+            CallableError::QueueFull,
         ];
         for expected in cases {
-            let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
+            let (callbacks, mut receiver) = ClientCallableCallbacks::bounded(1);
             let callable = client_callable();
             let worker = tokio::task::spawn_blocking(move || {
                 callbacks.invoke(callable, PhenixValue::U64(7))
@@ -1369,8 +1367,8 @@ mod tests {
 
     #[tokio::test]
     async fn elicitation_callback_is_normalized_against_its_request_schema() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(2);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, mut receiver) = ClientCallableCallbacks::bounded(2);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1380,7 +1378,7 @@ mod tests {
             capabilities: capabilities.clone(),
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let callable = elicitation_callable();
@@ -1397,7 +1395,7 @@ mod tests {
         let callable_for_call = callable.clone();
         let request_for_call = request.clone();
         let worker = tokio::task::spawn_blocking(move || {
-            invoke.invoke(CoreCapabilityInvokeInput {
+            invoke.invoke(CoreCallableInvocation {
                 callable: callable_for_call,
                 input: request_for_call.to_value(),
             })
@@ -1406,7 +1404,7 @@ mod tests {
             .recv()
             .await
             .unwrap()
-            .respond(Ok(ApplicationCapabilityInvokeResult {
+            .respond(Ok(ApplicationCallableInvocationResult {
                 output: ElicitationResponse::Accepted {
                     value: PhenixValue::I64(7),
                 }
@@ -1421,7 +1419,7 @@ mod tests {
         );
 
         let worker = tokio::task::spawn_blocking(move || {
-            capabilities.invoke(CoreCapabilityInvokeInput {
+            capabilities.invoke(CoreCallableInvocation {
                 callable,
                 input: request.to_value(),
             })
@@ -1430,7 +1428,7 @@ mod tests {
             .recv()
             .await
             .unwrap()
-            .respond(Ok(ApplicationCapabilityInvokeResult {
+            .respond(Ok(ApplicationCallableInvocationResult {
                 output: ElicitationResponse::Accepted {
                     value: PhenixValue::String("wrong".into()),
                 }
@@ -1438,14 +1436,14 @@ mod tests {
             }));
         assert!(matches!(
             worker.await.unwrap(),
-            Err(CapabilityError::SchemaMismatch { .. })
+            Err(CallableError::SchemaMismatch { .. })
         ));
     }
 
     #[tokio::test]
     async fn generic_callable_input_admits_a_client_owned_reference() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, mut receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1455,7 +1453,7 @@ mod tests {
             capabilities: capabilities.clone(),
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let callable = client_callable();
@@ -1469,13 +1467,13 @@ mod tests {
             .unwrap();
 
         let worker = tokio::task::spawn_blocking(move || {
-            capabilities.invoke(CoreCapabilityInvokeInput {
+            capabilities.invoke(CoreCallableInvocation {
                 callable,
                 input: PhenixValue::U64(7),
             })
         });
         let invocation = receiver.recv().await.unwrap();
-        invocation.respond(Ok(ApplicationCapabilityInvokeResult {
+        invocation.respond(Ok(ApplicationCallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         }));
         assert_eq!(
@@ -1486,8 +1484,8 @@ mod tests {
 
     #[tokio::test]
     async fn client_tool_operations_admit_and_remove_a_client_callable() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1497,7 +1495,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let session = phenix_core::SessionId::parse("session-a").unwrap();
@@ -1537,7 +1535,7 @@ mod tests {
         ));
         assert!(matches!(
             service.capabilities.schema(&rejected),
-            Err(CapabilityError::UnknownReference(_))
+            Err(CallableError::UnknownReference(_))
         ));
         duplicate.tool.description.clear();
         assert!(matches!(
@@ -1546,7 +1544,7 @@ mod tests {
         ));
         assert!(matches!(
             service.capabilities.schema(&rejected),
-            Err(CapabilityError::UnknownReference(_))
+            Err(CallableError::UnknownReference(_))
         ));
         let listed = service
             .invoke(
@@ -1577,18 +1575,18 @@ mod tests {
             .unwrap();
         assert!(service.client_tool_descriptors(&session).is_empty());
         assert!(matches!(
-            service.capabilities.invoke(CoreCapabilityInvokeInput {
+            service.capabilities.invoke(CoreCallableInvocation {
                 callable: callable.clone(),
                 input: PhenixValue::U64(7),
             }),
-            Err(CapabilityError::UnknownReference(reference)) if reference == callable
+            Err(CallableError::UnknownReference(reference)) if reference == callable
         ));
     }
 
     #[tokio::test]
     async fn client_tool_invocation_uses_the_generic_capability_dispatcher() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, mut receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, mut receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1598,7 +1596,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let session = phenix_core::SessionId::parse("session-a").unwrap();
@@ -1639,7 +1637,7 @@ mod tests {
         });
         let callback = receiver.recv().await.unwrap();
         assert_eq!(callback.request().input, PhenixValue::U64(7));
-        callback.respond(Ok(ApplicationCapabilityInvokeResult {
+        callback.respond(Ok(ApplicationCallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         }));
         let output = worker.await.unwrap().unwrap();
@@ -1676,8 +1674,8 @@ mod tests {
 
     #[tokio::test]
     async fn closing_the_application_transport_retires_client_tool_admissions() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1687,7 +1685,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let session = phenix_core::SessionId::parse("session-a").unwrap();
@@ -1719,14 +1717,14 @@ mod tests {
         assert!(observer.client_tool_descriptors(&session).is_empty());
         assert_eq!(
             observer.capabilities().schema(&client_callable()),
-            Err(CapabilityError::StaleReference(client_callable()))
+            Err(CallableError::StaleReference(client_callable()))
         );
     }
 
     #[test]
     fn retired_client_references_are_rejected_during_admission() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1736,7 +1734,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         service.retire_client();
@@ -1764,8 +1762,8 @@ mod tests {
 
     #[test]
     fn client_tool_admission_rejects_malformed_and_foreign_references() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1775,7 +1773,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let definition = |invoke| ApplicationClientToolAddInput {
@@ -1800,8 +1798,8 @@ mod tests {
         ));
         let foreign = CallableRef::new(
             ContractId::parse("fixture.client-callback@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("other-client").unwrap()),
-            CapabilityGenerationId::parse("other-generation").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("other-client").unwrap()),
+            ReferenceGenerationId::parse("other-generation").unwrap(),
             ReferenceId::parse("callback").unwrap(),
         );
         assert!(matches!(
@@ -1815,8 +1813,8 @@ mod tests {
 
     #[test]
     fn reconnect_starts_without_the_previous_generation_admissions() {
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let first = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1826,7 +1824,7 @@ mod tests {
             capabilities: capabilities.clone(),
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
         let session = phenix_core::SessionId::parse("session-a").unwrap();
@@ -1850,7 +1848,7 @@ mod tests {
             .unwrap();
         first.retire_client();
 
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let reconnected = SdkApplicationService {
             store: ObservableStore::default(),
             sdk: ApplicationSdkValue {
@@ -1860,7 +1858,7 @@ mod tests {
             capabilities,
             client_callbacks: callbacks,
             client_owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            client_generation: CapabilityGenerationId::parse("fixture-generation-2").unwrap(),
+            client_generation: ReferenceGenerationId::parse("fixture-generation-2").unwrap(),
             admissions: Arc::new(Mutex::new(ClientToolAdmissions::default())),
         };
 
@@ -1911,10 +1909,10 @@ mod tests {
                 initial: PhenixValue::U64(7),
             })
             .unwrap();
-        let capabilities = SharedCapabilityRegistry::default();
-        let (client_callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
-        let runtime = RuntimeId::parse("phenix.application-runtime").unwrap();
-        let generation = CapabilityGenerationId::parse("application-generation-1").unwrap();
+        let capabilities = SharedCallableRegistry::default();
+        let (client_callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let runtime = PluginRuntimeId::parse("phenix.application-runtime").unwrap();
+        let generation = ReferenceGenerationId::parse("application-generation-1").unwrap();
         let service = SdkApplicationService::new(
             &resolved,
             &store,
@@ -1922,9 +1920,9 @@ mod tests {
             runtime.clone(),
             generation.clone(),
             client_callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -1948,13 +1946,13 @@ mod tests {
         let PhenixValue::Callable(get) = state.get("get").unwrap() else {
             panic!("get is callable");
         };
-        assert_eq!(get.owner(), &CapabilityOwnerId::Runtime(runtime));
+        assert_eq!(get.owner(), &ReferenceOwnerId::Runtime(runtime));
         assert_eq!(get.generation(), &generation);
 
         let result = transport
             .invoke(
-                &ContractId::parse(InvokeCapability::ID).unwrap(),
-                ApplicationCapabilityInvokeInput {
+                &ContractId::parse(InvokeCallableReference::ID).unwrap(),
+                ApplicationCallableInvocation {
                     callable: PhenixValue::Callable(get.clone()),
                     input: PhenixValue::Unit,
                 }
@@ -1962,7 +1960,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let result = ApplicationCapabilityInvokeResult::from_value(&result).unwrap();
+        let result = ApplicationCallableInvocationResult::from_value(&result).unwrap();
         assert_eq!(
             result.output,
             PhenixValue::Table(std::collections::BTreeMap::from([
@@ -2002,7 +2000,7 @@ mod tests {
         }));
         assert_eq!(
             acp_error_to_capability(cancelled, callable.clone()),
-            CapabilityError::Cancelled
+            CallableError::Cancelled
         );
 
         let full = Error::internal_error().data(json!({
@@ -2011,7 +2009,7 @@ mod tests {
         }));
         assert_eq!(
             acp_error_to_capability(full, callable.clone()),
-            CapabilityError::QueueFull
+            CallableError::QueueFull
         );
 
         let disconnected = Error::internal_error().data(json!({
@@ -2020,7 +2018,7 @@ mod tests {
         }));
         assert_eq!(
             acp_error_to_capability(disconnected, callable),
-            CapabilityError::Disconnected
+            CallableError::Disconnected
         );
     }
 }

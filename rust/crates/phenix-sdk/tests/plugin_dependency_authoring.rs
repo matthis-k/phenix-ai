@@ -46,7 +46,7 @@ struct ResourceOnly;
 
 fn external_execution() -> phenix_sdk::PluginExecution {
     phenix_sdk::PluginExecution::Runtime {
-        runtime: phenix_sdk::RuntimeId::parse("fixture.runtime-provider").unwrap(),
+        runtime: phenix_sdk::PluginRuntimeId::parse("fixture.runtime-provider").unwrap(),
         artifact: phenix_sdk::PluginArtifact {
             locator: "fixture.wasm".into(),
             revision: phenix_sdk::ArtifactRevision::from_content(b"fixture"),

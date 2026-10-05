@@ -1,5 +1,5 @@
 use crate::{
-    Authority, CapabilityId, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult,
+    Authority, Kernel, KernelConfig, KernelError, LayerPolicy, LayerResult, PermissionId,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, RuntimeTraceBuffer,
     RuntimeTraceEvent, ServiceContribution, ServiceId, ServiceRole,
 };
@@ -16,8 +16,8 @@ fn service() -> ServiceId {
     ServiceId::parse("demo.layered@1").unwrap()
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn manifest(id: &str, role: ServiceRole, priority: i32, maximum: Authority) -> PluginManifest {

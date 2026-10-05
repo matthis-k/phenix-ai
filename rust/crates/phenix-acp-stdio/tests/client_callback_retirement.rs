@@ -1,16 +1,14 @@
-use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
-};
+use phenix_acp_stdio::{ClientCallableCallbacks, ClientReferenceIdentity, SdkApplicationService};
 use phenix_application_interface::{
-    types::{CapabilityInvokeInput, Empty, SdkValue},
-    GetSdk, InvokeCapability, Operation,
+    types::{CallableInvocation, Empty, SdkValue},
+    GetSdk, InvokeCallableReference, Operation,
 };
 use phenix_core::{
-    CallableRef, CapabilityError, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-    ContractId, Key, ObservableRegistration, ObservableStore, PhenixValue, PluginId,
-    PluginManifest, ReferenceId, ResolvedSdkContributions, RuntimeId, SdkContribution,
-    SdkNamespace, SdkObservableResource, SdkResourceId, SharedCapabilityRegistry, SnapshotPolicy,
-    Type, ValueCodec, ValueId, ValuePath,
+    CallableError, CallableRef, ClientConnectionId, ContractId, Key, ObservableRegistration,
+    ObservableStore, PhenixValue, PluginId, PluginManifest, PluginRuntimeId, ReferenceGenerationId,
+    ReferenceId, ReferenceOwnerId, ResolvedSdkContributions, SdkContribution, SdkNamespace,
+    SdkObservableResource, SdkResourceId, SharedCallableRegistry, SnapshotPolicy, Type, ValueCodec,
+    ValueId, ValuePath,
 };
 use std::collections::BTreeMap;
 
@@ -58,21 +56,21 @@ fn disconnected_client_listener_retires_its_owner_generation() {
     )
     .expect("fixture SDK resolves");
 
-    let capabilities = SharedCapabilityRegistry::default();
-    let (callbacks, callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+    let capabilities = SharedCallableRegistry::default();
+    let (callbacks, callback_receiver) = ClientCallableCallbacks::bounded(1);
     drop(callback_receiver);
     let client_owner = ClientConnectionId::parse("fixture-client").expect("client owner is valid");
-    let client_generation = CapabilityGenerationId::parse("fixture-client-generation")
+    let client_generation = ReferenceGenerationId::parse("fixture-client-generation")
         .expect("client generation is valid");
     let service = SdkApplicationService::new(
         &sdk,
         &store,
         capabilities,
-        RuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
-        CapabilityGenerationId::parse("fixture-runtime-generation")
+        PluginRuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
+        ReferenceGenerationId::parse("fixture-runtime-generation")
             .expect("fixture runtime generation is valid"),
         callbacks,
-        ClientCapabilityIdentity::new(client_owner.clone(), client_generation.clone()),
+        ClientReferenceIdentity::new(client_owner.clone(), client_generation.clone()),
     )
     .expect("fixture SDK service builds");
 
@@ -100,7 +98,7 @@ fn disconnected_client_listener_retires_its_owner_generation() {
 
     let listener = CallableRef::new(
         ContractId::parse("phenix.observable-delivery@1").expect("listener contract is valid"),
-        CapabilityOwnerId::Client(client_owner),
+        ReferenceOwnerId::Client(client_owner),
         client_generation,
         ReferenceId::parse("listener").expect("listener reference is valid"),
     );
@@ -121,9 +119,9 @@ fn disconnected_client_listener_retires_its_owner_generation() {
 
     service
         .invoke(
-            &ContractId::parse(InvokeCapability::ID)
+            &ContractId::parse(InvokeCallableReference::ID)
                 .expect("capability invoke operation id is valid"),
-            CapabilityInvokeInput {
+            CallableInvocation {
                 callable: PhenixValue::Callable(listen.clone()),
                 input: listen_input,
             }
@@ -133,6 +131,6 @@ fn disconnected_client_listener_retires_its_owner_generation() {
 
     assert_eq!(
         service.capabilities().schema(&listener),
-        Err(CapabilityError::StaleReference(listener))
+        Err(CallableError::StaleReference(listener))
     );
 }

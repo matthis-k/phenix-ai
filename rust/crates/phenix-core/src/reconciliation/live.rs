@@ -1,7 +1,7 @@
 use crate::{
-    GraphGenerationId, GraphReconciler, Kernel, LayerPolicy, MetadataReconciliationError, PluginId,
-    PluginManifest, ReconciliationResult, ResolvedCompositionMetadata, ResolvedHarness,
-    ResolvedHarnessActivationError, RootExecutionConstraints, ServiceId,
+    GenerationId, GraphReconciler, Kernel, LayerPolicy, MetadataReconciliationError, PluginId,
+    PluginManifest, ReconciliationResult, ResolvedCompositionMetadata, ResolvedGeneration,
+    ResolvedGenerationActivationError, RootExecutionConstraints, ServiceId,
 };
 use std::{
     error::Error,
@@ -12,8 +12,8 @@ use std::{
 pub enum LiveReconciliationError {
     NoActiveGeneration,
     ActiveGenerationMismatch {
-        kernel: GraphGenerationId,
-        reconciler: GraphGenerationId,
+        kernel: GenerationId,
+        reconciler: GenerationId,
     },
     KernelConfigurationMismatch {
         kernel_plugins: Vec<PluginId>,
@@ -29,7 +29,7 @@ pub enum LiveReconciliationError {
         kernel_layers: Vec<LayerPolicy>,
         resolved_layers: Vec<LayerPolicy>,
     },
-    ResidentGenerationsPresent(Vec<GraphGenerationId>),
+    ResidentGenerationsPresent(Vec<GenerationId>),
     MetadataPolicy(MetadataReconciliationError),
     Runtime(crate::KernelError),
 }
@@ -49,20 +49,20 @@ impl Display for LiveReconciliationError {
                 resolved_plugins,
             } => write!(
                 f,
-                "kernel plugin set differs from resolved Harness: kernel={kernel_plugins:?}, resolved={resolved_plugins:?}"
+                "kernel plugin set differs from resolved generation: kernel={kernel_plugins:?}, resolved={resolved_plugins:?}"
             ),
             Self::KernelPluginManifestMismatch { plugin, .. } => {
-                write!(f, "kernel Plugin manifest differs from resolved Harness for {plugin}")
+                write!(f, "kernel Plugin manifest differs from resolved generation for {plugin}")
             }
             Self::KernelLayerPolicyMismatch { service, .. } => {
-                write!(f, "kernel layer policy differs from resolved Harness for {service}")
+                write!(f, "kernel layer policy differs from resolved generation for {service}")
             }
             Self::ResidentGenerationsPresent(generations) => write!(
                 f,
                 "stable replacement requires no resident generations; found {:?}",
                 generations
                     .iter()
-                    .map(GraphGenerationId::as_str)
+                    .map(GenerationId::as_str)
                     .collect::<Vec<_>>()
             ),
             Self::MetadataPolicy(error) => write!(f, "{error}"),
@@ -86,9 +86,9 @@ impl GraphReconciler {
     pub fn make_candidate_resident_on_kernel(
         &mut self,
         kernel: &mut Kernel,
-        candidate: ResolvedHarness,
+        candidate: ResolvedGeneration,
         constraints: &RootExecutionConstraints,
-    ) -> Result<GraphGenerationId, LiveReconciliationError> {
+    ) -> Result<GenerationId, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
         let generation = kernel
             .make_generation_resident_under_constraints(&candidate, constraints)
@@ -104,7 +104,7 @@ impl GraphReconciler {
     pub fn promote_resident_on_kernel(
         &mut self,
         kernel: &mut Kernel,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
@@ -144,7 +144,7 @@ impl GraphReconciler {
     pub fn retire_resident_on_kernel(
         &mut self,
         kernel: &mut Kernel,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
@@ -169,7 +169,7 @@ impl GraphReconciler {
     pub fn activate_candidate_on_kernel(
         &mut self,
         kernel: &mut Kernel,
-        candidate: ResolvedHarness,
+        candidate: ResolvedGeneration,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
         self.require_stable_replacement_mode()?;
@@ -191,7 +191,7 @@ impl GraphReconciler {
         &mut self,
         kernel: &mut Kernel,
         active_metadata: &ResolvedCompositionMetadata,
-        candidate: ResolvedHarness,
+        candidate: ResolvedGeneration,
         candidate_metadata: &ResolvedCompositionMetadata,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.preflight_live_reconciliation(kernel)?;
@@ -236,7 +236,7 @@ fn validate_live_reconciliation(
         });
     }
 
-    crate::composition::activation::validate_resolved_harness_configuration(
+    crate::composition::activation::validate_resolved_generation_configuration(
         kernel,
         reconciler.active(),
     )
@@ -244,8 +244,8 @@ fn validate_live_reconciliation(
 }
 
 fn restart_plugins_for_plan(
-    active: &ResolvedHarness,
-    candidate: &ResolvedHarness,
+    active: &ResolvedGeneration,
+    candidate: &ResolvedGeneration,
     plan: &[crate::ReconciliationAction],
 ) -> std::collections::BTreeSet<PluginId> {
     plan.iter()
@@ -264,17 +264,17 @@ fn restart_plugins_for_plan(
 }
 
 fn map_activation_validation_error(
-    error: ResolvedHarnessActivationError,
+    error: ResolvedGenerationActivationError,
 ) -> LiveReconciliationError {
     match error {
-        ResolvedHarnessActivationError::KernelConfigurationMismatch {
+        ResolvedGenerationActivationError::KernelConfigurationMismatch {
             kernel_plugins,
             resolved_plugins,
         } => LiveReconciliationError::KernelConfigurationMismatch {
             kernel_plugins,
             resolved_plugins,
         },
-        ResolvedHarnessActivationError::KernelPluginManifestMismatch {
+        ResolvedGenerationActivationError::KernelPluginManifestMismatch {
             plugin,
             kernel_manifest,
             resolved_manifest,
@@ -283,7 +283,7 @@ fn map_activation_validation_error(
             kernel_manifest,
             resolved_manifest,
         },
-        ResolvedHarnessActivationError::KernelLayerPolicyMismatch {
+        ResolvedGenerationActivationError::KernelLayerPolicyMismatch {
             service,
             kernel_layers,
             resolved_layers,
@@ -292,13 +292,13 @@ fn map_activation_validation_error(
             kernel_layers,
             resolved_layers,
         },
-        ResolvedHarnessActivationError::DifferentGenerationAlreadyActive { .. } => {
+        ResolvedGenerationActivationError::DifferentGenerationAlreadyActive { .. } => {
             unreachable!("configuration validation does not inspect active generation")
         }
-        ResolvedHarnessActivationError::DurableSchemaPreparation(_) => {
+        ResolvedGenerationActivationError::DurableSchemaPreparation(_) => {
             unreachable!("configuration validation does not prepare durable schemas")
         }
-        ResolvedHarnessActivationError::AuthorityCeiling(_) => {
+        ResolvedGenerationActivationError::AuthorityCeiling(_) => {
             unreachable!("configuration validation does not enforce activation authority")
         }
     }
@@ -310,7 +310,7 @@ mod tests {
     use crate::{
         Authority, CompatibilityMetadata, ComponentHostKind, ComponentManifest,
         ComponentRuntimeMetadata, ComponentStateClass, CompositionMetadataInput, PluginExecution,
-        PluginPackageMetadata, ReloadPolicy, ResolvedHarnessActivation, SkillResourceMetadata,
+        PluginPackageMetadata, ReloadPolicy, ResolvedGenerationActivation, SkillResourceMetadata,
     };
     use std::collections::BTreeSet;
 
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn one_shot_replacement_is_blocked_while_trial_generations_are_resident() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -397,7 +397,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let trial = ResolvedHarness::resolve_with_resources(
+        let trial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:trial")],
@@ -405,7 +405,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let replacement = ResolvedHarness::resolve_with_resources(
+        let replacement = ResolvedGeneration::resolve_with_resources(
             [plugin],
             [],
             [resource("sha256:replacement")],
@@ -417,7 +417,7 @@ mod tests {
         let trial_generation = trial.generation().clone();
 
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let constraints = kernel
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn resident_lifecycle_keeps_reconciler_and_kernel_in_sync() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -449,7 +449,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let trial = ResolvedHarness::resolve_with_resources(
+        let trial = ResolvedGeneration::resolve_with_resources(
             [plugin],
             [],
             [resource("sha256:trial")],
@@ -461,7 +461,7 @@ mod tests {
         let trial_generation = trial.generation().clone();
 
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
         let constraints = kernel
             .capture_root_execution_constraints(&Authority::default(), [])
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn valid_development_candidate_replaces_the_live_generation_atomically() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -520,7 +520,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let candidate = ResolvedHarness::resolve_with_resources(
+        let candidate = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:two")],
@@ -530,7 +530,7 @@ mod tests {
         .unwrap();
         let expected_generation = candidate.generation().clone();
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let result = reconciler
@@ -557,7 +557,7 @@ mod tests {
         let initial_generation = initial.generation().clone();
         let component = crate::ComponentId::parse("fixture.component").unwrap();
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let error = reconciler
@@ -582,7 +582,7 @@ mod tests {
     #[test]
     fn changed_plugin_manifest_activates_as_a_new_generation() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -592,7 +592,7 @@ mod tests {
         .unwrap();
         let mut changed_plugin = plugin.clone();
         changed_plugin.version += 1;
-        let candidate = ResolvedHarness::resolve_with_resources(
+        let candidate = ResolvedGeneration::resolve_with_resources(
             [changed_plugin.clone()],
             [],
             [resource("sha256:two")],
@@ -602,7 +602,7 @@ mod tests {
         .unwrap();
         let initial_generation = initial.generation().clone();
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let expected_generation = candidate.generation().clone();
@@ -621,11 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn candidate_plugin_set_replaces_the_live_runtime_generation() {
+    fn candidate_plugin_set_replaces_the_live_generation_topology() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
         let replacement =
             PluginManifest::resource_only(PluginId::parse("fixture.replacement").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -633,7 +633,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let candidate = ResolvedHarness::resolve_with_resources(
+        let candidate = ResolvedGeneration::resolve_with_resources(
             [replacement.clone()],
             [],
             [resource("sha256:two")],
@@ -643,7 +643,7 @@ mod tests {
         .unwrap();
         let initial_generation = initial.generation().clone();
         let mut kernel = Kernel::new(initial.kernel_config().clone());
-        kernel.activate_resolved_harness(&initial).unwrap();
+        kernel.activate_resolved_generation(&initial).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let expected_generation = candidate.generation().clone();
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn stale_reconciler_cannot_mutate_a_different_live_generation() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:one")],
@@ -673,7 +673,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let live = ResolvedHarness::resolve_with_resources(
+        let live = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:live")],
@@ -681,7 +681,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let candidate = ResolvedHarness::resolve_with_resources(
+        let candidate = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource("sha256:candidate")],
@@ -692,7 +692,7 @@ mod tests {
         let initial_generation = initial.generation().clone();
         let live_generation = live.generation().clone();
         let mut kernel = Kernel::new(crate::KernelConfig::new([plugin]).unwrap());
-        kernel.activate_resolved_harness(&live).unwrap();
+        kernel.activate_resolved_generation(&live).unwrap();
         let mut reconciler = GraphReconciler::new(initial);
 
         let error = reconciler

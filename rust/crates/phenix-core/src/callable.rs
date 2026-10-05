@@ -1,5 +1,5 @@
 use crate::{
-    CallableRef, CapabilityGenerationId, CapabilityOwnerId, PhenixValue, ReferenceId, Type,
+    CallableRef, PhenixValue, ReferenceGenerationId, ReferenceId, ReferenceOwnerId, Type,
     ValueError,
 };
 use parking_lot::Mutex;
@@ -9,28 +9,28 @@ use std::{
 };
 use thiserror::Error;
 
-/// The transport-neutral input to a capability invocation.
+/// The transport-neutral input to a callable invocation.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CapabilityInvokeInput {
+pub struct CallableInvocation {
     pub callable: CallableRef,
     pub input: PhenixValue,
 }
 
-/// The transport-neutral successful result of a capability invocation.
+/// The transport-neutral successful result of a callable invocation.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CapabilityInvokeResult {
+pub struct CallableInvocationResult {
     pub output: PhenixValue,
 }
 
-impl CapabilityInvokeInput {
-    /// Validates the reference contract and input before provider code may run.
+impl CallableInvocation {
+    /// Validates the reference contract and input before handler code may run.
     pub fn validate(&self, callable_schema: &Type) -> Result<(), ValueError> {
         let Type::Callable {
             contract, input, ..
         } = callable_schema
         else {
             return Err(ValueError::InvalidValue(
-                "capability invocation requires a callable schema".to_owned(),
+                "callable invocation requires a callable schema".to_owned(),
             ));
         };
         if self.callable.contract() != contract {
@@ -43,94 +43,94 @@ impl CapabilityInvokeInput {
     }
 }
 
-impl CapabilityInvokeResult {
-    /// Validates provider output before it crosses the capability boundary.
+impl CallableInvocationResult {
+    /// Validates handler output before it crosses the callable boundary.
     pub fn validate(&self, callable_schema: &Type) -> Result<(), ValueError> {
         let Type::Callable { output, .. } = callable_schema else {
             return Err(ValueError::InvalidValue(
-                "capability invocation requires a callable schema".to_owned(),
+                "callable invocation requires a callable schema".to_owned(),
             ));
         };
         output.parse(&self.output)
     }
 }
 
-/// The owner-side implementation of a callable capability.
+/// The owner-side implementation of a callable.
 ///
 /// The registry validates both sides of every call. Handlers therefore receive
 /// only values that satisfy their declared input schema and cannot publish an
 /// unchecked output.
-pub trait CapabilityHandler: Send + Sync {
-    fn invoke(&self, input: PhenixValue) -> Result<PhenixValue, CapabilityError>;
+pub trait CallableHandler: Send + Sync {
+    fn invoke(&self, input: PhenixValue) -> Result<PhenixValue, CallableError>;
 }
 
-impl<F> CapabilityHandler for F
+impl<F> CallableHandler for F
 where
-    F: Fn(PhenixValue) -> Result<PhenixValue, CapabilityError> + Send + Sync,
+    F: Fn(PhenixValue) -> Result<PhenixValue, CallableError> + Send + Sync,
 {
-    fn invoke(&self, input: PhenixValue) -> Result<PhenixValue, CapabilityError> {
+    fn invoke(&self, input: PhenixValue) -> Result<PhenixValue, CallableError> {
         self(input)
     }
 }
 
 #[derive(Clone)]
-struct RegisteredCapability {
+struct RegisteredCallable {
     schema: Type,
-    handler: Arc<dyn CapabilityHandler>,
+    handler: Arc<dyn CallableHandler>,
 }
 
-type CapabilityKey = (CapabilityOwnerId, CapabilityGenerationId, ReferenceId);
+type CallableKey = (ReferenceOwnerId, ReferenceGenerationId, ReferenceId);
 
-/// Process-local capability dispatch keyed by opaque owner, generation, and
+/// Process-local callable dispatch keyed by opaque owner, generation, and
 /// reference identities. Transport adapters retain ownership of client queues;
 /// they register a handler that forwards the canonical invocation unchanged.
 #[derive(Default)]
-pub struct CapabilityRegistry {
-    entries: BTreeMap<CapabilityKey, RegisteredCapability>,
-    retired: BTreeSet<(CapabilityOwnerId, CapabilityGenerationId)>,
+pub struct CallableRegistry {
+    entries: BTreeMap<CallableKey, RegisteredCallable>,
+    retired: BTreeSet<(ReferenceOwnerId, ReferenceGenerationId)>,
 }
 
-/// A synchronization wrapper for dispatch that permits a capability handler to
-/// invoke another capability. The registry lock is released before provider
+/// A synchronization wrapper for dispatch that permits a callable handler to
+/// invoke another callable. The registry lock is released before provider
 /// code runs, so callbacks can safely re-enter through the same dispatcher.
 #[derive(Clone, Default)]
-pub struct SharedCapabilityRegistry(Arc<Mutex<CapabilityRegistry>>);
+pub struct SharedCallableRegistry(Arc<Mutex<CallableRegistry>>);
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum CapabilityError {
-    #[error("unknown capability reference {}", .0.id())]
+pub enum CallableError {
+    #[error("unknown callable reference {}", .0.id())]
     UnknownReference(CallableRef),
-    #[error("stale capability reference {}", .0.id())]
+    #[error("stale callable reference {}", .0.id())]
     StaleReference(CallableRef),
-    #[error("duplicate capability reference {}", .0.id())]
+    #[error("duplicate callable reference {}", .0.id())]
     DuplicateReference(CallableRef),
-    #[error("capability schema mismatch: {message}")]
+    #[error("callable schema mismatch: {message}")]
     SchemaMismatch { message: String },
-    #[error("capability provider failed: {message}")]
-    ProviderFailed { message: String },
-    #[error("capability invocation cancelled")]
+    #[error("callable handler failed: {message}")]
+    HandlerFailed { message: String },
+    #[error("callable invocation cancelled")]
     Cancelled,
-    #[error("capability provider disconnected")]
+    #[error("callable handler disconnected")]
     Disconnected,
-    #[error("capability provider queue is full")]
+    #[error("callable handler queue is full")]
     QueueFull,
 }
 
-impl CapabilityRegistry {
+impl CallableRegistry {
     /// Registers one callable for its exact owner generation.
     pub fn register(
         &mut self,
         reference: CallableRef,
         schema: Type,
-        handler: impl CapabilityHandler + 'static,
-    ) -> Result<(), CapabilityError> {
+        handler: impl CallableHandler + 'static,
+    ) -> Result<(), CallableError> {
         let Type::Callable { contract, .. } = &schema else {
-            return Err(CapabilityError::SchemaMismatch {
-                message: "registered capability schema is not callable".to_owned(),
+            return Err(CallableError::SchemaMismatch {
+                message: "registered callable schema is not callable".to_owned(),
             });
         };
         if reference.contract() != contract {
-            return Err(CapabilityError::SchemaMismatch {
+            return Err(CallableError::SchemaMismatch {
                 message: format!(
                     "reference contract {} does not match schema contract {contract}",
                     reference.contract()
@@ -143,14 +143,14 @@ impl CapabilityRegistry {
             reference.id().clone(),
         );
         if self.retired.contains(&(key.0.clone(), key.1.clone())) {
-            return Err(CapabilityError::StaleReference(reference));
+            return Err(CallableError::StaleReference(reference));
         }
         if self.entries.contains_key(&key) {
-            return Err(CapabilityError::DuplicateReference(reference));
+            return Err(CallableError::DuplicateReference(reference));
         }
         self.entries.insert(
             key,
-            RegisteredCapability {
+            RegisteredCallable {
                 schema,
                 handler: Arc::new(handler),
             },
@@ -159,7 +159,7 @@ impl CapabilityRegistry {
     }
 
     /// Makes every reference from an owner generation permanently stale.
-    pub fn retire(&mut self, owner: CapabilityOwnerId, generation: CapabilityGenerationId) {
+    pub fn retire(&mut self, owner: ReferenceOwnerId, generation: ReferenceGenerationId) {
         self.entries
             .retain(|(entry_owner, entry_generation, _), _| {
                 entry_owner != &owner || entry_generation != &generation
@@ -167,7 +167,7 @@ impl CapabilityRegistry {
         self.retired.insert((owner, generation));
     }
 
-    /// Removes one live capability without affecting other references from the
+    /// Removes one live callable without affecting other references from the
     /// same owner generation. This is used for explicit stop handles and
     /// session-scoped admissions whose owner remains connected.
     pub fn unregister(&mut self, reference: &CallableRef) -> bool {
@@ -189,19 +189,19 @@ impl CapabilityRegistry {
     /// Invokes one reference after input validation and before output release.
     pub fn invoke(
         &self,
-        invocation: CapabilityInvokeInput,
-    ) -> Result<CapabilityInvokeResult, CapabilityError> {
+        invocation: CallableInvocation,
+    ) -> Result<CallableInvocationResult, CallableError> {
         self.prepare(invocation)?.invoke()
     }
 
     fn prepare(
         &self,
-        invocation: CapabilityInvokeInput,
-    ) -> Result<PreparedCapabilityInvocation, CapabilityError> {
+        invocation: CallableInvocation,
+    ) -> Result<PreparedCallableInvocation, CallableError> {
         let reference = &invocation.callable;
         let owner_generation = (reference.owner().clone(), reference.generation().clone());
         if self.retired.contains(&owner_generation) {
-            return Err(CapabilityError::StaleReference(reference.clone()));
+            return Err(CallableError::StaleReference(reference.clone()));
         }
         let key = (
             reference.owner().clone(),
@@ -211,23 +211,23 @@ impl CapabilityRegistry {
         let entry = self
             .entries
             .get(&key)
-            .ok_or_else(|| CapabilityError::UnknownReference(reference.clone()))?;
+            .ok_or_else(|| CallableError::UnknownReference(reference.clone()))?;
         invocation
             .validate(&entry.schema)
-            .map_err(|error| CapabilityError::SchemaMismatch {
+            .map_err(|error| CallableError::SchemaMismatch {
                 message: error.to_string(),
             })?;
-        Ok(PreparedCapabilityInvocation {
+        Ok(PreparedCallableInvocation {
             schema: entry.schema.clone(),
             handler: Arc::clone(&entry.handler),
             input: invocation.input,
         })
     }
 
-    fn schema(&self, reference: &CallableRef) -> Result<Type, CapabilityError> {
+    fn schema(&self, reference: &CallableRef) -> Result<Type, CallableError> {
         let owner_generation = (reference.owner().clone(), reference.generation().clone());
         if self.retired.contains(&owner_generation) {
-            return Err(CapabilityError::StaleReference(reference.clone()));
+            return Err(CallableError::StaleReference(reference.clone()));
         }
         self.entries
             .get(&(
@@ -236,41 +236,41 @@ impl CapabilityRegistry {
                 reference.id().clone(),
             ))
             .map(|entry| entry.schema.clone())
-            .ok_or_else(|| CapabilityError::UnknownReference(reference.clone()))
+            .ok_or_else(|| CallableError::UnknownReference(reference.clone()))
     }
 }
 
-struct PreparedCapabilityInvocation {
+struct PreparedCallableInvocation {
     schema: Type,
-    handler: Arc<dyn CapabilityHandler>,
+    handler: Arc<dyn CallableHandler>,
     input: PhenixValue,
 }
 
-impl PreparedCapabilityInvocation {
-    fn invoke(self) -> Result<CapabilityInvokeResult, CapabilityError> {
-        let result = CapabilityInvokeResult {
+impl PreparedCallableInvocation {
+    fn invoke(self) -> Result<CallableInvocationResult, CallableError> {
+        let result = CallableInvocationResult {
             output: self.handler.invoke(self.input)?,
         };
         result
             .validate(&self.schema)
-            .map_err(|error| CapabilityError::SchemaMismatch {
+            .map_err(|error| CallableError::SchemaMismatch {
                 message: error.to_string(),
             })?;
         Ok(result)
     }
 }
 
-impl SharedCapabilityRegistry {
+impl SharedCallableRegistry {
     pub fn register(
         &self,
         reference: CallableRef,
         schema: Type,
-        handler: impl CapabilityHandler + 'static,
-    ) -> Result<(), CapabilityError> {
+        handler: impl CallableHandler + 'static,
+    ) -> Result<(), CallableError> {
         self.0.lock().register(reference, schema, handler)
     }
 
-    pub fn retire(&self, owner: CapabilityOwnerId, generation: CapabilityGenerationId) {
+    pub fn retire(&self, owner: ReferenceOwnerId, generation: ReferenceGenerationId) {
         self.0.lock().retire(owner, generation);
     }
 
@@ -280,14 +280,14 @@ impl SharedCapabilityRegistry {
 
     pub fn invoke(
         &self,
-        invocation: CapabilityInvokeInput,
-    ) -> Result<CapabilityInvokeResult, CapabilityError> {
+        invocation: CallableInvocation,
+    ) -> Result<CallableInvocationResult, CallableError> {
         let prepared = self.0.lock().prepare(invocation)?;
         prepared.invoke()
     }
 
     /// Returns the authoritative callable schema for one live reference.
-    pub fn schema(&self, reference: &CallableRef) -> Result<Type, CapabilityError> {
+    pub fn schema(&self, reference: &CallableRef) -> Result<Type, CallableError> {
         self.0.lock().schema(reference)
     }
 }
@@ -296,7 +296,7 @@ impl SharedCapabilityRegistry {
 mod tests {
     use super::*;
     use crate::{
-        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, ReferenceId,
+        ClientConnectionId, ContractId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
     };
 
     fn schema() -> Type {
@@ -310,21 +310,21 @@ mod tests {
     fn reference() -> CallableRef {
         CallableRef::new(
             ContractId::parse("fixture.callback@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("fixture.client").unwrap()),
-            CapabilityGenerationId::parse("fixture.generation").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("fixture.client").unwrap()),
+            ReferenceGenerationId::parse("fixture.generation").unwrap(),
             ReferenceId::parse("fixture.callback").unwrap(),
         )
     }
 
     #[test]
     fn invocation_validates_contract_and_input_before_dispatch() {
-        let invocation = CapabilityInvokeInput {
+        let invocation = CallableInvocation {
             callable: reference(),
             input: PhenixValue::U64(1),
         };
         invocation.validate(&schema()).unwrap();
 
-        let wrong_input = CapabilityInvokeInput {
+        let wrong_input = CallableInvocation {
             callable: reference(),
             input: PhenixValue::String("wrong".to_owned()),
         };
@@ -333,12 +333,12 @@ mod tests {
 
     #[test]
     fn invocation_validates_output_before_returning_to_the_caller() {
-        CapabilityInvokeResult {
+        CallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         }
         .validate(&schema())
         .unwrap();
-        assert!(CapabilityInvokeResult {
+        assert!(CallableInvocationResult {
             output: PhenixValue::U64(1),
         }
         .validate(&schema())
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn registry_validates_both_sides_of_a_plugin_or_client_capability_call() {
         let reference = reference();
-        let mut registry = CapabilityRegistry::default();
+        let mut registry = CallableRegistry::default();
         registry
             .register(reference.clone(), schema(), |input| match input {
                 PhenixValue::U64(value) => Ok(PhenixValue::String(value.to_string())),
@@ -357,7 +357,7 @@ mod tests {
             .unwrap();
 
         let result = registry
-            .invoke(CapabilityInvokeInput {
+            .invoke(CallableInvocation {
                 callable: reference.clone(),
                 input: PhenixValue::U64(7),
             })
@@ -365,18 +365,18 @@ mod tests {
         assert_eq!(result.output, PhenixValue::String("7".to_owned()));
 
         let error = registry
-            .invoke(CapabilityInvokeInput {
+            .invoke(CallableInvocation {
                 callable: reference,
                 input: PhenixValue::String("wrong".to_owned()),
             })
             .unwrap_err();
-        assert!(matches!(error, CapabilityError::SchemaMismatch { .. }));
+        assert!(matches!(error, CallableError::SchemaMismatch { .. }));
     }
 
     #[test]
     fn retired_owner_generation_is_structurally_stale() {
         let reference = reference();
-        let mut registry = CapabilityRegistry::default();
+        let mut registry = CallableRegistry::default();
         registry
             .register(reference.clone(), schema(), |_| {
                 Ok(PhenixValue::String("ok".to_owned()))
@@ -386,12 +386,12 @@ mod tests {
 
         assert_eq!(
             registry
-                .invoke(CapabilityInvokeInput {
+                .invoke(CallableInvocation {
                     callable: reference.clone(),
                     input: PhenixValue::U64(1),
                 })
                 .unwrap_err(),
-            CapabilityError::StaleReference(reference)
+            CallableError::StaleReference(reference)
         );
     }
 
@@ -404,7 +404,7 @@ mod tests {
             reference.generation().clone(),
             ReferenceId::parse("fixture.retained").unwrap(),
         );
-        let mut registry = CapabilityRegistry::default();
+        let mut registry = CallableRegistry::default();
         for callable in [&reference, &retained] {
             registry
                 .register(callable.clone(), schema(), |_| {
@@ -416,15 +416,15 @@ mod tests {
         assert!(registry.unregister(&reference));
         assert!(!registry.unregister(&reference));
         assert!(matches!(
-            registry.invoke(CapabilityInvokeInput {
+            registry.invoke(CallableInvocation {
                 callable: reference,
                 input: PhenixValue::U64(1),
             }),
-            Err(CapabilityError::UnknownReference(_))
+            Err(CallableError::UnknownReference(_))
         ));
         assert_eq!(
             registry
-                .invoke(CapabilityInvokeInput {
+                .invoke(CallableInvocation {
                     callable: retained,
                     input: PhenixValue::U64(1),
                 })
@@ -437,17 +437,17 @@ mod tests {
     #[test]
     fn invalid_provider_output_never_reaches_the_caller() {
         let reference = reference();
-        let mut registry = CapabilityRegistry::default();
+        let mut registry = CallableRegistry::default();
         registry
             .register(reference.clone(), schema(), |_| Ok(PhenixValue::U64(1)))
             .unwrap();
 
         assert!(matches!(
-            registry.invoke(CapabilityInvokeInput {
+            registry.invoke(CallableInvocation {
                 callable: reference,
                 input: PhenixValue::U64(1),
             }),
-            Err(CapabilityError::SchemaMismatch { .. })
+            Err(CallableError::SchemaMismatch { .. })
         ));
     }
 }

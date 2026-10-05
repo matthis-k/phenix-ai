@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, PluginContext, PluginExecution, PluginHost,
+    Authority, ComponentInterface, PermissionId, PluginContext, PluginExecution, PluginHost,
     PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{WorkspaceCommand, WorkspaceInterface, WorkspaceResponse};
@@ -205,8 +205,8 @@ fn service(value: &str) -> ServiceId {
     ServiceId::parse(value).expect("static service id is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn probe_capabilities(name: &CliName) -> BTreeSet<String> {
@@ -362,7 +362,8 @@ impl PluginInstance for CliPlugin {
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
+        Kernel, KernelConfig, PhenixValue, Project, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -400,7 +401,7 @@ mod tests {
             capability("kernel.persistence.read"),
             capability("kernel.persistence.write"),
         ]));
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [environment.clone(), workspace.clone(), cli.clone()],
             [
                 local_environment_component_manifest(),
@@ -412,7 +413,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([environment, workspace, cli]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         let environment_root = root.clone();
         kernel
             .register_embedded_factory(environment_id, move || {

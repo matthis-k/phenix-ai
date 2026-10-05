@@ -1,7 +1,7 @@
 use phenix_core::{
     Authority, InvocationOutcome, Kernel, LayerPolicy, LayerResult, PhenixValue, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness,
-    ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole,
+    PluginHost, PluginId, PluginInstance, PluginManifest, Project, ResolvedGeneration,
+    ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     HasPhenixSchema, StaticComponentBehavior, StaticPluginDefinition, StaticPluginGraph,
@@ -121,7 +121,7 @@ fn configured_kernel(layered: bool) -> (Kernel, Authority) {
         manifests.push(layer);
     }
 
-    let resolved = ResolvedHarness::resolve_with_layer_policies(
+    let resolved = ResolvedGeneration::resolve_with_layer_policies(
         manifests,
         components,
         std::iter::empty(),
@@ -139,7 +139,7 @@ fn configured_kernel(layered: bool) -> (Kernel, Authority) {
             .register_embedded_factory(layer_id(), || Box::new(PassthroughLayer))
             .unwrap();
     }
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
     (kernel, authority)
 }

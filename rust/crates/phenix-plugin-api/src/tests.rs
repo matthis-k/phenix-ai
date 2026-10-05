@@ -1,5 +1,7 @@
 use super::*;
-use phenix_core::{CapabilityId, Kernel, KernelConfig, ResolvedHarness, ResolvedHarnessActivation};
+use phenix_core::{
+    Kernel, KernelConfig, PermissionId, ResolvedGeneration, ResolvedGenerationActivation,
+};
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
@@ -57,9 +59,9 @@ where
 
 fn authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("kernel.persistence.schema").unwrap(),
-        CapabilityId::parse("kernel.persistence.read").unwrap(),
-        CapabilityId::parse("kernel.persistence.write").unwrap(),
+        PermissionId::parse("kernel.persistence.schema").unwrap(),
+        PermissionId::parse("kernel.persistence.read").unwrap(),
+        PermissionId::parse("kernel.persistence.write").unwrap(),
     ])
 }
 
@@ -159,7 +161,7 @@ fn session_open_uses_scoped_options() {
         options_manifest.clone(),
         sdk_manifest.clone(),
     ];
-    let resolved = ResolvedHarness::resolve_with_durable_schemas(
+    let resolved = ResolvedGeneration::resolve_with_durable_schemas(
         manifests.clone(),
         [
             session_component_manifest(),
@@ -181,7 +183,7 @@ fn session_open_uses_scoped_options() {
     kernel
         .register_embedded_factory(sdk_manifest.id, sdk_factory)
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     let open = |kernel: &mut Kernel| {
@@ -242,7 +244,7 @@ fn sdk_tools_wrap_execution_callables() {
     let execution_manifest = execution_manifest(authority.clone());
     let sdk_manifest = sdk_manifest(authority.clone());
     let manifests = vec![execution_manifest.clone(), sdk_manifest.clone()];
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         manifests.clone(),
         [
             execution_component_manifest(authority.clone()),
@@ -259,7 +261,7 @@ fn sdk_tools_wrap_execution_callables() {
     kernel
         .register_embedded_factory(sdk_manifest.id, sdk_factory)
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     let output = kernel
@@ -291,7 +293,7 @@ fn sdk_skills_wrap_context_resources() {
         context_manifest.clone(),
         sdk_manifest.clone(),
     ];
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         manifests.clone(),
         [
             execution_component_manifest(authority.clone()),
@@ -312,7 +314,7 @@ fn sdk_skills_wrap_context_resources() {
     kernel
         .register_embedded_factory(sdk_manifest.id, sdk_factory)
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     let register = kernel

@@ -406,7 +406,7 @@ The boundary rule is:
 
 ## Harness-generation selection
 
-`spec/selectable-harness-generations.md` proposes explicit selection between resident Harness generations.
+`spec/selectable-generations.md` proposes explicit selection between resident generations.
 
 Harness selection must not become an Environment-switch mechanism. A root execution may pin the canonical resolved Environment binding as a host constraint. Every selectable Harness for that root must preserve the pinned binding semantics. A different Environment requires a separately authorized root constraint set.
 

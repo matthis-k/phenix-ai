@@ -1,8 +1,8 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentListener, ComponentManifest, EventEnvelope,
-    EventFailurePolicy, EventHandler, EventTypeId, GraphGenerationId, GraphReconciler, InterfaceId,
+    EventFailurePolicy, EventHandler, EventTypeId, GenerationId, GraphReconciler, InterfaceId,
     Kernel, KernelError, ListenerProjection, LiveReconciliationError, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
+    PluginId, PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
     ResolvedListener, ServiceContribution, ServiceId, ServiceRole, SubscriptionId,
 };
 use std::sync::{
@@ -79,7 +79,7 @@ struct TrackingInstance {
     starts: Arc<AtomicUsize>,
     stops: Arc<AtomicUsize>,
     deliveries: Arc<AtomicUsize>,
-    delivered_generations: Arc<Mutex<Vec<GraphGenerationId>>>,
+    delivered_generations: Arc<Mutex<Vec<GenerationId>>>,
     fail_binding: bool,
     response: Vec<u8>,
 }
@@ -102,7 +102,7 @@ impl PluginInstance for TrackingInstance {
     fn bind_listener(
         &mut self,
         _listener: &ResolvedListener,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
     ) -> Result<Arc<dyn EventHandler>, String> {
         if self.fail_binding {
             return Err("candidate listener rejected".into());
@@ -132,7 +132,7 @@ impl PluginInstance for TrackingInstance {
 fn complete_listener_topology_is_replaced_with_each_live_generation() {
     let a = plugin("fixture.a", None);
     let a_component = listener_component(&a.id, "fixture.a", None);
-    let initial = ResolvedHarness::resolve(
+    let initial = ResolvedGeneration::resolve(
         [a.clone()],
         [a_component.clone()],
         [],
@@ -160,7 +160,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
             })
         }
     });
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     kernel.activate_all().unwrap();
     let events = kernel.events();
     events.dispatch(&event(1), &Authority::default()).unwrap();
@@ -168,7 +168,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     assert_eq!(a_deliveries.load(Ordering::Relaxed), 1);
 
     let resources = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-    let retained = ResolvedHarness::resolve(
+    let retained = ResolvedGeneration::resolve(
         [a.clone(), resources.clone()],
         [a_component.clone()],
         [],
@@ -188,7 +188,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     let service = ServiceId::parse("fixture.b.echo@1").unwrap();
     let b = plugin("fixture.b", Some(service.clone()));
     let b_component = listener_component(&b.id, "fixture.b", Some(service.clone()));
-    let added = ResolvedHarness::resolve(
+    let added = ResolvedGeneration::resolve(
         [a.clone(), b.clone(), resources.clone()],
         [a_component.clone(), b_component.clone()],
         [],
@@ -219,7 +219,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     reconciler
         .activate_candidate_on_kernel(&mut kernel, added)
         .unwrap();
-    let active = kernel.active_resolved_graph().unwrap();
+    let active = kernel.active_runtime_graph().unwrap();
     assert!(active.listeners().all(|binding| {
         binding.generation == &added_generation
             && (binding.listener.owning_plugin == a.id || binding.listener.owning_plugin == b.id)
@@ -236,7 +236,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     assert_eq!(b_deliveries.load(Ordering::Relaxed), 1);
     assert_eq!(b_generations.lock().unwrap()[0], added_generation);
 
-    let removed = ResolvedHarness::resolve(
+    let removed = ResolvedGeneration::resolve(
         [a.clone(), resources.clone()],
         [a_component.clone()],
         [],
@@ -256,7 +256,7 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
 
     let c = plugin("fixture.c", None);
     let c_component = listener_component(&c.id, "fixture.c", None);
-    let rejected = ResolvedHarness::resolve(
+    let rejected = ResolvedGeneration::resolve(
         [a.clone(), c.clone(), resources],
         [a_component, c_component],
         [],
@@ -300,13 +300,13 @@ fn listener_dependency_cycles_fail_during_candidate_resolution() {
     first.listeners[0].dependencies = vec![second.listeners[0].id.clone()];
     second.listeners[0].dependencies = vec![first.listeners[0].id.clone()];
 
-    let error =
-        ResolvedHarness::resolve([owner], [first, second], [], &Authority::default()).unwrap_err();
+    let error = ResolvedGeneration::resolve([owner], [first, second], [], &Authority::default())
+        .unwrap_err();
 
     assert!(matches!(
         error,
-        crate::ResolvedHarnessError::ComponentGraph(crate::ComponentGraphError::ListenerTopology(
-            crate::EventError::DependencyCycle(_)
-        ))
+        crate::GenerationResolutionError::ComponentGraph(
+            crate::ComponentGraphError::ListenerTopology(crate::EventError::DependencyCycle(_))
+        )
     ));
 }

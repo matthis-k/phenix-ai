@@ -1,5 +1,5 @@
 [package]
-name = "phenix-backend-acp"
+name = "phenix-model-adapter-acp"
 version = "0.1.0"
 edition = "2021"
 
@@ -20,7 +20,7 @@ bench = false
 
 [dependencies]
 agent-client-protocol.workspace = true
-phenix-backend = { path = "../phenix-backend" }
+phenix-model-adapter = { path = "../phenix-model-adapter" }
 phenix-domain = { path = "../phenix-domain" }
 rmcp.workspace = true
 serde_json.workspace = true

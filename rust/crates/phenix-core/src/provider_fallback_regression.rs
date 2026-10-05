@@ -2,7 +2,7 @@ use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, Kernel, PhenixValue, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, ProviderCompositionPolicy, ProviderFallbackReason,
-    ProviderSelectionReason, ResolvedHarness, ResolvedHarnessActivation, ServiceId,
+    ProviderSelectionReason, ResolvedGeneration, ResolvedGenerationActivation, ServiceId,
 };
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -138,7 +138,7 @@ fn fallback_is_generation_pinned_and_execution_failure_never_switches_provider()
         .with_explicit_binding(interface.clone(), primary_id.clone())
         .with_interface_fallback(interface.clone())
         .with_fallback_enabled(interface.clone());
-    let resolved = ResolvedHarness::resolve_with_provider_policy(
+    let resolved = ResolvedGeneration::resolve_with_provider_policy(
         [
             manifest("consumer"),
             manifest("primary"),
@@ -172,7 +172,7 @@ fn fallback_is_generation_pinned_and_execution_failure_never_switches_provider()
     let primary_calls = Arc::new(AtomicUsize::new(0));
     let fallback_calls = Arc::new(AtomicUsize::new(0));
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(plugin("consumer"), || Box::new(Consumer))
         .unwrap();

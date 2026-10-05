@@ -1,4 +1,4 @@
-use crate::{BackendFeature, DurableSchema, PluginId, SchemaMigration};
+use crate::{DurableSchema, PersistenceBackendFeature, PluginId, SchemaMigration};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -94,7 +94,7 @@ pub enum PersistenceBootstrapDependency {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersistenceProviderDescriptor {
     pub plugin: PluginId,
-    pub supported_features: BTreeSet<BackendFeature>,
+    pub supported_features: BTreeSet<PersistenceBackendFeature>,
     pub compatible_storage_formats: BTreeSet<String>,
     pub bootstrap_dependencies: Vec<PersistenceBootstrapDependency>,
 }
@@ -103,7 +103,7 @@ impl PersistenceProviderDescriptor {
     #[must_use]
     pub fn new(
         plugin: PluginId,
-        supported_features: impl IntoIterator<Item = BackendFeature>,
+        supported_features: impl IntoIterator<Item = PersistenceBackendFeature>,
         storage_formats: impl IntoIterator<Item = String>,
     ) -> Self {
         Self {
@@ -135,7 +135,7 @@ pub enum PersistenceProviderTransition {
 pub struct ResolvedPersistenceBootstrap {
     pub provider: PersistenceProviderDescriptor,
     pub binding: StoreBinding,
-    pub required_features: BTreeSet<BackendFeature>,
+    pub required_features: BTreeSet<PersistenceBackendFeature>,
     pub transition: Option<PersistenceProviderTransition>,
 }
 
@@ -152,7 +152,7 @@ pub enum PersistenceBootstrapError {
     TargetStoreBootstrapCycle(PluginId),
     UnsupportedFeatures {
         provider: PluginId,
-        missing: BTreeSet<BackendFeature>,
+        missing: BTreeSet<PersistenceBackendFeature>,
     },
     StorageFormatUnsupported {
         provider: PluginId,
@@ -279,7 +279,7 @@ pub fn resolve_persistence_bootstrap(
             schemas
                 .iter()
                 .filter(|registration| !registration.migrations.is_empty())
-                .map(|_| BackendFeature::Migrations),
+                .map(|_| PersistenceBackendFeature::Migrations),
         )
         .collect::<BTreeSet<_>>();
     let missing = required_features
@@ -446,7 +446,7 @@ mod tests {
 
     fn provider(
         id: &str,
-        features: &[BackendFeature],
+        features: &[PersistenceBackendFeature],
         formats: &[&str],
     ) -> PersistenceProviderDescriptor {
         PersistenceProviderDescriptor::new(
@@ -456,7 +456,7 @@ mod tests {
         )
     }
 
-    fn schema(features: &[BackendFeature]) -> DurableSchemaRegistration {
+    fn schema(features: &[PersistenceBackendFeature]) -> DurableSchemaRegistration {
         DurableSchemaRegistration::new(
             plugin("fixture.owner"),
             DurableSchema::requiring(
@@ -473,12 +473,12 @@ mod tests {
             &plugin("fixture.provider"),
             [provider(
                 "fixture.provider",
-                &[BackendFeature::Transactions],
+                &[PersistenceBackendFeature::Transactions],
                 &["fixture-v1"],
             )],
             &BTreeSet::new(),
             binding("primary", "fixture-v1"),
-            &[schema(&[BackendFeature::IndexedRange])],
+            &[schema(&[PersistenceBackendFeature::IndexedRange])],
             None,
             None,
         )
@@ -488,7 +488,7 @@ mod tests {
             error,
             PersistenceBootstrapError::UnsupportedFeatures {
                 provider: plugin("fixture.provider"),
-                missing: BTreeSet::from([BackendFeature::IndexedRange]),
+                missing: BTreeSet::from([PersistenceBackendFeature::IndexedRange]),
             }
         );
     }

@@ -1,7 +1,7 @@
 use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
     Authority, Bytes, ContextResourceId, Kernel, KernelConfig, LocalPersistence, PhenixValue,
-    Project, ResolvedHarness, ResolvedHarnessActivation,
+    Project, ResolvedGeneration, ResolvedGenerationActivation,
 };
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
@@ -41,7 +41,7 @@ fn kernel(path: &PathBuf) -> Kernel {
     let context_plugin = context_manifest.id.clone();
     let execution_manifest = execution_manifest(authority());
     let execution_plugin = execution_manifest.id.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [execution_manifest.clone(), context_manifest.clone()],
         [
             execution_component_manifest(authority()),
@@ -56,7 +56,7 @@ fn kernel(path: &PathBuf) -> Kernel {
         KernelConfig::new([execution_manifest, context_manifest]).unwrap(),
         persistence,
     );
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(execution_plugin, execution_factory)
         .unwrap();

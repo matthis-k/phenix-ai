@@ -1,6 +1,6 @@
 use crate::session_tree_component_id;
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, LayerResult, PluginContext,
+    Authority, ComponentInterface, DurableSchema, LayerResult, PermissionId, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, PreparedMutationHandle,
     ResourceNamespace, SdkClient, ServiceContribution, ServiceId, SessionId, TransactionOp,
 };
@@ -105,8 +105,8 @@ fn session_tree_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(SESSION_TREE_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk_macros::PhenixValue)]
@@ -423,8 +423,8 @@ mod tests {
     use super::*;
     use crate::session_tree_component_manifest;
     use phenix_core::{
-        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedHarness,
-        ResolvedHarnessActivation,
+        Kernel, KernelConfig, LocalPersistence, PhenixValue, Project, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use phenix_plugin_sessions::{session_component_manifest, session_factory, session_manifest};
     use std::{
@@ -468,7 +468,7 @@ mod tests {
         let tree = session_tree_manifest();
         let session_plugin = sessions.id.clone();
         let tree_plugin = tree.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [sessions.clone(), tree.clone()],
             [
                 session_component_manifest(),
@@ -482,7 +482,7 @@ mod tests {
             KernelConfig::new([sessions, tree]).unwrap(),
             LocalPersistence::open(path).unwrap(),
         );
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(session_plugin, session_factory)
             .unwrap();

@@ -1,5 +1,6 @@
 use phenix_core::{
-    BackendFeature, DurableSchema, DurableSchemaRegistration, PluginId, ResourceNamespace,
+    DurableSchema, DurableSchemaRegistration, PersistenceBackendFeature, PluginId,
+    ResourceNamespace,
 };
 use std::marker::PhantomData;
 
@@ -60,7 +61,7 @@ impl StaticResourceDescriptor {
     pub fn derived<F: StaticResourceField>(
         owner: &PluginId,
         field: &'static str,
-        features: impl IntoIterator<Item = BackendFeature>,
+        features: impl IntoIterator<Item = PersistenceBackendFeature>,
     ) -> Self {
         let namespace = ResourceNamespace::parse(format!("{}.{field}", owner.as_str()))
             .expect("plugin id and Rust field name derive a valid resource namespace");
@@ -71,7 +72,7 @@ impl StaticResourceDescriptor {
     pub fn explicit<F: StaticResourceField>(
         namespace: &str,
         field: &'static str,
-        features: impl IntoIterator<Item = BackendFeature>,
+        features: impl IntoIterator<Item = PersistenceBackendFeature>,
     ) -> Self {
         let namespace = ResourceNamespace::parse(namespace)
             .expect("resource attribute validated the static resource namespace");
@@ -81,7 +82,7 @@ impl StaticResourceDescriptor {
     fn new<F: StaticResourceField>(
         namespace: ResourceNamespace,
         field: &'static str,
-        features: impl IntoIterator<Item = BackendFeature>,
+        features: impl IntoIterator<Item = PersistenceBackendFeature>,
     ) -> Self {
         let resource_type = std::any::type_name::<<F as StaticResourceField>::Resource>();
         let version = <F::Resource as StaticResourceDefinition>::schema_version();
@@ -133,7 +134,7 @@ mod tests {
             vec![StaticResourceDescriptor::derived::<Durable<Store>>(
                 &PluginId::parse("fixture.resource-owner").unwrap(),
                 "plans",
-                [BackendFeature::Transactions],
+                [PersistenceBackendFeature::Transactions],
             )]
         }
     }
@@ -144,7 +145,7 @@ mod tests {
         let resource = StaticResourceDescriptor::derived::<Durable<Store>>(
             &owner,
             "plans",
-            [BackendFeature::Transactions],
+            [PersistenceBackendFeature::Transactions],
         );
 
         assert_eq!(resource.id.as_str(), "fixture.resource-owner.plans");
@@ -156,7 +157,7 @@ mod tests {
         assert!(resource
             .schema
             .required_features
-            .contains(&BackendFeature::Transactions));
+            .contains(&PersistenceBackendFeature::Transactions));
         assert!(resource.resource_type.ends_with("::Store"));
     }
 
@@ -174,7 +175,7 @@ mod tests {
         assert_eq!(schemas[0].version, 3);
         assert!(schemas[0]
             .required_features
-            .contains(&BackendFeature::Transactions));
+            .contains(&PersistenceBackendFeature::Transactions));
         assert_eq!(registrations[0].owner, owner);
         assert_eq!(registrations[0].schema, schemas[0]);
     }

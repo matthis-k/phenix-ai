@@ -1,8 +1,8 @@
 use phenix_core::{
-    ArtifactRevision, Authority, CapabilityId, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, DurableSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution, ServiceId,
-    TransactionOp, ValueCodec,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, DurableSchema, PermissionId, PhenixValue, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
+    ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
     efficiency_outcome_evidence_service, EfficiencyOutcomeEvidence,
@@ -142,15 +142,15 @@ pub fn benchmark_outcome_factory() -> Box<dyn PluginInstance> {
 
 fn persistence_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static persistence capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static persistence capability is valid"),
+        PermissionId::parse(PERSISTENCE_SCHEMA).expect("static persistence capability is valid"),
+        PermissionId::parse(PERSISTENCE_READ).expect("static persistence capability is valid"),
+        PermissionId::parse(PERSISTENCE_WRITE).expect("static persistence capability is valid"),
     ])
 }
 
 fn persistence_read_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_READ).expect("static persistence capability is valid")
+        PermissionId::parse(PERSISTENCE_READ).expect("static persistence capability is valid")
     ])
 }
 

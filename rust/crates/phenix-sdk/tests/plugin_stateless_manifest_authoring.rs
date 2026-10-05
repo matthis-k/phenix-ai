@@ -1,4 +1,4 @@
-use phenix_core::{HasPhenixSchema, ResolvedHarnessActivation};
+use phenix_core::{HasPhenixSchema, ResolvedGenerationActivation};
 
 #[derive(phenix_sdk::PhenixValue)]
 struct Request {
@@ -77,14 +77,14 @@ fn stateless_plugin_runs_through_generated_factory_and_dispatch() {
     let components = <plugin::Plugin as phenix_sdk::StaticPluginDefinition>::component_manifests();
     let component = components[0].id.clone();
     let resolved =
-        phenix_core::ResolvedHarness::resolve([manifest.clone()], components, [], &authority)
+        phenix_core::ResolvedGeneration::resolve([manifest.clone()], components, [], &authority)
             .unwrap();
 
     let mut kernel =
         phenix_core::Kernel::new(phenix_core::KernelConfig::new([manifest.clone()]).unwrap());
     let graph = phenix_sdk::StaticPluginGraph::compose::<plugin::Plugin>().unwrap();
     graph.preload_embedded_factories(&mut kernel).unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     for method in ["run", "projected", "exact"] {

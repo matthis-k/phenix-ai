@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PermissionId, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
     derive_efficiency_task_record_from_attempts, efficiency_evaluation_service,
@@ -17,7 +17,7 @@ pub const EFFICIENCY_EVALUATION_COMPONENT: &str = "phenix.efficiency-evaluation"
 const PERSISTENCE_READ: &str = "kernel.persistence.read";
 
 fn evidence_read_authority() -> Authority {
-    Authority::new([CapabilityId::parse(PERSISTENCE_READ)
+    Authority::new([PermissionId::parse(PERSISTENCE_READ)
         .expect("static persistence read capability id is valid")])
 }
 

@@ -1,8 +1,8 @@
 use phenix_core::{
     Authority, EventBus, EventDeliveryStatus, EventEnvelope, EventFailurePolicy,
     EventHandler, EventSubscription,
-    EventTypeId, GraphGenerationId, Kernel, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId,
+    EventTypeId, GenerationId, Kernel, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId,
     ServiceRole, SubscriptionId, SubscriptionSpec,
 };
 use std::sync::{Arc, Mutex};
@@ -46,7 +46,7 @@ impl PluginInstance for Emitter {
 }
 
 struct GenerationProbe {
-    observed: Arc<Mutex<Vec<GraphGenerationId>>>,
+    observed: Arc<Mutex<Vec<GenerationId>>>,
 }
 
 impl EventHandler for GenerationProbe {
@@ -59,7 +59,7 @@ impl EventHandler for GenerationProbe {
         _bus: &EventBus,
         _event: &EventEnvelope,
         _authority: &Authority,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> Result<(), String> {
         self.observed
             .lock()
@@ -88,13 +88,13 @@ fn plugin_host_event_delivery_is_pinned_to_the_active_graph_generation() {
         maximum_authority: Authority::default(),
     };
     let resolved =
-        ResolvedHarness::resolve([manifest], [], [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([manifest], [], [], &Authority::default()).unwrap();
     let generation = resolved.generation().clone();
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
     kernel
         .register_embedded_factory(plugin.clone(), || Box::new(Emitter))
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     let observed = Arc::new(Mutex::new(Vec::new()));

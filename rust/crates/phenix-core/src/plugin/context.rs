@@ -1,6 +1,6 @@
 use crate::{
     Authority, CallCancellationToken, ComponentId, ComponentInterface, ComponentInvocationError,
-    DurableSchema, EventAdmissionReceipt, EventError, EventTypeId, Exact, GraphGenerationId,
+    DurableSchema, EventAdmissionReceipt, EventError, EventTypeId, Exact, GenerationId,
     InterfaceId, KernelError, PhenixValue, PluginHost, PluginId, PreparedMutationHandle, Project,
     ResourceNamespace, SchemaMigration, ServiceId, TaskScope, TransactionOp, ValueError,
 };
@@ -53,7 +53,7 @@ pub struct CurrentPlugin<'host, Settings, State> {
 /// Data scoped to the current kernel-mediated call.
 pub struct CallContext<'host> {
     pub authority: &'host Authority,
-    pub graph_generation: Option<&'host GraphGenerationId>,
+    pub graph_generation: Option<&'host GenerationId>,
 }
 
 /// Scoped access to generic kernel mechanisms.

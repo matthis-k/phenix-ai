@@ -409,8 +409,8 @@ record!(ReviewDecisionInput, "phenix.application.type.review-decision-input@1", 
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, HasPhenixSchema, Key,
-        ReferenceId, Type, ValueCodec,
+        ClientConnectionId, HasPhenixSchema, Key, ReferenceGenerationId, ReferenceId,
+        ReferenceOwnerId, Type, ValueCodec,
     };
     use std::collections::BTreeMap;
 
@@ -426,8 +426,8 @@ mod tests {
     fn interaction_handlers_encode_exact_callable_contracts() {
         let permission = PermissionHandlerRef(phenix_core::CallableRef::new(
             phenix_core::ContractId::parse("phenix.application.permission@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("client-1").unwrap()),
-            CapabilityGenerationId::parse("generation-1").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("client-1").unwrap()),
+            ReferenceGenerationId::parse("generation-1").unwrap(),
             ReferenceId::parse("permission-handler").unwrap(),
         ));
         assert_eq!(

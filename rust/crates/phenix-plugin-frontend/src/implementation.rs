@@ -355,7 +355,8 @@ fn validate_id(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
+        Kernel, KernelConfig, PhenixValue, Project, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use phenix_plugin_execution::{
         execution_component_manifest, execution_factory, execution_manifest,
@@ -368,7 +369,7 @@ mod tests {
         let authority = execution_manifest.maximum_authority.clone();
         let frontend_manifest = frontend_manifest(authority.clone());
         let frontend_id = frontend_manifest.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [execution_manifest.clone(), frontend_manifest.clone()],
             [
                 execution_component_manifest(authority.clone()),
@@ -380,7 +381,7 @@ mod tests {
         .unwrap();
         let mut kernel =
             Kernel::new(KernelConfig::new([execution_manifest, frontend_manifest]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(execution_id, execution_factory)
             .unwrap();

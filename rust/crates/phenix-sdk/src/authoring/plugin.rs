@@ -21,9 +21,9 @@ pub mod __phenix_plugin {
     pub use phenix_core::{
         Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
         ComponentInvocationError, ComponentManifest, EventBus, EventHandler, EventSubscription,
-        GraphGenerationId, InterfaceId, InterfaceSchema, PhenixValue, PluginContext,
-        PluginExecution, PluginHost, PluginId, PluginInstance, PluginListener, PluginManifest,
-        ServiceContribution, ServiceId, ServiceRole,
+        GenerationId, InterfaceId, InterfaceSchema, PhenixValue, PluginContext, PluginExecution,
+        PluginHost, PluginId, PluginInstance, PluginListener, PluginManifest, ServiceContribution,
+        ServiceId, ServiceRole,
     };
 }
 

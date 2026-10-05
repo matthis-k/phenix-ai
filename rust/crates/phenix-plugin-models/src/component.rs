@@ -1,6 +1,6 @@
 use crate::model_routing_manifest;
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentId, ComponentInterface, ComponentManifest,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, PermissionId,
     PluginId,
 };
 use phenix_sdk::{ModelDispatchInterface, ModelRoutingInterface};
@@ -49,9 +49,9 @@ pub fn model_routing_component_manifest(maximum_authority: Authority) -> Compone
 
 fn persistence_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_READ).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
     ])
 }
 
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn model_interfaces_bind_without_package_only_authority() {
-        let network = CapabilityId::parse("network.openai").unwrap();
+        let network = PermissionId::parse("network.openai").unwrap();
         let package_authority = Authority::new(
             persistence_authority()
                 .capabilities()

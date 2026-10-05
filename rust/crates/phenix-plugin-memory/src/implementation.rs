@@ -11,7 +11,7 @@ use crate::{
     retrieval,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityId, ComponentInterface, DurableSchema, EventTypeId,
+    Authority, Bytes, CallableId, ComponentInterface, DurableSchema, EventTypeId, PermissionId,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
     ResourceNamespace, RoutingProfileId, SdkClient, ServiceContribution, ServiceId,
 };
@@ -96,8 +96,8 @@ pub(crate) fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn observe(context: &MemoryContext<'_, '_>, event: &str, payload: serde_json::Value) {

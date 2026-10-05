@@ -1,11 +1,11 @@
 use super::*;
-use crate::ResolvedHarness;
+use crate::ResolvedGeneration;
 
 impl Kernel {
     /// Return every generation that can accept a new root execution.
     ///
     /// The default generation is included with resident alternatives.
-    pub fn resident_generation_ids(&self) -> Vec<GraphGenerationId> {
+    pub fn resident_generation_ids(&self) -> Vec<GenerationId> {
         let mut generations = self
             .resident_generations
             .keys()
@@ -51,7 +51,7 @@ impl Kernel {
         })
     }
 
-    /// Stage one resolved Harness beside the current default generation.
+    /// Stage one resolved generation beside the current default generation.
     ///
     /// Residency does not change the default generation or ambient listener set.
     /// The first implementation requires identical durable schemas so trial
@@ -60,8 +60,8 @@ impl Kernel {
     #[cfg(test)]
     pub(crate) fn make_generation_resident(
         &mut self,
-        candidate: &ResolvedHarness,
-    ) -> Result<GraphGenerationId, KernelError> {
+        candidate: &ResolvedGeneration,
+    ) -> Result<GenerationId, KernelError> {
         let trusted_host_constraints = RootExecutionConstraints {
             authority: candidate.authority_ceiling().clone(),
             pinned_bindings: BTreeMap::new(),
@@ -71,9 +71,9 @@ impl Kernel {
 
     pub(crate) fn make_generation_resident_under_constraints(
         &mut self,
-        candidate: &ResolvedHarness,
+        candidate: &ResolvedGeneration,
         constraints: &RootExecutionConstraints,
-    ) -> Result<GraphGenerationId, KernelError> {
+    ) -> Result<GenerationId, KernelError> {
         let candidate_generation = candidate.generation().clone();
         self.validate_generation_authority(candidate)?;
         Self::validate_component_graph_root_execution_constraints(
@@ -118,10 +118,10 @@ impl Kernel {
     /// Capture one root handle against an explicitly selected resident generation.
     ///
     /// The returned handle owns a generation lease and can execute after the
-    /// caller releases any mutable Kernel or Harness lock.
+    /// caller releases any mutable kernel or generation lock.
     pub fn root_execution_handle_in_generation(
         &self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<RootExecutionHandle, KernelError> {
         let state = if self.graph_generation() == Some(generation) {
@@ -139,11 +139,11 @@ impl Kernel {
 
     /// Invoke one root against an explicitly selected resident generation.
     ///
-    /// Nested calls remain pinned because the selected RuntimeGeneration and
+    /// Nested calls remain pinned because the selected GenerationTopology and
     /// generation-local instances enter the root CallScope together.
     pub fn invoke_in_generation(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         service: &ServiceId,
         input: &[u8],
         constraints: &RootExecutionConstraints,
@@ -155,7 +155,7 @@ impl Kernel {
 
     fn validate_root_execution_constraints(
         state: &GenerationRuntimeState,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
         Self::validate_component_graph_root_execution_constraints(
@@ -167,7 +167,7 @@ impl Kernel {
 
     fn validate_component_graph_root_execution_constraints(
         component_graph: &ResolvedComponentGraph,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
         for ((component, interface), pinned) in &constraints.pinned_bindings {
@@ -191,7 +191,7 @@ impl Kernel {
     /// ambient event delivery. The previous default remains resident.
     pub(crate) fn promote_generation_under_constraints(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
         let state = if self.graph_generation() == Some(generation) {
@@ -205,7 +205,7 @@ impl Kernel {
         self.promote_generation(generation)
     }
 
-    fn promote_generation(&mut self, generation: &GraphGenerationId) -> Result<(), KernelError> {
+    fn promote_generation(&mut self, generation: &GenerationId) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
             return Ok(());
         }
@@ -252,7 +252,7 @@ impl Kernel {
     /// through the existing generation-aware stop path.
     pub(crate) fn retire_generation_under_constraints(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), KernelError> {
         self.retire_generation_with_constraints(generation, Some(constraints))
@@ -261,14 +261,14 @@ impl Kernel {
     #[cfg(test)]
     pub(crate) fn retire_generation(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
     ) -> Result<(), KernelError> {
         self.retire_generation_with_constraints(generation, None)
     }
 
     fn retire_generation_with_constraints(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         operation_constraints: Option<&RootExecutionConstraints>,
     ) -> Result<(), KernelError> {
         if self.graph_generation() == Some(generation) {
@@ -342,10 +342,10 @@ impl Kernel {
 
     fn stage_resident_generation(
         &self,
-        candidate: &ResolvedHarness,
+        candidate: &ResolvedGeneration,
         lifecycle_constraints: &RootExecutionConstraints,
     ) -> Result<GenerationRuntimeState, KernelError> {
-        let runtime = candidate.runtime_generation().clone();
+        let runtime = candidate.generation_topology().clone();
         let config = runtime.config().clone();
         let generation = runtime
             .generation()
@@ -363,102 +363,113 @@ impl Kernel {
             let manifest = config
                 .manifest(plugin)
                 .expect("activation order only contains configured plugins");
-            let instance = (|| -> Result<Option<Box<dyn PluginInstance>>, KernelError> {
-                match &manifest.execution {
-                    PluginExecution::ResourceOnly => Ok(None),
-                    PluginExecution::Embedded => self
-                        .embedded_factories
-                        .get(plugin)
-                        .map(|factory| factory())
-                        .map(Some)
-                        .ok_or_else(|| KernelError::EmbeddedFactoryMissing(plugin.clone())),
-                    PluginExecution::Runtime {
-                        runtime: runtime_id,
-                        artifact,
-                    } => {
-                        let binding = config.runtime_binding(plugin).cloned().ok_or_else(|| {
-                            KernelError::RuntimeProviderUnavailable(runtime_id.clone())
-                        })?;
-                        let provider_manifest = config
-                            .manifest(&binding.provider)
-                            .expect("resolved runtime provider is configured");
-                        let provider_authority = constrain_authority_to_ceiling(
-                            Some(lifecycle_constraints.authority()),
-                            &provider_manifest.maximum_authority,
-                        );
-                        let guest_authority = constrain_authority_to_ceiling(
-                            Some(lifecycle_constraints.authority()),
-                            &manifest.maximum_authority,
-                        );
-                        let provider =
-                            instances.get(&binding.provider).cloned().ok_or_else(|| {
-                                KernelError::PluginNotActive(binding.provider.clone())
-                            })?;
-                        let live_call = self.tasks.begin_call(&binding.provider, Some(&generation));
-                        let cancellation = live_call.cancellation_token().clone();
-                        let prepared_mutations = PreparedMutationScope::new(Some(&generation));
-                        let host = PluginHost {
-                            runtime: RuntimeServices {
-                                states: &states,
-                                instances: &instances,
-                                invocations: &invocations,
-                                events: &self.events,
-                                tasks: &self.tasks,
-                                persistence: &self.persistence,
-                                prepared_mutations: &prepared_mutations,
-                                trace_sink: self.trace_sink.as_ref(),
-                                provenance: &self.provenance,
-                            },
-                            plugin: &binding.provider,
-                            scope: CallScope::root_with_constraints(
-                                Arc::new(runtime.clone()),
-                                &binding.provider,
-                                &provider_authority,
-                                lifecycle_constraints,
-                                Some(cancellation.clone()),
-                            ),
-                            continuation: None,
-                        };
-                        let mut provider = provider.lock().expect("plugin instance mutex poisoned");
-                        let contract = provider.runtime_provider().ok_or_else(|| {
-                            KernelError::RuntimeProviderContractUnavailable {
-                                runtime: runtime_id.clone(),
-                                provider: binding.provider.clone(),
-                            }
-                        })?;
-                        let prepared = catch_unwind(AssertUnwindSafe(|| {
-                            contract.prepare_with_host(
-                                RuntimePluginCandidate {
-                                    manifest,
-                                    artifact,
-                                    guest_authority: &guest_authority,
-                                },
-                                &host,
-                            )
-                        }))
-                        .map_err(|_| KernelError::RuntimePrepare {
-                            plugin: plugin.clone(),
-                            runtime: runtime_id.clone(),
-                            message: "runtime provider panicked".into(),
-                        })?;
-                        if cancellation.is_cancelled() {
-                            prepared_mutations.clear();
-                            return Err(KernelError::RuntimePrepare {
-                                plugin: plugin.clone(),
-                                runtime: runtime_id.clone(),
-                                message: "runtime provider preparation cancelled".into(),
-                            });
-                        }
-                        prepared
+            let instance =
+                (|| -> Result<Option<Box<dyn PluginInstance>>, KernelError> {
+                    match &manifest.execution {
+                        PluginExecution::ResourceOnly => Ok(None),
+                        PluginExecution::Embedded => self
+                            .embedded_factories
+                            .get(plugin)
+                            .map(|factory| factory())
                             .map(Some)
-                            .map_err(|message| KernelError::RuntimePrepare {
-                                plugin: plugin.clone(),
-                                runtime: runtime_id.clone(),
-                                message,
+                            .ok_or_else(|| KernelError::EmbeddedFactoryMissing(plugin.clone())),
+                        PluginExecution::Runtime {
+                            runtime: runtime_id,
+                            artifact,
+                        } => {
+                            let binding = config
+                                .plugin_runtime_binding(plugin)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    KernelError::PluginRuntimeAdapterUnavailable(runtime_id.clone())
+                                })?;
+                            let adapter_manifest = config
+                                .manifest(&binding.adapter_plugin)
+                                .expect("resolved plugin runtime adapter is configured");
+                            let adapter_authority = constrain_authority_to_ceiling(
+                                Some(lifecycle_constraints.authority()),
+                                &adapter_manifest.maximum_authority,
+                            );
+                            let guest_authority = constrain_authority_to_ceiling(
+                                Some(lifecycle_constraints.authority()),
+                                &manifest.maximum_authority,
+                            );
+                            let adapter_instance =
+                                instances.get(&binding.adapter_plugin).cloned().ok_or_else(
+                                    || KernelError::PluginNotActive(binding.adapter_plugin.clone()),
+                                )?;
+                            let live_call = self
+                                .tasks
+                                .begin_call(&binding.adapter_plugin, Some(&generation));
+                            let cancellation = live_call.cancellation_token().clone();
+                            let prepared_mutations = PreparedMutationScope::new(Some(&generation));
+                            let host = PluginHost {
+                                runtime: RuntimeServices {
+                                    states: &states,
+                                    instances: &instances,
+                                    invocations: &invocations,
+                                    events: &self.events,
+                                    tasks: &self.tasks,
+                                    persistence: &self.persistence,
+                                    prepared_mutations: &prepared_mutations,
+                                    trace_sink: self.trace_sink.as_ref(),
+                                    provenance: &self.provenance,
+                                },
+                                plugin: &binding.adapter_plugin,
+                                scope: CallScope::root_with_constraints(
+                                    Arc::new(runtime.clone()),
+                                    &binding.adapter_plugin,
+                                    &adapter_authority,
+                                    lifecycle_constraints,
+                                    Some(cancellation.clone()),
+                                ),
+                                continuation: None,
+                            };
+                            let mut adapter_instance = adapter_instance
+                                .lock()
+                                .expect("plugin instance mutex poisoned");
+                            let contract =
+                                adapter_instance.plugin_runtime_adapter().ok_or_else(|| {
+                                    KernelError::PluginRuntimeAdapterContractUnavailable {
+                                        runtime: runtime_id.clone(),
+                                        adapter_plugin: binding.adapter_plugin.clone(),
+                                    }
+                                })?;
+                            let prepared = catch_unwind(AssertUnwindSafe(|| {
+                                contract.prepare_with_host(
+                                    PluginRuntimeCandidate {
+                                        manifest,
+                                        artifact,
+                                        guest_authority: &guest_authority,
+                                    },
+                                    &host,
+                                )
+                            }))
+                            .map_err(|_| {
+                                KernelError::PluginRuntimePreparation {
+                                    plugin: plugin.clone(),
+                                    runtime: runtime_id.clone(),
+                                    message: "plugin runtime adapter panicked".into(),
+                                }
+                            })?;
+                            if cancellation.is_cancelled() {
+                                prepared_mutations.clear();
+                                return Err(KernelError::PluginRuntimePreparation {
+                                    plugin: plugin.clone(),
+                                    runtime: runtime_id.clone(),
+                                    message: "plugin runtime adapter preparation cancelled".into(),
+                                });
+                            }
+                            prepared.map(Some).map_err(|message| {
+                                KernelError::PluginRuntimePreparation {
+                                    plugin: plugin.clone(),
+                                    runtime: runtime_id.clone(),
+                                    message,
+                                }
                             })
+                        }
                     }
-                }
-            })();
+                })();
 
             let instance = match instance {
                 Ok(instance) => instance,
@@ -604,7 +615,7 @@ mod tests {
     use super::*;
     use crate::{
         ComponentManifest, DurableSchema, DurableSchemaRegistration, EventFailurePolicy,
-        PluginManifest, ResolvedHarnessActivation, ResourceNamespace, ServiceContribution,
+        PluginManifest, ResolvedGenerationActivation, ResourceNamespace, ServiceContribution,
         SubscriptionId, SubscriptionSpec,
     };
 
@@ -650,10 +661,10 @@ mod tests {
         }
     }
 
-    type LifecycleObservation = (&'static str, GraphGenerationId, bool);
+    type LifecycleObservation = (&'static str, GenerationId, bool);
 
     struct AuthorityEcho {
-        capability: CapabilityId,
+        capability: PermissionId,
         lifecycle: Arc<Mutex<Vec<LifecycleObservation>>>,
     }
 
@@ -702,7 +713,7 @@ mod tests {
     }
 
     struct GenerationEventListener {
-        seen: Arc<Mutex<Vec<GraphGenerationId>>>,
+        seen: Arc<Mutex<Vec<GenerationId>>>,
     }
 
     impl PluginListener for GenerationEventListener {
@@ -720,7 +731,7 @@ mod tests {
     }
 
     struct GenerationEventPlugin {
-        seen: Arc<Mutex<Vec<GraphGenerationId>>>,
+        seen: Arc<Mutex<Vec<GenerationId>>>,
     }
 
     impl PluginInstance for GenerationEventPlugin {
@@ -731,7 +742,7 @@ mod tests {
         fn bind_plugin_listener(
             &mut self,
             _listener: &ResolvedListener,
-            _generation: &GraphGenerationId,
+            _generation: &GenerationId,
         ) -> Option<Result<Arc<dyn PluginListener>, String>> {
             Some(Ok(Arc::new(GenerationEventListener {
                 seen: Arc::clone(&self.seen),
@@ -781,7 +792,7 @@ mod tests {
             }],
             maximum_authority: Authority::default(),
         };
-        let first = ResolvedHarness::resolve(
+        let first = ResolvedGeneration::resolve(
             [first_manifest.clone()],
             [component.clone()],
             [],
@@ -789,14 +800,14 @@ mod tests {
         )
         .unwrap();
         let second =
-            ResolvedHarness::resolve([second_manifest], [component], [], &Authority::default())
+            ResolvedGeneration::resolve([second_manifest], [component], [], &Authority::default())
                 .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
         let seen = Arc::new(Mutex::new(Vec::new()));
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         let seen_for_factory = Arc::clone(&seen);
         kernel.preload_embedded_factory(plugin_id.clone(), move || {
             Box::new(GenerationEventPlugin {
@@ -881,20 +892,21 @@ mod tests {
 
     #[test]
     fn selected_generation_ceiling_attenuates_explicit_and_default_roots() {
-        let read = CapabilityId::parse("fixture.read").unwrap();
-        let write = CapabilityId::parse("fixture.write").unwrap();
+        let read = PermissionId::parse("fixture.read").unwrap();
+        let write = PermissionId::parse("fixture.write").unwrap();
         let broad = Authority::new([read.clone(), write.clone()]);
         let narrow = Authority::new([read]);
         let mut plugin_manifest = manifest("fixture.residency.authority");
         plugin_manifest.maximum_authority = broad.clone();
 
-        let first = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
-        let second = ResolvedHarness::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
+        let first = ResolvedGeneration::resolve([plugin_manifest.clone()], [], [], &broad).unwrap();
+        let second =
+            ResolvedGeneration::resolve([plugin_manifest.clone()], [], [], &narrow).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         let write_for_factory = write.clone();
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
         let lifecycle_for_factory = Arc::clone(&lifecycle);
@@ -956,8 +968,8 @@ mod tests {
 
     #[test]
     fn resident_lifecycle_is_bounded_by_admitting_root_authority() {
-        let read = CapabilityId::parse("fixture.read").unwrap();
-        let write = CapabilityId::parse("fixture.write").unwrap();
+        let read = PermissionId::parse("fixture.read").unwrap();
+        let write = PermissionId::parse("fixture.write").unwrap();
         let broad = Authority::new([read.clone(), write.clone()]);
         let narrow = Authority::new([read]);
 
@@ -966,8 +978,8 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
 
-        let first = ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
-        let second = ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first = ResolvedGeneration::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second = ResolvedGeneration::resolve([second_manifest], [], [], &broad).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
@@ -976,7 +988,7 @@ mod tests {
         let write_for_factory = write.clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(first_manifest.id, move || {
             Box::new(AuthorityEcho {
                 capability: write_for_factory.clone(),
@@ -1021,8 +1033,8 @@ mod tests {
 
     #[test]
     fn retirement_is_bounded_by_operation_authority() {
-        let read = CapabilityId::parse("fixture.read").unwrap();
-        let write = CapabilityId::parse("fixture.write").unwrap();
+        let read = PermissionId::parse("fixture.read").unwrap();
+        let write = PermissionId::parse("fixture.write").unwrap();
         let broad = Authority::new([read.clone(), write.clone()]);
         let narrow = Authority::new([read]);
 
@@ -1031,8 +1043,8 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
 
-        let first = ResolvedHarness::resolve([first_manifest.clone()], [], [], &broad).unwrap();
-        let second = ResolvedHarness::resolve([second_manifest], [], [], &broad).unwrap();
+        let first = ResolvedGeneration::resolve([first_manifest.clone()], [], [], &broad).unwrap();
+        let second = ResolvedGeneration::resolve([second_manifest], [], [], &broad).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
@@ -1041,7 +1053,7 @@ mod tests {
         let write_for_factory = write.clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(first_manifest.id, move || {
             Box::new(AuthorityEcho {
                 capability: write_for_factory.clone(),
@@ -1072,8 +1084,8 @@ mod tests {
     }
 
     struct GenerationTaskPlugin {
-        started: std::sync::mpsc::Sender<GraphGenerationId>,
-        cancelled: std::sync::mpsc::Sender<GraphGenerationId>,
+        started: std::sync::mpsc::Sender<GenerationId>,
+        cancelled: std::sync::mpsc::Sender<GenerationId>,
     }
 
     impl PluginInstance for GenerationTaskPlugin {
@@ -1114,17 +1126,17 @@ mod tests {
         let mut second_manifest = first_manifest.clone();
         second_manifest.version += 1;
         let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([first_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let second =
-            ResolvedHarness::resolve([second_manifest], [], [], &Authority::default()).unwrap();
+            ResolvedGeneration::resolve([second_manifest], [], [], &Authority::default()).unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(plugin_id.clone(), move || {
             Box::new(GenerationTaskPlugin {
                 started: started_tx.clone(),
@@ -1194,17 +1206,17 @@ mod tests {
         let first_manifest = manifest("fixture.residency.first");
         let second_manifest = manifest("fixture.residency.second");
         let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([first_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let second =
-            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([second_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
         kernel
-            .activate_resolved_harness(&first)
+            .activate_resolved_generation(&first)
             .expect("first generation activates");
         kernel.preload_embedded_factory(first_manifest.id.clone(), || Box::new(Echo(b"first")));
         kernel.preload_embedded_factory(second_manifest.id.clone(), || Box::new(Echo(b"second")));
@@ -1263,16 +1275,16 @@ mod tests {
         let first_manifest = manifest("fixture.residency.leased-first");
         let second_manifest = manifest("fixture.residency.leased-second");
         let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([first_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let second =
-            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([second_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(first_manifest.id, || Box::new(Echo(b"first")));
         kernel.preload_embedded_factory(second_manifest.id, || Box::new(Echo(b"second")));
         kernel.activate_all().unwrap();
@@ -1304,16 +1316,16 @@ mod tests {
         let first_manifest = manifest("fixture.residency.first");
         let second_manifest = manifest("fixture.residency.second");
         let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([first_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let second =
-            ResolvedHarness::resolve([second_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([second_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let first_generation = first.generation().clone();
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(first_manifest.id.clone(), || Box::new(Echo(b"first")));
         kernel.preload_embedded_factory(second_manifest.id.clone(), || Box::new(Echo(b"second")));
         kernel.activate_all().unwrap();
@@ -1353,16 +1365,16 @@ mod tests {
         let first_manifest = manifest("fixture.residency.first");
         let failing_manifest = manifest("fixture.residency.failing");
         let first =
-            ResolvedHarness::resolve([first_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([first_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let failing =
-            ResolvedHarness::resolve([failing_manifest.clone()], [], [], &Authority::default())
+            ResolvedGeneration::resolve([failing_manifest.clone()], [], [], &Authority::default())
                 .unwrap();
         let first_generation = first.generation().clone();
         let failing_generation = failing.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(first_manifest.id, || Box::new(Echo(b"first")));
         kernel.activate_all().unwrap();
 
@@ -1431,7 +1443,7 @@ mod tests {
             maximum_authority: Authority::default(),
         };
 
-        let first = ResolvedHarness::resolve(
+        let first = ResolvedGeneration::resolve(
             [consumer_manifest.clone(), first_provider_manifest.clone()],
             [
                 consumer_node.clone(),
@@ -1444,7 +1456,7 @@ mod tests {
         let first_generation = first.generation().clone();
         let mut changed_provider_manifest = first_provider_manifest.clone();
         changed_provider_manifest.version += 1;
-        let changed_provider = ResolvedHarness::resolve(
+        let changed_provider = ResolvedGeneration::resolve(
             [consumer_manifest.clone(), changed_provider_manifest],
             [
                 consumer_node.clone(),
@@ -1463,7 +1475,7 @@ mod tests {
         let mut schema_provider_node =
             provider_node(first_component.clone(), first_provider.clone());
         schema_provider_node.exports[0].schema = changed_schema;
-        let schema_changed = ResolvedHarness::resolve(
+        let schema_changed = ResolvedGeneration::resolve(
             [consumer_manifest.clone(), first_provider_manifest],
             [schema_consumer_node, schema_provider_node],
             [],
@@ -1472,7 +1484,7 @@ mod tests {
         .unwrap();
         let schema_changed_generation = schema_changed.generation().clone();
 
-        let second = ResolvedHarness::resolve(
+        let second = ResolvedGeneration::resolve(
             [consumer_manifest, second_provider_manifest],
             [
                 consumer_node,
@@ -1485,7 +1497,7 @@ mod tests {
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(consumer, || Box::new(Echo(b"consumer")));
         kernel.preload_embedded_factory(first_provider, || Box::new(Echo(b"provider-a")));
         kernel.preload_embedded_factory(second_provider, || Box::new(Echo(b"provider-b")));
@@ -1547,18 +1559,18 @@ mod tests {
 
     #[test]
     fn resident_candidate_cannot_expand_initial_authority_ceiling() {
-        let read = CapabilityId::parse("fixture.read").unwrap();
-        let write = CapabilityId::parse("fixture.write").unwrap();
+        let read = PermissionId::parse("fixture.read").unwrap();
+        let write = PermissionId::parse("fixture.write").unwrap();
         let initial_authority = Authority::new([read.clone()]);
         let broader_authority = Authority::new([read, write]);
         let first =
-            ResolvedHarness::resolve([], [], [], &initial_authority).expect("initial resolves");
-        let second =
-            ResolvedHarness::resolve([], [], [], &broader_authority).expect("candidate resolves");
+            ResolvedGeneration::resolve([], [], [], &initial_authority).expect("initial resolves");
+        let second = ResolvedGeneration::resolve([], [], [], &broader_authority)
+            .expect("candidate resolves");
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.activate_all().unwrap();
 
         assert_eq!(
@@ -1575,7 +1587,7 @@ mod tests {
         let mut durable_manifest = PluginManifest::resource_only(owner.clone());
         durable_manifest.resource_namespaces.push(namespace.clone());
 
-        let first = ResolvedHarness::resolve_with_durable_schemas(
+        let first = ResolvedGeneration::resolve_with_durable_schemas(
             [durable_manifest.clone()],
             [],
             [DurableSchemaRegistration::new(
@@ -1586,7 +1598,7 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        let second = ResolvedHarness::resolve_with_durable_schemas(
+        let second = ResolvedGeneration::resolve_with_durable_schemas(
             [durable_manifest],
             [],
             [DurableSchemaRegistration::new(
@@ -1601,7 +1613,7 @@ mod tests {
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.activate_all().unwrap();
 
         assert_eq!(
@@ -1646,14 +1658,14 @@ mod tests {
         let mut second_provider_manifest = manifest(second_provider_id.as_str());
         second_provider_manifest.services[0].service = nested_service();
 
-        let first = ResolvedHarness::resolve(
+        let first = ResolvedGeneration::resolve(
             [caller_manifest.clone(), first_provider_manifest],
             [],
             [],
             &Authority::default(),
         )
         .unwrap();
-        let second = ResolvedHarness::resolve(
+        let second = ResolvedGeneration::resolve(
             [caller_manifest, second_provider_manifest],
             [],
             [],
@@ -1664,7 +1676,7 @@ mod tests {
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         kernel.preload_embedded_factory(caller_id, || Box::new(NestedCaller));
         kernel.preload_embedded_factory(first_provider_id, || Box::new(Echo(b"A")));
         kernel.preload_embedded_factory(second_provider_id, || Box::new(Echo(b"B")));
@@ -1742,8 +1754,8 @@ mod tests {
 
         let owner = plugin("fixture.residency.persistence");
         let namespace = ResourceNamespace::parse("fixture.residency.persistence.state").unwrap();
-        let read = CapabilityId::parse("kernel.persistence.read").unwrap();
-        let write = CapabilityId::parse("kernel.persistence.write").unwrap();
+        let read = PermissionId::parse("kernel.persistence.read").unwrap();
+        let write = PermissionId::parse("kernel.persistence.write").unwrap();
         let authority = Authority::new([read, write]);
 
         let mut first_manifest = manifest(owner.as_str());
@@ -1754,7 +1766,7 @@ mod tests {
 
         let schema =
             DurableSchemaRegistration::new(owner.clone(), DurableSchema::new(namespace.clone(), 1));
-        let first = ResolvedHarness::resolve_with_durable_schemas(
+        let first = ResolvedGeneration::resolve_with_durable_schemas(
             [first_manifest],
             [],
             [schema.clone()],
@@ -1762,7 +1774,7 @@ mod tests {
             &authority,
         )
         .unwrap();
-        let second = ResolvedHarness::resolve_with_durable_schemas(
+        let second = ResolvedGeneration::resolve_with_durable_schemas(
             [second_manifest],
             [],
             [schema],
@@ -1774,7 +1786,7 @@ mod tests {
         let second_generation = second.generation().clone();
 
         let mut kernel = Kernel::new(first.kernel_config().clone());
-        kernel.activate_resolved_harness(&first).unwrap();
+        kernel.activate_resolved_generation(&first).unwrap();
         let namespace_for_factory = namespace.clone();
         kernel.preload_embedded_factory(owner, move || {
             Box::new(DurableValue {

@@ -18,7 +18,7 @@ pub(crate) const PROVIDER: &str = "openai-codex";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER: &str = "https://auth.openai.com";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
-const RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const RESPONSES_URL: &str = "https://chatgpt.com/adapter-api/codex/responses";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const REFRESH_MARGIN_SECONDS: u64 = 5 * 60;
 

@@ -2,8 +2,8 @@ use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
     Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     KernelConfig, LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
-    ServiceContribution, ServiceId, ServiceRole, SessionId,
+    PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
+    RoutingProfileId, ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_plugin_language::{
     language_component_manifest, language_factory, language_manifest, language_service,
@@ -56,7 +56,7 @@ fn routed_kernel_with(path: &PathBuf) -> Kernel {
     let memory = memory_manifest();
     let helper = helper_manifest();
     let authority = memory.maximum_authority.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [memory.clone(), helper.clone()],
         [memory_component_manifest(), helper_component_manifest()],
         [],
@@ -65,7 +65,7 @@ fn routed_kernel_with(path: &PathBuf) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();
@@ -81,7 +81,7 @@ fn code_kernel_with(path: &PathBuf) -> Kernel {
     let helper = helper_manifest();
     let language = language_manifest();
     let authority = memory.maximum_authority.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [memory.clone(), helper.clone(), language.clone()],
         [
             memory_component_manifest(),
@@ -94,7 +94,7 @@ fn code_kernel_with(path: &PathBuf) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();

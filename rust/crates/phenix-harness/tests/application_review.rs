@@ -6,7 +6,7 @@ use phenix_application_interface::{
     CreateSession, DecideReview, Operation,
 };
 use phenix_core::{ContractId, PhenixValue, Project, ValueCodec};
-use phenix_harness::{application::ApplicationWorker, default_suite_authority, PhenixHarness};
+use phenix_harness::{application::ApplicationWorker, default_suite_authority, PhenixRuntime};
 use phenix_plugin_catalog::{
     execution_review_service, ExecutionReviewCommand, ExecutionReviewResponse, PreparedReviewFile,
     WorkspaceFileVersion,
@@ -21,7 +21,7 @@ fn invoke_application<O: Operation>(worker: &mut ApplicationWorker, input: O::In
 
 #[test]
 fn review_decision_uses_execution_truth_and_journals_the_returned_record() {
-    let mut harness = PhenixHarness::default_suite().unwrap();
+    let mut harness = PhenixRuntime::default_suite().unwrap();
     harness.activate().unwrap();
 
     let prepare = ExecutionReviewCommand::Prepare {

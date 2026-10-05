@@ -11,7 +11,7 @@ pub trait PluginListener: Send + Sync {
 }
 
 struct ListenerRuntimeSnapshot {
-    runtime: Arc<RuntimeGeneration>,
+    runtime: Arc<GenerationTopology>,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     invocations: BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -30,7 +30,7 @@ struct ScopedPluginListener {
 
 #[derive(Clone, Copy)]
 pub(super) struct ListenerRuntimeSources<'a> {
-    pub(super) runtime: &'a RuntimeGeneration,
+    pub(super) runtime: &'a GenerationTopology,
     pub(super) states: &'a BTreeMap<PluginId, PluginState>,
     pub(super) instances: &'a BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
     pub(super) invocations: &'a BTreeMap<PluginId, Arc<dyn PluginInvocation>>,
@@ -119,7 +119,7 @@ impl EventHandler for ScopedPluginListener {
         _bus: &EventBus,
         event: &EventEnvelope,
         authority: &Authority,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> Result<(), String> {
         let expected = self
             .runtime

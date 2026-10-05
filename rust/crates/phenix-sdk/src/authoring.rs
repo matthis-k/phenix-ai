@@ -408,7 +408,7 @@
 //! #[phenix_sdk::plugin(
 //!     id = "phenix.runtime-hosted",
 //!     execution = phenix_sdk::PluginExecution::Runtime {
-//!         runtime: phenix_sdk::RuntimeId::parse("fixture.runtime").unwrap(),
+//!         runtime: phenix_sdk::PluginRuntimeId::parse("fixture.runtime").unwrap(),
 //!         artifact: phenix_sdk::PluginArtifact {
 //!             locator: "fixture.wasm".into(),
 //!             revision: phenix_sdk::ArtifactRevision::from_content(b"fixture"),
@@ -429,7 +429,7 @@
 //! #[phenix_sdk::plugin(
 //!     id = "phenix.runtime-hosted-event",
 //!     execution = phenix_sdk::PluginExecution::Runtime {
-//!         runtime: phenix_sdk::RuntimeId::parse("fixture.runtime").unwrap(),
+//!         runtime: phenix_sdk::PluginRuntimeId::parse("fixture.runtime").unwrap(),
 //!         artifact: phenix_sdk::PluginArtifact {
 //!             locator: "fixture.wasm".into(),
 //!             revision: phenix_sdk::ArtifactRevision::from_content(b"fixture"),

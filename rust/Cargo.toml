@@ -49,9 +49,9 @@ members = [
   "crates/phenix-plugin-workspace",
   "crates/phenix-plugin-catalog",
   "crates/phenix-provider-sdk",
-  "crates/phenix-backend",
-  "crates/phenix-backend-acp",
-  "crates/phenix-backend-native",
+  "crates/phenix-model-adapter",
+  "crates/phenix-model-adapter-acp",
+  "crates/phenix-model-adapter-native",
 ]
 
 [workspace.dependencies]

@@ -62,7 +62,7 @@
       rustUnitPackageShards = {
         core = [
           "phenix-application-interface"
-          "phenix-backend"
+          "phenix-model-adapter"
           "phenix-client"
           "phenix-contract"
           "phenix-core"
@@ -74,8 +74,8 @@
         protocolSdk = [
           "phenix-acp-stdio"
           "phenix-adapter-acp"
-          "phenix-backend-acp"
-          "phenix-backend-native"
+          "phenix-model-adapter-acp"
+          "phenix-model-adapter-native"
           "phenix-binding-generator"
           "phenix-client-acp"
           "phenix-sdk"
@@ -343,7 +343,7 @@
               ];
               exec = ''
                 ${rustRoot}
-                cargo test --quiet --locked -p phenix-backend-acp --tests
+                cargo test --quiet --locked -p phenix-model-adapter-acp --tests
               '';
             };
 

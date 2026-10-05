@@ -1,4 +1,6 @@
-use crate::{default_suite_authority, HarnessBuildError, HarnessBuilder, PhenixHarness};
+use crate::{
+    default_suite_authority, PhenixRuntime, PhenixRuntimeBuildError, PhenixRuntimeBuilder,
+};
 use phenix_core::{KernelError, PersistenceBackend};
 use phenix_plugin_catalog::{
     basic_context_component_manifest, basic_context_factory, basic_context_manifest,
@@ -8,7 +10,7 @@ use phenix_plugin_catalog::{
     session_component_manifest, session_factory, session_manifest,
 };
 
-impl HarnessBuilder {
+impl PhenixRuntimeBuilder {
     pub fn with_basic_suite() -> Result<Self, KernelError> {
         let mut builder = Self::new();
         builder.set_component_authority(default_suite_authority());
@@ -30,15 +32,15 @@ impl HarnessBuilder {
     }
 }
 
-impl PhenixHarness {
-    pub fn basic_suite() -> Result<Self, HarnessBuildError> {
-        HarnessBuilder::with_basic_suite()?.build()
+impl PhenixRuntime {
+    pub fn basic_suite() -> Result<Self, PhenixRuntimeBuildError> {
+        PhenixRuntimeBuilder::with_basic_suite()?.build()
     }
 
     pub fn basic_suite_with_persistence(
         persistence: impl PersistenceBackend + 'static,
-    ) -> Result<Self, HarnessBuildError> {
-        HarnessBuilder::with_basic_suite()?.build_with_persistence(persistence)
+    ) -> Result<Self, PhenixRuntimeBuildError> {
+        PhenixRuntimeBuilder::with_basic_suite()?.build_with_persistence(persistence)
     }
 }
 
@@ -73,7 +75,7 @@ mod tests {
         ))
     }
 
-    fn invoke<T, R>(harness: &mut PhenixHarness, service: &phenix_core::ServiceId, request: &T) -> R
+    fn invoke<T, R>(harness: &mut PhenixRuntime, service: &phenix_core::ServiceId, request: &T) -> R
     where
         for<'value> PhenixValue: From<&'value T>,
         for<'value> R: TryFrom<Project<&'value PhenixValue>, Error = phenix_core::ValueError>,
@@ -87,7 +89,7 @@ mod tests {
     }
 
     fn invoke_component<T, R>(
-        harness: &mut PhenixHarness,
+        harness: &mut PhenixRuntime,
         component: ComponentManifest,
         service: &phenix_core::ServiceId,
         request: &T,
@@ -120,7 +122,7 @@ mod tests {
             "phenix.basic-context",
         ] {
             let selected = BTreeSet::from([plugin.to_owned()]);
-            let harness = HarnessBuilder::with_selected_suite(&selected)
+            let harness = PhenixRuntimeBuilder::with_selected_suite(&selected)
                 .unwrap()
                 .build()
                 .unwrap();
@@ -138,7 +140,7 @@ mod tests {
 
     #[test]
     fn default_suite_includes_memory_while_basic_suite_remains_memory_free() {
-        let default = HarnessBuilder::with_default_suite()
+        let default = PhenixRuntimeBuilder::with_default_suite()
             .unwrap()
             .build()
             .unwrap();
@@ -159,7 +161,10 @@ mod tests {
             assert_eq!(handle.exporter(), &memory_component_id());
         }
 
-        let basic = HarnessBuilder::with_basic_suite().unwrap().build().unwrap();
+        let basic = PhenixRuntimeBuilder::with_basic_suite()
+            .unwrap()
+            .build()
+            .unwrap();
         assert!(!basic
             .kernel()
             .config()
@@ -172,7 +177,7 @@ mod tests {
         let path = temp_db();
         {
             let persistence = LocalPersistence::open(&path).unwrap();
-            let mut harness = PhenixHarness::basic_suite_with_persistence(persistence).unwrap();
+            let mut harness = PhenixRuntime::basic_suite_with_persistence(persistence).unwrap();
             harness.activate().unwrap();
 
             let _: SessionResponse = invoke(
@@ -239,7 +244,7 @@ mod tests {
         }
 
         let persistence = LocalPersistence::open(&path).unwrap();
-        let mut restored = PhenixHarness::basic_suite_with_persistence(persistence).unwrap();
+        let mut restored = PhenixRuntime::basic_suite_with_persistence(persistence).unwrap();
         restored.activate().unwrap();
         let sessions: SessionResponse =
             invoke(&mut restored, &session_service(), &SessionCommand::List);

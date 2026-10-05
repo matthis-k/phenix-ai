@@ -1,6 +1,4 @@
-use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
-};
+use phenix_acp_stdio::{ClientCallableCallbacks, ClientReferenceIdentity, SdkApplicationService};
 use phenix_application_interface::{
     types::{
         CallableInvokeInput, CallableResult, ClientToolAddInput, ClientToolAdmission,
@@ -9,39 +7,39 @@ use phenix_application_interface::{
     AddClientTool, InvokeCallable, Operation,
 };
 use phenix_core::{
-    CallableRef, CapabilityError, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-    ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
-    SdkContribution, SharedCapabilityRegistry, Type, ValueCodec,
+    CallableError, CallableRef, ClientConnectionId, ContractId, ObservableStore, PhenixValue,
+    PluginRuntimeId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
+    ResolvedSdkContributions, SdkContribution, SharedCallableRegistry, Type, ValueCodec,
 };
 
 fn client_callable(
     owner: &ClientConnectionId,
-    generation: &CapabilityGenerationId,
+    generation: &ReferenceGenerationId,
     reference: &str,
 ) -> CallableRef {
     CallableRef::new(
         ContractId::parse("fixture.client-tool@1").unwrap(),
-        CapabilityOwnerId::Client(owner.clone()),
+        ReferenceOwnerId::Client(owner.clone()),
         generation.clone(),
         ReferenceId::parse(reference).unwrap(),
     )
 }
 
 fn service(
-    capabilities: SharedCapabilityRegistry,
-    callbacks: ClientCapabilityCallbacks,
+    capabilities: SharedCallableRegistry,
+    callbacks: ClientCallableCallbacks,
     owner: ClientConnectionId,
-    generation: CapabilityGenerationId,
+    generation: ReferenceGenerationId,
 ) -> SdkApplicationService {
     let sdk = ResolvedSdkContributions::resolve(&[], &[], Vec::<SdkContribution>::new()).unwrap();
     SdkApplicationService::new(
         &sdk,
         &ObservableStore::default(),
         capabilities,
-        RuntimeId::parse("fixture.runtime").unwrap(),
-        CapabilityGenerationId::parse("fixture.runtime-generation").unwrap(),
+        PluginRuntimeId::parse("fixture.runtime").unwrap(),
+        ReferenceGenerationId::parse("fixture.runtime-generation").unwrap(),
         callbacks,
-        ClientCapabilityIdentity::new(owner, generation),
+        ClientReferenceIdentity::new(owner, generation),
     )
     .unwrap()
 }
@@ -60,13 +58,13 @@ fn definition(invoke: CallableRef) -> ClientToolDefinition {
 
 #[tokio::test]
 async fn reconnect_requires_a_new_callable_generation_and_allows_readmission() {
-    let capabilities = SharedCapabilityRegistry::default();
+    let capabilities = SharedCallableRegistry::default();
     let owner = ClientConnectionId::parse("fixture-client").unwrap();
-    let first_generation = CapabilityGenerationId::parse("fixture-generation-1").unwrap();
+    let first_generation = ReferenceGenerationId::parse("fixture-generation-1").unwrap();
     let first_callable = client_callable(&owner, &first_generation, "echo-1");
     let session = phenix_core::SessionId::parse("session-a").unwrap();
 
-    let (first_callbacks, first_receiver) = ClientCapabilityCallbacks::bounded(1);
+    let (first_callbacks, first_receiver) = ClientCallableCallbacks::bounded(1);
     let first = service(
         capabilities.clone(),
         first_callbacks,
@@ -90,12 +88,12 @@ async fn reconnect_requires_a_new_callable_generation_and_allows_readmission() {
     first.retire_client();
     assert_eq!(
         capabilities.schema(&first_callable),
-        Err(CapabilityError::StaleReference(first_callable.clone()))
+        Err(CallableError::StaleReference(first_callable.clone()))
     );
 
-    let second_generation = CapabilityGenerationId::parse("fixture-generation-2").unwrap();
+    let second_generation = ReferenceGenerationId::parse("fixture-generation-2").unwrap();
     let second_callable = client_callable(&owner, &second_generation, "echo-2");
-    let (second_callbacks, mut second_receiver) = ClientCapabilityCallbacks::bounded(1);
+    let (second_callbacks, mut second_receiver) = ClientCallableCallbacks::bounded(1);
     let second = service(capabilities, second_callbacks, owner, second_generation);
 
     assert!(second.client_tool_descriptors(&session).is_empty());
@@ -134,7 +132,7 @@ async fn reconnect_requires_a_new_callable_generation_and_allows_readmission() {
     );
     assert_eq!(invocation.request().input, PhenixValue::U64(7));
     invocation.respond(Ok(
-        phenix_application_interface::types::CapabilityInvokeResult {
+        phenix_application_interface::types::CallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         },
     ));

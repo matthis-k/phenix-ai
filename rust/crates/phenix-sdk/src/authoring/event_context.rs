@@ -1,6 +1,6 @@
 use super::{phenix_context, PhenixPluginContext};
 use phenix_core::{
-    Authority, ComponentId, EventEnvelope, EventTypeId, GraphGenerationId, PluginHost, PluginId,
+    Authority, ComponentId, EventEnvelope, EventTypeId, GenerationId, PluginHost, PluginId,
 };
 use std::ops::Deref;
 
@@ -44,7 +44,7 @@ impl<'host, 'runtime> EventContext<'host, 'runtime> {
     }
 
     #[must_use]
-    pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
+    pub fn graph_generation(&self) -> Option<&GenerationId> {
         self.plugin_context.call.graph_generation
     }
 

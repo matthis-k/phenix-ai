@@ -1,15 +1,15 @@
-use crate::{HarnessBuildError, HarnessBuilder, PhenixHarness};
+use crate::{PhenixRuntime, PhenixRuntimeBuildError, PhenixRuntimeBuilder};
 use phenix_core::{prepare_persistence_candidate, Kernel, PersistenceProvider, StoreBinding};
 use std::collections::BTreeSet;
 
-impl HarnessBuilder {
+impl PhenixRuntimeBuilder {
     /// Select an already constructed bootstrap Provider before opening its Store.
     /// Store-backed plugins start only after the resolved schemas are prepared.
     pub fn build_with_persistence_provider(
         self,
         provider: &mut dyn PersistenceProvider,
         binding: StoreBinding,
-    ) -> Result<PhenixHarness, HarnessBuildError> {
+    ) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
         self.build_using(|resolved| {
             let prepared = prepare_persistence_candidate(
                 provider,
@@ -32,8 +32,8 @@ impl HarnessBuilder {
 mod tests {
     use super::*;
     use phenix_core::{
-        Authority, BackendFeature, CapabilityId, DurableSchema, DurableSchemaRegistration,
-        LocalPersistence, PersistenceBackend, PersistenceBootstrapDependency,
+        Authority, DurableSchema, DurableSchemaRegistration, LocalPersistence, PermissionId,
+        PersistenceBackend, PersistenceBackendFeature, PersistenceBootstrapDependency,
         PersistenceBootstrapError, PersistenceCandidateError, PersistenceProviderDescriptor,
         PersistenceProviderError, PluginExecution, PluginHost, PluginId, PluginInstance,
         PluginManifest, ResolvedPersistenceBootstrap, ResourceNamespace, StoreBindingId,
@@ -85,15 +85,15 @@ mod tests {
         StoreBinding::new(StoreBindingId::parse("fixture.store").unwrap(), "sqlite-v1").unwrap()
     }
 
-    fn fixture(feature: BackendFeature) -> (HarnessBuilder, Provider) {
+    fn fixture(feature: PersistenceBackendFeature) -> (PhenixRuntimeBuilder, Provider) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let owner = PluginId::parse("fixture.state").unwrap();
         let mut manifest = PluginManifest::resource_only(owner.clone());
         manifest.execution = PluginExecution::Embedded;
         manifest.resource_namespaces.push(namespace());
         manifest.maximum_authority =
-            Authority::new([CapabilityId::parse("kernel.persistence.read").unwrap()]);
-        let mut builder = HarnessBuilder::new();
+            Authority::new([PermissionId::parse("kernel.persistence.read").unwrap()]);
+        let mut builder = PhenixRuntimeBuilder::new();
         builder.set_component_authority(manifest.maximum_authority.clone());
         let plugin_calls = Arc::clone(&calls);
         builder
@@ -110,7 +110,7 @@ mod tests {
         let provider = Provider {
             descriptor: PersistenceProviderDescriptor::new(
                 PluginId::parse("fixture.persistence").unwrap(),
-                [BackendFeature::Transactions],
+                [PersistenceBackendFeature::Transactions],
                 ["sqlite-v1".to_owned()],
             ),
             calls,
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn selected_provider_prepares_store_before_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::Transactions);
+        let (builder, mut provider) = fixture(PersistenceBackendFeature::Transactions);
         let binding = binding();
         let mut harness = builder
             .build_with_persistence_provider(&mut provider, binding.clone())
@@ -139,12 +139,12 @@ mod tests {
 
     #[test]
     fn unsupported_schema_features_prevent_store_open_and_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::IndexedRange);
+        let (builder, mut provider) = fixture(PersistenceBackendFeature::IndexedRange);
         let result = builder.build_with_persistence_provider(&mut provider, binding());
 
         assert!(matches!(
             result,
-            Err(HarnessBuildError::Persistence(
+            Err(PhenixRuntimeBuildError::Persistence(
                 PersistenceCandidateError::Bootstrap(
                     PersistenceBootstrapError::UnsupportedFeatures { .. }
                 )
@@ -155,14 +155,14 @@ mod tests {
 
     #[test]
     fn bootstrap_cycle_prevents_store_open_and_plugin_start() {
-        let (builder, mut provider) = fixture(BackendFeature::Transactions);
+        let (builder, mut provider) = fixture(PersistenceBackendFeature::Transactions);
         provider.descriptor.bootstrap_dependencies =
             vec![PersistenceBootstrapDependency::TargetStore];
         let result = builder.build_with_persistence_provider(&mut provider, binding());
 
         assert!(matches!(
             result,
-            Err(HarnessBuildError::Persistence(
+            Err(PhenixRuntimeBuildError::Persistence(
                 PersistenceCandidateError::Bootstrap(
                     PersistenceBootstrapError::TargetStoreBootstrapCycle(_)
                 )

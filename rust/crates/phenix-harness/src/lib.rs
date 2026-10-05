@@ -1,11 +1,11 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentEntryTrigger, ComponentId, ComponentManifest,
-    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration, GraphGenerationId,
+    Authority, ComponentEntryTrigger, ComponentId, ComponentManifest, ComponentProcessArgument,
+    ConfigContribution, DurableSchemaRegistration, GenerationId, GenerationResolutionError,
     GraphReconciler, InterfaceId, Kernel, KernelError, LayerPolicy, LiveReconciliationError,
-    PersistenceBackend, PluginBuildPlan, PluginBuildReport, PluginExecution, PluginId,
-    PluginInstance, PluginManagementContext, PluginManagementError, PluginManagementRequest,
-    PluginManifest, PluginTrialResult, ReconciliationResult, ResolvedHarness,
-    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError,
+    PermissionId, PersistenceBackend, PluginBuildPlan, PluginBuildReport, PluginExecution,
+    PluginId, PluginInstance, PluginManagementContext, PluginManagementError,
+    PluginManagementRequest, PluginManifest, PluginTrialResult, ReconciliationResult,
+    ResolvedGeneration, ResolvedGenerationActivation, ResolvedGenerationActivationError,
     RootExecutionConstraints, RootExecutionHandle, ServiceId,
 };
 use phenix_plugin_catalog::{
@@ -58,25 +58,27 @@ pub mod workspace_discovery;
 type EmbeddedFactory = Arc<dyn Fn() -> Box<dyn PluginInstance> + Send + Sync>;
 
 #[derive(Debug)]
-pub enum HarnessBuildError {
+pub enum PhenixRuntimeBuildError {
     Kernel(KernelError),
-    Resolution(ResolvedHarnessError),
-    Activation(ResolvedHarnessActivationError),
+    Resolution(GenerationResolutionError),
+    Activation(ResolvedGenerationActivationError),
     Persistence(phenix_core::PersistenceCandidateError),
 }
 
-impl Display for HarnessBuildError {
+impl Display for PhenixRuntimeBuildError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Kernel(error) => Display::fmt(error, f),
             Self::Resolution(error) => Display::fmt(error, f),
-            Self::Activation(error) => write!(f, "resolved Harness activation failed: {error:?}"),
+            Self::Activation(error) => {
+                write!(f, "resolved generation activation failed: {error:?}")
+            }
             Self::Persistence(error) => Display::fmt(error, f),
         }
     }
 }
 
-impl Error for HarnessBuildError {
+impl Error for PhenixRuntimeBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Kernel(error) => Some(error),
@@ -87,25 +89,25 @@ impl Error for HarnessBuildError {
     }
 }
 
-impl From<KernelError> for HarnessBuildError {
+impl From<KernelError> for PhenixRuntimeBuildError {
     fn from(error: KernelError) -> Self {
         Self::Kernel(error)
     }
 }
 
-impl From<ResolvedHarnessError> for HarnessBuildError {
-    fn from(error: ResolvedHarnessError) -> Self {
+impl From<GenerationResolutionError> for PhenixRuntimeBuildError {
+    fn from(error: GenerationResolutionError) -> Self {
         Self::Resolution(error)
     }
 }
 
-impl From<ResolvedHarnessActivationError> for HarnessBuildError {
-    fn from(error: ResolvedHarnessActivationError) -> Self {
+impl From<ResolvedGenerationActivationError> for PhenixRuntimeBuildError {
+    fn from(error: ResolvedGenerationActivationError) -> Self {
         Self::Activation(error)
     }
 }
 
-impl From<phenix_core::PersistenceCandidateError> for HarnessBuildError {
+impl From<phenix_core::PersistenceCandidateError> for PhenixRuntimeBuildError {
     fn from(error: phenix_core::PersistenceCandidateError) -> Self {
         Self::Persistence(error)
     }
@@ -113,27 +115,27 @@ impl From<phenix_core::PersistenceCandidateError> for HarnessBuildError {
 
 pub fn default_application_root_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("kernel.persistence.schema").expect("static capability"),
-        CapabilityId::parse("kernel.persistence.read").expect("static capability"),
-        CapabilityId::parse("kernel.persistence.write").expect("static capability"),
-        CapabilityId::parse("network.http").expect("static capability"),
-        CapabilityId::parse("secrets.manage").expect("static capability"),
-        CapabilityId::parse("workspace.read").expect("static capability"),
-        CapabilityId::parse("workspace.write").expect("static capability"),
-        CapabilityId::parse("workspace.shell").expect("static capability"),
-        CapabilityId::parse("workspace.git").expect("static capability"),
+        PermissionId::parse("kernel.persistence.schema").expect("static capability"),
+        PermissionId::parse("kernel.persistence.read").expect("static capability"),
+        PermissionId::parse("kernel.persistence.write").expect("static capability"),
+        PermissionId::parse("network.http").expect("static capability"),
+        PermissionId::parse("secrets.manage").expect("static capability"),
+        PermissionId::parse("workspace.read").expect("static capability"),
+        PermissionId::parse("workspace.write").expect("static capability"),
+        PermissionId::parse("workspace.shell").expect("static capability"),
+        PermissionId::parse("workspace.git").expect("static capability"),
     ])
 }
 
 pub fn runtime_orchestration_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("application.session.control").expect("static capability"),
-        CapabilityId::parse("runtime.generation.select").expect("static capability"),
-        CapabilityId::parse("runtime.plugin.inspect").expect("static capability"),
-        CapabilityId::parse("runtime.plugin.build").expect("static capability"),
-        CapabilityId::parse("runtime.plugin.trial").expect("static capability"),
-        CapabilityId::parse("runtime.plugin.promote").expect("static capability"),
-        CapabilityId::parse("runtime.plugin.retire").expect("static capability"),
+        PermissionId::parse("application.session.control").expect("static capability"),
+        PermissionId::parse("runtime.generation.select").expect("static capability"),
+        PermissionId::parse("runtime.plugin.inspect").expect("static capability"),
+        PermissionId::parse("runtime.plugin.build").expect("static capability"),
+        PermissionId::parse("runtime.plugin.trial").expect("static capability"),
+        PermissionId::parse("runtime.plugin.promote").expect("static capability"),
+        PermissionId::parse("runtime.plugin.retire").expect("static capability"),
     ])
 }
 
@@ -149,7 +151,7 @@ pub fn default_suite_authority() -> Authority {
 }
 
 #[derive(Default)]
-pub struct HarnessBuilder {
+pub struct PhenixRuntimeBuilder {
     manifests: Vec<PluginManifest>,
     durable_schemas: Vec<DurableSchemaRegistration>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
@@ -162,7 +164,7 @@ pub struct HarnessBuilder {
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
 
-impl HarnessBuilder {
+impl PhenixRuntimeBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -592,14 +594,14 @@ impl HarnessBuilder {
         Ok(())
     }
 
-    pub fn build(self) -> Result<PhenixHarness, HarnessBuildError> {
+    pub fn build(self) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
         self.build_using(|resolved| Ok(Kernel::new(resolved.kernel_config().clone())))
     }
 
     pub fn build_with_persistence(
         self,
         persistence: impl PersistenceBackend + 'static,
-    ) -> Result<PhenixHarness, HarnessBuildError> {
+    ) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
         self.build_using(|resolved| {
             Ok(Kernel::with_persistence(
                 resolved.kernel_config().clone(),
@@ -610,8 +612,8 @@ impl HarnessBuilder {
 
     fn build_using(
         self,
-        create_kernel: impl FnOnce(&ResolvedHarness) -> Result<Kernel, HarnessBuildError>,
-    ) -> Result<PhenixHarness, HarnessBuildError> {
+        create_kernel: impl FnOnce(&ResolvedGeneration) -> Result<Kernel, PhenixRuntimeBuildError>,
+    ) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
         let application_agent_tools = self.application_agent_tools.clone();
         let debug_id = debug_manifest(self.component_authority.clone()).id;
         let debug_enabled = self
@@ -619,7 +621,7 @@ impl HarnessBuilder {
             .iter()
             .any(|manifest| manifest.id == debug_id);
         let resolved =
-            ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+            ResolvedGeneration::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
                 self.manifests.clone(),
                 self.components,
                 self.durable_schemas,
@@ -633,12 +635,12 @@ impl HarnessBuilder {
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());
         }
-        kernel.activate_resolved_harness(&resolved)?;
+        kernel.activate_resolved_generation(&resolved)?;
         for (plugin, factory) in self.embedded_factories {
             kernel.register_embedded_factory(plugin, move || factory())?;
         }
         let reconciler = GraphReconciler::new(resolved);
-        Ok(PhenixHarness {
+        Ok(PhenixRuntime {
             kernel,
             reconciler,
             application_agent_tools,
@@ -646,13 +648,13 @@ impl HarnessBuilder {
     }
 }
 
-pub struct PhenixHarness {
+pub struct PhenixRuntime {
     kernel: Kernel,
     reconciler: GraphReconciler,
     application_agent_tools: application::ApplicationAgentToolRegistry,
 }
 
-impl PhenixHarness {
+impl PhenixRuntime {
     pub fn kernel(&self) -> &Kernel {
         &self.kernel
     }
@@ -665,14 +667,14 @@ impl PhenixHarness {
         self.reconciler.active().component_graph()
     }
 
-    pub fn resolved_harness(&self) -> &ResolvedHarness {
+    pub fn resolved_generation(&self) -> &ResolvedGeneration {
         self.reconciler.active()
     }
 
-    pub fn resolved_harness_in_generation(
+    pub fn resolved_generation_by_id(
         &self,
-        generation: &GraphGenerationId,
-    ) -> Result<&ResolvedHarness, KernelError> {
+        generation: &GenerationId,
+    ) -> Result<&ResolvedGeneration, KernelError> {
         if self.reconciler.active().generation() == generation {
             return Ok(self.reconciler.active());
         }
@@ -681,11 +683,11 @@ impl PhenixHarness {
             .ok_or_else(|| KernelError::UnknownGeneration(generation.clone()))
     }
 
-    pub fn generation(&self) -> &GraphGenerationId {
+    pub fn generation(&self) -> &GenerationId {
         self.reconciler.active().generation()
     }
 
-    pub fn selectable_generations(&self) -> Vec<GraphGenerationId> {
+    pub fn selectable_generations(&self) -> Vec<GenerationId> {
         self.kernel.resident_generation_ids()
     }
 
@@ -704,7 +706,7 @@ impl PhenixHarness {
 
     pub fn root_execution_handle_in_generation(
         &self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<RootExecutionHandle, KernelError> {
         self.kernel
@@ -737,16 +739,16 @@ impl PhenixHarness {
 
     pub fn make_candidate_resident(
         &mut self,
-        candidate: ResolvedHarness,
+        candidate: ResolvedGeneration,
         constraints: &RootExecutionConstraints,
-    ) -> Result<GraphGenerationId, LiveReconciliationError> {
+    ) -> Result<GenerationId, LiveReconciliationError> {
         self.reconciler
             .make_candidate_resident_on_kernel(&mut self.kernel, candidate, constraints)
     }
 
     pub fn promote_resident(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<ReconciliationResult, LiveReconciliationError> {
         self.reconciler
@@ -755,7 +757,7 @@ impl PhenixHarness {
 
     pub fn retire_resident(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         constraints: &RootExecutionConstraints,
     ) -> Result<(), LiveReconciliationError> {
         self.reconciler
@@ -767,12 +769,12 @@ impl PhenixHarness {
     }
 
     pub fn kernel_only() -> Self {
-        let resolved = ResolvedHarness::resolve([], [], [], &Authority::default())
+        let resolved = ResolvedGeneration::resolve([], [], [], &Authority::default())
             .expect("empty kernel-only composition is valid");
         let mut kernel = Kernel::kernel_only();
         kernel
-            .activate_resolved_harness(&resolved)
-            .expect("kernel-only resolved Harness activates");
+            .activate_resolved_generation(&resolved)
+            .expect("kernel-only resolved generation activates");
         Self {
             kernel,
             reconciler: GraphReconciler::new(resolved),
@@ -784,14 +786,14 @@ impl PhenixHarness {
         &self.application_agent_tools
     }
 
-    pub fn default_suite() -> Result<Self, HarnessBuildError> {
-        HarnessBuilder::with_default_suite()?.build()
+    pub fn default_suite() -> Result<Self, PhenixRuntimeBuildError> {
+        PhenixRuntimeBuilder::with_default_suite()?.build()
     }
 
     pub fn default_suite_with_persistence(
         persistence: impl PersistenceBackend + 'static,
-    ) -> Result<Self, HarnessBuildError> {
-        HarnessBuilder::with_default_suite()?.build_with_persistence(persistence)
+    ) -> Result<Self, PhenixRuntimeBuildError> {
+        PhenixRuntimeBuilder::with_default_suite()?.build_with_persistence(persistence)
     }
 
     pub fn invoke(
@@ -806,7 +808,7 @@ impl PhenixHarness {
 
     pub fn invoke_in_generation(
         &mut self,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
         service: &phenix_core::ServiceId,
         input: &[u8],
         constraints: &RootExecutionConstraints,
@@ -821,7 +823,7 @@ impl PhenixHarness {
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityId, ContextResourceId, ContextRevisionId, LayerResult, PhenixValue, Project,
+        ContextResourceId, ContextRevisionId, LayerResult, PermissionId, PhenixValue, Project,
         ServiceContribution, ServiceId, ServiceRole, SessionId,
     };
     use phenix_plugin_catalog::{
@@ -839,8 +841,8 @@ mod tests {
         PluginId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn service() -> ServiceId {
@@ -964,7 +966,7 @@ mod tests {
 
     #[test]
     fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
-        let basic = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+        let basic = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
             BASIC_AGENT_CONFIGURATION.to_owned(),
         ]))
         .unwrap();
@@ -996,7 +998,7 @@ mod tests {
         }
         basic.build().unwrap();
 
-        let advanced = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+        let advanced = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
             ADVANCED_AGENT_CONFIGURATION.to_owned(),
         ]))
         .unwrap();
@@ -1030,7 +1032,8 @@ mod tests {
     fn product_configurations_resolve_providers_and_frontend_sdk() {
         for root in [BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION] {
             let builder =
-                HarnessBuilder::with_selected_suite(&BTreeSet::from([root.to_owned()])).unwrap();
+                PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([root.to_owned()]))
+                    .unwrap();
             let ids = builder
                 .manifests
                 .iter()
@@ -1052,7 +1055,7 @@ mod tests {
 
             let harness = builder.build().unwrap();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap();
         }
@@ -1060,7 +1063,7 @@ mod tests {
 
     #[test]
     fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
-        let builder = HarnessBuilder::with_selected_suite(&BTreeSet::from([
+        let builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
             FULL_PRODUCT_CONFIGURATION.to_owned(),
         ]))
         .unwrap();
@@ -1093,7 +1096,7 @@ mod tests {
 
     #[test]
     fn alternate_memory_provider_replaces_default_without_core_changes() {
-        let mut builder = HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(
                 service_manifest(
@@ -1120,7 +1123,7 @@ mod tests {
     fn harness_builder_applies_layer_policy() {
         let service = service();
         let layer_id = plugin("fixture-layer");
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(manifest("terminal", 1), || Box::new(Echo(b"terminal")))
             .unwrap();
@@ -1155,7 +1158,7 @@ mod tests {
         let service = service();
         let active_plugin = plugin("fixture.active");
         let trial_plugin = plugin("fixture.trial");
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(
                 service_manifest(
@@ -1174,7 +1177,7 @@ mod tests {
         harness
             .kernel_mut()
             .preload_embedded_factory(trial_plugin.clone(), || Box::new(Echo(b"trial")));
-        let candidate = ResolvedHarness::resolve(
+        let candidate = ResolvedGeneration::resolve(
             [service_manifest(
                 trial_plugin.as_str(),
                 service.clone(),
@@ -1233,9 +1236,9 @@ mod tests {
 
     #[test]
     fn layer_policy_is_part_of_resolved_generation_identity() {
-        fn generation(required: bool) -> GraphGenerationId {
+        fn generation(required: bool) -> GenerationId {
             let service = service();
-            let mut builder = HarnessBuilder::new();
+            let mut builder = PhenixRuntimeBuilder::new();
             builder
                 .add_embedded(manifest("terminal", 1), || Box::new(Echo(b"terminal")))
                 .unwrap();
@@ -1263,7 +1266,7 @@ mod tests {
 
     #[test]
     fn efficiency_collection_requires_terminal_outcome_provider() {
-        let mut harness = HarnessBuilder::with_default_suite()
+        let mut harness = PhenixRuntimeBuilder::with_default_suite()
             .unwrap()
             .build()
             .unwrap();
@@ -1300,14 +1303,15 @@ mod tests {
     #[test]
     fn benchmark_outcomes_are_opt_in_but_selectable() {
         let benchmark = benchmark_outcome_manifest().id.as_str().to_owned();
-        let default = HarnessBuilder::with_default_suite().unwrap();
+        let default = PhenixRuntimeBuilder::with_default_suite().unwrap();
         assert!(!default
             .manifests
             .iter()
             .any(|manifest| manifest.id.as_str() == benchmark));
 
         let selected =
-            HarnessBuilder::with_selected_suite(&BTreeSet::from([benchmark.clone()])).unwrap();
+            PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([benchmark.clone()]))
+                .unwrap();
         assert!(selected
             .manifests
             .iter()
@@ -1325,7 +1329,8 @@ mod tests {
             .id
             .as_str()
             .to_owned();
-        let builder = HarnessBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
+        let builder =
+            PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
 
         assert!(builder
             .manifests
@@ -1335,7 +1340,7 @@ mod tests {
 
     #[test]
     fn kernel_only_harness_has_no_userspace_plugins() {
-        let mut harness = PhenixHarness::kernel_only();
+        let mut harness = PhenixRuntime::kernel_only();
         harness.activate().unwrap();
         assert_eq!(harness.kernel().config().manifests().count(), 0);
         let input = serde_json::to_vec(&SessionCommand::Get {
@@ -1360,7 +1365,7 @@ mod tests {
 
     #[test]
     fn default_harness_routes_first_party_services_through_kernel_contracts() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
         let snapshot = RepositoryWorkSnapshot {
@@ -1465,7 +1470,7 @@ mod tests {
     fn first_party_session_provider_is_replaceable_through_normal_resolution() {
         let alternate = serde_json::to_vec(&SessionResponse::Session { session: None }).unwrap();
         let alternate_factory = alternate.clone();
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder.set_component_authority(session_authority());
         builder
             .add_embedded(session_manifest(), session_factory)
@@ -1502,7 +1507,7 @@ mod tests {
         })
         .unwrap();
         let alternate_factory = alternate.clone();
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder.set_component_authority(default_suite_authority());
         builder
             .add_embedded(
@@ -1551,7 +1556,7 @@ mod tests {
         })
         .unwrap();
         let response_factory = response.clone();
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(
                 service_manifest(
@@ -1579,7 +1584,7 @@ mod tests {
 
     #[test]
     fn product_policy_can_replace_provider_without_kernel_changes() {
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(manifest("first-party", 10), || Box::new(Echo(b"first")))
             .unwrap();
@@ -1610,7 +1615,7 @@ mod tests {
 
     #[test]
     fn omitting_provider_removes_it_from_product_composition() {
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(manifest("first-party", 10), || Box::new(Echo(b"first")))
             .unwrap();
@@ -1653,7 +1658,7 @@ mod exact_selected_suite_tests {
     #[test]
     fn explicit_workspace_selection_does_not_inject_local_environment() {
         let enabled = BTreeSet::from(["phenix.workspace".to_owned()]);
-        let builder = HarnessBuilder::with_selected_suite(&enabled)
+        let builder = PhenixRuntimeBuilder::with_selected_suite(&enabled)
             .expect("workspace is a known first-party plugin");
         let selected = builder
             .manifests

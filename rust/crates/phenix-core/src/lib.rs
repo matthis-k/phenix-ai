@@ -6,7 +6,7 @@
 mod agent;
 mod artifact;
 mod authority;
-mod capability;
+mod callable;
 mod composition;
 mod configuration;
 #[cfg(test)]
@@ -45,6 +45,10 @@ mod plugin_build_loading_regression;
 #[cfg(test)]
 mod plugin_management_regression;
 #[cfg(test)]
+mod plugin_runtime_adapter_host_regression;
+#[cfg(test)]
+mod plugin_runtime_adapter_regression;
+#[cfg(test)]
 mod provider_availability_regression;
 #[cfg(test)]
 mod provider_fallback_regression;
@@ -52,10 +56,6 @@ mod provider_fallback_regression;
 mod provider_rebind_generation_regression;
 #[cfg(test)]
 mod runtime_component_parity_regression;
-#[cfg(test)]
-mod runtime_provider_host_regression;
-#[cfg(test)]
-mod runtime_provider_regression;
 #[cfg(test)]
 mod runtime_topology_generation_regression;
 #[cfg(test)]
@@ -75,19 +75,19 @@ pub use agent::{
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;
-pub use capability::{
-    CapabilityError, CapabilityHandler, CapabilityInvokeInput, CapabilityInvokeResult,
-    CapabilityRegistry, SharedCapabilityRegistry,
+pub use callable::{
+    CallableError, CallableHandler, CallableInvocation, CallableInvocationResult, CallableRegistry,
+    SharedCallableRegistry,
 };
 pub use composition::activation::{
-    ActiveResolvedGraph, ResolvedHarnessActivation, ResolvedHarnessActivationError,
+    ActiveGenerationGraph, ResolvedGenerationActivation, ResolvedGenerationActivationError,
 };
 pub use composition::component::{
     ComponentGraphError, ResolvedComponent, ResolvedComponentGraph, ResolvedImport,
     ResolvedImportHandle, ResolvedListener, ResolvedProviderPlan,
 };
 pub use composition::component_invocation::ComponentInvocationError;
-pub use composition::inspection::{ResolvedHarnessInspection, ResolvedListenerInspection};
+pub use composition::inspection::{ResolvedGenerationInspection, ResolvedListenerInspection};
 pub use composition::manifest::{
     ComponentEntryTrigger, ComponentExport, ComponentImport, ComponentListener, ComponentManifest,
     ComponentProcessArgument, EntryTriggerKind, ListenerProjection, PluginArtifact,
@@ -98,12 +98,15 @@ pub use composition::provider_resolution::{
     ProviderSelectionReason,
 };
 pub use composition::registry::{
-    runtime_provider_runtime, runtime_provider_service, KernelConfig, KernelError,
-    KernelPolicyIdentity, LayerPolicy, ProviderBinding, ResolvedComponentDispatchPlan,
-    ResolvedDispatchTopology, ResolvedLayerPlan, ResolvedServiceChain, ResolvedServicePlan,
-    ResolvedTerminalPlan, RuntimeBinding, EMBEDDED_RUNTIME, RUNTIME_PROVIDER_SERVICE_PREFIX,
+    plugin_runtime_adapter_id_from_service, plugin_runtime_adapter_service, KernelConfig,
+    KernelError, KernelPolicyIdentity, LayerPolicy, PluginRuntimeBinding, ProviderBinding,
+    ResolvedComponentDispatchPlan, ResolvedDispatchTopology, ResolvedLayerPlan,
+    ResolvedServiceChain, ResolvedServicePlan, ResolvedTerminalPlan, EMBEDDED_RUNTIME,
+    PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX,
 };
-pub use composition::resolver::{ResolvedHarness, ResolvedHarnessError, RuntimeGeneration};
+pub use composition::resolver::{
+    GenerationResolutionError, GenerationTopology, ResolvedGeneration,
+};
 pub use configuration::{
     ConfigContribution, ConfigContributionSource, ConfigMergeError, ConfigNamespace,
     ConfigSourceClass, ConfigurationFrontendMetadata, FrontendConfigContribution,
@@ -145,8 +148,8 @@ pub use observable::{
     ValueChange, ValueId, ValuePath, ValuePathSegment, ValueVersion, OBSERVABLE_CONTRACT,
 };
 pub use persistence::backend::{
-    BackendFeature, DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
-    PersistenceError, SchemaMigration, TransactionOp,
+    DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
+    PersistenceBackendFeature, PersistenceError, SchemaMigration, TransactionOp,
 };
 pub use persistence::bootstrap::{
     resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBootstrapDependency,
@@ -158,14 +161,14 @@ pub use persistence::provider::{
     PersistenceProviderError, PreparedPersistence,
 };
 pub use phenix_contract::{
-    Bytes, CallableId, CallableRef, CapabilityGenerationId, CapabilityId, CapabilityOwnerId,
-    ClientConnectionId, ComponentId, ComponentInterface, ConfigurationFrontendId,
-    ContextResourceId, ContextRevisionId, Contract, ContractId, ContractValue, EventTypeId, Exact,
-    GraphGenerationId, HasPhenixSchema, InterfaceCompatibility, InterfaceId, InterfaceSchema,
-    InterfaceSchemaMismatch, Key, ModelId, ObjectRef, PhenixContract, PhenixSchema, PhenixValue,
-    PluginId, Project, ReferenceId, ResourceNamespace, RoutingProfileId, RuntimeId,
-    SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId, SessionId,
-    SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
+    Bytes, CallableId, CallableRef, ClientConnectionId, ComponentId, ComponentInterface,
+    ConfigurationFrontendId, ContextResourceId, ContextRevisionId, Contract, ContractId,
+    ContractValue, EventTypeId, Exact, GenerationId, HasPhenixSchema, InterfaceCompatibility,
+    InterfaceId, InterfaceSchema, InterfaceSchemaMismatch, Key, ModelFeatureGenerationId, ModelId,
+    ObjectRef, PermissionId, PhenixContract, PhenixSchema, PhenixValue, PluginId, PluginRuntimeId,
+    Project, ReferenceGenerationId, ReferenceId, ReferenceOwnerId, ResourceNamespace,
+    RoutingProfileId, SchemaCompatibility, SchemaMismatch, SdkNamespace, SdkResourceId, ServiceId,
+    SessionId, SkillId, SubscriptionId, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
 pub use plugin::build::{
     BuildArgument, BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
@@ -194,8 +197,8 @@ pub use reconciliation::inspection::CandidateResolutionInspection;
 pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
     ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeProvider, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
-    RootExecutionConstraints, RootExecutionHandle, RuntimePluginCandidate, RuntimeTraceBuffer,
+    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginState, ProvenanceBuffer,
+    ProviderEndpointProvenance, RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer,
     RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
     DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,

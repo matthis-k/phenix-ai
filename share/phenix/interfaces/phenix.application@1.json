@@ -38,8 +38,8 @@
       "capability": "phenix.application.capability.discovery@1"
     },
     "phenix.application.capability-invoke@1": {
-      "input": "phenix.application.type.capability-invoke-input@1",
-      "output": "phenix.application.type.capability-invoke-result@1",
+      "input": "phenix.application.type.callable-invocation@1",
+      "output": "phenix.application.type.callable-invocation-result@1",
       "error": "phenix.application.error@1",
       "capability": "phenix.application.capability.capabilities@1"
     },
@@ -225,8 +225,8 @@
   },
   "callbacks": {
     "phenix.application.capability-call@1": {
-      "request": "phenix.application.type.capability-invoke-input@1",
-      "response": "phenix.application.type.capability-invoke-result@1",
+      "request": "phenix.application.type.callable-invocation@1",
+      "response": "phenix.application.type.callable-invocation-result@1",
       "capability": "phenix.application.capability.capabilities@1",
       "semantics": "data"
     },
@@ -607,6 +607,25 @@
         }
       }
     },
+    "phenix.application.type.callable-invocation-result@1": {
+      "type": "table",
+      "value": {
+        "output": {
+          "type": "any"
+        }
+      }
+    },
+    "phenix.application.type.callable-invocation@1": {
+      "type": "table",
+      "value": {
+        "callable": {
+          "type": "any"
+        },
+        "input": {
+          "type": "any"
+        }
+      }
+    },
     "phenix.application.type.callable-invoke-input@1": {
       "type": "table",
       "value": {
@@ -651,25 +670,6 @@
               }
             }
           }
-        }
-      }
-    },
-    "phenix.application.type.capability-invoke-input@1": {
-      "type": "table",
-      "value": {
-        "callable": {
-          "type": "any"
-        },
-        "input": {
-          "type": "any"
-        }
-      }
-    },
-    "phenix.application.type.capability-invoke-result@1": {
-      "type": "table",
-      "value": {
-        "output": {
-          "type": "any"
         }
       }
     },

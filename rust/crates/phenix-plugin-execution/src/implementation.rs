@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, KernelError, PluginContext,
+    Authority, ComponentInterface, DurableSchema, KernelError, PermissionId, PluginContext,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace,
     ServiceContribution, ServiceId, TransactionOp,
 };
@@ -31,7 +31,7 @@ fn parse_execution_authority(value: &ExecutionAuthority) -> Result<Authority, St
     value
         .capabilities
         .iter()
-        .map(|value| CapabilityId::parse(value).map_err(|error| error.to_string()))
+        .map(|value| PermissionId::parse(value).map_err(|error| error.to_string()))
         .collect::<Result<Vec<_>, _>>()
         .map(Authority::new)
 }
@@ -106,8 +106,8 @@ fn execution_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(EXECUTION_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 struct ExecutionPlugin;
@@ -639,8 +639,8 @@ fn validate_identity(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, LocalPersistence, PluginState, ResolvedHarness,
-        ResolvedHarnessActivation,
+        Kernel, KernelConfig, LocalPersistence, PluginState, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use std::{
         collections::BTreeSet,
@@ -668,10 +668,10 @@ mod tests {
         let plugin = manifest.id.clone();
         let persistence = LocalPersistence::open(path).unwrap();
         let resolved =
-            ResolvedHarness::resolve([manifest.clone()], [], [], &caller_authority()).unwrap();
+            ResolvedGeneration::resolve([manifest.clone()], [], [], &caller_authority()).unwrap();
         let mut kernel =
             Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin.clone(), execution_factory)
             .unwrap();

@@ -65,11 +65,11 @@ pub struct Structural16 { pub r#description: String,pub r#id: String,pub r#input
 pub struct PhenixApplicationTypeCallables1Type { pub r#callables: Vec<Structural16>, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeCallables1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.callables@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeCapabilityInvokeInput1Type { pub r#callable: phenix_core::PhenixValue,pub r#input: phenix_core::PhenixValue, }
-impl phenix_core::PhenixContract for PhenixApplicationTypeCapabilityInvokeInput1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.capability-invoke-input@1").expect("generated contract id is valid") } }
+pub struct PhenixApplicationTypeCallableInvocation1Type { pub r#callable: phenix_core::PhenixValue,pub r#input: phenix_core::PhenixValue, }
+impl phenix_core::PhenixContract for PhenixApplicationTypeCallableInvocation1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.callable-invocation@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
-pub struct PhenixApplicationTypeCapabilityInvokeResult1Type { pub r#output: phenix_core::PhenixValue, }
-impl phenix_core::PhenixContract for PhenixApplicationTypeCapabilityInvokeResult1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.capability-invoke-result@1").expect("generated contract id is valid") } }
+pub struct PhenixApplicationTypeCallableInvocationResult1Type { pub r#output: phenix_core::PhenixValue, }
+impl phenix_core::PhenixContract for PhenixApplicationTypeCallableInvocationResult1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.callable-invocation-result@1").expect("generated contract id is valid") } }
 #[derive(Clone, Debug, PartialEq, phenix_sdk_macros::PhenixValue)]
 pub struct PhenixApplicationTypeCapabilityList1Type { pub r#capabilities: Vec<String>,pub r#interface: String, }
 impl phenix_core::PhenixContract for PhenixApplicationTypeCapabilityList1Type { fn contract_id() -> phenix_core::ContractId { phenix_core::ContractId::parse("phenix.application.type.capability-list@1").expect("generated contract id is valid") } }
@@ -1638,8 +1638,8 @@ pub fn type_schemas() -> std::collections::BTreeMap<phenix_core::ContractId, phe
 (<PhenixApplicationTypeCallableInvokeInput1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCallableInvokeInput1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeCallableResult1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCallableResult1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeCallables1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCallables1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
-(<PhenixApplicationTypeCapabilityInvokeInput1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCapabilityInvokeInput1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
-(<PhenixApplicationTypeCapabilityInvokeResult1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCapabilityInvokeResult1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
+(<PhenixApplicationTypeCallableInvocation1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCallableInvocation1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
+(<PhenixApplicationTypeCallableInvocationResult1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCallableInvocationResult1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeCapabilityList1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeCapabilityList1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeClientToolAddInput1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeClientToolAddInput1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
 (<PhenixApplicationTypeClientToolAdmission1Type as phenix_core::PhenixContract>::contract_id(), <PhenixApplicationTypeClientToolAdmission1Type as phenix_core::HasPhenixSchema>::phenix_schema()),
@@ -1741,8 +1741,8 @@ pub struct PhenixApplicationCapabilities1Operation;
 impl phenix_application_interface::Operation for PhenixApplicationCapabilities1Operation { const ID: &'static str = "phenix.application.capabilities@1"; const CAPABILITY: &'static str = "phenix.application.capability.discovery@1"; type Input = PhenixApplicationTypeEmpty1Type; type Output = PhenixApplicationTypeCapabilityList1Type; }
 impl PhenixApplicationCapabilities1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeEmpty1Type) -> Result<PhenixApplicationTypeCapabilityList1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
 pub struct PhenixApplicationCapabilityInvoke1Operation;
-impl phenix_application_interface::Operation for PhenixApplicationCapabilityInvoke1Operation { const ID: &'static str = "phenix.application.capability-invoke@1"; const CAPABILITY: &'static str = "phenix.application.capability.capabilities@1"; type Input = PhenixApplicationTypeCapabilityInvokeInput1Type; type Output = PhenixApplicationTypeCapabilityInvokeResult1Type; }
-impl PhenixApplicationCapabilityInvoke1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeCapabilityInvokeInput1Type) -> Result<PhenixApplicationTypeCapabilityInvokeResult1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
+impl phenix_application_interface::Operation for PhenixApplicationCapabilityInvoke1Operation { const ID: &'static str = "phenix.application.capability-invoke@1"; const CAPABILITY: &'static str = "phenix.application.capability.capabilities@1"; type Input = PhenixApplicationTypeCallableInvocation1Type; type Output = PhenixApplicationTypeCallableInvocationResult1Type; }
+impl PhenixApplicationCapabilityInvoke1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeCallableInvocation1Type) -> Result<PhenixApplicationTypeCallableInvocationResult1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
 pub struct PhenixApplicationClientToolAdd1Operation;
 impl phenix_application_interface::Operation for PhenixApplicationClientToolAdd1Operation { const ID: &'static str = "phenix.application.client-tool-add@1"; const CAPABILITY: &'static str = "phenix.application.capability.client-tools@1"; type Input = PhenixApplicationTypeClientToolAddInput1Type; type Output = PhenixApplicationTypeClientToolAdmission1Type; }
 impl PhenixApplicationClientToolAdd1Operation { pub async fn invoke<T: phenix_application_interface::ApplicationTransport>(client: &phenix_application_interface::ApplicationClient<T>, input: PhenixApplicationTypeClientToolAddInput1Type) -> Result<PhenixApplicationTypeClientToolAdmission1Type, phenix_application_interface::types::ApplicationError> { client.invoke::<Self>(input).await } }
@@ -1830,9 +1830,9 @@ pub type PhenixApplicationObservableUpdate1Event = PhenixApplicationTypeObservab
 pub const PHENIXAPPLICATIONOBSERVABLEUPDATE1EVENT: &str = "phenix.application.observable-update@1";
 pub type PhenixApplicationSessionUpdate1Event = PhenixApplicationTypeSessionUpdate1Type;
 pub const PHENIXAPPLICATIONSESSIONUPDATE1EVENT: &str = "phenix.application.session-update@1";
-pub type PhenixApplicationCapabilityCall1CallbackRequest = PhenixApplicationTypeCapabilityInvokeInput1Type;
+pub type PhenixApplicationCapabilityCall1CallbackRequest = PhenixApplicationTypeCallableInvocation1Type;
 pub const PHENIXAPPLICATIONCAPABILITYCALL1CALLBACKREQUEST: &str = "phenix.application.capability-call@1";
-pub type PhenixApplicationCapabilityCall1CallbackResponse = PhenixApplicationTypeCapabilityInvokeResult1Type;
+pub type PhenixApplicationCapabilityCall1CallbackResponse = PhenixApplicationTypeCallableInvocationResult1Type;
 pub const PHENIXAPPLICATIONCAPABILITYCALL1CALLBACKRESPONSE: &str = "phenix.application.capability-call@1";
 pub type PhenixApplicationElicitation1CallbackRequest = PhenixApplicationTypeElicitationRequest1Type;
 pub const PHENIXAPPLICATIONELICITATION1CALLBACKREQUEST: &str = "phenix.application.elicitation@1";

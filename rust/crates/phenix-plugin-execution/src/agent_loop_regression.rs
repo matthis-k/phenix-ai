@@ -4,11 +4,12 @@ use crate::{
     ExecutionConfigurationCommand, ExecutionConfigurationResponse,
 };
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, Kernel, KernelError, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, PhenixSchema, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
-    SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    ModelToolResult, PermissionId, PhenixSchema, PhenixValue, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, Project, ResolvedGeneration,
+    ResolvedGenerationActivation, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    SessionId,
 };
 use phenix_plugin_basic_agent::{
     agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
@@ -43,9 +44,9 @@ const PERSISTENCE_WRITE: &str = "kernel.persistence.write";
 
 fn regression_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).unwrap(),
-        CapabilityId::parse(PERSISTENCE_READ).unwrap(),
-        CapabilityId::parse(PERSISTENCE_WRITE).unwrap(),
+        PermissionId::parse(PERSISTENCE_SCHEMA).unwrap(),
+        PermissionId::parse(PERSISTENCE_READ).unwrap(),
+        PermissionId::parse(PERSISTENCE_WRITE).unwrap(),
     ])
 }
 
@@ -488,7 +489,7 @@ fn fixture_attempt() -> StepAttemptRecord {
     attempt
 }
 
-fn resolved_harness(with_provider: bool) -> ResolvedHarness {
+fn resolved_generation(with_provider: bool) -> ResolvedGeneration {
     let authority = regression_authority();
     let execution = execution_manifest(authority.clone());
     let agent_loop = agent_loop_manifest(authority.clone());
@@ -504,18 +505,18 @@ fn resolved_harness(with_provider: bool) -> ResolvedHarness {
         plugins.push(provider_manifest());
         components.push(provider_component());
     }
-    ResolvedHarness::resolve(plugins, components, [], &ceiling).unwrap()
+    ResolvedGeneration::resolve(plugins, components, [], &ceiling).unwrap()
 }
 
 fn kernel(with_provider: bool) -> (Kernel, PluginId, Arc<AtomicU32>, Arc<Mutex<Vec<String>>>) {
-    let resolved = resolved_harness(with_provider);
+    let resolved = resolved_generation(with_provider);
     let execution = execution_manifest(Authority::default()).id;
     let agent_loop = agent_loop_manifest(Authority::default()).id;
     let executions = Arc::new(AtomicU32::new(0));
     let progress = Arc::new(Mutex::new(Vec::new()));
     let cancel_on_next_control = Arc::new(AtomicBool::new(false));
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(execution, execution_factory)
         .unwrap();

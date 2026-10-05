@@ -1,5 +1,5 @@
 use crate::{
-    Authority, Exact, GraphGenerationId, NamespaceTransaction, PhenixValue, PluginId, Project,
+    Authority, Exact, GenerationId, NamespaceTransaction, PhenixValue, PluginId, Project,
     ResourceNamespace, TransactionOp, Type, TypeKind, ValueCodec, ValueError,
 };
 use parking_lot::Mutex;
@@ -140,19 +140,19 @@ impl TransactionContext {
 }
 
 pub(crate) struct PreparedMutationScope {
-    generation: Option<GraphGenerationId>,
+    generation: Option<GenerationId>,
     prepared: Mutex<BTreeMap<PreparedMutationHandle, PreparedMutation>>,
 }
 
 impl PreparedMutationScope {
-    pub(crate) fn new(generation: Option<&GraphGenerationId>) -> Self {
+    pub(crate) fn new(generation: Option<&GenerationId>) -> Self {
         Self {
             generation: generation.cloned(),
             prepared: Mutex::new(BTreeMap::new()),
         }
     }
 
-    pub(crate) fn generation(&self) -> Option<&GraphGenerationId> {
+    pub(crate) fn generation(&self) -> Option<&GenerationId> {
         self.generation.as_ref()
     }
 

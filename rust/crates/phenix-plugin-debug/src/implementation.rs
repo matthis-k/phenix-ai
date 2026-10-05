@@ -3,10 +3,10 @@ use crate::{
     ModelProbeCommand, PlanningProbeCommand, SessionProbeCommand,
 };
 use phenix_core::{
-    Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GraphGenerationId,
-    LogSink, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance,
-    PluginListener, PluginManifest, ResolvedListener, RuntimeTraceBuffer, RuntimeTraceEvent,
-    RuntimeTraceSink, SdkClient, ServiceContribution, ServiceId, StructuredLogger,
+    Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GenerationId, LogSink,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginInstance, PluginListener,
+    PluginManifest, ResolvedListener, RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceSink,
+    SdkClient, ServiceContribution, ServiceId, StructuredLogger,
 };
 use phenix_sdk::{
     AgentDiagnosticEvent, ContextInterface, FrontendInterface, JobInterface, ModelDiagnosticEvent,
@@ -233,7 +233,7 @@ impl PluginInstance for crate::Plugin {
     fn bind_plugin_listener(
         &mut self,
         listener: &ResolvedListener,
-        _generation: &GraphGenerationId,
+        _generation: &GenerationId,
     ) -> Option<Result<Arc<dyn PluginListener>, String>> {
         match listener.declaration.method.as_str() {
             MODEL_DIAGNOSTIC_LISTENER_METHOD => Some(Ok(Arc::new(ModelDiagnosticLogger))),
@@ -420,7 +420,9 @@ fn record_trace_detail(kind: &str, summary: serde_json::Value, detail: serde_jso
 mod tests {
     use super::*;
     use crate::debug_component_manifest;
-    use phenix_core::{Kernel, KernelConfig, Project, ResolvedHarness, ResolvedHarnessActivation};
+    use phenix_core::{
+        Kernel, KernelConfig, Project, ResolvedGeneration, ResolvedGenerationActivation,
+    };
     use phenix_plugin_sessions::{session_component_manifest, session_factory, session_manifest};
     use phenix_sdk::SessionResponse;
 
@@ -432,7 +434,7 @@ mod tests {
         let debug_manifest = debug_manifest(authority.clone());
         let debug_id = debug_manifest.id.clone();
         let manifests = vec![session_manifest, debug_manifest];
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             manifests.clone(),
             [
                 session_component_manifest(),
@@ -449,7 +451,7 @@ mod tests {
         kernel
             .register_embedded_factory(debug_id, debug_factory)
             .unwrap();
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel.activate_all().unwrap();
 
         let input = serde_json::to_vec(&PhenixValue::from(&DebugCommand::Snapshot)).unwrap();

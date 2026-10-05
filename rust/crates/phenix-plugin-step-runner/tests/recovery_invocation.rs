@@ -1,9 +1,9 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, Kernel, KernelConfig, LocalPersistence, ModelId, ModelInferenceRequest,
-    ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation,
-    ServiceContribution, ServiceId, ServiceRole, ValueError,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
+    KernelConfig, LocalPersistence, ModelId, ModelInferenceRequest, ModelInferenceResponse,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, ReferenceGenerationId, ResolvedGeneration,
+    ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -219,9 +219,9 @@ impl PluginInstance for RecoverySupport {
 
 fn authority() -> Authority {
     Authority::new([
-        phenix_core::CapabilityId::parse("kernel.persistence.schema").unwrap(),
-        phenix_core::CapabilityId::parse("kernel.persistence.read").unwrap(),
-        phenix_core::CapabilityId::parse("kernel.persistence.write").unwrap(),
+        phenix_core::PermissionId::parse("kernel.persistence.schema").unwrap(),
+        phenix_core::PermissionId::parse("kernel.persistence.read").unwrap(),
+        phenix_core::PermissionId::parse("kernel.persistence.write").unwrap(),
     ])
 }
 
@@ -330,7 +330,7 @@ fn kernel(path: &PathBuf) -> Kernel {
     let runner_id = runner.id.clone();
     let provider_id = provider.id.clone();
     let support_id = support.id.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [
             execution.clone(),
             context.clone(),
@@ -355,7 +355,7 @@ fn kernel(path: &PathBuf) -> Kernel {
         KernelConfig::new([execution, context, models, runner, provider, support]).unwrap(),
         persistence,
     );
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(execution_id, execution_factory)
         .unwrap();
@@ -479,7 +479,7 @@ fn setup(kernel: &mut Kernel) {
         &ModelCommand::PublishCapabilities {
             capabilities: EffectiveModelCapabilities {
                 target: target(),
-                generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                generation: ReferenceGenerationId::parse("generation-1").unwrap(),
                 context: ContextControl::ReplaceableTurns,
                 capacity: CapacityKnowledge::Known {
                     limits: ModelLimits {

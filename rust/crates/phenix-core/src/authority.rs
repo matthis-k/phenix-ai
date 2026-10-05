@@ -1,43 +1,43 @@
-use crate::CapabilityId;
+use crate::PermissionId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Authority {
-    capabilities: BTreeSet<CapabilityId>,
+    permissions: BTreeSet<PermissionId>,
 }
 
 impl Authority {
-    pub fn new(capabilities: impl IntoIterator<Item = CapabilityId>) -> Self {
+    pub fn new(permissions: impl IntoIterator<Item = PermissionId>) -> Self {
         Self {
-            capabilities: capabilities.into_iter().collect(),
+            permissions: permissions.into_iter().collect(),
         }
     }
 
-    pub fn permits(&self, capability: &CapabilityId) -> bool {
-        self.capabilities.contains(capability)
+    pub fn permits(&self, permission: &PermissionId) -> bool {
+        self.permissions.contains(permission)
     }
 
     pub fn permits_all(&self, required: &Self) -> bool {
         required
-            .capabilities
+            .permissions
             .iter()
-            .all(|capability| self.permits(capability))
+            .all(|permission| self.permits(permission))
     }
 
     pub fn attenuate(&self, requested: &Self) -> Self {
         Self {
-            capabilities: self
-                .capabilities
-                .intersection(&requested.capabilities)
+            permissions: self
+                .permissions
+                .intersection(&requested.permissions)
                 .cloned()
                 .collect(),
         }
     }
 
-    pub fn capabilities(&self) -> impl Iterator<Item = &CapabilityId> {
-        self.capabilities.iter()
+    pub fn permissions(&self) -> impl Iterator<Item = &PermissionId> {
+        self.permissions.iter()
     }
 }
 
@@ -45,8 +45,8 @@ impl Authority {
 mod tests {
     use super::*;
 
-    fn cap(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn cap(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     #[test]

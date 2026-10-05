@@ -1,8 +1,8 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, Kernel, KernelError, PhenixValue, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedHarness,
-    ResolvedHarnessActivation, ServiceId,
+    PluginId, PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
+    ResolvedGenerationActivation, ServiceId,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -125,7 +125,7 @@ fn unavailable_primary_does_not_search_unplanned_providers() {
     let secondary = component("secondary-component");
     let policy =
         ProviderCompositionPolicy::new().with_explicit_binding(interface.clone(), primary.clone());
-    let resolved = ResolvedHarness::resolve_with_provider_policy(
+    let resolved = ResolvedGeneration::resolve_with_provider_policy(
         [
             manifest("consumer"),
             manifest("primary"),
@@ -152,7 +152,7 @@ fn unavailable_primary_does_not_search_unplanned_providers() {
     let primary_calls = Arc::new(AtomicUsize::new(0));
     let secondary_calls = Arc::new(AtomicUsize::new(0));
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(plugin("consumer"), || Box::new(Consumer))
         .unwrap();

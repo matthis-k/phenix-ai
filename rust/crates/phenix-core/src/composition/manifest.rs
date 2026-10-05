@@ -1,7 +1,7 @@
 use crate::{
     ArtifactRevision, Authority, CallableId, ComponentId, EventFailurePolicy, EventTypeId,
-    InterfaceId, InterfaceSchema, PhenixSchema, PhenixValue, PluginId, ResourceNamespace,
-    RuntimeId, ServiceId, SubscriptionId,
+    InterfaceId, InterfaceSchema, PhenixSchema, PhenixValue, PluginId, PluginRuntimeId,
+    ResourceNamespace, ServiceId, SubscriptionId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -18,7 +18,10 @@ pub struct PluginArtifact {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PluginExecution<A = PluginArtifact> {
     Embedded,
-    Runtime { runtime: RuntimeId, artifact: A },
+    Runtime {
+        runtime: PluginRuntimeId,
+        artifact: A,
+    },
     ResourceOnly,
 }
 
@@ -185,7 +188,7 @@ mod tests {
             id: PluginId::parse("third-party").unwrap(),
             version: 7,
             execution: PluginExecution::Runtime {
-                runtime: RuntimeId::parse("vendor.runtime").unwrap(),
+                runtime: PluginRuntimeId::parse("vendor.runtime").unwrap(),
                 artifact: PluginArtifact {
                     locator: "plugin.wasm".into(),
                     revision: ArtifactRevision::from_content(b"fixture"),

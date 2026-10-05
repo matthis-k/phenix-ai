@@ -1,9 +1,9 @@
 use phenix_core::{
-    Authority, Bytes, CallableId, CapabilityId, ComponentExport, ComponentId, ComponentImport,
+    Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, InterfaceId, ModelToolCall, ModelToolDescriptor,
-    ModelToolResult, ModelToolTurn, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
-    SessionId, SharedPluginInvocation, ValueCodec,
+    ModelToolResult, ModelToolTurn, PermissionId, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
+    ServiceRole, SessionId, SharedPluginInvocation, ValueCodec,
 };
 use phenix_sdk::{
     agent_diagnostic_event_type, AgentDiagnosticEvent, DefaultInvocationCommand,
@@ -265,9 +265,9 @@ pub fn agent_loop_control_service() -> ServiceId {
 #[must_use]
 pub fn agent_loop_progress_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("kernel.persistence.read")
+        PermissionId::parse("kernel.persistence.read")
             .expect("static persistence read capability is valid"),
-        CapabilityId::parse("kernel.persistence.write")
+        PermissionId::parse("kernel.persistence.write")
             .expect("static persistence write capability is valid"),
     ])
 }
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn tool_execution_import_carries_agent_loop_authority() {
-        let shell = phenix_core::CapabilityId::parse("workspace.shell").unwrap();
+        let shell = phenix_core::PermissionId::parse("workspace.shell").unwrap();
         let component = agent_loop_component_manifest(Authority::new([shell.clone()]));
 
         assert!(
@@ -886,9 +886,9 @@ mod tests {
 
     #[test]
     fn progress_import_carries_only_durable_journal_authority() {
-        let shell = CapabilityId::parse("workspace.shell").unwrap();
-        let read = CapabilityId::parse("kernel.persistence.read").unwrap();
-        let write = CapabilityId::parse("kernel.persistence.write").unwrap();
+        let shell = PermissionId::parse("workspace.shell").unwrap();
+        let read = PermissionId::parse("kernel.persistence.read").unwrap();
+        let write = PermissionId::parse("kernel.persistence.write").unwrap();
         let component = agent_loop_component_manifest(Authority::new([shell.clone()]));
 
         assert!(component.imports[3].authority.permits(&read));

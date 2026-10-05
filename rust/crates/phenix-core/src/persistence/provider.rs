@@ -1,7 +1,8 @@
 use crate::{
-    resolve_persistence_bootstrap, BackendFeature, DurableSchemaRegistration, PersistenceBackend,
-    PersistenceBootstrapError, PersistenceError, PersistenceProviderDescriptor,
-    PersistenceProviderTransition, PluginId, ResolvedPersistenceBootstrap, StoreBinding,
+    resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBackend,
+    PersistenceBackendFeature, PersistenceBootstrapError, PersistenceError,
+    PersistenceProviderDescriptor, PersistenceProviderTransition, PluginId,
+    ResolvedPersistenceBootstrap, StoreBinding,
 };
 use std::{
     collections::BTreeSet,
@@ -167,12 +168,14 @@ pub(crate) fn prepare_durable_schema_set(
                 ));
             }
         }
-        if !registration.migrations.is_empty() && !supported.contains(&BackendFeature::Migrations) {
+        if !registration.migrations.is_empty()
+            && !supported.contains(&PersistenceBackendFeature::Migrations)
+        {
             return Err(schema_error(
                 registration,
                 PersistenceError::UnsupportedFeature {
                     namespace: registration.schema.namespace.clone(),
-                    feature: BackendFeature::Migrations,
+                    feature: PersistenceBackendFeature::Migrations,
                 },
             ));
         }

@@ -1,8 +1,8 @@
 use crate::{execution_factory, execution_manifest};
 use phenix_core::{
-    Authority, CapabilityId, ConfigContribution, ConfigContributionSource, ConfigNamespace,
-    ConfigurationFrontendId, Kernel, KernelConfig, LocalPersistence, PhenixValue, Project,
-    ResolvedHarness, ResolvedHarnessActivation,
+    Authority, ConfigContribution, ConfigContributionSource, ConfigNamespace,
+    ConfigurationFrontendId, Kernel, KernelConfig, LocalPersistence, PermissionId, PhenixValue,
+    Project, ResolvedGeneration, ResolvedGenerationActivation,
 };
 use phenix_sdk::{
     execution_service, ExecutionAuthority, ExecutionCommand, ExecutionRecord, ExecutionResponse,
@@ -14,8 +14,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn caller_authority() -> Authority {
@@ -45,7 +45,7 @@ fn generation_contribution(mode: &str) -> ConfigContribution {
 fn kernel_with(path: &PathBuf, mode: &str) -> Kernel {
     let manifest = execution_manifest(caller_authority());
     let plugin = manifest.id.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [manifest.clone()],
         [],
         [generation_contribution(mode)],
@@ -54,7 +54,7 @@ fn kernel_with(path: &PathBuf, mode: &str) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(KernelConfig::new([manifest]).unwrap(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(plugin, execution_factory)
         .unwrap();
@@ -103,7 +103,7 @@ fn temp_db() -> PathBuf {
 }
 
 #[test]
-fn restored_execution_lineage_stays_pinned_when_the_runtime_generation_changes() {
+fn restored_execution_lineage_stays_pinned_when_the_generation_topology_changes() {
     let path = temp_db();
     let old_generation;
     {

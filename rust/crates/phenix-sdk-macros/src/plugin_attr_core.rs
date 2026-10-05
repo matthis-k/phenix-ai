@@ -393,7 +393,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
                 ::phenix_sdk::StaticResourceDescriptor::explicit::<#ty>(
                     #id,
                     stringify!(#field),
-                    [#(::phenix_sdk::BackendFeature::#features),*],
+                    [#(::phenix_sdk::PersistenceBackendFeature::#features),*],
                 )
             }
         } else {
@@ -401,7 +401,7 @@ fn expand_struct(args: TokenStream, mut item: ItemStruct) -> syn::Result<TokenSt
                 ::phenix_sdk::StaticResourceDescriptor::derived::<#ty>(
                     &Self::plugin_id(),
                     stringify!(#field),
-                    [#(::phenix_sdk::BackendFeature::#features),*],
+                    [#(::phenix_sdk::PersistenceBackendFeature::#features),*],
                 )
             }
         }

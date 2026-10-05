@@ -1,10 +1,12 @@
 # Phenix AI
 
-This repository owns the generic Phenix runtime, runtime, internal client wire, independently packaged first-party plugins and protocol adapters, native client bindings, and the supported Harness product.
+This repository owns the generic Phenix kernel, runtime process, internal client wire, independently packaged first-party plugins and protocol adapters, native client bindings, and the supported Harness product.
 
 The canonical Neovim AI client lives in `matthis-k/phenix-ai.nvim`. The complete Neovim distribution lives in `matthis-k/phenix-nvim` and consumes that client. This repository owns frontend-neutral runtime behavior and contracts.
 
 ## Architecture
+
+See [glossary.md](glossary.md) for the canonical architecture vocabulary.
 
 ```text
 frontends / protocol adapters
@@ -25,7 +27,7 @@ frontends / protocol adapters
   selected plugin providers
 ```
 
-`phenix-core` owns plugin identity and lifecycle, deterministic service resolution, authority attenuation, generic persistence, events, tasks, the embedded runtime bootstrap, runtime-provider integration, and resource-only plugins. It does not own session, context, execution, planning, tool, model, frontend, or other first-party agent semantics.
+`phenix-core` owns plugin identity and lifecycle, deterministic service resolution, authority attenuation, generic persistence, events, tasks, the embedded runtime bootstrap, plugin runtime adapter integration, and resource-only plugins. It does not own session, context, execution, planning, tool, model, frontend, or other first-party agent semantics.
 
 `phenix-runtime` owns the generic server process and client transport. It hosts only configured plugins. A zero-plugin runtime has no first-party fallback behavior.
 
@@ -52,7 +54,7 @@ First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently se
 | `phenix-acp-stdio` | ACP stdio server and configured-runtime hand-off |
 | `phenix-plugin-catalog` | Thin embedded-factory catalog |
 | `phenix-harness` | Supported runtime + selected-plugin product assembly |
-| `phenix-backend-*` | Provider/backend adapters |
+| `phenix-model-adapter-*` | Model execution adapters |
 
 ## Product composition
 
@@ -102,7 +104,7 @@ Neovim-specific packaging is intentionally absent. `phenix-ai.nvim` composes the
 
 The runtime wire remains internal. Protocol adapters translate external protocols to configured runtime services without owning durable application state.
 
-Backend adapters translate execution requests into provider protocols. Provider conversation state is disposable. Durable Phenix state stays with the owning plugins.
+Model adapters translate execution requests into provider protocols. Provider conversation state is disposable. Durable Phenix state stays with the owning plugins.
 
 Provider plugins own authentication and credential state. Model routing owns provider selection. The Harness application layer projects both through the product API. None of these concerns become privileged core APIs or ambient process authority.
 

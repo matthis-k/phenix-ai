@@ -230,7 +230,7 @@ Primary files:
 Mechanical sequence:
 
 1. Define generation-owned dispatch topology types.
-2. Build service terminal and layer plans during resolved-harness construction.
+2. Build service terminal and layer plans during resolved-generation construction.
 3. Bind component import plans to prevalidated service identities.
 4. Store dispatch topology in `RuntimeGeneration`.
 5. Convert component invocation to one component-plan lookup.

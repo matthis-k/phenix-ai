@@ -9,16 +9,15 @@ mod std_value;
 mod structural_value;
 
 pub use contract::{
-    Bytes, CallableRef, CapabilityOwnerId, Contract, ContractId, ContractValue, Exact,
-    HasPhenixSchema, Key, ObjectRef, PhenixContract, PhenixSchema, PhenixValue, Project,
-    ReferenceId, SchemaCompatibility, SchemaMismatch, Type, TypeKind, ValueCodec, ValueError,
-    ValueMatch,
+    Bytes, CallableRef, Contract, ContractId, ContractValue, Exact, HasPhenixSchema, Key,
+    ObjectRef, PhenixContract, PhenixSchema, PhenixValue, Project, ReferenceId, ReferenceOwnerId,
+    SchemaCompatibility, SchemaMismatch, Type, TypeKind, ValueCodec, ValueError, ValueMatch,
 };
 pub use identity::{
-    CallableId, CapabilityGenerationId, CapabilityId, ClientConnectionId, ComponentId,
-    ConfigurationFrontendId, ContextResourceId, ContextRevisionId, EventTypeId, GraphGenerationId,
-    InterfaceId, ModelId, PluginId, ResourceNamespace, RoutingProfileId, RuntimeId, SdkNamespace,
-    SdkResourceId, ServiceId, SessionId, SkillId, SubscriptionId,
+    CallableId, ClientConnectionId, ComponentId, ConfigurationFrontendId, ContextResourceId,
+    ContextRevisionId, EventTypeId, GenerationId, InterfaceId, ModelFeatureGenerationId, ModelId,
+    PermissionId, PluginId, PluginRuntimeId, ReferenceGenerationId, ResourceNamespace,
+    RoutingProfileId, SdkNamespace, SdkResourceId, ServiceId, SessionId, SkillId, SubscriptionId,
 };
 pub use interface::{
     ComponentInterface, InterfaceCompatibility, InterfaceSchema, InterfaceSchemaMismatch,

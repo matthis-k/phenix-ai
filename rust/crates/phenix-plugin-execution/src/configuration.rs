@@ -1,5 +1,5 @@
 use phenix_core::{
-    CallableId, CapabilityId, ComponentInterface, DurableSchema, InterfaceId, PhenixSchema,
+    CallableId, ComponentInterface, DurableSchema, InterfaceId, PermissionId, PhenixSchema,
     PhenixValue, PluginContext, PluginHost, PluginInstance, ResourceNamespace, SdkClient,
     ServiceId, TransactionOp, TypeKind, ValueCodec, ValueError,
 };
@@ -113,7 +113,7 @@ struct CallableDefinition {
     input_schema: PhenixSchema,
     output_schema: PhenixSchema,
     #[serde(default)]
-    capabilities: BTreeSet<CapabilityId>,
+    capabilities: BTreeSet<PermissionId>,
     #[serde(default)]
     policy: CallablePolicy,
 }
@@ -150,7 +150,7 @@ impl AgentDefinition {
         &self.callable.output_schema
     }
 
-    pub fn capabilities(&self) -> &BTreeSet<CapabilityId> {
+    pub fn capabilities(&self) -> &BTreeSet<PermissionId> {
         &self.callable.capabilities
     }
 

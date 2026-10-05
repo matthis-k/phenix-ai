@@ -56,7 +56,7 @@ An SDK contribution declares:
 
 `SdkNamespace` and `SdkResourceId` are parsed identifiers. Invalid identifiers do not enter resolved state. Resources are opaque to Core.
 
-SDK contributions resolve against an already resolved Harness composition. Resolution requires the provider plugin to be selected, every referenced interface to be available, and one provider to own each namespace.
+SDK contributions resolve against an already resolved generation. Resolution requires the provider plugin to be selected, every referenced interface to be available, and one provider to own each namespace.
 
 Source order does not affect the result. SDK metadata grants no authority and does not alter provider selection. The resolved SDK set is derived from selected plugins, components, and contribution metadata rather than stored in a second runtime registry.
 

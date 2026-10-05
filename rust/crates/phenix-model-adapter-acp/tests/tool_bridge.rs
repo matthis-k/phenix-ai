@@ -1,12 +1,12 @@
-use phenix_backend::{
-    Backend, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
-    BackendSessionRequest, ToolInvocation, ToolProvision, ToolResult,
-};
-use phenix_backend_acp::{AcpBackend, AcpBackendConfig};
 use phenix_domain::{
-    BackendId, CallableDescriptor, CallableId, CallableKind, CallablePolicy, CapabilitySet,
-    ExecutionId, InferenceOptions, ModelId, ModelTarget, PhenixSchema, ProviderId,
+    CallableDescriptor, CallableFeatureSet, CallableId, CallableKind, CallablePolicy, ExecutionId,
+    InferenceOptions, ModelAdapterId, ModelId, ModelProviderId, ModelTarget, PhenixSchema,
 };
+use phenix_model_adapter::{
+    ModelAdapter, ModelAdapterError, ModelAdapterHost, ModelEvent, ModelExecutionRequest,
+    ModelSessionRequest, ToolInvocation, ToolProvision, ToolResult,
+};
+use phenix_model_adapter_acp::{AcpModelAdapter, AcpModelAdapterConfig};
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -16,21 +16,21 @@ struct ToolHost {
     invocations: Vec<ToolInvocation>,
 }
 
-impl BackendHost for ToolHost {
-    fn emit(&mut self, event: BackendEvent) -> Result<(), BackendError> {
-        if let BackendEvent::ContentDelta(text) = event {
+impl ModelAdapterHost for ToolHost {
+    fn emit(&mut self, event: ModelEvent) -> Result<(), ModelAdapterError> {
+        if let ModelEvent::ContentDelta(text) = event {
             self.content.push_str(&text);
         }
         Ok(())
     }
 
-    fn invoke_tool(&mut self, invocation: ToolInvocation) -> Result<ToolResult, BackendError> {
+    fn invoke_tool(&mut self, invocation: ToolInvocation) -> Result<ToolResult, ModelAdapterError> {
         let arguments: serde_json::Value = serde_json::from_str(&invocation.arguments_json)
-            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?;
         let value = arguments
             .get("value")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| BackendError::Protocol("echo value is missing".to_owned()))?;
+            .ok_or_else(|| ModelAdapterError::Protocol("echo value is missing".to_owned()))?;
         let output = format!("echo:{value}");
         self.invocations.push(invocation);
         Ok(ToolResult {
@@ -42,8 +42,8 @@ impl BackendHost for ToolHost {
 
 fn target() -> ModelTarget {
     ModelTarget {
-        backend: BackendId::parse("fixture-acp").unwrap(),
-        provider: ProviderId::parse("fixture-provider").unwrap(),
+        adapter: ModelAdapterId::parse("fixture-acp").unwrap(),
+        provider: ModelProviderId::parse("fixture-provider").unwrap(),
         model: ModelId::parse("fixture-model").unwrap(),
         inference: InferenceOptions::default(),
     }
@@ -59,7 +59,7 @@ fn callable() -> CallableDescriptor {
             PhenixSchema::String,
         )])),
         output_schema: PhenixSchema::String,
-        capabilities: CapabilitySet::default(),
+        features: CallableFeatureSet::default(),
         policy: CallablePolicy::default(),
     }
 }
@@ -68,19 +68,19 @@ fn callable() -> CallableDescriptor {
 fn real_acp_agent_calls_conductor_tool_and_continues_model_turn() {
     let fixture = env!("CARGO_BIN_EXE_acp-tool-bridge-fixture");
     let cwd = std::env::current_dir().unwrap();
-    let mut backend = AcpBackend::new(AcpBackendConfig::new(
-        BackendId::parse("fixture-acp").unwrap(),
-        ProviderId::parse("fixture-provider").unwrap(),
+    let mut model_adapter = AcpModelAdapter::new(AcpModelAdapterConfig::new(
+        ModelAdapterId::parse("fixture-acp").unwrap(),
+        ModelProviderId::parse("fixture-provider").unwrap(),
         fixture,
         cwd,
     ));
     let tools = ToolProvision {
         callables: vec![callable()],
     }
-    .prepare(&backend.capabilities())
+    .prepare(&model_adapter.features())
     .unwrap();
-    let session = backend
-        .open_session(BackendSessionRequest {
+    let session = model_adapter
+        .open_session(ModelSessionRequest {
             model: target(),
             tools,
         })
@@ -89,7 +89,7 @@ fn real_acp_agent_calls_conductor_tool_and_continues_model_turn() {
 
     session
         .execute(
-            BackendExecutionRequest {
+            ModelExecutionRequest {
                 execution_id: ExecutionId::parse("tool-execution").unwrap(),
                 prompt: "use the echo tool".to_owned(),
             },

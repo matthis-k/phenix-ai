@@ -25,11 +25,11 @@ use mlua::{
 };
 use phenix_application_interface::{
     types::{
-        CapabilityInvokeInput, CapabilityInvokeResult, Empty, SdkValue, SelectionInfo,
+        CallableInvocation, CallableInvocationResult, Empty, SdkValue, SelectionInfo,
         SelectionPresentation, SelectionSelectInput, Selections, SessionInfo, SessionInput,
         SessionSnapshot,
     },
-    CreateSession as AppCreateSession, GetSdk, InvokeCapability,
+    CreateSession as AppCreateSession, GetSdk, InvokeCallableReference,
     ListSelections as AppListSelections, Operation, ResumeSession as AppResumeSession,
     SelectSelection as AppSelectSelection,
 };
@@ -38,8 +38,8 @@ use phenix_client_acp::{
     ExtensionUpdates, SessionUpdates, StdioConfig, INTERFACE_ID,
 };
 use phenix_core::{
-    CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, Key,
-    ObjectRef, PhenixSchema, PhenixValue, PluginId, ReferenceId, RoutingProfileId, Type,
+    CallableRef, ClientConnectionId, ContractId, Key, ObjectRef, PhenixSchema, PhenixValue,
+    PluginId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId, RoutingProfileId, Type,
     ValueCodec,
 };
 use std::{
@@ -210,8 +210,8 @@ enum Command {
         input: PhenixValue,
         reply: oneshot::Sender<CommandResult>,
     },
-    InvokeCapability {
-        input: CapabilityInvokeInput,
+    InvokeCallableReference {
+        input: CallableInvocation,
         output_schema: PhenixSchema,
         reply: oneshot::Sender<CommandResult>,
     },
@@ -230,7 +230,7 @@ struct ClientState {
     session_config_options: Mutex<BTreeMap<String, Vec<SessionConfigOption>>>,
     terminal_error: Mutex<Option<BindingError>>,
     owner: ClientConnectionId,
-    generation: CapabilityGenerationId,
+    generation: ReferenceGenerationId,
 }
 
 impl ClientState {
@@ -429,7 +429,7 @@ impl LocalCallables {
         );
         Ok(CallableRef::new(
             contract.clone(),
-            CapabilityOwnerId::Client(state.owner.clone()),
+            ReferenceOwnerId::Client(state.owner.clone()),
             state.generation.clone(),
             id,
         ))
@@ -468,7 +468,7 @@ impl LocalCallables {
         match result {
             Ok(output) => pending
                 .callback
-                .respond(Ok(CapabilityInvokeResult { output }.to_value())),
+                .respond(Ok(CallableInvocationResult { output }.to_value())),
             Err(error) => pending.callback.respond(Err(
                 phenix_application_interface::types::ApplicationError::Failed {
                     message: error.message,
@@ -1052,7 +1052,7 @@ fn connect(options: Table) -> LuaResult<Client> {
         terminal_error: Mutex::new(None),
         owner: ClientConnectionId::parse(format!("lua-client-{connection}"))
             .expect("generated client id is valid"),
-        generation: CapabilityGenerationId::parse(format!("connection-{connection}"))
+        generation: ReferenceGenerationId::parse(format!("connection-{connection}"))
             .expect("generated generation id is valid"),
     });
     let worker_state = Arc::clone(&state);
@@ -1491,21 +1491,21 @@ fn run_client(
                             };
                             let _ = reply.send(result);
                         }
-                        Command::InvokeCapability {
+                        Command::InvokeCallableReference {
                             input,
                             output_schema,
                             reply,
                         } => {
                             let result = connection
                                 .invoke_extension(
-                                    &ContractId::parse(InvokeCapability::ID)
+                                    &ContractId::parse(InvokeCallableReference::ID)
                                         .expect("static operation id"),
                                     input.to_value(),
                                 )
                                 .await
                                 .map_err(BindingError::from_client)
                                 .and_then(|value| {
-                                    let result = CapabilityInvokeResult::from_value(&value)
+                                    let result = CallableInvocationResult::from_value(&value)
                                         .map_err(|error| {
                                             BindingError::conversion(error.to_string())
                                         })?;
@@ -1561,13 +1561,13 @@ fn dispatch_local_callback(
         let reply = callback
             .as_ref()
             .expect("callback remains available before deferred reservation");
-        let invocation = CapabilityInvokeInput::from_value(&reply.input)
+        let invocation = CallableInvocation::from_value(&reply.input)
             .map_err(|error| BindingError::conversion(error.to_string()))?;
         let callable = invocation
             .callable
             .callable()
             .map_err(|error| BindingError::conversion(error.to_string()))?;
-        if callable.owner() != &CapabilityOwnerId::Client(state.owner.clone())
+        if callable.owner() != &ReferenceOwnerId::Client(state.owner.clone())
             || callable.generation() != &state.generation
         {
             return Err(BindingError::local(
@@ -1637,7 +1637,7 @@ fn dispatch_local_callback(
             callback
                 .take()
                 .expect("immediate callback retains its reply handle")
-                .respond(Ok(CapabilityInvokeResult { output }.to_value()));
+                .respond(Ok(CallableInvocationResult { output }.to_value()));
             Ok(())
         }
         Ok(CallbackResult::Deferred) => Ok(()),
@@ -2382,8 +2382,8 @@ fn remote_callable(
                 None
             };
             let request = request_for(&state, local_callables.clone(), |reply| {
-                Command::InvokeCapability {
-                    input: CapabilityInvokeInput {
+                Command::InvokeCallableReference {
+                    input: CallableInvocation {
                         callable: PhenixValue::Callable(callable.clone()),
                         input,
                     },
@@ -2495,7 +2495,7 @@ fn phenix(lua: &Lua) -> LuaResult<Table> {
 mod tests {
     use super::*;
     use phenix_client_acp::RequestRejection;
-    use phenix_core::{CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ReferenceId};
+    use phenix_core::{ClientConnectionId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId};
 
     #[test]
     fn standard_acp_model_config_projects_to_application_selections() {
@@ -2740,12 +2740,12 @@ mod tests {
             session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ReferenceGenerationId::parse("generation-1").unwrap(),
         });
         let reference = CallableRef::new(
             ContractId::parse("fixture.echo@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
-            CapabilityGenerationId::parse("generation-1").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
+            ReferenceGenerationId::parse("generation-1").unwrap(),
             ReferenceId::parse("echo").unwrap(),
         );
         let schema = Type::Callable {
@@ -2766,7 +2766,7 @@ mod tests {
 
         let _: mlua::AnyUserData = proxy.call(7_i64).unwrap();
         let command = futures::executor::block_on(receiver.next()).unwrap();
-        let Command::InvokeCapability {
+        let Command::InvokeCallableReference {
             input,
             output_schema,
             ..
@@ -2797,7 +2797,7 @@ mod tests {
                 session_config_options: Mutex::new(BTreeMap::new()),
                 terminal_error: Mutex::new(None),
                 owner: ClientConnectionId::parse("fixture-client").unwrap(),
-                generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                generation: ReferenceGenerationId::parse("generation-1").unwrap(),
             }),
             local_callables: Rc::new(RefCell::new(LocalCallables::default())),
             worker: Rc::new(ClientWorker {
@@ -2838,12 +2838,12 @@ mod tests {
             session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ReferenceGenerationId::parse("generation-1").unwrap(),
         });
         let reference = CallableRef::new(
             ContractId::parse("fixture.echo@1").unwrap(),
-            CapabilityOwnerId::Plugin(phenix_core::PluginId::parse("fixture").unwrap()),
-            CapabilityGenerationId::parse("plugin-generation").unwrap(),
+            ReferenceOwnerId::Plugin(phenix_core::PluginId::parse("fixture").unwrap()),
+            ReferenceGenerationId::parse("plugin-generation").unwrap(),
             ReferenceId::parse("echo").unwrap(),
         );
         let schema = Type::Table(BTreeMap::from([(
@@ -2879,7 +2879,7 @@ mod tests {
 
         let _: mlua::AnyUserData = proxy.call(7_i64).unwrap();
         let command = futures::executor::block_on(receiver.next()).unwrap();
-        let Command::InvokeCapability {
+        let Command::InvokeCallableReference {
             input,
             output_schema,
             ..
@@ -2909,7 +2909,7 @@ mod tests {
             session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ReferenceGenerationId::parse("generation-1").unwrap(),
         });
         let local_callables = Rc::new(RefCell::new(LocalCallables::default()));
         let listener_schema = Type::Callable {
@@ -2930,8 +2930,10 @@ mod tests {
             .unwrap();
         let stop = CallableRef::new(
             ContractId::parse("phenix.observable-stop@1").unwrap(),
-            CapabilityOwnerId::Runtime(phenix_core::RuntimeId::parse("fixture-runtime").unwrap()),
-            CapabilityGenerationId::parse("runtime-generation").unwrap(),
+            ReferenceOwnerId::Runtime(
+                phenix_core::PluginRuntimeId::parse("fixture-runtime").unwrap(),
+            ),
+            ReferenceGenerationId::parse("runtime-generation").unwrap(),
             ReferenceId::parse("stop").unwrap(),
         );
         let stop_schema = Type::Callable {
@@ -2956,7 +2958,7 @@ mod tests {
 
         let stop_request: mlua::AnyUserData = stop_proxy.call(()).unwrap();
         let command = futures::executor::block_on(receiver.next()).unwrap();
-        let Command::InvokeCapability { input, reply, .. } = command else {
+        let Command::InvokeCallableReference { input, reply, .. } = command else {
             panic!("observable stop must use generic capability invocation");
         };
         assert_eq!(input.callable, PhenixValue::Callable(stop));
@@ -2978,8 +2980,8 @@ mod tests {
         let lua = Lua::new();
         let reference = ObjectRef::new(
             ContractId::parse("fixture.object@1").unwrap(),
-            CapabilityOwnerId::Plugin(phenix_core::PluginId::parse("fixture").unwrap()),
-            CapabilityGenerationId::parse("plugin-generation").unwrap(),
+            ReferenceOwnerId::Plugin(phenix_core::PluginId::parse("fixture").unwrap()),
+            ReferenceGenerationId::parse("plugin-generation").unwrap(),
             ReferenceId::parse("object").unwrap(),
         );
         let value = phenix_to_lua_with_state(
@@ -3018,7 +3020,7 @@ mod tests {
             session_config_options: Mutex::new(BTreeMap::new()),
             terminal_error: Mutex::new(None),
             owner: ClientConnectionId::parse("fixture-client").unwrap(),
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ReferenceGenerationId::parse("generation-1").unwrap(),
         });
         let schema = Type::Callable {
             contract: ContractId::parse("fixture.listener@1").unwrap(),
@@ -3048,11 +3050,11 @@ mod tests {
         );
         assert_eq!(
             reference.owner(),
-            &CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap())
+            &ReferenceOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap())
         );
         assert_eq!(
             reference.generation(),
-            &CapabilityGenerationId::parse("generation-1").unwrap()
+            &ReferenceGenerationId::parse("generation-1").unwrap()
         );
         assert!(local_callables
             .borrow()

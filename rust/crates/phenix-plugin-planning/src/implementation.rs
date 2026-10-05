@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
+    Authority, PermissionId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
@@ -91,8 +91,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn handle(
@@ -553,7 +553,7 @@ fn validate_text(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::planning_component_manifest;
-    use phenix_core::{Kernel, LocalPersistence, ResolvedHarness, ResolvedHarnessActivation};
+    use phenix_core::{Kernel, LocalPersistence, ResolvedGeneration, ResolvedGenerationActivation};
     use std::{
         fs,
         path::PathBuf,
@@ -574,7 +574,7 @@ mod tests {
     fn kernel_with(path: &PathBuf) -> Kernel {
         let manifest = planning_manifest();
         let plugin = manifest.id.clone();
-        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+        let resolved = ResolvedGeneration::resolve_with_durable_schemas(
             [manifest],
             [planning_component_manifest()],
             planning_durable_schema_registrations(),
@@ -584,7 +584,7 @@ mod tests {
         .unwrap();
         let persistence = LocalPersistence::open(path).unwrap();
         let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, planning_factory)
             .unwrap();

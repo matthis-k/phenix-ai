@@ -1,8 +1,9 @@
 use crate::{
-    runtime_provider_service, ArtifactRevision, Authority, CapabilityId, GraphReconciler, Kernel,
-    KernelConfig, KernelError, LiveReconciliationError, PluginArtifact, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, PluginRuntimeProvider, ResolvedHarness,
-    ResolvedHarnessActivation, RuntimeId, RuntimePluginCandidate, ServiceContribution, ServiceRole,
+    plugin_runtime_adapter_service, ArtifactRevision, Authority, GraphReconciler, Kernel,
+    KernelConfig, KernelError, LiveReconciliationError, PermissionId, PluginArtifact,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, PluginRuntimeAdapter,
+    PluginRuntimeCandidate, PluginRuntimeId, ResolvedGeneration, ResolvedGenerationActivation,
+    ServiceContribution, ServiceRole,
 };
 use std::{
     collections::BTreeMap,
@@ -16,8 +17,8 @@ fn plugin(value: &str) -> PluginId {
     PluginId::parse(value).unwrap()
 }
 
-fn runtime(value: &str) -> RuntimeId {
-    RuntimeId::parse(value).unwrap()
+fn runtime(value: &str) -> PluginRuntimeId {
+    PluginRuntimeId::parse(value).unwrap()
 }
 
 fn artifact(revision: &str) -> PluginArtifact {
@@ -28,9 +29,9 @@ fn artifact(revision: &str) -> PluginArtifact {
     }
 }
 
-fn bridge_manifest(
+fn adapter_manifest(
     id: &str,
-    provided_runtime: &RuntimeId,
+    runtime: &PluginRuntimeId,
     execution: PluginExecution,
 ) -> PluginManifest {
     PluginManifest {
@@ -39,7 +40,7 @@ fn bridge_manifest(
         execution,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
-            service: runtime_provider_service(provided_runtime),
+            service: plugin_runtime_adapter_service(runtime),
             role: ServiceRole::Terminal,
             priority: 0,
             required_authority: Authority::default(),
@@ -51,7 +52,7 @@ fn bridge_manifest(
 
 fn guest_manifest(
     id: &str,
-    runtime: RuntimeId,
+    runtime: PluginRuntimeId,
     revision: &str,
     authority: Authority,
 ) -> PluginManifest {
@@ -80,16 +81,16 @@ impl PluginInstance for PreparedGuest {
     }
 }
 
-struct Bridge {
+struct FixturePluginRuntimeAdapter {
     fail: Arc<AtomicBool>,
     prepared_authority: Arc<Mutex<Option<Authority>>>,
     started_authority: Arc<Mutex<Option<Authority>>>,
 }
 
-impl PluginRuntimeProvider for Bridge {
+impl PluginRuntimeAdapter for FixturePluginRuntimeAdapter {
     fn prepare(
         &mut self,
-        candidate: RuntimePluginCandidate<'_>,
+        candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         *self.prepared_authority.lock().unwrap() = Some(candidate.guest_authority.clone());
         if self.fail.load(Ordering::Acquire) {
@@ -101,20 +102,20 @@ impl PluginRuntimeProvider for Bridge {
     }
 }
 
-impl PluginInstance for Bridge {
+impl PluginInstance for FixturePluginRuntimeAdapter {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
 
 #[test]
-fn arbitrary_runtime_identity_resolves_through_an_embedded_provider() {
+fn arbitrary_runtime_identity_resolves_through_an_embedded_plugin_runtime_adapter() {
     let runtime = runtime("vendor.runtime");
-    let bridge = bridge_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
+    let adapter_plugin = adapter_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
     let guest = guest_manifest(
         "fixture.guest",
         runtime.clone(),
@@ -122,16 +123,16 @@ fn arbitrary_runtime_identity_resolves_through_an_embedded_provider() {
         Authority::default(),
     );
 
-    let config = KernelConfig::new([guest.clone(), bridge.clone()]).unwrap();
-    let binding = config.runtime_binding(&guest.id).unwrap();
+    let config = KernelConfig::new([guest.clone(), adapter_plugin.clone()]).unwrap();
+    let binding = config.plugin_runtime_binding(&guest.id).unwrap();
 
     assert_eq!(binding.runtime, runtime);
-    assert_eq!(binding.provider, bridge.id);
+    assert_eq!(binding.adapter_plugin, adapter_plugin.id);
     assert_eq!(
         binding.artifact_revision,
         ArtifactRevision::from_content(b"sha256:guest-v1")
     );
-    assert_eq!(config.activation_order(), &[bridge.id, guest.id]);
+    assert_eq!(config.activation_order(), &[adapter_plugin.id, guest.id]);
 }
 
 #[test]
@@ -146,15 +147,15 @@ fn unknown_runtime_is_rejected_during_graph_resolution() {
 
     assert_eq!(
         KernelConfig::new([guest]).unwrap_err(),
-        KernelError::RuntimeProviderUnavailable(runtime)
+        KernelError::PluginRuntimeAdapterUnavailable(runtime)
     );
 }
 
 #[test]
-fn runtime_provider_cycles_are_rejected_by_the_normal_dependency_graph() {
+fn plugin_runtime_adapter_cycles_are_rejected_by_the_normal_dependency_graph() {
     let runtime_a = runtime("runtime.a");
     let runtime_b = runtime("runtime.b");
-    let bridge_a = bridge_manifest(
+    let bridge_a = adapter_manifest(
         "bridge.a",
         &runtime_a,
         PluginExecution::Runtime {
@@ -162,7 +163,7 @@ fn runtime_provider_cycles_are_rejected_by_the_normal_dependency_graph() {
             artifact: artifact("sha256:a"),
         },
     );
-    let bridge_b = bridge_manifest(
+    let bridge_b = adapter_manifest(
         "bridge.b",
         &runtime_b,
         PluginExecution::Runtime {
@@ -178,13 +179,14 @@ fn runtime_provider_cycles_are_rejected_by_the_normal_dependency_graph() {
 }
 
 #[test]
-fn guest_authority_is_independent_from_bridge_authority() {
+fn guest_authority_is_independent_from_adapter_authority() {
     let runtime = runtime("vendor.runtime");
-    let guest_capability = CapabilityId::parse("guest.read").unwrap();
-    let bridge_capability = CapabilityId::parse("bridge.exec").unwrap();
-    let guest_authority = Authority::new([guest_capability.clone()]);
-    let mut bridge = bridge_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
-    bridge.maximum_authority = Authority::new([bridge_capability.clone()]);
+    let guest_permission = PermissionId::parse("guest.read").unwrap();
+    let adapter_permission = PermissionId::parse("bridge.exec").unwrap();
+    let guest_authority = Authority::new([guest_permission.clone()]);
+    let mut adapter_plugin =
+        adapter_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
+    adapter_plugin.maximum_authority = Authority::new([adapter_permission.clone()]);
     let guest = guest_manifest(
         "fixture.guest",
         runtime,
@@ -194,13 +196,13 @@ fn guest_authority_is_independent_from_bridge_authority() {
     let prepared_authority = Arc::new(Mutex::new(None));
     let started_authority = Arc::new(Mutex::new(None));
     let fail = Arc::new(AtomicBool::new(false));
-    let mut kernel = Kernel::new(KernelConfig::new([bridge.clone(), guest]).unwrap());
+    let mut kernel = Kernel::new(KernelConfig::new([adapter_plugin.clone(), guest]).unwrap());
     let prepared_for_factory = Arc::clone(&prepared_authority);
     let started_for_factory = Arc::clone(&started_authority);
     let fail_for_factory = Arc::clone(&fail);
     kernel
-        .register_embedded_factory(bridge.id, move || {
-            Box::new(Bridge {
+        .register_embedded_factory(adapter_plugin.id, move || {
+            Box::new(FixturePluginRuntimeAdapter {
                 fail: Arc::clone(&fail_for_factory),
                 prepared_authority: Arc::clone(&prepared_for_factory),
                 started_authority: Arc::clone(&started_for_factory),
@@ -212,16 +214,16 @@ fn guest_authority_is_independent_from_bridge_authority() {
 
     let prepared = prepared_authority.lock().unwrap().clone().unwrap();
     let started = started_authority.lock().unwrap().clone().unwrap();
-    assert!(prepared.permits(&guest_capability));
-    assert!(!prepared.permits(&bridge_capability));
+    assert!(prepared.permits(&guest_permission));
+    assert!(!prepared.permits(&adapter_permission));
     assert_eq!(prepared, guest_authority);
     assert_eq!(started, guest_authority);
 }
 
 #[test]
-fn artifact_revision_and_resolved_provider_are_pinned_by_generation() {
+fn artifact_revision_and_resolved_adapter_plugin_are_pinned_by_generation() {
     let runtime = runtime("vendor.runtime");
-    let bridge = bridge_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
+    let adapter_plugin = adapter_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
     let first_guest = guest_manifest(
         "fixture.guest",
         runtime.clone(),
@@ -234,25 +236,34 @@ fn artifact_revision_and_resolved_provider_are_pinned_by_generation() {
         "sha256:guest-v2",
         Authority::default(),
     );
-    let first =
-        ResolvedHarness::resolve([bridge.clone(), first_guest], [], [], &Authority::default())
-            .unwrap();
-    let second =
-        ResolvedHarness::resolve([bridge, second_guest], [], [], &Authority::default()).unwrap();
+    let first = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), first_guest],
+        [],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
+    let second = ResolvedGeneration::resolve(
+        [adapter_plugin, second_guest],
+        [],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
 
     assert_ne!(first.generation(), second.generation());
     assert_eq!(
         first
             .kernel_config()
-            .runtime_binding(&plugin("fixture.guest"))
+            .plugin_runtime_binding(&plugin("fixture.guest"))
             .unwrap()
-            .provider,
+            .adapter_plugin,
         plugin("fixture.bridge")
     );
     assert_eq!(
         first
             .kernel_config()
-            .runtime_binding(&plugin("fixture.guest"))
+            .plugin_runtime_binding(&plugin("fixture.guest"))
             .unwrap()
             .artifact_revision,
         ArtifactRevision::from_content(b"sha256:guest-v1")
@@ -262,7 +273,7 @@ fn artifact_revision_and_resolved_provider_are_pinned_by_generation() {
 #[test]
 fn failed_runtime_prepare_keeps_the_active_generation() {
     let runtime = runtime("vendor.runtime");
-    let bridge = bridge_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
+    let adapter_plugin = adapter_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
     let initial_guest = guest_manifest(
         "fixture.guest",
         runtime.clone(),
@@ -275,15 +286,15 @@ fn failed_runtime_prepare_keeps_the_active_generation() {
         "sha256:guest-v2",
         Authority::default(),
     );
-    let initial = ResolvedHarness::resolve(
-        [bridge.clone(), initial_guest],
+    let initial = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), initial_guest],
         [],
         [],
         &Authority::default(),
     )
     .unwrap();
-    let candidate = ResolvedHarness::resolve(
-        [bridge.clone(), candidate_guest],
+    let candidate = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), candidate_guest],
         [],
         [],
         &Authority::default(),
@@ -294,13 +305,13 @@ fn failed_runtime_prepare_keeps_the_active_generation() {
     let prepared_authority = Arc::new(Mutex::new(None));
     let started_authority = Arc::new(Mutex::new(None));
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     let fail_for_factory = Arc::clone(&fail);
     let prepared_for_factory = Arc::clone(&prepared_authority);
     let started_for_factory = Arc::clone(&started_authority);
     kernel
-        .register_embedded_factory(bridge.id, move || {
-            Box::new(Bridge {
+        .register_embedded_factory(adapter_plugin.id, move || {
+            Box::new(FixturePluginRuntimeAdapter {
                 fail: Arc::clone(&fail_for_factory),
                 prepared_authority: Arc::clone(&prepared_for_factory),
                 started_authority: Arc::clone(&started_for_factory),
@@ -317,7 +328,7 @@ fn failed_runtime_prepare_keeps_the_active_generation() {
 
     assert!(matches!(
         error,
-        LiveReconciliationError::Runtime(KernelError::RuntimePrepare { .. })
+        LiveReconciliationError::Runtime(KernelError::PluginRuntimePreparation { .. })
     ));
     assert_eq!(kernel.graph_generation(), Some(&active_generation));
     assert_eq!(reconciler.active().generation(), &active_generation);
@@ -336,14 +347,14 @@ impl PluginInstance for StartFailGuest {
     }
 }
 
-struct StartFailBridge {
+struct StartFailPluginRuntimeAdapter {
     fail: Arc<AtomicBool>,
 }
 
-impl PluginRuntimeProvider for StartFailBridge {
+impl PluginRuntimeAdapter for StartFailPluginRuntimeAdapter {
     fn prepare(
         &mut self,
-        _candidate: RuntimePluginCandidate<'_>,
+        _candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         Ok(Box::new(StartFailGuest {
             fail: Arc::clone(&self.fail),
@@ -351,12 +362,12 @@ impl PluginRuntimeProvider for StartFailBridge {
     }
 }
 
-impl PluginInstance for StartFailBridge {
+impl PluginInstance for StartFailPluginRuntimeAdapter {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
@@ -364,24 +375,30 @@ impl PluginInstance for StartFailBridge {
 #[test]
 fn unknown_runtime_candidate_keeps_the_active_generation() {
     let active_runtime = runtime("vendor.runtime");
-    let bridge = bridge_manifest("fixture.bridge", &active_runtime, PluginExecution::Embedded);
+    let adapter_plugin =
+        adapter_manifest("fixture.bridge", &active_runtime, PluginExecution::Embedded);
     let guest = guest_manifest(
         "fixture.guest",
         active_runtime,
         "sha256:guest-v1",
         Authority::default(),
     );
-    let active =
-        ResolvedHarness::resolve([bridge.clone(), guest], [], [], &Authority::default()).unwrap();
+    let active = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), guest],
+        [],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
     let active_generation = active.generation().clone();
     let fail = Arc::new(AtomicBool::new(false));
     let prepared_authority = Arc::new(Mutex::new(None));
     let started_authority = Arc::new(Mutex::new(None));
     let mut kernel = Kernel::new(active.kernel_config().clone());
-    kernel.activate_resolved_harness(&active).unwrap();
+    kernel.activate_resolved_generation(&active).unwrap();
     kernel
-        .register_embedded_factory(bridge.id, move || {
-            Box::new(Bridge {
+        .register_embedded_factory(adapter_plugin.id, move || {
+            Box::new(FixturePluginRuntimeAdapter {
                 fail: Arc::clone(&fail),
                 prepared_authority: Arc::clone(&prepared_authority),
                 started_authority: Arc::clone(&started_authority),
@@ -398,11 +415,11 @@ fn unknown_runtime_candidate_keeps_the_active_generation() {
         Authority::default(),
     );
     let error =
-        ResolvedHarness::resolve([invalid_guest], [], [], &Authority::default()).unwrap_err();
+        ResolvedGeneration::resolve([invalid_guest], [], [], &Authority::default()).unwrap_err();
 
     assert!(matches!(
         error,
-        crate::ResolvedHarnessError::Kernel(KernelError::RuntimeProviderUnavailable(runtime))
+        crate::GenerationResolutionError::Kernel(KernelError::PluginRuntimeAdapterUnavailable(runtime))
             if runtime == missing
     ));
     assert_eq!(kernel.graph_generation(), Some(&active_generation));
@@ -411,7 +428,7 @@ fn unknown_runtime_candidate_keeps_the_active_generation() {
 #[test]
 fn failed_runtime_start_keeps_the_active_generation() {
     let runtime = runtime("vendor.runtime");
-    let bridge = bridge_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
+    let adapter_plugin = adapter_manifest("fixture.bridge", &runtime, PluginExecution::Embedded);
     let initial_guest = guest_manifest(
         "fixture.guest",
         runtime.clone(),
@@ -424,15 +441,15 @@ fn failed_runtime_start_keeps_the_active_generation() {
         "sha256:guest-v2",
         Authority::default(),
     );
-    let initial = ResolvedHarness::resolve(
-        [bridge.clone(), initial_guest],
+    let initial = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), initial_guest],
         [],
         [],
         &Authority::default(),
     )
     .unwrap();
-    let candidate = ResolvedHarness::resolve(
-        [bridge.clone(), candidate_guest],
+    let candidate = ResolvedGeneration::resolve(
+        [adapter_plugin.clone(), candidate_guest],
         [],
         [],
         &Authority::default(),
@@ -442,10 +459,10 @@ fn failed_runtime_start_keeps_the_active_generation() {
     let fail = Arc::new(AtomicBool::new(false));
     let fail_for_factory = Arc::clone(&fail);
     let mut kernel = Kernel::new(initial.kernel_config().clone());
-    kernel.activate_resolved_harness(&initial).unwrap();
+    kernel.activate_resolved_generation(&initial).unwrap();
     kernel
-        .register_embedded_factory(bridge.id, move || {
-            Box::new(StartFailBridge {
+        .register_embedded_factory(adapter_plugin.id, move || {
+            Box::new(StartFailPluginRuntimeAdapter {
                 fail: Arc::clone(&fail_for_factory),
             })
         })

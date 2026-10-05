@@ -3,10 +3,10 @@ use crate::{
     session_tree_service, SessionTreeCommand, SessionTreeResponse,
 };
 use phenix_core::{
-    Authority, BackendFeature, DurableSchema, Kernel, KernelConfig, LocalPersistence,
-    NamespaceTransaction, PersistenceBackend, PersistenceError, PhenixValue, PluginId, Project,
-    ResolvedHarness, ResolvedHarnessActivation, ResourceNamespace, SchemaMigration, SessionId,
-    TransactionOp,
+    Authority, DurableSchema, Kernel, KernelConfig, LocalPersistence, NamespaceTransaction,
+    PersistenceBackend, PersistenceBackendFeature, PersistenceError, PhenixValue, PluginId,
+    Project, ResolvedGeneration, ResolvedGenerationActivation, ResourceNamespace, SchemaMigration,
+    SessionId, TransactionOp,
 };
 use phenix_plugin_sessions::{
     session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
@@ -32,7 +32,7 @@ impl FailMultiNamespaceTransaction {
 }
 
 impl PersistenceBackend for FailMultiNamespaceTransaction {
-    fn supported_features(&self) -> BTreeSet<BackendFeature> {
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature> {
         self.inner.supported_features()
     }
 
@@ -112,7 +112,7 @@ fn kernel_with_persistence(persistence: impl PersistenceBackend + 'static) -> Ke
     let tree = session_tree_manifest();
     let session_plugin = sessions.id.clone();
     let tree_plugin = tree.id.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [sessions.clone(), tree.clone()],
         [
             session_component_manifest(),
@@ -124,7 +124,7 @@ fn kernel_with_persistence(persistence: impl PersistenceBackend + 'static) -> Ke
     .unwrap();
     let mut kernel =
         Kernel::with_persistence(KernelConfig::new([sessions, tree]).unwrap(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(session_plugin, session_factory)
         .unwrap();

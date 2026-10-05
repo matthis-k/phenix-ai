@@ -11,7 +11,7 @@ pub use plans::*;
 mod decisions;
 pub use decisions::*;
 
-use crate::{CallableId, CapabilitySet, ExecutionId, WorkspaceId};
+use crate::{CallableFeatureSet, CallableId, ExecutionId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ pub enum FilesystemAuthority {
 
 impl FilesystemAuthority {
     #[must_use]
-    pub fn permits_capabilities(self, capabilities: &CapabilitySet) -> bool {
+    pub fn permits_capabilities(self, capabilities: &CallableFeatureSet) -> bool {
         !capabilities.0.contains(CAPABILITY_FILESYSTEM_WRITE) || self == FilesystemAuthority::Write
     }
 }
@@ -326,8 +326,8 @@ mod tests {
 
     #[test]
     fn filesystem_authority_filters_write_capabilities() {
-        let read = CapabilitySet(BTreeSet::from([CAPABILITY_FILESYSTEM_READ.to_owned()]));
-        let write = CapabilitySet(BTreeSet::from([CAPABILITY_FILESYSTEM_WRITE.to_owned()]));
+        let read = CallableFeatureSet(BTreeSet::from([CAPABILITY_FILESYSTEM_READ.to_owned()]));
+        let write = CallableFeatureSet(BTreeSet::from([CAPABILITY_FILESYSTEM_WRITE.to_owned()]));
 
         assert!(FilesystemAuthority::ReadOnly.permits_capabilities(&read));
         assert!(!FilesystemAuthority::ReadOnly.permits_capabilities(&write));

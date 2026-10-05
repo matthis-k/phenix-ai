@@ -151,9 +151,9 @@ fn plugin_resource_field_preserves_identity_schema_and_backend_features() {
     assert!(resources[0]
         .schema
         .required_features
-        .contains(&phenix_sdk::BackendFeature::Transactions));
+        .contains(&phenix_sdk::PersistenceBackendFeature::Transactions));
     assert!(resources[0]
         .schema
         .required_features
-        .contains(&phenix_sdk::BackendFeature::Migrations));
+        .contains(&phenix_sdk::PersistenceBackendFeature::Migrations));
 }

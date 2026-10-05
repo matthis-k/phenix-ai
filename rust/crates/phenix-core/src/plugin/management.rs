@@ -1,10 +1,10 @@
 use crate::{
     ArtifactRevision, Authority, ComponentEntryTrigger, ComponentId, ComponentManifest,
-    ComponentProcessArgument, GraphGenerationId, GraphReconciler, Kernel, KernelError,
-    LiveReconciliationError, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
+    ComponentProcessArgument, GenerationId, GenerationResolutionError, GraphReconciler, Kernel,
+    KernelError, LiveReconciliationError, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
     PluginBuildEvidence, PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution,
-    PluginId, PluginManifest, ReconciliationPreview, ReconciliationResult, ResolvedHarness,
-    ResolvedHarnessError, RootExecutionConstraints, RuntimeId,
+    PluginId, PluginManifest, PluginRuntimeId, ReconciliationPreview, ReconciliationResult,
+    ResolvedGeneration, RootExecutionConstraints,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -103,14 +103,14 @@ pub struct PluginManagementResult {
 
 #[derive(Debug)]
 pub struct PreparedPluginManagement {
-    pub candidate: ResolvedHarness,
+    pub candidate: ResolvedGeneration,
     pub preview: ReconciliationPreview,
     pub build: Option<PluginBuildReport>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PluginTrialResult {
-    pub generation: GraphGenerationId,
+    pub generation: GenerationId,
     pub preview: ReconciliationPreview,
     pub build: Option<PluginBuildReport>,
 }
@@ -135,11 +135,11 @@ pub enum PluginManagementError {
         build: Option<Box<PluginBuildReport>>,
     },
     RuntimeUnavailable {
-        runtime: RuntimeId,
+        runtime: PluginRuntimeId,
         build: Option<Box<PluginBuildReport>>,
     },
     Candidate {
-        error: Box<ResolvedHarnessError>,
+        error: Box<GenerationResolutionError>,
         build: Option<Box<PluginBuildReport>>,
     },
     ComponentOwnership {
@@ -493,16 +493,16 @@ fn build_artifact(
 }
 
 fn map_candidate_error(
-    error: ResolvedHarnessError,
+    error: GenerationResolutionError,
     build: Option<PluginBuildReport>,
 ) -> PluginManagementError {
     match error {
-        ResolvedHarnessError::Kernel(KernelError::RuntimeProviderUnavailable(runtime)) => {
-            PluginManagementError::RuntimeUnavailable {
-                runtime,
-                build: build.map(Box::new),
-            }
-        }
+        GenerationResolutionError::Kernel(KernelError::PluginRuntimeAdapterUnavailable(
+            runtime,
+        )) => PluginManagementError::RuntimeUnavailable {
+            runtime,
+            build: build.map(Box::new),
+        },
         error => PluginManagementError::Candidate {
             error: Box::new(error),
             build: build.map(Box::new),
@@ -526,7 +526,7 @@ type PluginDesiredState = (
 );
 
 fn apply_load(
-    active: &ResolvedHarness,
+    active: &ResolvedGeneration,
     request: ConcretePluginLoadRequest,
 ) -> Result<PluginDesiredState, PluginManagementError> {
     let plugin = request.manifest.id.clone();
@@ -608,7 +608,7 @@ fn apply_load(
 }
 
 fn check_load_expected_revision(
-    active: &ResolvedHarness,
+    active: &ResolvedGeneration,
     request: &PluginLoadRequest,
 ) -> Result<(), PluginManagementError> {
     let Some(expected) = &request.expected_active_revision else {
@@ -623,7 +623,7 @@ fn check_load_expected_revision(
 }
 
 fn apply_unload(
-    active: &ResolvedHarness,
+    active: &ResolvedGeneration,
     request: PluginUnloadRequest,
 ) -> Result<PluginDesiredState, PluginManagementError> {
     let existing = active

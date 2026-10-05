@@ -1,6 +1,7 @@
 use phenix_core::{
-    BackendFeature, DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
-    PersistenceError, PluginId, ResourceNamespace, SchemaMigration, TransactionOp,
+    DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
+    PersistenceBackendFeature, PersistenceError, PluginId, ResourceNamespace, SchemaMigration,
+    TransactionOp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,11 +83,11 @@ impl MemoryPersistence {
 }
 
 impl PersistenceBackend for MemoryPersistence {
-    fn supported_features(&self) -> BTreeSet<BackendFeature> {
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature> {
         [
-            BackendFeature::Transactions,
-            BackendFeature::UniqueKeys,
-            BackendFeature::Migrations,
+            PersistenceBackendFeature::Transactions,
+            PersistenceBackendFeature::UniqueKeys,
+            PersistenceBackendFeature::Migrations,
         ]
         .into_iter()
         .collect()
@@ -213,7 +214,10 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
             &DurableSchema::requiring(
                 first_namespace.clone(),
                 1,
-                [BackendFeature::Transactions, BackendFeature::UniqueKeys],
+                [
+                    PersistenceBackendFeature::Transactions,
+                    PersistenceBackendFeature::UniqueKeys,
+                ],
             ),
         )
         .unwrap();
@@ -295,7 +299,10 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
     let migrated_schema = DurableSchema::requiring(
         first_namespace.clone(),
         2,
-        [BackendFeature::Transactions, BackendFeature::Migrations],
+        [
+            PersistenceBackendFeature::Transactions,
+            PersistenceBackendFeature::Migrations,
+        ],
     );
     backend
         .migrate_schema(
@@ -329,12 +336,15 @@ fn assert_backend_conformance(mut backend: impl PersistenceBackend) {
 }
 
 fn assert_unsupported_feature(mut backend: impl PersistenceBackend) {
-    let requested =
-        DurableSchema::requiring(namespace("feature.test"), 1, [BackendFeature::IndexedRange]);
+    let requested = DurableSchema::requiring(
+        namespace("feature.test"),
+        1,
+        [PersistenceBackendFeature::IndexedRange],
+    );
     assert!(matches!(
         backend.register_schema(&plugin("owner"), &requested),
         Err(PersistenceError::UnsupportedFeature {
-            feature: BackendFeature::IndexedRange,
+            feature: PersistenceBackendFeature::IndexedRange,
             ..
         })
     ));

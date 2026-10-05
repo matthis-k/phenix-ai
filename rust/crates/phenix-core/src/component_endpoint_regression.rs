@@ -1,7 +1,7 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, Kernel, PhenixValue, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ServiceId,
+    PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation, ServiceId,
 };
 
 struct Demo;
@@ -57,7 +57,7 @@ fn typed_import_dispatches_the_exact_resolved_component_endpoint() {
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
     };
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [provider.clone(), consumer.clone()],
         [
             ComponentManifest {
@@ -113,7 +113,7 @@ fn typed_import_dispatches_the_exact_resolved_component_endpoint() {
     assert_eq!(handle.exporter(), &component("provider-high"));
 
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(provider.id, || Box::new(Provider))
         .unwrap();

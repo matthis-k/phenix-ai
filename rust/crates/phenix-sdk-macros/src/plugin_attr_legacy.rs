@@ -247,7 +247,7 @@ fn expand_struct(
                 owner: &::phenix_sdk::__phenix_plugin::PluginId,
                 component: &::phenix_sdk::__phenix_plugin::ComponentId,
                 method: &str,
-                _generation: &::phenix_sdk::__phenix_plugin::GraphGenerationId,
+                _generation: &::phenix_sdk::__phenix_plugin::GenerationId,
             ) -> Option<::std::sync::Arc<dyn ::phenix_sdk::__phenix_plugin::PluginListener>>
             where
                 Self: Send + Sync + 'static,

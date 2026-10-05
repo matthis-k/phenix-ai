@@ -4,10 +4,10 @@ use agent_client_protocol::schema::v1::{
     McpConnectionId, McpServer, McpServerAcp, MessageMcpNotification, MessageMcpRequest,
     MessageMcpResponse,
 };
-use phenix_backend::{
-    BackendError, PreparedToolSurface, ToolInvocation, ToolPresentation, ToolResult,
-};
 use phenix_domain::{CallableDescriptor, PhenixSchema};
+use phenix_model_adapter::{
+    ModelAdapterError, PreparedToolSurface, ToolInvocation, ToolPresentation, ToolResult,
+};
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResult, ContentBlock, DiscoverResult,
     Implementation, ListToolsResult, ProtocolVersion, RequestMetaObject, ServerCapabilities, Tool,
@@ -37,16 +37,16 @@ impl ToolBridge {
         McpServer::Acp(McpServerAcp::new(SERVER_NAME, SERVER_ID))
     }
 
-    pub(super) fn provision(&self, tools: &PreparedToolSurface) -> Result<(), BackendError> {
+    pub(super) fn provision(&self, tools: &PreparedToolSurface) -> Result<(), ModelAdapterError> {
         if !tools.is_empty() && tools.presentation() != Some(ToolPresentation::AcpExtension) {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "ACP tool bridge requires the negotiated ACP extension presentation".to_owned(),
             ));
         }
         let mut state = self
             .state
             .lock()
-            .map_err(|_| BackendError::Protocol("ACP tool bridge lock poisoned".to_owned()))?;
+            .map_err(|_| ModelAdapterError::Protocol("ACP tool bridge lock poisoned".to_owned()))?;
         state.callables = tools
             .callables()
             .iter()
@@ -60,12 +60,12 @@ impl ToolBridge {
         &self,
         tools: &PreparedToolSurface,
         worker: mpsc::Sender<WorkerMessage>,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), ModelAdapterError> {
         self.provision(tools)?;
         let mut state = self
             .state
             .lock()
-            .map_err(|_| BackendError::Protocol("ACP tool bridge lock poisoned".to_owned()))?;
+            .map_err(|_| ModelAdapterError::Protocol("ACP tool bridge lock poisoned".to_owned()))?;
         state.worker = Some(worker);
         Ok(())
     }
@@ -172,7 +172,7 @@ impl ToolBridge {
 
         Ok(json!({
             "protocolVersion": selected,
-            "capabilities": server_capabilities(),
+            "features": server_capabilities(),
             "serverInfo": server_implementation(),
         }))
     }
@@ -345,7 +345,7 @@ impl ToolBridge {
 #[derive(Debug)]
 pub(super) struct BridgeToolRequest {
     pub(super) invocation: ToolInvocation,
-    pub(super) response: mpsc::SyncSender<Result<ToolResult, BackendError>>,
+    pub(super) response: mpsc::SyncSender<Result<ToolResult, ModelAdapterError>>,
 }
 
 fn server_capabilities() -> ServerCapabilities {
@@ -377,17 +377,17 @@ fn is_current_protocol(version: &ProtocolVersion) -> bool {
     version.as_str() >= ProtocolVersion::V_2026_07_28.as_str()
 }
 
-fn json_schema_object(schema: &PhenixSchema) -> Result<Map<String, Value>, BackendError> {
+fn json_schema_object(schema: &PhenixSchema) -> Result<Map<String, Value>, ModelAdapterError> {
     let value = json_schema(schema)?;
     let Value::Object(object) = value else {
-        return Err(BackendError::Protocol(
+        return Err(ModelAdapterError::Protocol(
             "Phenix callable JSON Schema must be an object".to_owned(),
         ));
     };
     Ok(object)
 }
 
-fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
+fn json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
     let schema = match schema {
         PhenixSchema::Any => json!({}),
         PhenixSchema::Never => json!({"not": {}}),
@@ -417,7 +417,7 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
             let properties = fields
                 .iter()
                 .map(|(key, schema)| Ok((key.as_str().to_owned(), json_schema(schema)?)))
-                .collect::<Result<Map<String, Value>, BackendError>>()?;
+                .collect::<Result<Map<String, Value>, ModelAdapterError>>()?;
             let required = fields
                 .keys()
                 .map(|key| key.as_str().to_owned())
@@ -430,7 +430,7 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
             })
         }
         PhenixSchema::Variant(_) | PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "Phenix callable schema cannot be represented as JSON Schema".to_owned(),
             ));
         }
@@ -439,7 +439,7 @@ fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
 }
 
 fn serialize_tool_result(
-    result: Result<ToolResult, BackendError>,
+    result: Result<ToolResult, ModelAdapterError>,
     version: &ProtocolVersion,
 ) -> Result<Value, agent_client_protocol::Error> {
     let mut result = match result {
@@ -464,8 +464,10 @@ fn raw_value(value: Value) -> Result<Arc<RawValue>, agent_client_protocol::Error
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_backend::{BackendCapabilities, ToolProvision};
-    use phenix_domain::{CallableId, CallableKind, CallablePolicy, CapabilitySet, PhenixSchema};
+    use phenix_domain::{
+        CallableFeatureSet, CallableId, CallableKind, CallablePolicy, PhenixSchema,
+    };
+    use phenix_model_adapter::{ModelAdapterFeatures, ToolProvision};
     use std::collections::BTreeSet;
 
     fn callable() -> CallableDescriptor {
@@ -478,7 +480,7 @@ mod tests {
                 PhenixSchema::String,
             )])),
             output_schema: PhenixSchema::String,
-            capabilities: CapabilitySet::default(),
+            features: CallableFeatureSet::default(),
             policy: CallablePolicy::default(),
         }
     }
@@ -487,7 +489,7 @@ mod tests {
         ToolProvision {
             callables: vec![callable()],
         }
-        .prepare(&BackendCapabilities {
+        .prepare(&ModelAdapterFeatures {
             tool_presentations: BTreeSet::from([ToolPresentation::AcpExtension]),
             images: false,
             persistent_sessions: false,

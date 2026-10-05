@@ -74,11 +74,11 @@ record!(CallableInvokeInput, "phenix.application.type.callable-invoke-input@1", 
     input: PhenixValue,
 });
 record!(CallableResult, "phenix.application.type.callable-result@1", { output: PhenixValue });
-record!(CapabilityInvokeInput, "phenix.application.type.capability-invoke-input@1", {
+record!(CallableInvocation, "phenix.application.type.callable-invocation@1", {
     callable: PhenixValue,
     input: PhenixValue,
 });
-record!(CapabilityInvokeResult, "phenix.application.type.capability-invoke-result@1", {
+record!(CallableInvocationResult, "phenix.application.type.callable-invocation-result@1", {
     output: PhenixValue,
 });
 // Admission keeps client-local behavior outside the durable runtime model. The

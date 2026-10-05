@@ -1,4 +1,4 @@
-use super::{default_suite_authority, PhenixHarness};
+use super::{default_suite_authority, PhenixRuntime};
 use phenix_core::{
     Authority, CallableId, CapabilityGenerationId, ModelId, PhenixValue, PluginId, Project,
     RoutingProfileId, ServiceId, ValueError,
@@ -120,7 +120,7 @@ impl RuntimeRoutingProfile {
 }
 
 pub(super) fn apply_default_config_directory(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     directory: &Path,
 ) -> Result<(), Box<dyn Error>> {
     if !directory.is_dir() {
@@ -138,7 +138,7 @@ pub(super) fn apply_default_config_directory(
 }
 
 pub(super) fn apply_startup_settings(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     config_directory: Option<&Path>,
     nix_settings: Option<&Path>,
     precedence: OptionStartupPrecedence,
@@ -214,7 +214,7 @@ fn settings_assignments(settings: SettingsConfiguration) -> Vec<OptionAssignment
 }
 
 fn invoke_projected<Request, Response>(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     service: &ServiceId,
     request: &Request,
     authority: &Authority,
@@ -230,7 +230,7 @@ where
 }
 
 pub(super) fn apply_runtime_config(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     path: &Path,
 ) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
@@ -239,7 +239,7 @@ pub(super) fn apply_runtime_config(
 }
 
 fn apply_configuration(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     configuration: RuntimeConfiguration,
 ) -> Result<(), Box<dyn Error>> {
     let profiles = configuration
@@ -291,10 +291,10 @@ fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn
 fn without_legacy_runtime_metadata(mut profile: RoutingProfile) -> RoutingProfile {
     fn normalize_target(target: &mut ModelTarget) {
         if matches!(
-            target.options.get("backend"),
-            Some(PhenixValue::String(backend)) if backend == "phenix"
+            target.options.get("adapter"),
+            Some(PhenixValue::String(adapter)) if adapter == "phenix"
         ) {
-            target.options.remove("backend");
+            target.options.remove("adapter");
         }
         if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
             target.options.remove("inference");
@@ -344,7 +344,7 @@ fn cache_capabilities_for_target(target: &ModelTarget) -> CacheCapabilities {
 }
 
 pub(crate) fn publish_routing_profile_runtime_state(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     profile: &RoutingProfile,
 ) -> Result<(), Box<dyn Error>> {
     let mut targets = vec![profile.default_target.clone()];
@@ -414,14 +414,14 @@ mod tests {
             "routing_profiles": [{
                 "id": "router.test",
                 "default_target": {
-                    "backend": "phenix",
+                    "adapter": "phenix",
                     "provider": "provider.fixture",
                     "model": "model.test",
                     "inference": {"effort": "low"}
                 },
                 "callable_targets": {
                     "agent.scout": {
-                        "backend": "phenix",
+                        "adapter": "phenix",
                         "provider": "provider.fixture",
                         "model": "model.scout",
                         "inference": {"effort": "medium"}
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn packaged_router_policy_does_not_publish_implicit_direct_model_profiles() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();
 
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn runtime_model_target_lowers_foreign_json_before_dispatch() {
         let target: RuntimeModelTarget = serde_json::from_value(json!({
-            "backend": "phenix",
+            "adapter": "phenix",
             "provider": "provider.fixture",
             "model": "model.test",
             "inference": {"effort": "low"}
@@ -495,7 +495,7 @@ mod tests {
         .unwrap();
         let target = target.into_model_target();
 
-        assert!(!target.options.contains_key("backend"));
+        assert!(!target.options.contains_key("adapter"));
         assert!(matches!(
             &target.options["inference"],
             PhenixValue::Map(values)
@@ -504,7 +504,7 @@ mod tests {
     }
 
     fn invoke_configuration(
-        harness: &mut PhenixHarness,
+        harness: &mut PhenixRuntime,
         command: ExecutionConfigurationCommand,
     ) -> ExecutionConfigurationResponse {
         invoke_projected(
@@ -532,7 +532,7 @@ mod tests {
             r#"{"global":{"session.auto_create":false}}"#,
         )
         .unwrap();
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
         apply_startup_settings(
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn startup_migrates_legacy_generated_routes_outside_current_configuration() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         let mut target = sample_runtime()
             .routing_profiles
@@ -574,7 +574,7 @@ mod tests {
             .default_target;
         target
             .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
+            .insert("adapter".into(), PhenixValue::String("phenix".into()));
         target.options.insert("inference".into(), PhenixValue::Unit);
         let legacy = direct_routing_profile(target).unwrap();
         let normalized = without_legacy_runtime_metadata(legacy.clone());
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn runtime_configuration_migrates_legacy_backend_metadata() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
         let desired = sample_runtime()
@@ -635,16 +635,16 @@ mod tests {
         legacy
             .default_target
             .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
+            .insert("adapter".into(), PhenixValue::String("phenix".into()));
         for target in &mut legacy.fallback_targets {
             target
                 .options
-                .insert("backend".into(), PhenixValue::String("phenix".into()));
+                .insert("adapter".into(), PhenixValue::String("phenix".into()));
         }
         for target in legacy.callable_targets.values_mut() {
             target
                 .options
-                .insert("backend".into(), PhenixValue::String("phenix".into()));
+                .insert("adapter".into(), PhenixValue::String("phenix".into()));
         }
 
         let response: ModelResponse = invoke_projected(
@@ -687,7 +687,7 @@ mod tests {
                 "routing_profiles": [{
                     "id": "router.legacy-null-inference",
                     "default_target": {
-                        "backend": "phenix",
+                        "adapter": "phenix",
                         "provider": "provider.fixture",
                         "model": "model.test"
                     }
@@ -696,7 +696,7 @@ mod tests {
             .unwrap()
         }
 
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
         let desired = configuration()
@@ -709,7 +709,7 @@ mod tests {
         legacy
             .default_target
             .options
-            .insert("backend".into(), PhenixValue::String("phenix".into()));
+            .insert("adapter".into(), PhenixValue::String("phenix".into()));
         legacy
             .default_target
             .options
@@ -744,7 +744,7 @@ mod tests {
 
     #[test]
     fn runtime_configuration_rejects_nonlegacy_profile_identity_changes() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
 
         let mut conflicting = sample_runtime()
@@ -789,7 +789,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut harness = PhenixHarness::default_suite_with_persistence(
+        let mut harness = PhenixRuntime::default_suite_with_persistence(
             phenix_core::LocalPersistence::open(&path).unwrap(),
         )
         .unwrap();
@@ -824,7 +824,7 @@ mod tests {
         changed.orchestrations = vec![updated_orchestration.clone()];
         apply_configuration(&mut harness, changed).unwrap();
         drop(harness);
-        let mut harness = PhenixHarness::default_suite_with_persistence(
+        let mut harness = PhenixRuntime::default_suite_with_persistence(
             phenix_core::LocalPersistence::open(&path).unwrap(),
         )
         .unwrap();
@@ -905,7 +905,7 @@ mod tests {
     #[test]
     fn invalid_orchestration_and_duplicate_profiles_do_not_publish_agents() {
         for duplicate in [false, true] {
-            let mut harness = PhenixHarness::default_suite().unwrap();
+            let mut harness = PhenixRuntime::default_suite().unwrap();
             harness.activate().unwrap();
             let mut config = sample_runtime();
             if duplicate {
@@ -932,7 +932,7 @@ mod tests {
 
     #[test]
     fn out_of_band_owned_profile_change_blocks_configuration() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();
         let expected = sample_runtime()
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn later_foreign_generated_profiles_and_callables_remain_visible() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         let empty = || RuntimeConfiguration {
             agents: vec![],
@@ -1030,7 +1030,7 @@ mod tests {
 
     #[test]
     fn migrated_runtime_configuration_is_active_and_restart_safe() {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();
         apply_configuration(&mut harness, sample_runtime()).unwrap();

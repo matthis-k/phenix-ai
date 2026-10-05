@@ -1,5 +1,5 @@
 use phenix_sdk::{
-    Authority, Call, CapabilityId, Emit, HasPhenixSchema, Host, InterfaceMarker, Optional,
+    Authority, Call, Emit, HasPhenixSchema, Host, InterfaceMarker, Optional, PermissionId,
     Required, StaticComponentBehavior, StaticComponentImports, StaticPluginComponents,
 };
 
@@ -19,7 +19,7 @@ const MODEL_POLICY_PRIORITY: i32 = 23;
 struct Api {
     #[phenix(
         import,
-        authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.invoke").unwrap()])
     )]
     models: Required<Call<ModelsInference, ConsumerRequest, ConsumerResponse>>,
 
@@ -28,7 +28,7 @@ struct Api {
 
     #[phenix(
         host,
-        authority = Authority::new([CapabilityId::parse("models.host").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.host").unwrap()])
     )]
     model_host: Host<ModelsInference>,
 
@@ -43,7 +43,7 @@ impl Api {
         export(ModelsInference),
         public,
         terminal,
-        authority = Authority::new([CapabilityId::parse("models.serve").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.serve").unwrap()])
     )]
     fn run(
         &self,
@@ -82,9 +82,9 @@ fn component_fields_lower_to_typed_import_export_and_plugin_metadata() {
     fn assert_generated_dispatch<T: phenix_sdk::StaticComponentDispatch>() {}
     assert_generated_dispatch::<Api>();
 
-    let import_authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()]);
-    let host_authority = Authority::new([CapabilityId::parse("models.host").unwrap()]);
-    let export_authority = Authority::new([CapabilityId::parse("models.serve").unwrap()]);
+    let import_authority = Authority::new([PermissionId::parse("models.invoke").unwrap()]);
+    let host_authority = Authority::new([PermissionId::parse("models.host").unwrap()]);
+    let export_authority = Authority::new([PermissionId::parse("models.serve").unwrap()]);
 
     let imports = <Api as StaticComponentImports>::imports();
     assert_eq!(imports.len(), 2);
@@ -204,7 +204,7 @@ struct RootResponse;
 struct RootPlugin {
     #[phenix(
         import,
-        authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.invoke").unwrap()])
     )]
     models: Required<Call<RootModels, RootRequest, RootResponse>>,
 
@@ -213,7 +213,7 @@ struct RootPlugin {
 
     #[phenix(
         host,
-        authority = Authority::new([CapabilityId::parse("models.host").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.host").unwrap()])
     )]
     model_host: Host<RootModels>,
 
@@ -223,8 +223,8 @@ struct RootPlugin {
 
 #[test]
 fn plugin_root_fields_lower_to_a_derived_root_component() {
-    let import_authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()]);
-    let host_authority = Authority::new([CapabilityId::parse("models.host").unwrap()]);
+    let import_authority = Authority::new([PermissionId::parse("models.invoke").unwrap()]);
+    let host_authority = Authority::new([PermissionId::parse("models.host").unwrap()]);
 
     let imports = <RootPlugin as StaticComponentImports>::imports();
     assert_eq!(imports.len(), 2);
@@ -344,7 +344,7 @@ fn attribute_only_components_reject_structurally_incompatible_provider_and_consu
             .remove(0),
     ];
 
-    let error = phenix_core::ResolvedHarness::resolve(
+    let error = phenix_core::ResolvedGeneration::resolve(
         manifests,
         components,
         std::iter::empty(),

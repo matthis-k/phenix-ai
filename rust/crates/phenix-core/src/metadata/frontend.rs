@@ -1,7 +1,7 @@
 use crate::{
     Authority, CompositionMetadataInput, ConfigurationFrontendId, ConfigurationFrontendMetadata,
     FrontendConfigContribution, FrontendConfigError, MetadataResolutionError, PluginId,
-    ResolvedHarness,
+    ResolvedGeneration,
 };
 use std::{
     collections::BTreeMap,
@@ -133,7 +133,7 @@ impl CompositionMetadataInput {
             Item = (ConfigurationFrontendId, FrontendConfigContribution),
         >,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, FrontendMetadataResolutionError> {
+    ) -> Result<ResolvedGeneration, FrontendMetadataResolutionError> {
         let mut owners = BTreeMap::new();
         for package in &self.packages {
             for frontend in &package.configuration_frontends {
@@ -193,10 +193,10 @@ impl CompositionMetadataInput {
 mod tests {
     use super::*;
     use crate::{
-        CapabilityId, CompatibilityMetadata, ComponentHostKind, ComponentId, ComponentManifest,
+        CompatibilityMetadata, ComponentHostKind, ComponentId, ComponentManifest,
         ComponentRuntimeMetadata, ComponentStateClass, ConfigContribution,
-        ConfigContributionSource, ConfigNamespace, ConfigSourceClass, PluginExecution,
-        PluginManifest, PluginPackageMetadata, ReloadPolicy,
+        ConfigContributionSource, ConfigNamespace, ConfigSourceClass, PermissionId,
+        PluginExecution, PluginManifest, PluginPackageMetadata, ReloadPolicy,
     };
     use std::collections::BTreeSet;
 
@@ -212,8 +212,8 @@ mod tests {
         ConfigurationFrontendId::parse("fixture.config").unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn package() -> PluginPackageMetadata {
@@ -305,7 +305,7 @@ mod tests {
     fn package_declared_frontend_lowers_through_the_canonical_resolver() {
         let package = package();
         let component = component_metadata();
-        let expected = ResolvedHarness::resolve(
+        let expected = ResolvedGeneration::resolve(
             [package.manifest.clone()],
             [component.manifest.clone()],
             [ConfigContribution {

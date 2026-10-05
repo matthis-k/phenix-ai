@@ -12,14 +12,15 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use mcp_bridge::{BridgeToolRequest, ToolBridge};
-use phenix_backend::{
-    Backend, BackendCapabilities, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
-    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolPresentation,
-};
 use phenix_domain::{
     AuthenticationMethodDescriptor, AuthenticationMethodId, AuthenticationMethodKind,
-    AuthenticationState, BackendCatalog, BackendId, InferenceOptions, ModelDescriptor, ModelId,
-    ModelTarget, ProviderId, SessionId,
+    AuthenticationState, InferenceOptions, ModelAdapterCatalog, ModelAdapterId, ModelDescriptor,
+    ModelId, ModelProviderId, ModelTarget, SessionId,
+};
+use phenix_model_adapter::{
+    ModelAdapter, ModelAdapterError, ModelAdapterFeatures, ModelAdapterHost, ModelEvent,
+    ModelExecutionRequest, ModelSession, ModelSessionRequest, PreparedToolSurface,
+    ToolPresentation,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,25 +32,25 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcpBackendConfig {
-    pub backend: BackendId,
-    pub provider: ProviderId,
+pub struct AcpModelAdapterConfig {
+    pub adapter: ModelAdapterId,
+    pub provider: ModelProviderId,
     pub command: PathBuf,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub cwd: PathBuf,
 }
 
-impl AcpBackendConfig {
+impl AcpModelAdapterConfig {
     #[must_use]
     pub fn new(
-        backend: BackendId,
-        provider: ProviderId,
+        adapter: ModelAdapterId,
+        provider: ModelProviderId,
         command: impl Into<PathBuf>,
         cwd: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            backend,
+            adapter,
             provider,
             command: command.into(),
             args: Vec::new(),
@@ -72,14 +73,14 @@ impl AcpBackendConfig {
 }
 
 #[derive(Clone)]
-pub struct AcpBackend {
-    config: AcpBackendConfig,
+pub struct AcpModelAdapter {
+    config: AcpModelAdapterConfig,
     persistent_sessions: BTreeMap<SessionId, Arc<AcpPersistentSession>>,
 }
 
-impl AcpBackend {
+impl AcpModelAdapter {
     #[must_use]
-    pub fn new(config: AcpBackendConfig) -> Self {
+    pub fn new(config: AcpModelAdapterConfig) -> Self {
         Self {
             config,
             persistent_sessions: BTreeMap::new(),
@@ -87,35 +88,35 @@ impl AcpBackend {
     }
 
     #[must_use]
-    pub fn config(&self) -> &AcpBackendConfig {
+    pub fn config(&self) -> &AcpModelAdapterConfig {
         &self.config
     }
 
     fn validate_session_request(
         &self,
-        request: &BackendSessionRequest,
-    ) -> Result<(), BackendError> {
-        if request.model.backend != self.config.backend {
-            return Err(BackendError::Unsupported(format!(
-                "ACP backend {} cannot serve target backend {}",
-                self.config.backend, request.model.backend
+        request: &ModelSessionRequest,
+    ) -> Result<(), ModelAdapterError> {
+        if request.model.adapter != self.config.adapter {
+            return Err(ModelAdapterError::Unsupported(format!(
+                "ACP adapter {} cannot serve target adapter {}",
+                self.config.adapter, request.model.adapter
             )));
         }
         if request.model.provider != self.config.provider {
-            return Err(BackendError::Unsupported(format!(
-                "ACP backend provider {} cannot serve target provider {}",
+            return Err(ModelAdapterError::Unsupported(format!(
+                "ACP adapter provider {} cannot serve target provider {}",
                 self.config.provider, request.model.provider
             )));
         }
         if request.model.inference.effort.is_some() {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "ACP inference effort mapping is not implemented in R7".to_owned(),
             ));
         }
         if !request.tools.is_empty()
             && request.tools.presentation() != Some(ToolPresentation::AcpExtension)
         {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "ACP runtime tools require the negotiated ACP extension presentation".to_owned(),
             ));
         }
@@ -123,32 +124,32 @@ impl AcpBackend {
     }
 }
 
-impl Backend for AcpBackend {
-    fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities {
+impl ModelAdapter for AcpModelAdapter {
+    fn features(&self) -> ModelAdapterFeatures {
+        ModelAdapterFeatures {
             tool_presentations: BTreeSet::from([ToolPresentation::AcpExtension]),
             images: false,
             persistent_sessions: true,
         }
     }
 
-    fn catalog(&mut self) -> Result<BackendCatalog, BackendError> {
+    fn catalog(&mut self) -> Result<ModelAdapterCatalog, ModelAdapterError> {
         block_on(discover_catalog(self.config.clone()))
     }
 
-    fn authenticate(&mut self, method: &AuthenticationMethodId) -> Result<(), BackendError> {
+    fn authenticate(&mut self, method: &AuthenticationMethodId) -> Result<(), ModelAdapterError> {
         let catalog = self.catalog()?;
         let descriptor = catalog
             .authentication_methods
             .iter()
             .find(|candidate| candidate.id == *method)
             .ok_or_else(|| {
-                BackendError::Unsupported(format!(
+                ModelAdapterError::Unsupported(format!(
                     "ACP agent does not advertise authentication method {method}"
                 ))
             })?;
         if !descriptor.selectable {
-            return Err(BackendError::Unsupported(format!(
+            return Err(ModelAdapterError::Unsupported(format!(
                 "ACP authentication method {method} requires a frontend credential/terminal flow"
             )));
         }
@@ -157,10 +158,10 @@ impl Backend for AcpBackend {
 
     fn open_session(
         &mut self,
-        request: BackendSessionRequest,
-    ) -> Result<Arc<dyn BackendSession>, BackendError> {
+        request: ModelSessionRequest,
+    ) -> Result<Arc<dyn ModelSession>, ModelAdapterError> {
         self.validate_session_request(&request)?;
-        Ok(Arc::new(AcpBackendSession {
+        Ok(Arc::new(AcpModelSession {
             config: self.config.clone(),
             model: request.model,
             tools: request.tools,
@@ -171,8 +172,8 @@ impl Backend for AcpBackend {
     fn open_persistent_session(
         &mut self,
         session_id: &SessionId,
-        request: BackendSessionRequest,
-    ) -> Result<Arc<dyn BackendSession>, BackendError> {
+        request: ModelSessionRequest,
+    ) -> Result<Arc<dyn ModelSession>, ModelAdapterError> {
         self.validate_session_request(&request)?;
         if let Some(session) = self.persistent_sessions.get(session_id) {
             session.set_request(request.model, request.tools)?;
@@ -210,13 +211,13 @@ struct CancellationState {
 
 fn arm_cancellation(
     cancellation: &Mutex<CancellationState>,
-) -> Result<Option<ArmedCancellation>, BackendError> {
-    let mut cancellation = cancellation
-        .lock()
-        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
+) -> Result<Option<ArmedCancellation>, ModelAdapterError> {
+    let mut cancellation = cancellation.lock().map_err(|_| {
+        ModelAdapterError::Protocol("ACP cancellation state lock poisoned".to_owned())
+    })?;
     if cancellation.signal.is_some() {
-        return Err(BackendError::Protocol(
-            "ACP backend session is already executing".to_owned(),
+        return Err(ModelAdapterError::Protocol(
+            "ACP adapter session is already executing".to_owned(),
         ));
     }
     if std::mem::take(&mut cancellation.requested) {
@@ -230,19 +231,19 @@ fn arm_cancellation(
     }))
 }
 
-fn disarm_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), BackendError> {
-    let mut cancellation = cancellation
-        .lock()
-        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
+fn disarm_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), ModelAdapterError> {
+    let mut cancellation = cancellation.lock().map_err(|_| {
+        ModelAdapterError::Protocol("ACP cancellation state lock poisoned".to_owned())
+    })?;
     cancellation.signal = None;
     cancellation.requested = false;
     Ok(())
 }
 
-fn request_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), BackendError> {
-    let mut cancellation = cancellation
-        .lock()
-        .map_err(|_| BackendError::Protocol("ACP cancellation state lock poisoned".to_owned()))?;
+fn request_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), ModelAdapterError> {
+    let mut cancellation = cancellation.lock().map_err(|_| {
+        ModelAdapterError::Protocol("ACP cancellation state lock poisoned".to_owned())
+    })?;
     cancellation.requested = true;
     if let Some(signal) = cancellation.signal.as_ref() {
         let _ = signal.send(CancellationSignal::Cancel);
@@ -251,29 +252,29 @@ fn request_cancellation(cancellation: &Mutex<CancellationState>) -> Result<(), B
 }
 
 #[derive(Debug)]
-struct AcpBackendSession {
-    config: AcpBackendConfig,
+struct AcpModelSession {
+    config: AcpModelAdapterConfig,
     model: ModelTarget,
     tools: PreparedToolSurface,
     cancellation: Mutex<CancellationState>,
 }
 
-impl AcpBackendSession {
-    fn arm_cancellation(&self) -> Result<Option<ArmedCancellation>, BackendError> {
+impl AcpModelSession {
+    fn arm_cancellation(&self) -> Result<Option<ArmedCancellation>, ModelAdapterError> {
         arm_cancellation(&self.cancellation)
     }
 
-    fn disarm_cancellation(&self) -> Result<(), BackendError> {
+    fn disarm_cancellation(&self) -> Result<(), ModelAdapterError> {
         disarm_cancellation(&self.cancellation)
     }
 }
 
-impl BackendSession for AcpBackendSession {
+impl ModelSession for AcpModelSession {
     fn execute(
         &self,
-        request: BackendExecutionRequest,
-        host: &mut dyn BackendHost,
-    ) -> Result<(), BackendError> {
+        request: ModelExecutionRequest,
+        host: &mut dyn ModelAdapterHost,
+    ) -> Result<(), ModelAdapterError> {
         let Some(cancellation) = self.arm_cancellation()? else {
             return Ok(());
         };
@@ -305,7 +306,7 @@ impl BackendSession for AcpBackendSession {
         result
     }
 
-    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), BackendError> {
+    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), ModelAdapterError> {
         request_cancellation(&self.cancellation)
     }
 }
@@ -320,10 +321,10 @@ struct AcpPersistentSession {
 
 impl AcpPersistentSession {
     fn start(
-        config: AcpBackendConfig,
+        config: AcpModelAdapterConfig,
         model: ModelTarget,
         tools: PreparedToolSurface,
-    ) -> Result<Self, BackendError> {
+    ) -> Result<Self, ModelAdapterError> {
         let (commands, command_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker_model = model.clone();
@@ -341,7 +342,7 @@ impl AcpPersistentSession {
             }
         });
         let bridge_available = ready_rx.recv().map_err(|error| {
-            BackendError::Transport(format!(
+            ModelAdapterError::Transport(format!(
                 "ACP persistent session worker closed during startup: {error}"
             ))
         })??;
@@ -358,42 +359,44 @@ impl AcpPersistentSession {
         &self,
         model: ModelTarget,
         tools: PreparedToolSurface,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), ModelAdapterError> {
         if !tools.is_empty() && !self.bridge_available {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "ACP agent does not advertise native MCP-over-ACP support for this persistent session"
                     .to_owned(),
             ));
         }
         *self.model.lock().map_err(|_| {
-            BackendError::Protocol("ACP persistent model lock poisoned".to_owned())
+            ModelAdapterError::Protocol("ACP persistent model lock poisoned".to_owned())
         })? = model;
         *self.tools.lock().map_err(|_| {
-            BackendError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
+            ModelAdapterError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
         })? = tools;
         Ok(())
     }
 }
 
-impl BackendSession for AcpPersistentSession {
+impl ModelSession for AcpPersistentSession {
     fn execute(
         &self,
-        request: BackendExecutionRequest,
-        host: &mut dyn BackendHost,
-    ) -> Result<(), BackendError> {
+        request: ModelExecutionRequest,
+        host: &mut dyn ModelAdapterHost,
+    ) -> Result<(), ModelAdapterError> {
         let Some(cancellation) = arm_cancellation(&self.cancellation)? else {
             return Ok(());
         };
         let model = self
             .model
             .lock()
-            .map_err(|_| BackendError::Protocol("ACP persistent model lock poisoned".to_owned()))?
+            .map_err(|_| {
+                ModelAdapterError::Protocol("ACP persistent model lock poisoned".to_owned())
+            })?
             .clone();
         let tools = self
             .tools
             .lock()
             .map_err(|_| {
-                BackendError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
+                ModelAdapterError::Protocol("ACP persistent tool surface lock poisoned".to_owned())
             })?
             .clone();
         let (events, event_rx) = mpsc::channel();
@@ -406,7 +409,7 @@ impl BackendSession for AcpPersistentSession {
         });
         let result = match send_result {
             Ok(()) => receive_worker_messages(event_rx, host),
-            Err(error) => Err(BackendError::Transport(format!(
+            Err(error) => Err(ModelAdapterError::Transport(format!(
                 "ACP persistent session worker is unavailable: {error}"
             ))),
         };
@@ -414,7 +417,7 @@ impl BackendSession for AcpPersistentSession {
         result
     }
 
-    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), BackendError> {
+    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), ModelAdapterError> {
         request_cancellation(&self.cancellation)
     }
 }
@@ -435,15 +438,15 @@ impl PersistentCommand {
 
 #[derive(Debug)]
 enum WorkerMessage {
-    Event(BackendEvent),
+    Event(ModelEvent),
     ToolCall(BridgeToolRequest),
-    Done(Result<(), BackendError>),
+    Done(Result<(), ModelAdapterError>),
 }
 
 fn receive_worker_messages(
     rx: mpsc::Receiver<WorkerMessage>,
-    host: &mut dyn BackendHost,
-) -> Result<(), BackendError> {
+    host: &mut dyn ModelAdapterHost,
+) -> Result<(), ModelAdapterError> {
     let mut host_error = None;
     loop {
         match rx.recv() {
@@ -454,8 +457,8 @@ fn receive_worker_messages(
             }
             Ok(WorkerMessage::ToolCall(request)) => {
                 let result = if let Some(error) = host_error.as_ref() {
-                    Err(BackendError::Protocol(format!(
-                        "backend host already failed before tool invocation: {error}"
+                    Err(ModelAdapterError::Protocol(format!(
+                        "adapter host already failed before tool invocation: {error}"
                     )))
                 } else {
                     host.invoke_tool(request.invocation)
@@ -465,7 +468,7 @@ fn receive_worker_messages(
             Ok(WorkerMessage::Done(result)) => return host_error.map_or(result, Err),
             Err(error) => {
                 return Err(host_error.unwrap_or_else(|| {
-                    BackendError::Transport(format!(
+                    ModelAdapterError::Transport(format!(
                         "ACP worker channel closed before completion: {error}"
                     ))
                 }));
@@ -474,8 +477,10 @@ fn receive_worker_messages(
     }
 }
 
-async fn discover_catalog(config: AcpBackendConfig) -> Result<BackendCatalog, BackendError> {
-    let backend = config.backend.clone();
+async fn discover_catalog(
+    config: AcpModelAdapterConfig,
+) -> Result<ModelAdapterCatalog, ModelAdapterError> {
+    let adapter = config.adapter.clone();
     let provider = config.provider.clone();
     let cwd = config.cwd.clone();
     let agent = new_agent(&config);
@@ -488,7 +493,7 @@ async fn discover_catalog(config: AcpBackendConfig) -> Result<BackendCatalog, Ba
                 .block_task()
                 .await?;
             let authentication_methods =
-                normalize_auth_methods(&initialized.auth_methods, &backend, &provider)
+                normalize_auth_methods(&initialized.auth_methods, &adapter, &provider)
                     .map_err(to_acp_error)?;
 
             match connection
@@ -500,9 +505,9 @@ async fn discover_catalog(config: AcpBackendConfig) -> Result<BackendCatalog, Ba
                     let options = serde_json::to_value(&session.config_options)
                         .map_err(agent_client_protocol::Error::into_internal_error)?;
                     let models =
-                        model_descriptors(&options, &backend, &provider).map_err(to_acp_error)?;
-                    Ok(BackendCatalog {
-                        backend,
+                        model_descriptors(&options, &adapter, &provider).map_err(to_acp_error)?;
+                    Ok(ModelAdapterCatalog {
+                        adapter,
                         models,
                         authentication_state: if authentication_methods.is_empty() {
                             AuthenticationState::NotRequired
@@ -512,8 +517,8 @@ async fn discover_catalog(config: AcpBackendConfig) -> Result<BackendCatalog, Ba
                         authentication_methods,
                     })
                 }
-                Err(error) if error.code == ErrorCode::AuthRequired => Ok(BackendCatalog {
-                    backend,
+                Err(error) if error.code == ErrorCode::AuthRequired => Ok(ModelAdapterCatalog {
+                    adapter,
                     models: Vec::new(),
                     authentication_state: AuthenticationState::Required,
                     authentication_methods,
@@ -522,13 +527,13 @@ async fn discover_catalog(config: AcpBackendConfig) -> Result<BackendCatalog, Ba
             }
         })
         .await
-        .map_err(|error| BackendError::Transport(error.to_string()))
+        .map_err(|error| ModelAdapterError::Transport(error.to_string()))
 }
 
 async fn authenticate_agent(
-    config: AcpBackendConfig,
+    config: AcpModelAdapterConfig,
     method: AuthenticationMethodId,
-) -> Result<(), BackendError> {
+) -> Result<(), ModelAdapterError> {
     let agent = new_agent(&config);
     agent_client_protocol::Client
         .builder()
@@ -557,17 +562,17 @@ async fn authenticate_agent(
             Ok(())
         })
         .await
-        .map_err(|error| BackendError::Transport(error.to_string()))
+        .map_err(|error| ModelAdapterError::Transport(error.to_string()))
 }
 
 async fn run_turn(
-    config: AcpBackendConfig,
+    config: AcpModelAdapterConfig,
     model: ModelTarget,
     tools: PreparedToolSurface,
     prompt: String,
     events: mpsc::Sender<WorkerMessage>,
     cancellation: ArmedCancellation,
-) -> Result<(), BackendError> {
+) -> Result<(), ModelAdapterError> {
     let agent = new_agent(&config);
     let notification_events = events.clone();
     let bridge = ToolBridge::default();
@@ -625,7 +630,7 @@ async fn run_turn(
                 .block_task()
                 .await?;
             if !tools.is_empty() && !initialized.agent_capabilities.mcp_capabilities.acp {
-                return Err(to_acp_error(BackendError::Unsupported(
+                return Err(to_acp_error(ModelAdapterError::Unsupported(
                     "ACP agent does not advertise native MCP-over-ACP support".to_owned(),
                 )));
             }
@@ -672,18 +677,18 @@ async fn run_turn(
             Ok(())
         })
         .await
-        .map_err(|error| BackendError::Transport(error.to_string()))?;
+        .map_err(|error| ModelAdapterError::Transport(error.to_string()))?;
 
     Ok(())
 }
 
 async fn run_persistent_session(
-    config: AcpBackendConfig,
+    config: AcpModelAdapterConfig,
     initial_model: ModelTarget,
     initial_tools: PreparedToolSurface,
     commands: mpsc::Receiver<PersistentCommand>,
-    ready: mpsc::SyncSender<Result<bool, BackendError>>,
-) -> Result<(), BackendError> {
+    ready: mpsc::SyncSender<Result<bool, ModelAdapterError>>,
+) -> Result<(), ModelAdapterError> {
     let agent = new_agent(&config);
     let active_events = Arc::new(Mutex::new(None::<mpsc::Sender<WorkerMessage>>));
     let notification_events = active_events.clone();
@@ -747,7 +752,7 @@ async fn run_persistent_session(
                 .await?;
             let bridge_available = initialized.agent_capabilities.mcp_capabilities.acp;
             if !initial_tools.is_empty() && !bridge_available {
-                return Err(to_acp_error(BackendError::Unsupported(
+                return Err(to_acp_error(ModelAdapterError::Unsupported(
                     "ACP agent does not advertise native MCP-over-ACP support".to_owned(),
                 )));
             }
@@ -789,22 +794,17 @@ async fn run_persistent_session(
                         .map_err(to_acp_error);
                 if let Err(error) = validation {
                     let message = error.to_string();
-                    let _ =
-                        command
-                            .events
-                            .send(WorkerMessage::Done(Err(BackendError::Unsupported(
-                                message.clone(),
-                            ))));
+                    let _ = command.events.send(WorkerMessage::Done(Err(
+                        ModelAdapterError::Unsupported(message.clone()),
+                    )));
                     return Err(error);
                 }
                 if !command.tools.is_empty() && !bridge_available {
-                    let _ =
-                        command
-                            .events
-                            .send(WorkerMessage::Done(Err(BackendError::Unsupported(
-                                "ACP agent does not advertise native MCP-over-ACP support"
-                                    .to_owned(),
-                            ))));
+                    let _ = command.events.send(WorkerMessage::Done(Err(
+                        ModelAdapterError::Unsupported(
+                            "ACP agent does not advertise native MCP-over-ACP support".to_owned(),
+                        ),
+                    )));
                     continue;
                 }
                 if current_model.as_deref() != Some(command.model.model.as_str()) {
@@ -818,9 +818,9 @@ async fn run_persistent_session(
                         .await
                     {
                         let message = error.to_string();
-                        let _ = command
-                            .events
-                            .send(WorkerMessage::Done(Err(BackendError::Transport(message))));
+                        let _ = command.events.send(WorkerMessage::Done(Err(
+                            ModelAdapterError::Transport(message),
+                        )));
                         return Err(error);
                     }
                     current_model = Some(command.model.model.as_str().to_owned());
@@ -868,9 +868,9 @@ async fn run_persistent_session(
                     }
                     Err(error) => {
                         let message = error.to_string();
-                        let _ = command
-                            .events
-                            .send(WorkerMessage::Done(Err(BackendError::Transport(message))));
+                        let _ = command.events.send(WorkerMessage::Done(Err(
+                            ModelAdapterError::Transport(message),
+                        )));
                         return Err(error);
                     }
                 }
@@ -878,7 +878,7 @@ async fn run_persistent_session(
             Ok(())
         })
         .await
-        .map_err(|error| BackendError::Transport(error.to_string()))
+        .map_err(|error| ModelAdapterError::Transport(error.to_string()))
 }
 
 struct CancelForwarder {
@@ -915,7 +915,7 @@ fn spawn_cancel_forwarder(
     }
 }
 
-fn new_agent(config: &AcpBackendConfig) -> AcpAgent {
+fn new_agent(config: &AcpModelAdapterConfig) -> AcpAgent {
     AcpAgent::new(
         AcpAgentConfig::new(config.command.clone())
             .args(config.args.clone())
@@ -923,15 +923,15 @@ fn new_agent(config: &AcpBackendConfig) -> AcpAgent {
     )
 }
 
-fn to_acp_error(error: BackendError) -> agent_client_protocol::Error {
+fn to_acp_error(error: ModelAdapterError) -> agent_client_protocol::Error {
     agent_client_protocol::Error::internal_error().data(error.to_string())
 }
 
 fn normalize_auth_methods(
     methods: &[AuthMethod],
-    backend: &BackendId,
-    provider: &ProviderId,
-) -> Result<Vec<AuthenticationMethodDescriptor>, BackendError> {
+    adapter: &ModelAdapterId,
+    provider: &ModelProviderId,
+) -> Result<Vec<AuthenticationMethodDescriptor>, ModelAdapterError> {
     methods
         .iter()
         .map(|method| {
@@ -943,11 +943,11 @@ fn normalize_auth_methods(
             };
             Ok(AuthenticationMethodDescriptor {
                 id: AuthenticationMethodId::parse(method.id().0.to_string()).map_err(|_| {
-                    BackendError::Protocol(
+                    ModelAdapterError::Protocol(
                         "ACP advertised an empty authentication method id".into(),
                     )
                 })?,
-                backend: backend.clone(),
+                adapter: adapter.clone(),
                 provider: provider.clone(),
                 kind,
                 name: method.name().to_owned(),
@@ -960,12 +960,12 @@ fn normalize_auth_methods(
 
 fn model_descriptors(
     serialized_config_options: &Value,
-    backend: &BackendId,
-    provider: &ProviderId,
-) -> Result<Vec<ModelDescriptor>, BackendError> {
+    adapter: &ModelAdapterId,
+    provider: &ModelProviderId,
+) -> Result<Vec<ModelDescriptor>, ModelAdapterError> {
     let model_option = find_model_option(serialized_config_options)?;
     let select_options = model_option.get("options").ok_or_else(|| {
-        BackendError::Protocol("ACP model config is not a select option".to_owned())
+        ModelAdapterError::Protocol("ACP model config is not a select option".to_owned())
     })?;
     let mut values = Vec::new();
     collect_select_values(select_options, &mut values);
@@ -975,11 +975,11 @@ fn model_descriptors(
         .filter(|(value, _)| seen.insert(value.clone()))
         .map(|(value, name)| {
             let model = ModelId::parse(value).map_err(|_| {
-                BackendError::Protocol("ACP advertised an empty model value id".to_owned())
+                ModelAdapterError::Protocol("ACP advertised an empty model value id".to_owned())
             })?;
             Ok(ModelDescriptor {
                 target: ModelTarget {
-                    backend: backend.clone(),
+                    adapter: adapter.clone(),
                     provider: provider.clone(),
                     model,
                     inference: InferenceOptions::default(),
@@ -992,9 +992,9 @@ fn model_descriptors(
         .collect()
 }
 
-fn find_model_option(serialized_config_options: &Value) -> Result<&Value, BackendError> {
+fn find_model_option(serialized_config_options: &Value) -> Result<&Value, ModelAdapterError> {
     let options = serialized_config_options.as_array().ok_or_else(|| {
-        BackendError::Protocol(
+        ModelAdapterError::Protocol(
             "ACP session config options did not serialize as an array".to_owned(),
         )
     })?;
@@ -1002,7 +1002,7 @@ fn find_model_option(serialized_config_options: &Value) -> Result<&Value, Backen
         .iter()
         .find(|option| option.get("category").and_then(Value::as_str) == Some("model"))
         .ok_or_else(|| {
-            BackendError::Unsupported(
+            ModelAdapterError::Unsupported(
                 "ACP agent did not advertise a model configuration option".to_owned(),
             )
         })
@@ -1028,16 +1028,16 @@ fn collect_select_values(value: &Value, output: &mut Vec<(String, String)>) {
     }
 }
 
-fn normalize_update(update: SessionUpdate) -> Option<BackendEvent> {
+fn normalize_update(update: SessionUpdate) -> Option<ModelEvent> {
     match update {
         SessionUpdate::AgentMessageChunk(ContentChunk {
             content: ContentBlock::Text(text),
             ..
-        }) => Some(BackendEvent::ContentDelta(text.text)),
+        }) => Some(ModelEvent::ContentDelta(text.text)),
         SessionUpdate::AgentThoughtChunk(ContentChunk {
             content: ContentBlock::Text(text),
             ..
-        }) => Some(BackendEvent::ReasoningDelta(text.text)),
+        }) => Some(ModelEvent::ReasoningDelta(text.text)),
         _ => None,
     }
 }
@@ -1051,17 +1051,19 @@ struct AcpModelConfigSelection {
 fn exact_model_selection(
     serialized_config_options: &Value,
     desired_model: &str,
-) -> Result<AcpModelConfigSelection, BackendError> {
+) -> Result<AcpModelConfigSelection, ModelAdapterError> {
     let model_option = find_model_option(serialized_config_options)?;
     let config_id = model_option
         .get("id")
         .and_then(Value::as_str)
-        .ok_or_else(|| BackendError::Protocol("ACP model config is missing its id".to_owned()))?;
+        .ok_or_else(|| {
+            ModelAdapterError::Protocol("ACP model config is missing its id".to_owned())
+        })?;
     let select_options = model_option.get("options").ok_or_else(|| {
-        BackendError::Protocol("ACP model config is not a select option".to_owned())
+        ModelAdapterError::Protocol("ACP model config is not a select option".to_owned())
     })?;
     if !contains_select_value(select_options, desired_model) {
-        return Err(BackendError::Unsupported(format!(
+        return Err(ModelAdapterError::Unsupported(format!(
             "ACP agent does not advertise exact model value {desired_model}"
         )));
     }
@@ -1116,14 +1118,14 @@ fn block_on<F: Future>(future: F) -> F::Output {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_backend::ToolProvision;
     use phenix_domain::InferenceEffort;
+    use phenix_model_adapter::ToolProvision;
     use serde_json::json;
 
-    fn config() -> AcpBackendConfig {
-        AcpBackendConfig::new(
-            BackendId::parse("pi-acp").unwrap(),
-            ProviderId::parse("openai").unwrap(),
+    fn config() -> AcpModelAdapterConfig {
+        AcpModelAdapterConfig::new(
+            ModelAdapterId::parse("pi-acp").unwrap(),
+            ModelProviderId::parse("openai").unwrap(),
             "pi-acp",
             ".",
         )
@@ -1131,8 +1133,8 @@ mod tests {
 
     fn model() -> ModelTarget {
         ModelTarget {
-            backend: BackendId::parse("pi-acp").unwrap(),
-            provider: ProviderId::parse("openai").unwrap(),
+            adapter: ModelAdapterId::parse("pi-acp").unwrap(),
+            provider: ModelProviderId::parse("openai").unwrap(),
             model: ModelId::parse("gpt-5.6-sol").unwrap(),
             inference: InferenceOptions::default(),
         }
@@ -1140,12 +1142,12 @@ mod tests {
 
     fn empty_tools() -> PreparedToolSurface {
         ToolProvision::default()
-            .prepare(&AcpBackend::new(config()).capabilities())
+            .prepare(&AcpModelAdapter::new(config()).features())
             .unwrap()
     }
 
-    fn backend_session() -> AcpBackendSession {
-        AcpBackendSession {
+    fn backend_session() -> AcpModelSession {
+        AcpModelSession {
             config: config(),
             model: model(),
             tools: empty_tools(),
@@ -1196,7 +1198,7 @@ mod tests {
         );
         assert!(matches!(
             exact_model_selection(&options, "GPT 5.6 Sol"),
-            Err(BackendError::Unsupported(_))
+            Err(ModelAdapterError::Unsupported(_))
         ));
     }
 
@@ -1213,8 +1215,8 @@ mod tests {
         }]);
         let models = model_descriptors(
             &options,
-            &BackendId::parse("pi-acp").unwrap(),
-            &ProviderId::parse("openai").unwrap(),
+            &ModelAdapterId::parse("pi-acp").unwrap(),
+            &ModelProviderId::parse("openai").unwrap(),
         )
         .unwrap();
         assert_eq!(models.len(), 2);
@@ -1225,26 +1227,26 @@ mod tests {
 
     #[test]
     fn backend_rejects_non_exact_target_features_before_spawning() {
-        let mut backend = AcpBackend::new(config());
+        let mut adapter = AcpModelAdapter::new(config());
         let mut target = model();
         target.inference.effort = Some(InferenceEffort::High);
         let tools = ToolProvision::default()
-            .prepare(&backend.capabilities())
+            .prepare(&adapter.features())
             .unwrap();
         assert!(matches!(
-            backend.open_session(BackendSessionRequest {
+            adapter.open_session(ModelSessionRequest {
                 model: target,
                 tools,
             }),
-            Err(BackendError::Unsupported(_))
+            Err(ModelAdapterError::Unsupported(_))
         ));
     }
 
     #[test]
     fn acp_backend_advertises_persistent_sessions_and_native_tool_bridge() {
-        let capabilities = AcpBackend::new(config()).capabilities();
-        assert!(capabilities.persistent_sessions);
-        assert!(capabilities
+        let features = AcpModelAdapter::new(config()).features();
+        assert!(features.persistent_sessions);
+        assert!(features
             .tool_presentations
             .contains(&ToolPresentation::AcpExtension));
     }
