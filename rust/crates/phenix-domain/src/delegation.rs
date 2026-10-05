@@ -160,12 +160,12 @@ impl DelegationContract {
             validate_component(component, &components_by_id)?;
         }
         for condition in &escalation {
-            if let EscalationScope::Component(component) = &condition.scope {
-                if !components_by_id.contains_key(component) {
-                    return Err(DelegationContractError::UnknownEscalationComponent(
-                        component.clone(),
-                    ));
-                }
+            if let EscalationScope::Component(component) = &condition.scope
+                && !components_by_id.contains_key(component)
+            {
+                return Err(DelegationContractError::UnknownEscalationComponent(
+                    component.clone(),
+                ));
             }
         }
 
@@ -444,13 +444,13 @@ fn validate_component(
     }
 
     for permission in &component.may_change {
-        if let ChangeScope::OwnedElement(target) = &permission.scope {
-            if !owned_elements.contains(target) {
-                return Err(DelegationContractError::UnknownOwnedElementTarget {
-                    component: component.id.clone(),
-                    target: target.clone(),
-                });
-            }
+        if let ChangeScope::OwnedElement(target) = &permission.scope
+            && !owned_elements.contains(target)
+        {
+            return Err(DelegationContractError::UnknownOwnedElementTarget {
+                component: component.id.clone(),
+                target: target.clone(),
+            });
         }
     }
 
