@@ -65,14 +65,13 @@ impl PluginInstance for FixtureProvider {
             ));
         }
 
-        if let Ok(expected) = env::var("PHENIX_FIXTURE_EXPECT_INPUT") {
-            if !expected.is_empty()
-                && !String::from_utf8_lossy(request.input.as_ref()).contains(&expected)
-            {
-                return Err(format!(
-                    "fixture model input did not contain expected marker {expected:?}"
-                ));
-            }
+        if let Ok(expected) = env::var("PHENIX_FIXTURE_EXPECT_INPUT")
+            && !expected.is_empty()
+            && !String::from_utf8_lossy(request.input.as_ref()).contains(&expected)
+        {
+            return Err(format!(
+                "fixture model input did not contain expected marker {expected:?}"
+            ));
         }
         let response = if request.model.as_str() == FIXTURE_INTROSPECTION_MODEL {
             model_surface_response(&request).map_err(|error| error.to_string())?
