@@ -378,7 +378,7 @@ mod tests {
 
     fn delegation_input() -> ExplorationDelegationInput {
         use crate::contracts::{ModelTarget, RoutingEstimate};
-        use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+        use phenix_core::{ModelFeatureGenerationId, ModelId, PluginId};
         use std::collections::BTreeMap;
 
         ExplorationDelegationInput {
@@ -396,7 +396,7 @@ mod tests {
                     model: ModelId::parse("model.fixture").unwrap(),
                     options: BTreeMap::new(),
                 },
-                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "routing-1".into(),
                 candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
@@ -423,7 +423,7 @@ mod tests {
             historical_estimator_snapshot: None,
             routing: RoutingRequirements {
                 context: ContextDemand::default(),
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
                 require_known_capacity: false,
             },
             context: ContextDemand::default(),
