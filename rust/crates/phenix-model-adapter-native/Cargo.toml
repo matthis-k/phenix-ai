@@ -1,5 +1,5 @@
 [package]
-name = "phenix-backend-native"
+name = "phenix-model-adapter-native"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,7 +12,7 @@ base64.workspace = true
 futures.workspace = true
 genai.workspace = true
 getrandom.workspace = true
-phenix-backend = { path = "../phenix-backend" }
+phenix-model-adapter = { path = "../phenix-model-adapter" }
 phenix-domain = { path = "../phenix-domain" }
 reqwest.workspace = true
 serde.workspace = true

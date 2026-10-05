@@ -359,8 +359,8 @@ mod tests {
             ClientToolRemoveInput,
         };
         use phenix_core::{
-            CallableId, CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-            ReferenceId, Type,
+            CallableId, CallableRef, ClientConnectionId, ReferenceGenerationId, ReferenceId,
+            ReferenceOwnerId, Type,
         };
         let input = ClientToolAddInput {
             session_id: SessionId::parse("session-1").unwrap(),
@@ -373,8 +373,8 @@ mod tests {
                 requires_permission: false,
                 invoke: PhenixValue::Callable(CallableRef::new(
                     contract("fixture.echo@1"),
-                    CapabilityOwnerId::Client(ClientConnectionId::parse("client-1").unwrap()),
-                    CapabilityGenerationId::parse("generation-1").unwrap(),
+                    ReferenceOwnerId::Client(ClientConnectionId::parse("client-1").unwrap()),
+                    ReferenceGenerationId::parse("generation-1").unwrap(),
                     ReferenceId::parse("handler-1").unwrap(),
                 )),
             },

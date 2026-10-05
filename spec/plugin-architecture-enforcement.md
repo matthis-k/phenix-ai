@@ -6,7 +6,7 @@ coverage:
   - scripts/check-structural-boundaries.sh
   - modules/package-sets.nix
   - rust/crates/phenix-sdk/tests/plugin_attribute_only_gate.rs
-  - rust/crates/phenix-core/src/runtime_provider_regression.rs
+  - rust/crates/phenix-core/src/plugin_runtime_adapter_regression.rs
   - rust/crates/phenix-core/src/plugin_management_regression.rs
 
 ## Purpose

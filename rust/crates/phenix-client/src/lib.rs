@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use phenix_domain::{
-    AuthenticationInput, AuthenticationMethodId, BackendCatalog, BackendId, CallableDescriptor,
-    CallableId, ConfigRevisionId, ExecutionEvent, ExecutionId, ExecutionSummary,
+    AuthenticationInput, AuthenticationMethodId, CallableDescriptor, CallableId, ConfigRevisionId,
+    ExecutionEvent, ExecutionId, ExecutionSummary, ModelAdapterCatalog, ModelAdapterId,
     RoutingProfileDescriptor, RoutingProfileId, SessionId, SessionSummary, SkillDescriptor,
 };
 use serde::{Deserialize, Serialize};
@@ -262,11 +262,11 @@ pub enum Command {
     CancelExecution {
         execution_id: ExecutionId,
     },
-    RefreshBackendCatalog {
-        backend_id: BackendId,
+    RefreshModelAdapterCatalog {
+        adapter_id: ModelAdapterId,
     },
     SelectAuthentication {
-        backend_id: BackendId,
+        adapter_id: ModelAdapterId,
         method_id: AuthenticationMethodId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<AuthenticationInput>,
@@ -294,11 +294,11 @@ pub enum Reply {
     Initialized {
         snapshot: RuntimeSnapshot,
         events: Vec<ExecutionEvent>,
-        backends: Vec<BackendCatalog>,
+        model_adapters: Vec<ModelAdapterCatalog>,
     },
     Snapshot {
         snapshot: RuntimeSnapshot,
-        backends: Vec<BackendCatalog>,
+        model_adapters: Vec<ModelAdapterCatalog>,
     },
     CallableCatalog {
         callables: Vec<CallableDescriptor>,
@@ -315,8 +315,8 @@ pub enum Reply {
     Execution {
         execution: ExecutionSummary,
     },
-    BackendCatalog {
-        catalog: BackendCatalog,
+    ModelAdapterCatalog {
+        catalog: ModelAdapterCatalog,
     },
     SessionDebug {
         bundle: Box<phenix_domain::SessionDebugBundle>,
@@ -378,7 +378,7 @@ pub enum ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_domain::{ProviderId, RoutingProfileId};
+    use phenix_domain::{ModelProviderId, RoutingProfileId};
 
     #[test]
     fn harness_service_wire_is_protocol_owned_and_policy_neutral() {
@@ -467,7 +467,7 @@ mod tests {
             value["command"]["input"],
             serde_json::json!({"objective": "implement change"})
         );
-        assert!(value["command"].get("backend").is_none());
+        assert!(value["command"].get("adapter").is_none());
         assert!(value["command"].get("provider").is_none());
     }
 
@@ -510,8 +510,8 @@ mod tests {
                     profiles: vec![RoutingProfileDescriptor {
                         id: RoutingProfileId::parse("router.mixed").unwrap(),
                         providers: vec![
-                            ProviderId::parse("openai-codex").unwrap(),
-                            ProviderId::parse("opencode-go").unwrap(),
+                            ModelProviderId::parse("openai-codex").unwrap(),
+                            ModelProviderId::parse("opencode-go").unwrap(),
                         ],
                     }],
                 },
@@ -531,7 +531,7 @@ mod tests {
         let message = ClientMessage {
             id: 11,
             command: Command::SelectAuthentication {
-                backend_id: BackendId::parse("phenix").unwrap(),
+                adapter_id: ModelAdapterId::parse("phenix").unwrap(),
                 method_id: AuthenticationMethodId::parse("openai-api").unwrap(),
                 input: Some(AuthenticationInput::ApiKey {
                     secret: "super-secret".to_owned(),

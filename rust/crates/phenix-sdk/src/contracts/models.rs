@@ -1,11 +1,11 @@
-use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelCapabilities, ModelTurnUsage};
+use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelFeatures, ModelTurnUsage};
 pub use phenix_core::{
     model_inference_service, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
     MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    CallableId, CapabilityGenerationId, ComponentInterface, EventTypeId, InterfaceId, ModelId,
+    CallableId, ComponentInterface, EventTypeId, InterfaceId, ModelFeatureGenerationId, ModelId,
     PhenixValue, PluginId, PreparedMutationHandle, RoutingProfileId, ServiceId,
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub enum ModelDiagnosticEvent {
         model: String,
         candidate_ordinal: u32,
         policy_revision: String,
-        capability_generation: String,
+        feature_generation: String,
         input_bytes: usize,
         tool_count: usize,
         continuation_turns: usize,
@@ -104,7 +104,7 @@ pub struct RoutingProfileDescriptor {
 pub struct RoutingRequirements {
     pub context: ContextDemand,
     #[serde(default)]
-    pub required_capabilities: BTreeSet<String>,
+    pub required_features: BTreeSet<String>,
     #[serde(default)]
     pub require_known_capacity: bool,
 }
@@ -113,31 +113,29 @@ pub struct RoutingRequirements {
 #[serde(tag = "eligibility", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteEligibility {
     Eligible,
-    MissingCapabilities { capabilities: Vec<String> },
+    MissingFeatures { features: Vec<String> },
     InsufficientContextCapacity,
     UnknownContextCapacity,
 }
 
 impl RoutingRequirements {
     #[must_use]
-    pub fn evaluate(&self, capabilities: &EffectiveModelCapabilities) -> RouteEligibility {
+    pub fn evaluate(&self, features: &EffectiveModelFeatures) -> RouteEligibility {
         let missing: Vec<String> = self
-            .required_capabilities
-            .union(&self.context.required_capabilities)
-            .filter(|required| !capabilities.optional.contains(*required))
+            .required_features
+            .union(&self.context.required_features)
+            .filter(|required| !features.optional.contains(*required))
             .cloned()
             .collect();
         if !missing.is_empty() {
-            return RouteEligibility::MissingCapabilities {
-                capabilities: missing,
-            };
+            return RouteEligibility::MissingFeatures { features: missing };
         }
 
         let required_context = self
             .context
             .total_input_tokens()
             .saturating_add(self.context.output_reserve_tokens);
-        match &capabilities.capacity {
+        match &features.capacity {
             CapacityKnowledge::Known { limits }
             | CapacityKnowledge::ConfiguredConservative { limits } => {
                 if limits.context_window_tokens < required_context
@@ -183,7 +181,7 @@ pub struct RoutingEstimate {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingCandidate {
-    pub capabilities: EffectiveModelCapabilities,
+    pub features: EffectiveModelFeatures,
     pub estimate: Option<RoutingEstimate>,
     pub ordinal: u32,
 }
@@ -210,7 +208,7 @@ pub struct RouteSelectionPolicy {
 #[serde(deny_unknown_fields)]
 pub struct RouteDecision {
     pub target: ModelTarget,
-    pub capability_generation: CapabilityGenerationId,
+    pub feature_generation: ModelFeatureGenerationId,
     pub policy_revision: String,
     pub candidate_ordinal: u32,
     pub estimate: Option<RoutingEstimate>,
@@ -265,10 +263,10 @@ pub fn select_route(
     let mut eligible: Vec<&RoutingCandidate> = Vec::new();
 
     for candidate in candidates {
-        match requirements.evaluate(&candidate.capabilities) {
+        match requirements.evaluate(&candidate.features) {
             RouteEligibility::Eligible => eligible.push(candidate),
             reason => rejected.push(RejectedRoutingCandidate {
-                target: candidate.capabilities.target.clone(),
+                target: candidate.features.target.clone(),
                 ordinal: candidate.ordinal,
                 reason,
             }),
@@ -297,8 +295,8 @@ pub fn select_route(
     let winner = eligible[0];
     Ok(RouteSelection {
         decision: RouteDecision {
-            target: winner.capabilities.target.clone(),
-            capability_generation: winner.capabilities.generation.clone(),
+            target: winner.features.target.clone(),
+            feature_generation: winner.features.generation.clone(),
             policy_revision: policy.revision.clone(),
             candidate_ordinal: winner.ordinal,
             estimate: winner.estimate.clone(),
@@ -373,8 +371,8 @@ pub enum ModelCommand {
         id: RoutingProfileId,
     },
     ListProfiles,
-    PublishCapabilities {
-        capabilities: EffectiveModelCapabilities,
+    PublishModelFeatures {
+        features: EffectiveModelFeatures,
     },
     ListCandidates {
         profile_id: RoutingProfileId,
@@ -405,8 +403,8 @@ pub enum ModelResponse {
     Profiles {
         profiles: Vec<RoutingProfileDescriptor>,
     },
-    Capabilities {
-        capabilities: EffectiveModelCapabilities,
+    Features {
+        features: EffectiveModelFeatures,
     },
     Candidates {
         candidates: Vec<RoutingCandidate>,
@@ -440,14 +438,14 @@ mod tests {
     use super::*;
     use crate::contracts::{ContextControl, ModelLimits};
 
-    fn capabilities(model: &str, capacity: CapacityKnowledge) -> EffectiveModelCapabilities {
-        EffectiveModelCapabilities {
+    fn features(model: &str, capacity: CapacityKnowledge) -> EffectiveModelFeatures {
+        EffectiveModelFeatures {
             target: ModelTarget {
                 provider_plugin: PluginId::parse("provider.fixture").unwrap(),
                 model: ModelId::parse(model).unwrap(),
                 options: BTreeMap::new(),
             },
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity,
             cache: Default::default(),
@@ -461,9 +459,9 @@ mod tests {
                 mandatory_input_tokens: 800,
                 reducible_input_tokens: 100,
                 output_reserve_tokens: 200,
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
             },
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: true,
         }
     }
@@ -471,7 +469,7 @@ mod tests {
     #[test]
     fn hard_capacity_is_checked_before_ranking() {
         assert_eq!(
-            requirements().evaluate(&capabilities(
+            requirements().evaluate(&features(
                 "model.fixture",
                 CapacityKnowledge::Known {
                     limits: ModelLimits {
@@ -488,7 +486,7 @@ mod tests {
     fn deterministic_default_uses_profile_order_not_estimates() {
         let candidates = vec![
             RoutingCandidate {
-                capabilities: capabilities(
+                features: features(
                     "first",
                     CapacityKnowledge::Known {
                         limits: ModelLimits {
@@ -509,7 +507,7 @@ mod tests {
                 ordinal: 0,
             },
             RoutingCandidate {
-                capabilities: capabilities(
+                features: features(
                     "second",
                     CapacityKnowledge::Known {
                         limits: ModelLimits {
@@ -547,7 +545,7 @@ mod tests {
     fn estimates_only_rank_candidates_that_pass_hard_admission() {
         let candidates = vec![
             RoutingCandidate {
-                capabilities: capabilities(
+                features: features(
                     "high-quality-too-small",
                     CapacityKnowledge::Known {
                         limits: ModelLimits {
@@ -568,7 +566,7 @@ mod tests {
                 ordinal: 0,
             },
             RoutingCandidate {
-                capabilities: capabilities(
+                features: features(
                     "eligible",
                     CapacityKnowledge::Known {
                         limits: ModelLimits {

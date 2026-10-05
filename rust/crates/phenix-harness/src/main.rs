@@ -6,7 +6,7 @@ use phenix_core::{
 };
 use phenix_harness::{
     application::serve_configured_application, default_suite_authority,
-    invocation_defaults_manifest, HarnessBuilder, PhenixHarness,
+    invocation_defaults_manifest, PhenixRuntime, PhenixRuntimeBuilder,
 };
 use phenix_plugin_catalog::{
     adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
@@ -80,9 +80,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     let persistence = LocalPersistence::open(&state)?;
     let mut builder = match configured_first_party_plugins(&cli)? {
-        Some(enabled) => HarnessBuilder::with_selected_suite(&enabled)
+        Some(enabled) => PhenixRuntimeBuilder::with_selected_suite(&enabled)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
-        None => HarnessBuilder::with_default_suite()?,
+        None => PhenixRuntimeBuilder::with_default_suite()?,
     };
     for package in configured_plugin_packages()? {
         add_packaged_plugin(&mut builder, &package)?;
@@ -91,7 +91,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut harness = builder.build_with_persistence(persistence)?;
     let process_arguments = resolve_process_arguments(
         &cli.plugin_arguments,
-        harness.resolved_harness().process_arguments(),
+        harness.resolved_generation().process_arguments(),
     )
     .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     harness.activate()?;
@@ -300,12 +300,12 @@ fn resolve_process_arguments(
 }
 
 fn apply_process_arguments(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     arguments: &[ProcessArgumentInvocation],
 ) -> Result<(), Box<dyn Error>> {
     for argument in arguments {
         let component = harness
-            .resolved_harness()
+            .resolved_generation()
             .components()
             .iter()
             .find(|component| component.id == argument.argument.component)
@@ -488,7 +488,7 @@ fn default_layer_enabled() -> bool {
     true
 }
 
-fn apply_configured_layer_policy(builder: &mut HarnessBuilder) -> Result<(), Box<dyn Error>> {
+fn apply_configured_layer_policy(builder: &mut PhenixRuntimeBuilder) -> Result<(), Box<dyn Error>> {
     let Some(value) = env::var_os("PHENIX_LAYER_POLICY") else {
         return Ok(());
     };
@@ -525,7 +525,10 @@ fn configured_plugin_packages() -> Result<Vec<PathBuf>, Box<dyn Error>> {
     Ok(value.split(':').map(PathBuf::from).collect())
 }
 
-fn add_packaged_plugin(builder: &mut HarnessBuilder, package: &Path) -> Result<(), Box<dyn Error>> {
+fn add_packaged_plugin(
+    builder: &mut PhenixRuntimeBuilder,
+    package: &Path,
+) -> Result<(), Box<dyn Error>> {
     let manifest_path = package.join("share/phenix-plugin/manifest.json");
     let manifest: PluginManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
     if matches!(manifest.execution, PluginExecution::Embedded) {
@@ -661,7 +664,7 @@ mod tests {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let factory_observed = Arc::clone(&observed);
 
-        let mut builder = HarnessBuilder::new();
+        let mut builder = PhenixRuntimeBuilder::new();
         builder
             .add_embedded(
                 PluginManifest {
@@ -701,7 +704,7 @@ mod tests {
         let mut harness = builder.build().unwrap();
         let arguments = resolve_process_arguments(
             &["--plugin-handled-value".into(), "7".into()],
-            harness.resolved_harness().process_arguments(),
+            harness.resolved_generation().process_arguments(),
         )
         .unwrap();
         harness.activate().unwrap();

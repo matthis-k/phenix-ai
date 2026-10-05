@@ -20,7 +20,7 @@ use phenix_application_interface::{
     SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
 };
 use phenix_core::{
-    CapabilityOwnerId, ContentReference, ReferenceId, RoutingProfileId, SessionId, ValueCodec,
+    ContentReference, ReferenceId, ReferenceOwnerId, RoutingProfileId, SessionId, ValueCodec,
 };
 use std::{
     cell::RefCell,
@@ -184,7 +184,7 @@ pub(super) fn connect(lua: &Lua, options: Table) -> LuaResult<FacadeClient> {
         .transpose()?;
 
     let raw = super::connect_raw(options)?;
-    let owner = CapabilityOwnerId::Client(raw.state.owner.clone());
+    let owner = ReferenceOwnerId::Client(raw.state.owner.clone());
     let generation = raw.state.generation.clone();
     let permission_ref = permission_handler.as_ref().map(|_| {
         ReferenceId::parse("facade-permission").expect("static facade permission reference")
@@ -695,7 +695,7 @@ impl InteractionReply {
                 "interaction reply has already been settled",
             ))
         })?;
-        callback.respond(Ok(CapabilityInvokeResult { output }.to_value()));
+        callback.respond(Ok(CallableInvocationResult { output }.to_value()));
         Ok(())
     }
 
@@ -720,7 +720,7 @@ impl Drop for InteractionReply {
             InteractionReplyKind::Elicitation(_) => ElicitationResponse::Cancelled.to_value(),
         };
         if let Some(callback) = self.callback.take() {
-            callback.respond(Ok(CapabilityInvokeResult { output }.to_value()));
+            callback.respond(Ok(CallableInvocationResult { output }.to_value()));
         }
     }
 }
@@ -1223,13 +1223,13 @@ fn dispatch_callback(
     core: &Rc<FacadeCore>,
     callback: phenix_client_acp::ExtensionCallbackRequest,
 ) -> LuaResult<()> {
-    let invocation = CapabilityInvokeInput::from_value(&callback.input)
+    let invocation = CallableInvocation::from_value(&callback.input)
         .map_err(|error| lua_error(BindingError::conversion(error.to_string())))?;
     let callable = invocation
         .callable
         .callable()
         .map_err(|error| lua_error(BindingError::conversion(error.to_string())))?;
-    if callable.owner() != &CapabilityOwnerId::Client(core.raw.state.owner.clone())
+    if callable.owner() != &ReferenceOwnerId::Client(core.raw.state.owner.clone())
         || callable.generation() != &core.raw.state.generation
     {
         callback.respond(Err(

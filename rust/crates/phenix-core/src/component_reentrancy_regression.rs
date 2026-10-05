@@ -1,7 +1,7 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, Kernel, KernelError, PhenixValue, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResolvedHarness, ResolvedHarnessActivation,
+    PluginId, PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
     ServiceId, SharedPluginInvocation,
 };
 use std::sync::Arc;
@@ -191,9 +191,9 @@ fn kernel(recurse_to_entry: bool) -> Kernel {
         ));
     }
     let resolved =
-        ResolvedHarness::resolve([manifest()], components, [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([manifest()], components, [], &Authority::default()).unwrap();
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(plugin(), move || {
             Box::new(ReentrantPlugin::new(recurse_to_entry))
@@ -209,9 +209,9 @@ fn legacy_kernel() -> Kernel {
         component_manifest("middle", Vec::new(), vec![export::<Middle>()]),
     ];
     let resolved =
-        ResolvedHarness::resolve([manifest()], components, [], &Authority::default()).unwrap();
+        ResolvedGeneration::resolve([manifest()], components, [], &Authority::default()).unwrap();
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(plugin(), || Box::new(LegacyReentrantPlugin))
         .unwrap();

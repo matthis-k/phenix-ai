@@ -2,8 +2,8 @@ use crate::credentials::CredentialStore;
 use genai::adapter::AdapterKind;
 use genai::resolver::{AuthData, Endpoint};
 use genai::{ModelIden, ServiceTarget};
-use phenix_backend::BackendError;
-use phenix_domain::{ModelId, ProviderId};
+use phenix_domain::{ModelId, ModelProviderId};
+use phenix_model_adapter::ModelAdapterError;
 
 pub(crate) const OPENAI_API_PROVIDER: &str = "openai-api";
 pub(crate) const ANTHROPIC_PROVIDER: &str = "anthropic";
@@ -58,7 +58,7 @@ const DEEPSEEK_API_KEY_ENV: &str = "DEEPSEEK_API_KEY";
 const GROQ_API_KEY_ENV: &str = "GROQ_API_KEY";
 const XAI_API_KEY_ENV: &str = "XAI_API_KEY";
 
-pub(crate) fn is_gateway_provider(provider: &ProviderId) -> bool {
+pub(crate) fn is_gateway_provider(provider: &ModelProviderId) -> bool {
     matches!(
         provider.as_str(),
         OPENCODE_ZEN_PROVIDER | OPENCODE_GO_PROVIDER
@@ -66,17 +66,17 @@ pub(crate) fn is_gateway_provider(provider: &ProviderId) -> bool {
 }
 
 pub(crate) fn validate_gateway_model(
-    provider: &ProviderId,
+    provider: &ModelProviderId,
     model: &ModelId,
-) -> Result<(), BackendError> {
+) -> Result<(), ModelAdapterError> {
     gateway_adapter(provider, model).map(|_| ())
 }
 
 pub(crate) fn gateway_target(
     credentials: &CredentialStore,
-    provider: &ProviderId,
+    provider: &ModelProviderId,
     model: &ModelId,
-) -> Result<Option<ServiceTarget>, BackendError> {
+) -> Result<Option<ServiceTarget>, ModelAdapterError> {
     let (credential_provider, endpoint, auth_names) = match provider.as_str() {
         OPENCODE_ZEN_PROVIDER => (
             OPENCODE_ZEN_PROVIDER,
@@ -93,7 +93,7 @@ pub(crate) fn gateway_target(
     let adapter_kind = gateway_adapter(provider, model)?;
     let auth = match credentials
         .api_key(credential_provider)
-        .map_err(BackendError::Protocol)?
+        .map_err(ModelAdapterError::Protocol)?
     {
         Some(secret) => AuthData::from_single(secret),
         None => auth_from_environment(auth_names),
@@ -105,7 +105,7 @@ pub(crate) fn gateway_target(
     }))
 }
 
-pub(crate) fn canonical_auth_provider(provider: &ProviderId) -> Option<&'static str> {
+pub(crate) fn canonical_auth_provider(provider: &ModelProviderId) -> Option<&'static str> {
     match provider.as_str() {
         OPENAI_API_PROVIDER => Some(OPENAI_API_PROVIDER),
         "openai-codex" => Some("openai-codex"),
@@ -123,7 +123,10 @@ pub(crate) fn canonical_auth_provider(provider: &ProviderId) -> Option<&'static 
     }
 }
 
-pub(crate) fn genai_model(provider: &ProviderId, model: &ModelId) -> Result<String, BackendError> {
+pub(crate) fn genai_model(
+    provider: &ModelProviderId,
+    model: &ModelId,
+) -> Result<String, ModelAdapterError> {
     let namespace = match provider.as_str() {
         OPENAI_API_PROVIDER | "openai-codex" => "openai_resp",
         ANTHROPIC_PROVIDER => "anthropic",
@@ -136,7 +139,7 @@ pub(crate) fn genai_model(provider: &ProviderId, model: &ModelId) -> Result<Stri
         GROQ_PROVIDER => "groq",
         XAI_PROVIDER => "xai",
         other => {
-            return Err(BackendError::Unsupported(format!(
+            return Err(ModelAdapterError::Unsupported(format!(
                 "unsupported Phenix provider {other:?}"
             )))
         }
@@ -244,21 +247,24 @@ pub(crate) fn environment_name(provider: &str) -> Option<&'static str> {
     }
 }
 
-fn gateway_adapter(provider: &ProviderId, model: &ModelId) -> Result<AdapterKind, BackendError> {
+fn gateway_adapter(
+    provider: &ModelProviderId,
+    model: &ModelId,
+) -> Result<AdapterKind, ModelAdapterError> {
     match provider.as_str() {
         OPENCODE_ZEN_PROVIDER => zen_adapter(model),
         OPENCODE_GO_PROVIDER => Ok(go_adapter(model)),
-        other => Err(BackendError::Unsupported(format!(
+        other => Err(ModelAdapterError::Unsupported(format!(
             "provider {other:?} is not an OpenCode gateway"
         ))),
     }
 }
 
-fn zen_adapter(model: &ModelId) -> Result<AdapterKind, BackendError> {
+fn zen_adapter(model: &ModelId) -> Result<AdapterKind, ModelAdapterError> {
     let model = model.as_str();
     if model.starts_with("gemini-") {
-        return Err(BackendError::Unsupported(format!(
-            "OpenCode Zen model {model:?} requires the Google-native Zen endpoint, which the built-in Phenix backend does not expose yet"
+        return Err(ModelAdapterError::Unsupported(format!(
+            "OpenCode Zen model {model:?} requires the Google-native Zen endpoint, which the built-in Phenix adapter does not expose yet"
         )));
     }
     if model.starts_with("gpt-") || model.starts_with("grok-") {
@@ -296,8 +302,8 @@ fn auth_from_environment(names: &[&'static str]) -> AuthData {
 mod tests {
     use super::*;
 
-    fn provider(value: &str) -> ProviderId {
-        ProviderId::parse(value).unwrap()
+    fn provider(value: &str) -> ModelProviderId {
+        ModelProviderId::parse(value).unwrap()
     }
 
     fn model(value: &str) -> ModelId {
@@ -403,7 +409,7 @@ mod tests {
         );
         assert!(matches!(
             zen_adapter(&model("gemini-3.6-flash")),
-            Err(BackendError::Unsupported(_))
+            Err(ModelAdapterError::Unsupported(_))
         ));
     }
 }

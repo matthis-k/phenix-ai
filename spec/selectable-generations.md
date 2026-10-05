@@ -1,4 +1,4 @@
-# Selectable Harness generations
+# Selectable generations
 
 status: implemented
 coverage:
@@ -14,7 +14,7 @@ depends_on:
 
 ## Purpose
 
-Keep the Phenix runtime and kernel stable while allowing multiple resolved Harness generations to remain available for explicit root execution.
+Keep the Phenix runtime and kernel stable while allowing multiple resolved generation generations to remain available for explicit root execution.
 
 This supports plugin development without turning reload into a second runtime model. An agent may build a candidate generation, exercise it, compare it with the current generation, and promote it without gaining new authority or silently changing its Environment.
 
@@ -22,7 +22,7 @@ This supports plugin development without turning reload into a second runtime mo
 
 The kernel remains the long-lived owner of host state.
 
-A `ResolvedHarness` remains one immutable, internally coherent runtime topology. Plugins, Components, provider bindings, Layers, Listeners, skills, resources, and configuration are resolved as one generation.
+A `ResolvedGeneration` remains one immutable, internally coherent runtime topology. Plugins, Components, provider bindings, Layers, Listeners, skills, resources, and configuration are resolved as one generation.
 
 The runtime may keep more than one compatible generation resident:
 
@@ -59,7 +59,7 @@ root execution constraints
 Each resident generation owns:
 
 ```text
-ResolvedHarness
+ResolvedGeneration
 Plugin instances
 Plugin invocation endpoints
 resolved service/component topology
@@ -129,7 +129,7 @@ A pin identifies a canonical resolved binding, not only a Plugin ID. Its identit
 
 Environment is the primary example.
 
-If the original root is bound to one Environment, selecting another Harness generation must preserve that Environment binding. A candidate that changes the pinned Environment provider, artifact/configuration semantics, or another pinned host binding is incompatible with that root.
+If the original root is bound to one Environment, selecting another generation must preserve that Environment binding. A candidate that changes the pinned Environment provider, artifact/configuration semantics, or another pinned host binding is incompatible with that root.
 
 Changing the Environment requires a separately authorized root constraint set. Harness selection is not an Environment-switch operation.
 
@@ -346,9 +346,9 @@ This keeps host constraints outside agent-controlled Harness composition while l
 ## Invariants
 
 - One long-lived runtime/kernel owns shared host state.
-- A `ResolvedHarness` is one immutable coherent topology.
-- A root execution uses exactly one Harness generation.
-- Nested execution cannot switch Harness generation.
+- A `ResolvedGeneration` is one immutable coherent topology.
+- A root execution uses exactly one generation.
+- Nested execution cannot switch generation.
 - Multiple compatible generations may be resident.
 - Exactly one generation is the default for new unqualified roots and ambient delivery.
 - Generation selection cannot widen initial authority.
@@ -356,7 +356,7 @@ This keeps host constraints outside agent-controlled Harness composition while l
 - Pinned bindings are validated before resident candidate lifecycle runs and again before promotion.
 - Retirement cannot run Plugin `stop` with more authority than the caller requesting retirement.
 - Generation selection cannot change a pinned Environment or other host binding.
-- Harness generations never mix providers dynamically across generation boundaries.
+- generations never mix providers dynamically across generation boundaries.
 - Plugin instances, listeners, tasks, and runtime handles are generation-local.
 - Durable persistence remains kernel-owned and is not forked implicitly.
 - Incompatible durable migrations prevent concurrent residency.

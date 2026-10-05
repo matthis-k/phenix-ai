@@ -3,10 +3,10 @@ use crate::{
     SessionJournalDraft, SessionJournalEntry, SessionRecord, SessionResponse, SessionTransition,
 };
 use phenix_core::{
-    Authority, Bytes, CapabilityId, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, ContractId, DurableSchema, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution, ServiceId,
-    SessionId, TransactionOp,
+    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest,
+    ContractId, DurableSchema, PermissionId, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution, ServiceId, SessionId,
+    TransactionOp,
 };
 use phenix_sdk::{
     session_mutation_service, SessionHistoryDraft, SessionHistoryEntry, SessionLifecycle,
@@ -91,8 +91,8 @@ fn session_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(SESSION_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 struct SessionPlugin;

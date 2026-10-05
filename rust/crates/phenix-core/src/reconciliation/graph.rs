@@ -1,8 +1,8 @@
 use crate::{
     Authority, ComponentId, ComponentManifest, ConfigContribution, ConfigurationFrontendId,
-    ConfigurationFrontendMetadata, FrontendConfigContribution, GraphGenerationId, InterfaceId,
-    LayerPolicy, PluginManifest, ResolvedHarness, ResolvedHarnessError, ServiceId,
-    SkillResourceMetadata,
+    ConfigurationFrontendMetadata, FrontendConfigContribution, GenerationId,
+    GenerationResolutionError, InterfaceId, LayerPolicy, PluginManifest, ResolvedGeneration,
+    ServiceId, SkillResourceMetadata,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,7 +60,7 @@ pub struct GraphDiff {
 }
 
 impl GraphDiff {
-    pub fn between(previous: &ResolvedHarness, next: &ResolvedHarness) -> Self {
+    pub fn between(previous: &ResolvedGeneration, next: &ResolvedGeneration) -> Self {
         Self {
             components: component_changes(previous, next),
             bindings: binding_changes(previous, next),
@@ -102,43 +102,43 @@ pub enum ReconciliationAction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReconciliationPreview {
-    pub active_generation: GraphGenerationId,
-    pub candidate_generation: GraphGenerationId,
+    pub active_generation: GenerationId,
+    pub candidate_generation: GenerationId,
     pub diff: GraphDiff,
     pub transition_plan: Vec<ReconciliationAction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReconciliationResult {
-    pub previous_generation: GraphGenerationId,
-    pub active_generation: GraphGenerationId,
+    pub previous_generation: GenerationId,
+    pub active_generation: GenerationId,
     pub diff: GraphDiff,
     pub transition_plan: Vec<ReconciliationAction>,
 }
 
 #[derive(Clone, Debug)]
 pub struct GraphReconciler {
-    pub(super) active: ResolvedHarness,
-    pub(super) resident: BTreeMap<GraphGenerationId, ResolvedHarness>,
+    pub(super) active: ResolvedGeneration,
+    pub(super) resident: BTreeMap<GenerationId, ResolvedGeneration>,
 }
 
 impl GraphReconciler {
-    pub fn new(active: ResolvedHarness) -> Self {
+    pub fn new(active: ResolvedGeneration) -> Self {
         Self {
             active,
             resident: BTreeMap::new(),
         }
     }
 
-    pub fn active(&self) -> &ResolvedHarness {
+    pub fn active(&self) -> &ResolvedGeneration {
         &self.active
     }
 
-    pub fn resident(&self, generation: &GraphGenerationId) -> Option<&ResolvedHarness> {
+    pub fn resident(&self, generation: &GenerationId) -> Option<&ResolvedGeneration> {
         self.resident.get(generation)
     }
 
-    pub fn resident_generations(&self) -> impl Iterator<Item = &GraphGenerationId> {
+    pub fn resident_generations(&self) -> impl Iterator<Item = &GenerationId> {
         self.resident.keys()
     }
 
@@ -147,8 +147,8 @@ impl GraphReconciler {
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
-        ResolvedHarness::resolve(
+    ) -> Result<ResolvedGeneration, GenerationResolutionError> {
+        ResolvedGeneration::resolve(
             plugin_manifests,
             component_manifests,
             contributions,
@@ -162,8 +162,8 @@ impl GraphReconciler {
         resources: impl IntoIterator<Item = SkillResourceMetadata>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
-        ResolvedHarness::resolve_with_resources(
+    ) -> Result<ResolvedGeneration, GenerationResolutionError> {
+        ResolvedGeneration::resolve_with_resources(
             plugin_manifests,
             component_manifests,
             resources,
@@ -178,8 +178,8 @@ impl GraphReconciler {
         frontend_metadata: impl IntoIterator<Item = ConfigurationFrontendMetadata>,
         contributions: impl IntoIterator<Item = (ConfigurationFrontendId, FrontendConfigContribution)>,
         authority_ceiling: &Authority,
-    ) -> Result<ResolvedHarness, ResolvedHarnessError> {
-        ResolvedHarness::resolve_frontends(
+    ) -> Result<ResolvedGeneration, GenerationResolutionError> {
+        ResolvedGeneration::resolve_frontends(
             plugin_manifests,
             component_manifests,
             frontend_metadata,
@@ -188,7 +188,7 @@ impl GraphReconciler {
         )
     }
 
-    pub fn preview_candidate(&self, candidate: &ResolvedHarness) -> ReconciliationPreview {
+    pub fn preview_candidate(&self, candidate: &ResolvedGeneration) -> ReconciliationPreview {
         let diff = GraphDiff::between(&self.active, candidate);
         let transition_plan = transition_plan(&self.active, candidate, &diff);
         ReconciliationPreview {
@@ -199,7 +199,7 @@ impl GraphReconciler {
         }
     }
 
-    pub fn activate_candidate(&mut self, candidate: ResolvedHarness) -> ReconciliationResult {
+    pub fn activate_candidate(&mut self, candidate: ResolvedGeneration) -> ReconciliationResult {
         let preview = self.preview_candidate(&candidate);
         self.active = candidate;
         ReconciliationResult {
@@ -216,7 +216,7 @@ impl GraphReconciler {
         component_manifests: impl IntoIterator<Item = ComponentManifest>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<ReconciliationResult, ResolvedHarnessError> {
+    ) -> Result<ReconciliationResult, GenerationResolutionError> {
         let candidate = Self::resolve_candidate(
             plugin_manifests,
             component_manifests,
@@ -233,7 +233,7 @@ impl GraphReconciler {
         resources: impl IntoIterator<Item = SkillResourceMetadata>,
         contributions: impl IntoIterator<Item = ConfigContribution>,
         authority_ceiling: &Authority,
-    ) -> Result<ReconciliationResult, ResolvedHarnessError> {
+    ) -> Result<ReconciliationResult, GenerationResolutionError> {
         let candidate = Self::resolve_candidate_with_resources(
             plugin_manifests,
             component_manifests,
@@ -251,7 +251,7 @@ impl GraphReconciler {
         frontend_metadata: impl IntoIterator<Item = ConfigurationFrontendMetadata>,
         contributions: impl IntoIterator<Item = (ConfigurationFrontendId, FrontendConfigContribution)>,
         authority_ceiling: &Authority,
-    ) -> Result<ReconciliationResult, ResolvedHarnessError> {
+    ) -> Result<ReconciliationResult, GenerationResolutionError> {
         let candidate = Self::resolve_frontend_candidate(
             plugin_manifests,
             component_manifests,
@@ -264,8 +264,8 @@ impl GraphReconciler {
 }
 
 fn transition_plan(
-    previous: &ResolvedHarness,
-    next: &ResolvedHarness,
+    previous: &ResolvedGeneration,
+    next: &ResolvedGeneration,
     diff: &GraphDiff,
 ) -> Vec<ReconciliationAction> {
     let mut actions = Vec::new();
@@ -329,7 +329,7 @@ fn transition_plan(
 }
 
 fn collect_required_dependents(
-    harness: &ResolvedHarness,
+    harness: &ResolvedGeneration,
     provider: &ComponentId,
     affected: &mut BTreeSet<ComponentId>,
 ) {
@@ -355,7 +355,10 @@ fn collect_required_dependents(
     }
 }
 
-fn component_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<ComponentChange> {
+fn component_changes(
+    previous: &ResolvedGeneration,
+    next: &ResolvedGeneration,
+) -> Vec<ComponentChange> {
     let previous: BTreeMap<_, _> = previous
         .components()
         .iter()
@@ -387,11 +390,11 @@ fn component_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<
         .collect()
 }
 
-fn binding_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<BindingChange> {
+fn binding_changes(previous: &ResolvedGeneration, next: &ResolvedGeneration) -> Vec<BindingChange> {
     type BindingState = (Option<ComponentId>, Option<Authority>);
     type BindingKey = (ComponentId, InterfaceId);
 
-    fn bindings(harness: &ResolvedHarness) -> BTreeMap<BindingKey, BindingState> {
+    fn bindings(harness: &ResolvedGeneration) -> BTreeMap<BindingKey, BindingState> {
         harness
             .component_graph()
             .components()
@@ -434,8 +437,8 @@ fn binding_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<Bi
 }
 
 fn interposition_changes(
-    previous: &ResolvedHarness,
-    next: &ResolvedHarness,
+    previous: &ResolvedGeneration,
+    next: &ResolvedGeneration,
 ) -> Vec<InterpositionChange> {
     let services: BTreeSet<_> = previous
         .layer_policies()
@@ -466,7 +469,10 @@ fn interposition_changes(
         .collect()
 }
 
-fn resource_changes(previous: &ResolvedHarness, next: &ResolvedHarness) -> Vec<ResourceChange> {
+fn resource_changes(
+    previous: &ResolvedGeneration,
+    next: &ResolvedGeneration,
+) -> Vec<ResourceChange> {
     let previous: BTreeMap<_, _> = previous
         .resources()
         .iter()
@@ -615,8 +621,8 @@ mod tests {
         }
     }
 
-    fn initial() -> ResolvedHarness {
-        ResolvedHarness::resolve(
+    fn initial() -> ResolvedGeneration {
+        ResolvedGeneration::resolve(
             [owner("consumer-owner"), owner("provider-a-owner")],
             [consumer(), provider("provider-a", "provider-a-owner", 10)],
             [],
@@ -659,7 +665,7 @@ mod tests {
     fn candidate_transition_can_be_inspected_before_activation() {
         let active = initial();
         let active_generation = active.generation().clone();
-        let candidate = ResolvedHarness::resolve(
+        let candidate = ResolvedGeneration::resolve(
             [owner("consumer-owner"), owner("provider-b-owner")],
             [consumer(), provider("provider-b", "provider-b-owner", 10)],
             [],
@@ -701,7 +707,9 @@ mod tests {
 
         assert!(matches!(
             error,
-            ResolvedHarnessError::ComponentGraph(ComponentGraphError::MissingRequiredImport { .. })
+            GenerationResolutionError::ComponentGraph(
+                ComponentGraphError::MissingRequiredImport { .. }
+            )
         ));
         assert_eq!(reconciler.active().generation(), &generation);
     }
@@ -726,7 +734,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            ResolvedHarnessError::ConfigurationFrontend { .. }
+            GenerationResolutionError::ConfigurationFrontend { .. }
         ));
         assert_eq!(reconciler.active().generation(), &generation);
     }
@@ -759,7 +767,7 @@ mod tests {
 
     #[test]
     fn skill_content_change_invalidates_only_declared_derived_state() {
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [],
             [],
             [resource("sha256:one")],
@@ -796,7 +804,7 @@ mod tests {
 
     #[test]
     fn skill_version_change_is_an_explicit_upgrade() {
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [],
             [],
             [resource("sha256:one")],
@@ -830,7 +838,7 @@ mod tests {
 
     #[test]
     fn skill_metadata_change_is_an_explicit_reconfiguration() {
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [],
             [],
             [resource("sha256:one")],
@@ -864,7 +872,7 @@ mod tests {
 
     #[test]
     fn invalid_resource_candidate_leaves_the_active_generation_unchanged() {
-        let initial = ResolvedHarness::resolve_with_resources(
+        let initial = ResolvedGeneration::resolve_with_resources(
             [],
             [],
             [resource("sha256:one")],
@@ -879,7 +887,7 @@ mod tests {
 
         assert!(matches!(
             reconciler.reconcile_with_resources([], [], [invalid], [], &Authority::default(),),
-            Err(ResolvedHarnessError::MissingResourceDependency { .. })
+            Err(GenerationResolutionError::MissingResourceDependency { .. })
         ));
         assert_eq!(reconciler.active().generation(), &generation);
     }
@@ -899,7 +907,7 @@ mod tests {
             )])
         };
         let resolved = |priority| {
-            ResolvedHarness::resolve_with_layer_policies(
+            ResolvedGeneration::resolve_with_layer_policies(
                 [owner("consumer-owner"), owner("provider-a-owner")],
                 [consumer(), provider("provider-a", "provider-a-owner", 10)],
                 [],
@@ -1015,7 +1023,7 @@ mod tests {
 
     #[test]
     fn removing_an_unreferenced_optional_component_does_not_restart_existing_components() {
-        let initial = ResolvedHarness::resolve(
+        let initial = ResolvedGeneration::resolve(
             [
                 owner("consumer-owner"),
                 owner("provider-a-owner"),

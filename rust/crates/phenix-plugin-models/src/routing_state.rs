@@ -1,6 +1,6 @@
-use phenix_core::{CallableId, CapabilityGenerationId};
+use phenix_core::{CallableId, ModelFeatureGenerationId};
 use phenix_sdk::{
-    select_route, EffectiveModelCapabilities, ModelTarget, RouteDecision, RouteSelection,
+    select_route, EffectiveModelFeatures, ModelTarget, RouteDecision, RouteSelection,
     RouteSelectionError, RouteSelectionPolicy, RoutingCandidate, RoutingEstimate, RoutingEvidence,
     RoutingProfile, RoutingRequirements,
 };
@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RoutingRuntimeState {
-    capabilities: BTreeMap<String, EffectiveModelCapabilities>,
+    features: BTreeMap<String, EffectiveModelFeatures>,
     #[serde(skip)]
     estimates: BTreeMap<String, RoutingEstimate>,
     evidence: BTreeMap<String, Vec<RoutingEvidence>>,
@@ -20,24 +20,24 @@ pub(crate) struct RoutingRuntimeState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RoutingRuntimeError {
     InvalidTargetIdentity,
-    MissingEffectiveCapabilities {
+    MissingEffectiveModelFeatures {
         target: ModelTarget,
     },
-    StaleCapabilityGeneration {
+    StaleModelFeatureGeneration {
         target: ModelTarget,
-        decision: CapabilityGenerationId,
-        current: CapabilityGenerationId,
+        decision: ModelFeatureGenerationId,
+        current: ModelFeatureGenerationId,
     },
     Selection(RouteSelectionError),
 }
 
 impl RoutingRuntimeState {
-    pub(crate) fn publish_capabilities(
+    pub(crate) fn publish_model_features(
         &mut self,
-        capabilities: EffectiveModelCapabilities,
+        features: EffectiveModelFeatures,
     ) -> Result<(), RoutingRuntimeError> {
-        let key = target_key(&capabilities.target)?;
-        self.capabilities.insert(key, capabilities);
+        let key = target_key(&features.target)?;
+        self.features.insert(key, features);
         Ok(())
     }
 
@@ -95,17 +95,17 @@ impl RoutingRuntimeState {
     pub(crate) fn validate_decision(
         &self,
         decision: &RouteDecision,
-    ) -> Result<&EffectiveModelCapabilities, RoutingRuntimeError> {
+    ) -> Result<&EffectiveModelFeatures, RoutingRuntimeError> {
         let current = self
-            .capabilities
+            .features
             .get(&target_key(&decision.target)?)
-            .ok_or_else(|| RoutingRuntimeError::MissingEffectiveCapabilities {
+            .ok_or_else(|| RoutingRuntimeError::MissingEffectiveModelFeatures {
                 target: decision.target.clone(),
             })?;
-        if current.generation != decision.capability_generation {
-            return Err(RoutingRuntimeError::StaleCapabilityGeneration {
+        if current.generation != decision.feature_generation {
+            return Err(RoutingRuntimeError::StaleModelFeatureGeneration {
                 target: decision.target.clone(),
-                decision: decision.capability_generation.clone(),
+                decision: decision.feature_generation.clone(),
                 current: current.generation.clone(),
             });
         }
@@ -132,14 +132,14 @@ impl RoutingRuntimeState {
             if !seen.insert(key.clone()) {
                 continue;
             }
-            let capabilities = self.capabilities.get(&key).cloned().ok_or_else(|| {
-                RoutingRuntimeError::MissingEffectiveCapabilities {
+            let features = self.features.get(&key).cloned().ok_or_else(|| {
+                RoutingRuntimeError::MissingEffectiveModelFeatures {
                     target: target.clone(),
                 }
             })?;
             let ordinal = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
             candidates.push(RoutingCandidate {
-                capabilities,
+                features,
                 estimate: self.estimates.get(&key).cloned(),
                 ordinal,
             });
@@ -179,10 +179,10 @@ mod tests {
         }
     }
 
-    fn capabilities(target: ModelTarget, generation: &str) -> EffectiveModelCapabilities {
-        EffectiveModelCapabilities {
+    fn features(target: ModelTarget, generation: &str) -> EffectiveModelFeatures {
+        EffectiveModelFeatures {
             target,
-            generation: CapabilityGenerationId::parse(generation).unwrap(),
+            generation: ModelFeatureGenerationId::parse(generation).unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity: CapacityKnowledge::Known {
                 limits: ModelLimits {
@@ -205,25 +205,25 @@ mod tests {
     }
 
     #[test]
-    fn candidate_order_is_profile_order_and_requires_effective_capabilities() {
+    fn candidate_order_is_profile_order_and_requires_effective_features() {
         let mut state = RoutingRuntimeState::default();
         let profile = profile();
         state
-            .publish_capabilities(capabilities(profile.default_target.clone(), "generation-1"))
+            .publish_model_features(features(profile.default_target.clone(), "generation-1"))
             .unwrap();
         assert!(matches!(
             state.candidates(&profile, None),
-            Err(RoutingRuntimeError::MissingEffectiveCapabilities { .. })
+            Err(RoutingRuntimeError::MissingEffectiveModelFeatures { .. })
         ));
         state
-            .publish_capabilities(capabilities(
+            .publish_model_features(features(
                 profile.fallback_targets[0].clone(),
                 "generation-1",
             ))
             .unwrap();
         let candidates = state.candidates(&profile, None).unwrap();
         assert_eq!(candidates[0].ordinal, 0);
-        assert_eq!(candidates[0].capabilities.target.model.as_str(), "primary");
+        assert_eq!(candidates[0].features.target.model.as_str(), "primary");
         assert_eq!(candidates[1].ordinal, 1);
     }
 
@@ -232,22 +232,22 @@ mod tests {
         let mut state = RoutingRuntimeState::default();
         let target = target("primary");
         state
-            .publish_capabilities(capabilities(target.clone(), "generation-1"))
+            .publish_model_features(features(target.clone(), "generation-1"))
             .unwrap();
         let decision = RouteDecision {
             target: target.clone(),
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
             policy_revision: "policy-1".into(),
             candidate_ordinal: 0,
             estimate: None,
         };
         state.validate_decision(&decision).unwrap();
         state
-            .publish_capabilities(capabilities(target, "generation-2"))
+            .publish_model_features(features(target, "generation-2"))
             .unwrap();
         assert!(matches!(
             state.validate_decision(&decision),
-            Err(RoutingRuntimeError::StaleCapabilityGeneration { .. })
+            Err(RoutingRuntimeError::StaleModelFeatureGeneration { .. })
         ));
     }
 
@@ -259,13 +259,13 @@ mod tests {
             std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
         {
             state
-                .publish_capabilities(capabilities(target.clone(), "generation-1"))
+                .publish_model_features(features(target.clone(), "generation-1"))
                 .unwrap();
         }
 
         let decision = |target: ModelTarget, ordinal: u32| RouteDecision {
             target,
-            capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
             policy_revision: "policy-1".into(),
             candidate_ordinal: ordinal,
             estimate: None,
@@ -326,9 +326,9 @@ mod tests {
                         mandatory_input_tokens: 100,
                         reducible_input_tokens: 100,
                         output_reserve_tokens: 100,
-                        required_capabilities: BTreeSet::new(),
+                        required_features: BTreeSet::new(),
                     },
-                    required_capabilities: BTreeSet::new(),
+                    required_features: BTreeSet::new(),
                     require_known_capacity: true,
                 },
                 &RouteSelectionPolicy {
@@ -359,7 +359,7 @@ mod tests {
             std::iter::once(&profile.default_target).chain(profile.fallback_targets.iter())
         {
             state
-                .publish_capabilities(capabilities(target.clone(), "generation-1"))
+                .publish_model_features(features(target.clone(), "generation-1"))
                 .unwrap();
         }
         let selection = state
@@ -371,9 +371,9 @@ mod tests {
                         mandatory_input_tokens: 100,
                         reducible_input_tokens: 100,
                         output_reserve_tokens: 100,
-                        required_capabilities: BTreeSet::new(),
+                        required_features: BTreeSet::new(),
                     },
-                    required_capabilities: BTreeSet::new(),
+                    required_features: BTreeSet::new(),
                     require_known_capacity: true,
                 },
                 &RouteSelectionPolicy {

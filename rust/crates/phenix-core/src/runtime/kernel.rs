@@ -55,7 +55,7 @@ impl Kernel {
         Self::new(KernelConfig::empty())
     }
 
-    pub fn runtime_generation(&self) -> &RuntimeGeneration {
+    pub fn generation_topology(&self) -> &GenerationTopology {
         &self.generation_state.runtime
     }
 
@@ -67,13 +67,13 @@ impl Kernel {
         self.persistence_bootstrap.as_ref()
     }
 
-    pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
+    pub fn graph_generation(&self) -> Option<&GenerationId> {
         self.generation_state.runtime.generation()
     }
 
-    pub(crate) fn install_runtime_generation(
+    pub(crate) fn install_generation_topology(
         &mut self,
-        generation: RuntimeGeneration,
+        generation: GenerationTopology,
         durable_schemas: Vec<DurableSchemaRegistration>,
         authority_ceiling: Authority,
     ) {
@@ -95,7 +95,7 @@ impl Kernel {
 
     pub(crate) fn validate_generation_authority(
         &self,
-        candidate: &crate::ResolvedHarness,
+        candidate: &crate::ResolvedGeneration,
     ) -> Result<(), KernelError> {
         let Some(ceiling) = &self.authority_ceiling else {
             return Ok(());
@@ -239,28 +239,31 @@ impl Kernel {
                     PluginExecution::ResourceOnly => Ok(None),
                     PluginExecution::Embedded => self.take_embedded_instance(plugin).map(Some),
                     PluginExecution::Runtime { runtime, artifact } => {
-                        let binding = config.runtime_binding(plugin).cloned().ok_or_else(|| {
-                            KernelError::RuntimeProviderUnavailable(runtime.clone())
-                        })?;
-                        let provider_manifest = config
-                            .manifest(&binding.provider)
-                            .expect("resolved runtime provider is configured");
-                        let provider_authority = self
+                        let binding =
+                            config
+                                .plugin_runtime_binding(plugin)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    KernelError::PluginRuntimeAdapterUnavailable(runtime.clone())
+                                })?;
+                        let adapter_manifest = config
+                            .manifest(&binding.adapter_plugin)
+                            .expect("resolved plugin runtime adapter is configured");
+                        let adapter_authority = self
                             .generation_state
-                            .constrain_plugin_authority(&provider_manifest.maximum_authority);
+                            .constrain_plugin_authority(&adapter_manifest.maximum_authority);
                         let guest_authority = self
                             .generation_state
                             .constrain_plugin_authority(&manifest.maximum_authority);
-                        let provider =
-                            next_instances
-                                .get(&binding.provider)
-                                .cloned()
-                                .ok_or_else(|| {
-                                    KernelError::PluginNotActive(binding.provider.clone())
-                                })?;
+                        let adapter_instance = next_instances
+                            .get(&binding.adapter_plugin)
+                            .cloned()
+                            .ok_or_else(|| {
+                                KernelError::PluginNotActive(binding.adapter_plugin.clone())
+                            })?;
                         let live_call = self
                             .tasks
-                            .begin_call(&binding.provider, self.graph_generation());
+                            .begin_call(&binding.adapter_plugin, self.graph_generation());
                         let cancellation = live_call.cancellation_token().clone();
                         let prepared_mutations =
                             PreparedMutationScope::new(self.graph_generation());
@@ -276,25 +279,28 @@ impl Kernel {
                                 trace_sink: self.trace_sink.as_ref(),
                                 provenance: &self.provenance,
                             },
-                            plugin: &binding.provider,
+                            plugin: &binding.adapter_plugin,
                             scope: CallScope::root(
                                 Arc::new(self.generation_state.runtime.clone()),
-                                &binding.provider,
-                                &provider_authority,
+                                &binding.adapter_plugin,
+                                &adapter_authority,
                                 Some(cancellation.clone()),
                             ),
                             continuation: None,
                         };
-                        let mut provider = provider.lock().expect("plugin instance mutex poisoned");
-                        let contract = provider.runtime_provider().ok_or_else(|| {
-                            KernelError::RuntimeProviderContractUnavailable {
-                                runtime: runtime.clone(),
-                                provider: binding.provider.clone(),
-                            }
-                        })?;
+                        let mut adapter_instance = adapter_instance
+                            .lock()
+                            .expect("plugin instance mutex poisoned");
+                        let contract =
+                            adapter_instance.plugin_runtime_adapter().ok_or_else(|| {
+                                KernelError::PluginRuntimeAdapterContractUnavailable {
+                                    runtime: runtime.clone(),
+                                    adapter_plugin: binding.adapter_plugin.clone(),
+                                }
+                            })?;
                         let prepared = catch_unwind(AssertUnwindSafe(|| {
                             contract.prepare_with_host(
-                                RuntimePluginCandidate {
+                                PluginRuntimeCandidate {
                                     manifest,
                                     artifact,
                                     guest_authority: &guest_authority,
@@ -302,26 +308,28 @@ impl Kernel {
                                 &host,
                             )
                         }))
-                        .map_err(|_| KernelError::RuntimePrepare {
-                            plugin: plugin.clone(),
-                            runtime: runtime.clone(),
-                            message: "runtime provider panicked".into(),
+                        .map_err(|_| {
+                            KernelError::PluginRuntimePreparation {
+                                plugin: plugin.clone(),
+                                runtime: runtime.clone(),
+                                message: "plugin runtime adapter panicked".into(),
+                            }
                         })?;
                         if cancellation.is_cancelled() {
                             prepared_mutations.clear();
-                            return Err(KernelError::RuntimePrepare {
+                            return Err(KernelError::PluginRuntimePreparation {
                                 plugin: plugin.clone(),
                                 runtime: runtime.clone(),
-                                message: "runtime provider preparation cancelled".into(),
+                                message: "plugin runtime adapter preparation cancelled".into(),
                             });
                         }
-                        prepared
-                            .map(Some)
-                            .map_err(|message| KernelError::RuntimePrepare {
+                        prepared.map(Some).map_err(|message| {
+                            KernelError::PluginRuntimePreparation {
                                 plugin: plugin.clone(),
                                 runtime: runtime.clone(),
                                 message,
-                            })
+                            }
+                        })
                     }
                 }
             })();

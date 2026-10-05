@@ -11,10 +11,10 @@ pub use store::*;
 pub use types::*;
 
 use phenix_core::{
-    model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
-    ComponentInterface, ComponentManifest, InterfaceId, InvocationOutcome, ModelId,
-    ModelInferenceInterface, ModelInferenceResponse, PhenixValue, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    model_inference_service, Authority, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, InterfaceId, InvocationOutcome, ModelId, ModelInferenceInterface,
+    ModelInferenceResponse, PermissionId, PhenixValue, PluginExecution, PluginId, PluginInstance,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -388,9 +388,9 @@ impl ProviderDefinition {
             });
             maximum_authority = Authority::new(
                 maximum_authority
-                    .capabilities()
+                    .permissions()
                     .cloned()
-                    .chain(secrets.capabilities().cloned()),
+                    .chain(secrets.permissions().cloned()),
             );
         }
         if self.spec.supports_model_catalog() {
@@ -472,8 +472,8 @@ fn secrets_authority() -> Authority {
     Authority::new([capability(SECRETS_MANAGE_CAPABILITY)])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static provider capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static provider capability is valid")
 }
 
 #[cfg(test)]

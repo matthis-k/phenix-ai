@@ -9,7 +9,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum BackendFeature {
+pub enum PersistenceBackendFeature {
     Transactions,
     UniqueKeys,
     ForeignKeys,
@@ -22,7 +22,7 @@ pub enum BackendFeature {
 pub struct DurableSchema {
     pub namespace: ResourceNamespace,
     pub version: u32,
-    pub required_features: BTreeSet<BackendFeature>,
+    pub required_features: BTreeSet<PersistenceBackendFeature>,
 }
 
 impl DurableSchema {
@@ -37,7 +37,7 @@ impl DurableSchema {
     pub fn requiring(
         namespace: ResourceNamespace,
         version: u32,
-        features: impl IntoIterator<Item = BackendFeature>,
+        features: impl IntoIterator<Item = PersistenceBackendFeature>,
     ) -> Self {
         Self {
             namespace,
@@ -95,7 +95,7 @@ pub enum PersistenceError {
     },
     UnsupportedFeature {
         namespace: ResourceNamespace,
-        feature: BackendFeature,
+        feature: PersistenceBackendFeature,
     },
     UnregisteredNamespace(ResourceNamespace),
     WrongNamespaceOwner {
@@ -163,7 +163,7 @@ impl From<rusqlite::Error> for PersistenceError {
 }
 
 pub trait PersistenceBackend: Send {
-    fn supported_features(&self) -> BTreeSet<BackendFeature>;
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature>;
 
     fn register_schema(
         &mut self,
@@ -179,7 +179,7 @@ pub trait PersistenceBackend: Send {
     ) -> Result<(), PersistenceError> {
         Err(PersistenceError::UnsupportedFeature {
             namespace: schema.namespace.clone(),
-            feature: BackendFeature::Migrations,
+            feature: PersistenceBackendFeature::Migrations,
         })
     }
 
@@ -309,11 +309,11 @@ impl LocalPersistence {
 }
 
 impl PersistenceBackend for LocalPersistence {
-    fn supported_features(&self) -> BTreeSet<BackendFeature> {
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature> {
         [
-            BackendFeature::Transactions,
-            BackendFeature::UniqueKeys,
-            BackendFeature::Migrations,
+            PersistenceBackendFeature::Transactions,
+            PersistenceBackendFeature::UniqueKeys,
+            PersistenceBackendFeature::Migrations,
         ]
         .into_iter()
         .collect()
@@ -532,13 +532,16 @@ mod tests {
     #[test]
     fn unsupported_backend_feature_is_rejected_before_schema_registration() {
         let mut store = LocalPersistence::open_in_memory().unwrap();
-        let schema =
-            DurableSchema::requiring(namespace("owner.state"), 1, [BackendFeature::IndexedRange]);
+        let schema = DurableSchema::requiring(
+            namespace("owner.state"),
+            1,
+            [PersistenceBackendFeature::IndexedRange],
+        );
 
         assert!(matches!(
             store.register_schema(&plugin("owner"), &schema),
             Err(PersistenceError::UnsupportedFeature {
-                feature: BackendFeature::IndexedRange,
+                feature: PersistenceBackendFeature::IndexedRange,
                 ..
             })
         ));
@@ -676,7 +679,11 @@ mod tests {
             )
             .unwrap();
 
-        let target = DurableSchema::requiring(namespace.clone(), 2, [BackendFeature::Migrations]);
+        let target = DurableSchema::requiring(
+            namespace.clone(),
+            2,
+            [PersistenceBackendFeature::Migrations],
+        );
         store
             .migrate_schema(
                 &owner,
@@ -704,8 +711,11 @@ mod tests {
             Some(b"migrated".to_vec())
         );
 
-        let failed_target =
-            DurableSchema::requiring(namespace.clone(), 3, [BackendFeature::Migrations]);
+        let failed_target = DurableSchema::requiring(
+            namespace.clone(),
+            3,
+            [PersistenceBackendFeature::Migrations],
+        );
         let error = store
             .migrate_schema(
                 &owner,
@@ -742,7 +752,11 @@ mod tests {
             .register_schema(&owner, &DurableSchema::new(namespace.clone(), 1))
             .unwrap();
 
-        let target = DurableSchema::requiring(namespace.clone(), 3, [BackendFeature::Migrations]);
+        let target = DurableSchema::requiring(
+            namespace.clone(),
+            3,
+            [PersistenceBackendFeature::Migrations],
+        );
         assert!(matches!(
             store.migrate_schema(
                 &owner,

@@ -620,7 +620,7 @@ fn validate_component_manifest(manifest: &ComponentManifest) -> Result<(), Compo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CapabilityId, ComponentExport, ComponentImport};
+    use crate::{ComponentExport, ComponentImport, PermissionId};
 
     fn component(value: &str) -> ComponentId {
         ComponentId::parse(value).unwrap()
@@ -634,8 +634,8 @@ mod tests {
         PluginId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn plugin_manifest(id: &str, authority: Authority) -> PluginManifest {

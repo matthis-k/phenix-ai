@@ -1,8 +1,8 @@
-use phenix_backend::BackendError;
 use phenix_domain::PhenixSchema;
+use phenix_model_adapter::ModelAdapterError;
 use serde_json::{json, Map, Value};
 
-pub(crate) fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> {
+pub(crate) fn json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
     let schema = match schema {
         PhenixSchema::Any => json!({}),
         PhenixSchema::Never => json!({"not": {}}),
@@ -30,7 +30,7 @@ pub(crate) fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> 
             let properties = fields
                 .iter()
                 .map(|(key, schema)| Ok((key.as_str().to_owned(), json_schema(schema)?)))
-                .collect::<Result<Map<String, Value>, BackendError>>()?;
+                .collect::<Result<Map<String, Value>, ModelAdapterError>>()?;
             let required = fields
                 .keys()
                 .map(|key| key.as_str().to_owned())
@@ -43,7 +43,7 @@ pub(crate) fn json_schema(schema: &PhenixSchema) -> Result<Value, BackendError> 
             })
         }
         PhenixSchema::Variant(_) | PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => {
-            return Err(BackendError::Unsupported(
+            return Err(ModelAdapterError::Unsupported(
                 "Phenix callable schema cannot be represented as JSON Schema".to_owned(),
             ));
         }

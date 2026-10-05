@@ -1,14 +1,14 @@
 use crate::{
-    GraphGenerationId, GraphReconciler, ReconciliationPreview, ResolvedHarness,
-    ResolvedHarnessError,
+    GenerationId, GenerationResolutionError, GraphReconciler, ReconciliationPreview,
+    ResolvedGeneration,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CandidateResolutionInspection {
     Resolved(ReconciliationPreview),
     Rejected {
-        active_generation: GraphGenerationId,
-        reason: ResolvedHarnessError,
+        active_generation: GenerationId,
+        reason: GenerationResolutionError,
     },
 }
 
@@ -19,7 +19,7 @@ impl GraphReconciler {
     /// error. This method never activates or otherwise mutates the active graph.
     pub fn inspect_candidate_resolution(
         &self,
-        candidate: Result<ResolvedHarness, ResolvedHarnessError>,
+        candidate: Result<ResolvedGeneration, GenerationResolutionError>,
     ) -> CandidateResolutionInspection {
         match candidate {
             Ok(candidate) => {
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn invalid_candidate_reports_rejection_without_mutating_the_active_generation() {
-        let active = ResolvedHarness::resolve([], [], [], &Authority::default()).unwrap();
+        let active = ResolvedGeneration::resolve([], [], [], &Authority::default()).unwrap();
         let active_generation = active.generation().clone();
         let reconciler = GraphReconciler::new(active);
         let component = ComponentId::parse("fixture.component").unwrap();
@@ -66,7 +66,7 @@ mod tests {
             inspection,
             CandidateResolutionInspection::Rejected {
                 active_generation,
-                reason: ResolvedHarnessError::ComponentGraph(
+                reason: GenerationResolutionError::ComponentGraph(
                     ComponentGraphError::UnknownOwningPlugin {
                         component,
                         plugin: owner,
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn valid_candidate_reports_the_same_diff_and_transition_plan_as_preview() {
-        let active = ResolvedHarness::resolve([], [], [], &Authority::default()).unwrap();
+        let active = ResolvedGeneration::resolve([], [], [], &Authority::default()).unwrap();
         let reconciler = GraphReconciler::new(active);
         let candidate =
             GraphReconciler::resolve_candidate([], [], [], &Authority::default()).unwrap();

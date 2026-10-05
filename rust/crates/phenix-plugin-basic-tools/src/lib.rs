@@ -1,8 +1,8 @@
 use phenix_core::{
-    ArtifactRevision, Authority, CallableId, CapabilityId, ComponentId, ComponentInterface,
-    ComponentManifest, InterfaceId, PluginContext, PluginInstance, PluginManifest,
-    ResourceNamespace, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition,
-    ToolResponse, TransactionOp, TOOL_SERVICE,
+    ArtifactRevision, Authority, CallableId, ComponentId, ComponentInterface, ComponentManifest,
+    InterfaceId, PermissionId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
+    ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition, ToolResponse,
+    TransactionOp, TOOL_SERVICE,
 };
 use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 
@@ -284,8 +284,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[cfg(test)]

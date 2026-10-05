@@ -129,44 +129,44 @@ fn tool_failed(call_id: String, error: ApplicationError) -> ExecutionChange {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{ClientCapabilityCallbacks, ClientCapabilityIdentity};
+    use crate::transport::{ClientCallableCallbacks, ClientReferenceIdentity};
     use phenix_application_interface::{
-        types::{CapabilityInvokeResult, ClientToolAddInput, ClientToolDefinition},
+        types::{CallableInvocationResult, ClientToolAddInput, ClientToolDefinition},
         AddClientTool,
     };
     use phenix_core::{
-        CallableId, CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId,
-        ContractId, ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
-        SdkContribution, SharedCapabilityRegistry, Type,
+        CallableId, CallableRef, ClientConnectionId, ContractId, ObservableStore, PhenixValue,
+        PluginRuntimeId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
+        ResolvedSdkContributions, SdkContribution, SharedCallableRegistry, Type,
     };
 
     fn admitted_service(
         requires_permission: bool,
     ) -> (
         SdkApplicationService,
-        tokio::sync::mpsc::Receiver<crate::transport::ClientCapabilityInvocation>,
+        tokio::sync::mpsc::Receiver<crate::transport::ClientCallableInvocation>,
         SessionId,
     ) {
         let sdk =
             ResolvedSdkContributions::resolve(&[], &[], Vec::<SdkContribution>::new()).unwrap();
-        let capabilities = SharedCapabilityRegistry::default();
-        let (callbacks, receiver) = ClientCapabilityCallbacks::bounded(1);
+        let capabilities = SharedCallableRegistry::default();
+        let (callbacks, receiver) = ClientCallableCallbacks::bounded(1);
         let owner = ClientConnectionId::parse("fixture-client").unwrap();
-        let generation = CapabilityGenerationId::parse("fixture-generation").unwrap();
+        let generation = ReferenceGenerationId::parse("fixture-generation").unwrap();
         let service = SdkApplicationService::new(
             &sdk,
             &ObservableStore::default(),
             capabilities,
-            RuntimeId::parse("fixture-runtime").unwrap(),
-            CapabilityGenerationId::parse("fixture-runtime-generation").unwrap(),
+            PluginRuntimeId::parse("fixture-runtime").unwrap(),
+            ReferenceGenerationId::parse("fixture-runtime-generation").unwrap(),
             callbacks,
-            ClientCapabilityIdentity::new(owner.clone(), generation.clone()),
+            ClientReferenceIdentity::new(owner.clone(), generation.clone()),
         )
         .unwrap();
         let session_id = SessionId::parse("session-a").unwrap();
         let callable = CallableRef::new(
             ContractId::parse("fixture.client-tool-handler@1").unwrap(),
-            CapabilityOwnerId::Client(owner),
+            ReferenceOwnerId::Client(owner),
             generation,
             ReferenceId::parse("handler").unwrap(),
         );
@@ -277,7 +277,7 @@ mod tests {
 
         let callback = callbacks.recv().await.unwrap();
         assert_eq!(callback.request().input, PhenixValue::U64(7));
-        callback.respond(Ok(CapabilityInvokeResult {
+        callback.respond(Ok(CallableInvocationResult {
             output: PhenixValue::String("ok".to_owned()),
         }));
 
@@ -309,7 +309,7 @@ mod tests {
             .recv()
             .await
             .unwrap()
-            .respond(Ok(CapabilityInvokeResult {
+            .respond(Ok(CallableInvocationResult {
                 output: PhenixValue::String("ok".to_owned()),
             }));
         assert!(matches!(

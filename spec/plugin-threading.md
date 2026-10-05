@@ -5,7 +5,7 @@ coverage:
   - rust/crates/phenix-core/src/tasks.rs
   - rust/crates/phenix-core/src/runtime/dispatch.rs
   - rust/crates/phenix-core/src/runtime/tests.rs
-  - rust/crates/phenix-core/src/runtime_provider_host_regression.rs
+  - rust/crates/phenix-core/src/plugin_runtime_adapter_host_regression.rs
   - rust/crates/phenix-core/tests/kernel_concurrency_contract.rs
   - rust/crates/phenix-sdk/src/authoring/static_dispatch.rs
   - rust/crates/phenix-provider-sdk/src/runtime.rs

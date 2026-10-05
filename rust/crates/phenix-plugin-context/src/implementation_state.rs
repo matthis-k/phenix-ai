@@ -5,8 +5,8 @@ use crate::{
     PromptSection, PromptSectionKind,
 };
 use phenix_core::{
-    Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
-    DurableSchema, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    Authority, Bytes, ComponentInterface, ContextResourceId, ContextRevisionId, DurableSchema,
+    PermissionId, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
     PluginManifest, ResourceNamespace, RuntimeTraceEvent, SdkClient, ServiceContribution,
     ServiceId, TransactionOp,
 };
@@ -91,8 +91,8 @@ pub(crate) fn context_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(CONTEXT_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 struct ContextPlugin {

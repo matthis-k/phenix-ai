@@ -1,7 +1,7 @@
 use crate::routing_state::RoutingRuntimeState;
 use phenix_core::RoutingProfileId;
 use phenix_sdk::{
-    EffectiveModelCapabilities, ModelCommand, ModelResponse, RouteDecision, RoutingProfile,
+    EffectiveModelFeatures, ModelCommand, ModelResponse, RouteDecision, RoutingProfile,
 };
 
 pub(crate) const ROUTING_RUNTIME_KEY: &str = "runtime/routing-state";
@@ -53,7 +53,7 @@ impl RoutingServiceState {
     pub(crate) fn validate_decision(
         &self,
         decision: &RouteDecision,
-    ) -> Result<&EffectiveModelCapabilities, String> {
+    ) -> Result<&EffectiveModelFeatures, String> {
         self.runtime
             .validate_decision(decision)
             .map_err(|error| format!("resolved routing decision is invalid: {error:?}"))
@@ -68,13 +68,11 @@ impl RoutingServiceState {
         F: FnMut(&RoutingProfileId) -> Result<Option<RoutingProfile>, String>,
     {
         let response = match command {
-            ModelCommand::PublishCapabilities { capabilities } => {
-                let response = capabilities.clone();
+            ModelCommand::PublishModelFeatures { features } => {
+                let response = features.clone();
                 self.runtime
-                    .publish_capabilities(capabilities)
-                    .map(|()| ModelResponse::Capabilities {
-                        capabilities: response,
-                    })
+                    .publish_model_features(features)
+                    .map(|()| ModelResponse::Features { features: response })
                     .map_err(|error| format!("routing capability publication failed: {error:?}"))
             }
             ModelCommand::ListCandidates {
@@ -123,9 +121,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{ModelFeatureGenerationId, ModelId, PluginId};
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ModelLimits, ModelTarget,
+        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ModelLimits, ModelTarget,
     };
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -136,9 +134,9 @@ mod tests {
             model: ModelId::parse("model.fixture").unwrap(),
             options: BTreeMap::new(),
         };
-        let capabilities = EffectiveModelCapabilities {
+        let features = EffectiveModelFeatures {
             target: target.clone(),
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity: CapacityKnowledge::Known {
                 limits: ModelLimits {
@@ -150,13 +148,13 @@ mod tests {
             optional: BTreeSet::new(),
         };
         let mut state = RoutingServiceState::default();
-        state.runtime.publish_capabilities(capabilities).unwrap();
+        state.runtime.publish_model_features(features).unwrap();
         state
             .runtime
             .record_evidence(
                 &phenix_sdk::RouteDecision {
                     target,
-                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                     policy_revision: "policy-1".into(),
                     candidate_ordinal: 0,
                     estimate: None,
@@ -189,9 +187,9 @@ mod tests {
             model: ModelId::parse("model.fixture").unwrap(),
             options: BTreeMap::new(),
         };
-        let capabilities = EffectiveModelCapabilities {
+        let features = EffectiveModelFeatures {
             target,
-            generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+            generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
             context: ContextControl::ReplaceableTurns,
             capacity: CapacityKnowledge::Known {
                 limits: ModelLimits {
@@ -205,8 +203,8 @@ mod tests {
         let mut state = RoutingServiceState::default();
         let response = state
             .handle_state_command(
-                ModelCommand::PublishCapabilities {
-                    capabilities: capabilities.clone(),
+                ModelCommand::PublishModelFeatures {
+                    features: features.clone(),
                 },
                 |_| Ok(None),
             )
@@ -214,8 +212,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             response,
-            ModelResponse::Capabilities {
-                capabilities: capabilities.clone(),
+            ModelResponse::Features {
+                features: features.clone(),
             }
         );
 

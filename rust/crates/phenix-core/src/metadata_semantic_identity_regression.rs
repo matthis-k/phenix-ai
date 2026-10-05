@@ -2,7 +2,7 @@ use crate::{
     Authority, CompatibilityMetadata, ComponentHostKind, ComponentId, ComponentManifest,
     ComponentRuntimeMetadata, ComponentStateClass, CompositionMetadataInput, ConfigNamespace,
     DurableMigrationMetadata, EventTypeId, GraphReconciler, InterfaceId, PluginExecution, PluginId,
-    PluginManifest, PluginPackageMetadata, ReloadPolicy, ResolvedHarness, ResourceNamespace,
+    PluginManifest, PluginPackageMetadata, ReloadPolicy, ResolvedGeneration, ResourceNamespace,
 };
 use std::collections::BTreeSet;
 
@@ -64,7 +64,7 @@ fn component_metadata() -> ComponentRuntimeMetadata {
 fn resolve_inspectable(
     package: PluginPackageMetadata,
     component: ComponentRuntimeMetadata,
-) -> (ResolvedHarness, crate::ResolvedCompositionMetadata) {
+) -> (ResolvedGeneration, crate::ResolvedCompositionMetadata) {
     CompositionMetadataInput {
         packages: vec![package],
         components: vec![component],
@@ -78,14 +78,14 @@ fn resolve_inspectable(
 fn resolve_harness(
     package: PluginPackageMetadata,
     component: ComponentRuntimeMetadata,
-) -> ResolvedHarness {
+) -> ResolvedGeneration {
     resolve_inspectable(package, component).0
 }
 
 fn resolve(
     package: PluginPackageMetadata,
     component: ComponentRuntimeMetadata,
-) -> crate::GraphGenerationId {
+) -> crate::GenerationId {
     resolve_harness(package, component).generation().clone()
 }
 

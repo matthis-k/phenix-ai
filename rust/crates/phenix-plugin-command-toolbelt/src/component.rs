@@ -1,7 +1,7 @@
 use crate::{cli_manifest, CLI_AUTH_STATE_SERVICE, CLI_DISCOVER_SERVICE, CLI_VERSION_SERVICE};
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, InterfaceId, PluginId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, InterfaceId, PermissionId, PluginId,
 };
 use phenix_sdk::WorkspaceInterface;
 
@@ -40,7 +40,7 @@ pub fn cli_component_id() -> ComponentId {
 pub fn cli_component_manifest(maximum_authority: Authority) -> ComponentManifest {
     let authority = cli_manifest(maximum_authority).maximum_authority;
     let shell =
-        Authority::new([CapabilityId::parse(WORKSPACE_SHELL)
+        Authority::new([PermissionId::parse(WORKSPACE_SHELL)
             .expect("static workspace shell capability is valid")]);
     ComponentManifest {
         listeners: Vec::new(),
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn cli_requires_workspace_binding_before_activation() {
-        let shell = Authority::new([CapabilityId::parse(WORKSPACE_SHELL).unwrap()]);
+        let shell = Authority::new([PermissionId::parse(WORKSPACE_SHELL).unwrap()]);
         let error = ResolvedComponentGraph::compile(
             [workspace_manifest(), cli_manifest(shell.clone())],
             [cli_component_manifest(shell.clone())],
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn cli_workspace_import_is_attenuated_by_cli_authority() {
-        let shell_capability = CapabilityId::parse(WORKSPACE_SHELL).unwrap();
+        let shell_capability = PermissionId::parse(WORKSPACE_SHELL).unwrap();
         let shell = Authority::new([shell_capability.clone()]);
         let graph = ResolvedComponentGraph::compile(
             [

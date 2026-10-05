@@ -1,6 +1,6 @@
 use super::{EventContext, StaticPluginComponents, StaticPluginResources};
 use phenix_core::{
-    Authority, ComponentId, EventEnvelope, EventTypeId, Exact, GraphGenerationId, InterfaceId,
+    Authority, ComponentId, EventEnvelope, EventTypeId, Exact, GenerationId, InterfaceId,
     LayerResult, PhenixValue, PluginContext, PluginHost, PluginId, PluginInstance, PluginListener,
     Project, ResolvedListener, ServiceId, SharedPluginInvocation, ValueError,
 };
@@ -176,7 +176,7 @@ impl<'host, 'runtime> LayerContext<'host, 'runtime> {
     }
 
     #[must_use]
-    pub fn graph_generation(&self) -> Option<&phenix_core::GraphGenerationId> {
+    pub fn graph_generation(&self) -> Option<&phenix_core::GenerationId> {
         self.host.graph_generation()
     }
 
@@ -335,7 +335,7 @@ pub trait StaticPluginComponentDispatch {
         _owner: &PluginId,
         _component: &ComponentId,
         _method: &str,
-        _generation: &GraphGenerationId,
+        _generation: &GenerationId,
     ) -> Option<Arc<dyn PluginListener>>
     where
         Self: Sized + Send + Sync + 'static,
@@ -619,7 +619,7 @@ where
     fn bind_plugin_listener(
         &mut self,
         listener: &ResolvedListener,
-        generation: &GraphGenerationId,
+        generation: &GenerationId,
     ) -> Option<Result<Arc<dyn PluginListener>, String>> {
         Some(
             T::listener_handler(

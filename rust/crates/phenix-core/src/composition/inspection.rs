@@ -1,16 +1,15 @@
 use crate::{
     Authority, ComponentEntryTrigger, ComponentGraphError, ComponentId, ComponentManifest,
     ComponentProcessArgument, ComponentRuntimeMetadata, ConfigurationFrontendMetadata,
-    GraphGenerationId, InterfaceId, LayerPolicy, PluginExecution, PluginManifest,
-    PluginPackageMetadata, ResolvedComponentGraph, ResolvedCompositionMetadata,
-    ResolvedConfigContributions, ResolvedHarness, ResolvedListener, ServiceId,
-    SkillResourceMetadata,
+    GenerationId, InterfaceId, LayerPolicy, PluginExecution, PluginManifest, PluginPackageMetadata,
+    ResolvedComponentGraph, ResolvedCompositionMetadata, ResolvedConfigContributions,
+    ResolvedGeneration, ResolvedListener, ServiceId, SkillResourceMetadata,
 };
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
-pub struct ResolvedHarnessInspection {
-    generation: GraphGenerationId,
+pub struct ResolvedGenerationInspection {
+    generation: GenerationId,
     plugins: Vec<PluginManifest>,
     components: Vec<ComponentManifest>,
     entry_triggers: Vec<ComponentEntryTrigger>,
@@ -26,12 +25,12 @@ pub struct ResolvedHarnessInspection {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResolvedListenerInspection<'a> {
-    pub generation: &'a GraphGenerationId,
+    pub generation: &'a GenerationId,
     pub listener: &'a ResolvedListener,
 }
 
-impl ResolvedHarnessInspection {
-    pub fn from_resolved(resolved: &ResolvedHarness) -> Self {
+impl ResolvedGenerationInspection {
+    pub fn from_resolved(resolved: &ResolvedGeneration) -> Self {
         Self {
             generation: resolved.generation().clone(),
             plugins: resolved.plugins().to_vec(),
@@ -49,7 +48,7 @@ impl ResolvedHarnessInspection {
     }
 
     pub fn from_resolved_with_metadata(
-        resolved: &ResolvedHarness,
+        resolved: &ResolvedGeneration,
         metadata: &ResolvedCompositionMetadata,
     ) -> Result<Self, &'static str> {
         if resolved.generation() != metadata.generation() {
@@ -62,7 +61,7 @@ impl ResolvedHarnessInspection {
         Ok(inspection)
     }
 
-    pub fn generation(&self) -> &GraphGenerationId {
+    pub fn generation(&self) -> &GenerationId {
         &self.generation
     }
 
@@ -173,9 +172,9 @@ impl ResolvedHarnessInspection {
 mod tests {
     use super::*;
     use crate::{
-        CallableId, CapabilityId, CompatibilityMetadata, ComponentExport, ComponentHostKind,
-        ComponentImport, ComponentStateClass, CompositionMetadataInput, ConfigNamespace,
-        ConfigurationFrontendId, PluginId, ReloadPolicy,
+        CallableId, CompatibilityMetadata, ComponentExport, ComponentHostKind, ComponentImport,
+        ComponentStateClass, CompositionMetadataInput, ConfigNamespace, ConfigurationFrontendId,
+        PermissionId, PluginId, ReloadPolicy,
     };
     use std::collections::BTreeSet;
 
@@ -187,8 +186,8 @@ mod tests {
         InterfaceId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn plugin(id: &str, authority: Authority) -> PluginManifest {
@@ -228,7 +227,7 @@ mod tests {
     #[test]
     fn resolved_metadata_is_inspectable_without_activating_plugin_behavior() {
         let plugin = PluginManifest::resource_only(PluginId::parse("fixture.resources").unwrap());
-        let resolved = ResolvedHarness::resolve_with_resources(
+        let resolved = ResolvedGeneration::resolve_with_resources(
             [plugin.clone()],
             [],
             [resource()],
@@ -237,7 +236,7 @@ mod tests {
         )
         .unwrap();
 
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
 
         assert_eq!(inspection.generation(), resolved.generation());
         assert_eq!(inspection.plugins(), &[plugin]);
@@ -281,7 +280,7 @@ mod tests {
             required_authority: Authority::default(),
         };
         let resolved =
-            ResolvedHarness::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+            ResolvedGeneration::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
                 [plugin],
                 [component],
                 [],
@@ -293,7 +292,7 @@ mod tests {
             )
             .unwrap();
 
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
 
         assert_eq!(inspection.process_arguments(), &[argument]);
     }
@@ -356,7 +355,8 @@ mod tests {
         .unwrap();
 
         let inspection =
-            ResolvedHarnessInspection::from_resolved_with_metadata(&resolved, &metadata).unwrap();
+            ResolvedGenerationInspection::from_resolved_with_metadata(&resolved, &metadata)
+                .unwrap();
 
         assert_eq!(inspection.generation(), metadata.generation());
         assert_eq!(
@@ -411,7 +411,7 @@ mod tests {
                 maximum_authority: Authority::new([read.clone(), write.clone()]),
             },
         ];
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [provider, consumer],
             components,
             [],
@@ -419,7 +419,7 @@ mod tests {
         )
         .unwrap();
 
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
         let handle = inspection
             .component_graph()
             .import_handle(&component("consumer"), &interface)
@@ -465,7 +465,7 @@ mod tests {
             resource_namespaces: Vec::new(),
             maximum_authority: Authority::default(),
         };
-        let resolved = ResolvedHarness::resolve_with_layer_policies(
+        let resolved = ResolvedGeneration::resolve_with_layer_policies(
             [
                 layer_plugin(first.clone(), 20),
                 layer_plugin(second.clone(), 10),
@@ -493,7 +493,7 @@ mod tests {
         )
         .unwrap();
 
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
         let chain = inspection.interposition_chain(&service);
 
         assert_eq!(chain.len(), 2);
@@ -506,14 +506,14 @@ mod tests {
 
     #[test]
     fn inspection_exposes_runtime_component_execution_kind_before_activation() {
-        let runtime = crate::RuntimeId::parse("vendor.runtime").unwrap();
+        let runtime = crate::PluginRuntimeId::parse("vendor.runtime").unwrap();
         let bridge = PluginManifest {
             id: PluginId::parse("runtime-bridge").unwrap(),
             version: 1,
             execution: PluginExecution::Embedded,
             dependencies: Vec::new(),
             services: vec![crate::ServiceContribution {
-                service: crate::runtime_provider_service(&runtime),
+                service: crate::plugin_runtime_adapter_service(&runtime),
                 role: crate::ServiceRole::Terminal,
                 priority: 0,
                 required_authority: Authority::default(),
@@ -538,7 +538,7 @@ mod tests {
             maximum_authority: Authority::default(),
         };
         let component_id = component("runtime-provider");
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [bridge, provider.clone()],
             [ComponentManifest {
                 listeners: Vec::new(),
@@ -553,11 +553,11 @@ mod tests {
         )
         .unwrap();
 
-        let inspection = ResolvedHarnessInspection::from_resolved(&resolved);
+        let inspection = ResolvedGenerationInspection::from_resolved(&resolved);
         assert_eq!(
             inspection.component_execution(&component_id),
             Some(&PluginExecution::Runtime {
-                runtime: crate::RuntimeId::parse("vendor.runtime").unwrap(),
+                runtime: crate::PluginRuntimeId::parse("vendor.runtime").unwrap(),
                 artifact: crate::PluginArtifact {
                     locator: "plugin.wasm".into(),
                     revision: crate::ArtifactRevision::from_content(b"fixture"),

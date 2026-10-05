@@ -9,7 +9,7 @@ use phenix_core::{
 };
 use phenix_harness::{
     application::serve_configured_application, default_suite_authority,
-    model_surface_fixture::model_surface_response, HarnessBuilder, PhenixHarness,
+    model_surface_fixture::model_surface_response, PhenixRuntime, PhenixRuntimeBuilder,
 };
 use phenix_sdk::{
     model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelCapabilities,
@@ -139,7 +139,7 @@ fn fixture_target(model: &str) -> ModelTarget {
 }
 
 fn invoke_model(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     command: &ModelCommand,
 ) -> Result<ModelResponse, Box<dyn Error>> {
     let input = serde_json::to_vec(&PhenixValue::from(command))?;
@@ -153,7 +153,7 @@ fn invoke_model(
     Ok(ModelResponse::try_from(Project(&output))?)
 }
 
-fn configure_fixture(harness: &mut PhenixHarness) -> Result<(), Box<dyn Error>> {
+fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> {
     let target = fixture_target(FIXTURE_MODEL);
     let introspection_target = fixture_target(FIXTURE_INTROSPECTION_MODEL);
     // Session snapshots resolve the default route before the frontend can select
@@ -241,7 +241,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::fs::create_dir_all(parent)?;
     }
     let persistence = LocalPersistence::open(state)?;
-    let mut builder = HarnessBuilder::with_default_suite()?;
+    let mut builder = PhenixRuntimeBuilder::with_default_suite()?;
     builder.add_embedded(fixture_manifest(), || Box::new(FixtureProvider))?;
     builder.add_component(fixture_component());
     let mut harness = builder.build_with_persistence(persistence)?;

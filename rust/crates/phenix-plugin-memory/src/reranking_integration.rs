@@ -2,8 +2,8 @@ use crate::{memory_component_manifest, memory_factory, memory_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     LocalPersistence, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId,
-    ServiceRole, SessionId,
+    PluginManifest, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution,
+    ServiceId, ServiceRole, SessionId,
 };
 use phenix_plugin_models::{
     model_routing_component_manifest, model_routing_factory, model_routing_manifest,
@@ -121,7 +121,7 @@ fn kernel_with_rank(path: &PathBuf) -> Kernel {
     let routing = model_routing_manifest(Authority::default());
     let rank = rank_manifest();
     let authority = memory.maximum_authority.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [memory.clone(), routing.clone(), rank.clone()],
         [
             memory_component_manifest(),
@@ -134,7 +134,7 @@ fn kernel_with_rank(path: &PathBuf) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(memory.id, memory_factory)
         .unwrap();

@@ -1,11 +1,11 @@
 use phenix_core::{
     ComponentInterface, DurableSchema, EventEnvelope, EventFailurePolicy, EventSubscription,
-    EventTypeId, GraphReconciler, InterfaceId, InterfaceSchema, Kernel, PluginId, ResolvedHarness,
-    ResolvedHarnessActivation, ResourceNamespace, ServiceId, SubscriptionId, SubscriptionSpec,
-    TransactionOp,
+    EventTypeId, GraphReconciler, InterfaceId, InterfaceSchema, Kernel, PluginId,
+    ResolvedGeneration, ResolvedGenerationActivation, ResourceNamespace, ServiceId, SubscriptionId,
+    SubscriptionSpec, TransactionOp,
 };
 use phenix_sdk::{
-    Authority, Call, CapabilityId, Emit, Required, StaticComponentBehavior,
+    Authority, Call, Emit, PermissionId, Required, StaticComponentBehavior,
     StaticComponentRuntimeDispatch, StaticPluginComponentDispatch, StaticPluginComponents,
     StaticPluginConfiguration, StaticPluginDefinition, StaticPluginLifecycle,
     StaticPluginResources,
@@ -94,28 +94,28 @@ mod sessions {
 }
 
 fn authority(capability: &str) -> Authority {
-    Authority::new([CapabilityId::parse(capability).unwrap()])
+    Authority::new([PermissionId::parse(capability).unwrap()])
 }
 
 fn plugin_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("plugin.run").unwrap(),
-        CapabilityId::parse("kernel.persistence.schema").unwrap(),
-        CapabilityId::parse("kernel.persistence.write").unwrap(),
-        CapabilityId::parse("models.invoke").unwrap(),
-        CapabilityId::parse("events.observe").unwrap(),
+        PermissionId::parse("plugin.run").unwrap(),
+        PermissionId::parse("kernel.persistence.schema").unwrap(),
+        PermissionId::parse("kernel.persistence.write").unwrap(),
+        PermissionId::parse("models.invoke").unwrap(),
+        PermissionId::parse("events.observe").unwrap(),
     ])
 }
 
 fn runtime_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse("plugin.run").unwrap(),
-        CapabilityId::parse("kernel.persistence.schema").unwrap(),
-        CapabilityId::parse("kernel.persistence.write").unwrap(),
-        CapabilityId::parse("models.invoke").unwrap(),
-        CapabilityId::parse("models.serve").unwrap(),
-        CapabilityId::parse("models.layer").unwrap(),
-        CapabilityId::parse("events.observe").unwrap(),
+        PermissionId::parse("plugin.run").unwrap(),
+        PermissionId::parse("kernel.persistence.schema").unwrap(),
+        PermissionId::parse("kernel.persistence.write").unwrap(),
+        PermissionId::parse("models.invoke").unwrap(),
+        PermissionId::parse("models.serve").unwrap(),
+        PermissionId::parse("models.layer").unwrap(),
+        PermissionId::parse("events.observe").unwrap(),
     ])
 }
 
@@ -192,8 +192,8 @@ impl Api {
             return Err("listener task scope lost owner or generation".into());
         }
         let requested_task_authority = Authority::new([
-            CapabilityId::parse("models.invoke").unwrap(),
-            CapabilityId::parse("models.serve").unwrap(),
+            PermissionId::parse("models.invoke").unwrap(),
+            PermissionId::parse("models.serve").unwrap(),
         ]);
         let expected_task_authority = context.authority().attenuate(&requested_task_authority);
         let task = task_scope.spawn(&requested_task_authority, |token| {
@@ -441,7 +441,7 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
         sessions_component,
         <Plugin as StaticPluginDefinition>::component_manifests().remove(0),
     ];
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         manifests,
         components,
         std::iter::empty(),
@@ -453,7 +453,7 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
     graph
         .preload_embedded_instance::<Plugin>(&mut kernel, plugin().__phenix_into_plugin_instance())
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     let generation = kernel
@@ -533,9 +533,9 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
         payload,
     };
     let listener_authority = Authority::new([
-        CapabilityId::parse("events.observe").unwrap(),
-        CapabilityId::parse("models.invoke").unwrap(),
-        CapabilityId::parse("kernel.persistence.write").unwrap(),
+        PermissionId::parse("events.observe").unwrap(),
+        PermissionId::parse("models.invoke").unwrap(),
+        PermissionId::parse("kernel.persistence.write").unwrap(),
     ]);
     let report = events.dispatch(&event, &listener_authority).unwrap();
     assert_eq!(report.delivered.len(), 1);
@@ -584,7 +584,7 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
         diagnostic_payload["direction"],
         serde_json::json!("listener")
     );
-    let without_plugin = ResolvedHarness::resolve(
+    let without_plugin = ResolvedGeneration::resolve(
         [<sessions::Plugin as StaticPluginDefinition>::manifest()],
         [<sessions::Plugin as StaticPluginDefinition>::component_manifests().remove(0)],
         std::iter::empty(),

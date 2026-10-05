@@ -67,7 +67,7 @@ mod tests {
         context_service, skill_service, tool_service, Authority, CallableId, ComponentInterface,
         ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
         ContextScope, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
-        PhenixSchema, PhenixValue, ResolvedHarness, ResolvedHarnessActivation, SkillCommand,
+        PhenixSchema, PhenixValue, ResolvedGeneration, ResolvedGenerationActivation, SkillCommand,
         SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
     };
     use phenix_sdk::{
@@ -124,7 +124,7 @@ mod tests {
             .iter()
             .flat_map(basic_durable_schema_registrations)
             .collect::<Vec<_>>();
-        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+        let resolved = ResolvedGeneration::resolve_with_durable_schemas(
             manifests.clone(),
             components,
             durable_schemas,
@@ -136,7 +136,7 @@ mod tests {
             KernelConfig::new(manifests.clone()).unwrap(),
             LocalPersistence::open(path).unwrap(),
         );
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(manifests[0].id.clone(), basic_model_factory)
             .unwrap();

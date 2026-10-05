@@ -1,5 +1,5 @@
 use phenix_sdk::{
-    Authority, Call, CapabilityId, Required, StaticComponentBehavior, StaticComponentImports,
+    Authority, Call, PermissionId, Required, StaticComponentBehavior, StaticComponentImports,
 };
 
 #[phenix_sdk::interface("fixture.layer.authority@1")]
@@ -14,7 +14,7 @@ impl Api {
         export(Models),
         terminal,
         priority = 29,
-        authority = Authority::new([CapabilityId::parse("models.serve").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.serve").unwrap()])
     )]
     fn run(&self, request: String) -> String {
         request
@@ -23,13 +23,13 @@ impl Api {
     #[phenix(layer(
         Models,
         priority = 17,
-        authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.invoke").unwrap()])
     ))]
     fn policy(&self) {}
 
     #[phenix(
         listen("fixture.models.observed"),
-        authority = Authority::new([CapabilityId::parse("models.observe").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.observe").unwrap()])
     )]
     fn observed(&self, _context: &phenix_sdk::EventContext, _event: String) {}
 }
@@ -39,17 +39,17 @@ impl Api {
 struct Consumer {
     #[phenix(
         import,
-        authority = Authority::new([CapabilityId::parse("models.read").unwrap()])
+        authority = Authority::new([PermissionId::parse("models.read").unwrap()])
     )]
     models: Required<Call<Models, String, String>>,
 }
 
 #[test]
 fn component_authority_survives_macro_lowering() {
-    let layer_authority = Authority::new([CapabilityId::parse("models.invoke").unwrap()]);
-    let export_authority = Authority::new([CapabilityId::parse("models.serve").unwrap()]);
-    let import_authority = Authority::new([CapabilityId::parse("models.read").unwrap()]);
-    let listener_authority = Authority::new([CapabilityId::parse("models.observe").unwrap()]);
+    let layer_authority = Authority::new([PermissionId::parse("models.invoke").unwrap()]);
+    let export_authority = Authority::new([PermissionId::parse("models.serve").unwrap()]);
+    let import_authority = Authority::new([PermissionId::parse("models.read").unwrap()]);
+    let listener_authority = Authority::new([PermissionId::parse("models.observe").unwrap()]);
 
     let layers = <Api as StaticComponentBehavior>::layers();
     assert_eq!(layers.len(), 1);

@@ -1,4 +1,4 @@
-use crate::{Authority, EventBus, GraphGenerationId, KernelEvent, PluginId};
+use crate::{Authority, EventBus, GenerationId, KernelEvent, PluginId};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -13,7 +13,7 @@ use std::{
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
     authority: Authority,
-    graph_generation: GraphGenerationId,
+    graph_generation: GenerationId,
 }
 
 impl CancellationToken {
@@ -25,7 +25,7 @@ impl CancellationToken {
         &self.authority
     }
 
-    pub fn graph_generation(&self) -> &GraphGenerationId {
+    pub fn graph_generation(&self) -> &GenerationId {
         &self.graph_generation
     }
 }
@@ -67,7 +67,7 @@ impl Drop for LiveCallScope<'_> {
 
 pub struct TaskHandle<T> {
     id: u64,
-    graph_generation: GraphGenerationId,
+    graph_generation: GenerationId,
     cancelled: Arc<AtomicBool>,
     receiver: Receiver<T>,
     join: JoinHandle<()>,
@@ -79,7 +79,7 @@ impl<T> TaskHandle<T> {
         self.id
     }
 
-    pub fn graph_generation(&self) -> &GraphGenerationId {
+    pub fn graph_generation(&self) -> &GenerationId {
         &self.graph_generation
     }
 
@@ -101,7 +101,7 @@ impl<T> TaskHandle<T> {
 #[derive(Clone, Copy)]
 pub struct TaskScope<'a> {
     runtime: &'a TaskRuntime,
-    graph_generation: &'a GraphGenerationId,
+    graph_generation: &'a GenerationId,
     authority: &'a Authority,
     plugin: Option<&'a PluginId>,
 }
@@ -110,7 +110,7 @@ impl<'a> TaskScope<'a> {
     #[cfg(test)]
     pub(crate) fn new(
         runtime: &'a TaskRuntime,
-        graph_generation: &'a GraphGenerationId,
+        graph_generation: &'a GenerationId,
         authority: &'a Authority,
     ) -> Self {
         Self {
@@ -123,7 +123,7 @@ impl<'a> TaskScope<'a> {
 
     pub(crate) fn new_owned(
         runtime: &'a TaskRuntime,
-        graph_generation: &'a GraphGenerationId,
+        graph_generation: &'a GenerationId,
         authority: &'a Authority,
         plugin: &'a PluginId,
     ) -> Self {
@@ -135,7 +135,7 @@ impl<'a> TaskScope<'a> {
         }
     }
 
-    pub fn graph_generation(&self) -> &GraphGenerationId {
+    pub fn graph_generation(&self) -> &GenerationId {
         self.graph_generation
     }
 
@@ -165,14 +165,14 @@ impl<'a> TaskScope<'a> {
 #[derive(Debug)]
 struct OwnedTask {
     id: u64,
-    graph_generation: GraphGenerationId,
+    graph_generation: GenerationId,
     cancelled: Weak<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct OwnedCall {
     id: u64,
-    graph_generation: Option<GraphGenerationId>,
+    graph_generation: Option<GenerationId>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -205,7 +205,7 @@ impl TaskRuntime {
     pub(crate) fn begin_call<'a>(
         &'a self,
         plugin: &PluginId,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> LiveCallScope<'a> {
         let id = self.next_call_id.fetch_add(1, Ordering::Relaxed) + 1;
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -241,7 +241,7 @@ impl TaskRuntime {
     pub(crate) fn cancel_calls(
         &self,
         plugin: &PluginId,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> usize {
         self.calls
             .lock()
@@ -265,7 +265,7 @@ impl TaskRuntime {
 
     pub fn spawn<T, F>(
         &self,
-        graph_generation: &GraphGenerationId,
+        graph_generation: &GenerationId,
         parent_authority: &Authority,
         requested_authority: &Authority,
         worker: F,
@@ -286,7 +286,7 @@ impl TaskRuntime {
     fn spawn_scoped<T, F>(
         &self,
         owner: Option<&PluginId>,
-        graph_generation: &GraphGenerationId,
+        graph_generation: &GenerationId,
         parent_authority: &Authority,
         requested_authority: &Authority,
         worker: F,
@@ -341,7 +341,7 @@ impl TaskRuntime {
     pub(crate) fn cancel_plugin_generation(
         &self,
         plugin: &PluginId,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
     ) -> usize {
         let Some(graph_generation) = graph_generation else {
             return 0;
@@ -388,16 +388,16 @@ impl TaskRuntime {
 mod tests {
     use super::*;
     use crate::{
-        CapabilityId, ComponentManifest, ConfigContribution, PluginManifest, ResolvedHarness,
+        ComponentManifest, ConfigContribution, PermissionId, PluginManifest, ResolvedGeneration,
     };
     use std::thread;
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
-    fn generation_with_authority(authority: &Authority) -> GraphGenerationId {
-        ResolvedHarness::resolve(
+    fn generation_with_authority(authority: &Authority) -> GenerationId {
+        ResolvedGeneration::resolve(
             Vec::<PluginManifest>::new(),
             Vec::<ComponentManifest>::new(),
             Vec::<ConfigContribution>::new(),
@@ -408,7 +408,7 @@ mod tests {
         .clone()
     }
 
-    fn generation() -> GraphGenerationId {
+    fn generation() -> GenerationId {
         generation_with_authority(&Authority::default())
     }
 

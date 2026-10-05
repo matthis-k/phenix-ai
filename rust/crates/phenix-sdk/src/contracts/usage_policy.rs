@@ -269,13 +269,13 @@ impl UsagePolicy {
             mandatory_input_tokens: input.task.context.mandatory_input_tokens,
             reducible_input_tokens: planned_reducible,
             output_reserve_tokens: input.task.context.output_reserve_tokens,
-            required_capabilities: input.task.context.required_capabilities.clone(),
+            required_features: input.task.context.required_features.clone(),
         };
         let routing_context = ContextDemand {
             mandatory_input_tokens,
             reducible_input_tokens: planned_reducible,
             output_reserve_tokens: planned_context.output_reserve_tokens,
-            required_capabilities: planned_context.required_capabilities.clone(),
+            required_features: planned_context.required_features.clone(),
         };
 
         let max_attempts = self
@@ -292,7 +292,7 @@ impl UsagePolicy {
             ),
             routing: RoutingRequirements {
                 context: routing_context,
-                required_capabilities: input.task.required_capabilities.clone(),
+                required_features: input.task.required_capabilities.clone(),
                 require_known_capacity: self.require_known_capacity,
             },
             context: planned_context.clone(),

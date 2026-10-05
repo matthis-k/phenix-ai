@@ -1,6 +1,6 @@
 use crate::{hook_component_id, ExecutionCommand, ExecutionResponse};
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    Authority, ComponentInterface, DurableSchema, PermissionId, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, SdkClient,
     ServiceContribution, ServiceId, TransactionOp,
 };
@@ -215,8 +215,8 @@ fn hook_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(HOOK_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[derive(Default)]

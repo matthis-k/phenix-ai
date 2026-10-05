@@ -1,8 +1,8 @@
 use crate::configuration::ExecutionConfigurationInterface;
 use crate::{execution_manifest, ExecutionReviewInterface};
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, PluginId,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, PermissionId, PluginId,
 };
 use phenix_sdk::{
     ExecutionInspectionInterface, ExecutionInterface, ExecutionResourceInterface,
@@ -93,18 +93,18 @@ pub fn execution_component_manifest(maximum_authority: Authority) -> ComponentMa
 
 fn persistence_authority() -> Authority {
     Authority::new([
-        CapabilityId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid"),
-        CapabilityId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_SCHEMA).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_READ).expect("static capability is valid"),
+        PermissionId::parse(PERSISTENCE_WRITE).expect("static capability is valid"),
     ])
 }
 
 fn attempt_read_authority() -> Authority {
-    Authority::new([CapabilityId::parse(PERSISTENCE_READ).expect("static capability is valid")])
+    Authority::new([PermissionId::parse(PERSISTENCE_READ).expect("static capability is valid")])
 }
 
 fn workspace_write_authority() -> Authority {
-    Authority::new([CapabilityId::parse(WORKSPACE_WRITE).expect("static capability is valid")])
+    Authority::new([PermissionId::parse(WORKSPACE_WRITE).expect("static capability is valid")])
 }
 
 #[cfg(test)]
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn execution_component_separates_package_ceiling_from_interface_minimum() {
-        let capability = CapabilityId::parse("fixture.execution").unwrap();
+        let capability = PermissionId::parse("fixture.execution").unwrap();
         let authority = Authority::new([capability.clone()]);
         let plugin = execution_manifest(authority.clone());
         let component = execution_component_manifest(authority);
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn review_workspace_import_is_limited_to_package_ceiling() {
-        let write = CapabilityId::parse(WORKSPACE_WRITE).unwrap();
+        let write = PermissionId::parse(WORKSPACE_WRITE).unwrap();
         let component = execution_component_manifest(Authority::new([write.clone()]));
         assert!(component.imports[0].authority.permits(&write));
     }

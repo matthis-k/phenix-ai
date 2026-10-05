@@ -7,7 +7,7 @@ use super::{
 };
 
 impl<'a> PluginHost<'a> {
-    pub fn graph_generation(&self) -> Option<&GraphGenerationId> {
+    pub fn graph_generation(&self) -> Option<&GenerationId> {
         self.scope.generation.generation()
     }
 
@@ -487,7 +487,7 @@ impl<'a> PluginHost<'a> {
                 });
             }
 
-            let write = CapabilityId::parse(PERSISTENCE_WRITE)
+            let write = PermissionId::parse(PERSISTENCE_WRITE)
                 .expect("kernel persistence write capability is valid");
             for participant in &participants {
                 let transaction = &participant.transaction;
@@ -625,7 +625,7 @@ impl<'a> PluginHost<'a> {
     }
 
     fn require_capability(&self, capability: &str) -> Result<(), KernelError> {
-        let capability = CapabilityId::parse(capability).expect("kernel capability is valid");
+        let capability = PermissionId::parse(capability).expect("kernel capability is valid");
         if self.scope.authority.permits(&capability) {
             return Ok(());
         }

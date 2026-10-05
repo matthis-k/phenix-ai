@@ -39,15 +39,15 @@ pub fn workspace_component_manifest() -> ComponentManifest {
 mod tests {
     use super::*;
     use phenix_core::{
-        CapabilityId, ComponentGraphError, ComponentImport, PluginExecution, PluginManifest,
+        ComponentGraphError, ComponentImport, PermissionId, PluginExecution, PluginManifest,
         ResolvedComponentGraph,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_manifest,
     };
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn consumer_manifest(maximum_authority: Authority) -> PluginManifest {

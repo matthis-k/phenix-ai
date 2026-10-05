@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
+    Authority, ComponentId, ComponentInterface, ComponentManifest, InterfaceId, PermissionId,
     PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SkillCommand,
     SkillDefinition, SkillId, SkillResponse, TransactionOp, SKILL_SERVICE,
 };
@@ -158,8 +158,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::{CallableDescriptor, CallableId, CallableKind, SessionId};
-use phenix_core::{CallableRef, CapabilityGenerationId, CapabilityOwnerId};
+use phenix_core::{CallableRef, ReferenceGenerationId, ReferenceOwnerId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
@@ -43,8 +43,8 @@ impl ClientToolDefinition {
 pub struct ClientToolAdmission {
     pub id: ClientToolAdmissionId,
     pub session_id: SessionId,
-    pub owner: CapabilityOwnerId,
-    pub generation: CapabilityGenerationId,
+    pub owner: ReferenceOwnerId,
+    pub generation: ReferenceGenerationId,
     pub tool: ClientToolDefinition,
 }
 
@@ -79,7 +79,7 @@ pub struct ClientToolAdmissions {
     by_id: BTreeMap<ClientToolAdmissionId, ClientToolAdmission>,
     by_session_callable: BTreeMap<(SessionId, CallableId), ClientToolAdmissionId>,
     by_owner_generation:
-        BTreeMap<(CapabilityOwnerId, CapabilityGenerationId), BTreeSet<ClientToolAdmissionId>>,
+        BTreeMap<(ReferenceOwnerId, ReferenceGenerationId), BTreeSet<ClientToolAdmissionId>>,
 }
 
 impl ClientToolAdmissions {
@@ -140,8 +140,8 @@ impl ClientToolAdmissions {
     fn remove(
         &mut self,
         id: &ClientToolAdmissionId,
-        owner: &CapabilityOwnerId,
-        generation: &CapabilityGenerationId,
+        owner: &ReferenceOwnerId,
+        generation: &ReferenceGenerationId,
     ) -> Result<ClientToolAdmission, ClientToolAdmissionError> {
         let Some(admission) = self.by_id.get(id) else {
             return Err(ClientToolAdmissionError::StaleAdmission(id.clone()));
@@ -166,7 +166,7 @@ impl ClientToolAdmissions {
         Ok(admission)
     }
 
-    pub fn retire(&mut self, owner: &CapabilityOwnerId, generation: &CapabilityGenerationId) {
+    pub fn retire(&mut self, owner: &ReferenceOwnerId, generation: &ReferenceGenerationId) {
         let Some(ids) = self
             .by_owner_generation
             .get(&(owner.clone(), generation.clone()))
@@ -222,8 +222,8 @@ impl ClientToolAdmissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CallablePolicy, CapabilitySet};
-    use phenix_core::{ContractId, ReferenceId, RuntimeId, Type};
+    use crate::{CallableFeatureSet, CallablePolicy};
+    use phenix_core::{ContractId, PluginRuntimeId, ReferenceId, Type};
 
     fn definition(id: &str, generation: &str) -> ClientToolDefinition {
         let descriptor = CallableDescriptor {
@@ -232,13 +232,13 @@ mod tests {
             description: "fixture client tool".to_owned(),
             input_schema: Type::String,
             output_schema: Type::String,
-            capabilities: CapabilitySet::default(),
+            features: CallableFeatureSet::default(),
             policy: CallablePolicy::default(),
         };
         let callable = CallableRef::new(
             ContractId::parse("fixture.callable@1").unwrap(),
-            CapabilityOwnerId::Runtime(RuntimeId::parse("fixture.runtime").unwrap()),
-            CapabilityGenerationId::parse(generation).unwrap(),
+            ReferenceOwnerId::Runtime(PluginRuntimeId::parse("fixture.runtime").unwrap()),
+            ReferenceGenerationId::parse(generation).unwrap(),
             ReferenceId::parse("fixture.callable").unwrap(),
         );
         ClientToolDefinition::new(descriptor, callable).unwrap()

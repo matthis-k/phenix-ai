@@ -1,6 +1,6 @@
 use phenix_core::{Bytes, CallableId, PhenixValue, Project, SessionId};
 use phenix_harness::{
-    default_suite_authority, HarnessBuilder, PhenixHarness, INVOCATION_DEFAULTS_PLUGIN,
+    default_suite_authority, PhenixRuntime, PhenixRuntimeBuilder, INVOCATION_DEFAULTS_PLUGIN,
 };
 use phenix_sdk::{
     invocation_defaults_service, options_service, InvocationDefaultsCommand,
@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 #[test]
 fn extracted_defaults_work_without_options_plugin() {
     let enabled = BTreeSet::from([INVOCATION_DEFAULTS_PLUGIN.to_owned()]);
-    let mut harness = HarnessBuilder::with_selected_suite(&enabled)
+    let mut harness = PhenixRuntimeBuilder::with_selected_suite(&enabled)
         .unwrap()
         .build()
         .unwrap();
@@ -52,7 +52,7 @@ fn extracted_defaults_work_without_options_plugin() {
 
 #[test]
 fn extracted_defaults_keep_session_route_precedence() {
-    let mut harness = PhenixHarness::default_suite().unwrap();
+    let mut harness = PhenixRuntime::default_suite().unwrap();
     harness.activate().unwrap();
 
     let key = OptionKey::parse("model.default").unwrap();

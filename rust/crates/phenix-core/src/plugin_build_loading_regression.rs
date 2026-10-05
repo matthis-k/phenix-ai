@@ -1,30 +1,31 @@
 use crate::{
-    runtime_provider_service, ArtifactRevision, Authority, BuildArgument, BuildArtifactOutput,
-    BuildEnvironment, BuildEnvironmentName, BuildExecutable, BuildSourceIdentity,
-    BuildSourceRevision, BuildWorkingDirectory, CapabilityId, GraphReconciler, Kernel, KernelError,
-    PluginArtifact, PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError,
-    PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure,
-    PluginBuildOutput, PluginBuildPlan, PluginBuildSource, PluginBuildStep, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext,
-    PluginManagementError, PluginManagementPolicy, PluginManagementRequest, PluginManifest,
-    PluginRuntimeProvider, ResolvedHarness, ResolvedHarnessActivation, RuntimeId,
-    RuntimePluginCandidate, ServiceContribution, ServiceRole,
+    plugin_runtime_adapter_service, ArtifactRevision, Authority, BuildArgument,
+    BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
+    BuildSourceIdentity, BuildSourceRevision, BuildWorkingDirectory, GraphReconciler, Kernel,
+    KernelError, PermissionId, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
+    PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor,
+    PluginBuildFailure, PluginBuildOutput, PluginBuildPlan, PluginBuildSource, PluginBuildStep,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
+    PluginManagementContext, PluginManagementError, PluginManagementPolicy,
+    PluginManagementRequest, PluginManifest, PluginRuntimeAdapter, PluginRuntimeCandidate,
+    PluginRuntimeId, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution,
+    ServiceRole,
 };
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn plugin(value: &str) -> PluginId {
     PluginId::parse(value).unwrap()
 }
 
-fn runtime() -> RuntimeId {
-    RuntimeId::parse("fixture.runtime").unwrap()
+fn runtime() -> PluginRuntimeId {
+    PluginRuntimeId::parse("fixture.runtime").unwrap()
 }
 
 fn plan(requested_authority: Authority) -> PluginBuildPlan {
@@ -94,7 +95,7 @@ fn bridge_manifest() -> PluginManifest {
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
-            service: runtime_provider_service(&runtime()),
+            service: plugin_runtime_adapter_service(&runtime()),
             role: ServiceRole::Terminal,
             priority: 0,
             required_authority: Authority::default(),
@@ -109,9 +110,9 @@ fn active_fixture(plugins: impl IntoIterator<Item = PluginManifest>) -> (GraphRe
     // long-lived kernel must start with the same ceiling; reconciliation may
     // attenuate it, but must never widen it.
     let authority_ceiling = Authority::new([capability("plugin.runtime")]);
-    let active = ResolvedHarness::resolve(plugins, [], [], &authority_ceiling).unwrap();
+    let active = ResolvedGeneration::resolve(plugins, [], [], &authority_ceiling).unwrap();
     let mut kernel = Kernel::new(active.kernel_config().clone());
-    kernel.activate_resolved_harness(&active).unwrap();
+    kernel.activate_resolved_generation(&active).unwrap();
     (GraphReconciler::new(active), kernel)
 }
 
@@ -418,10 +419,10 @@ fn missing_output_and_failed_build_leave_the_active_graph_unchanged() {
 
 struct RejectingBridge;
 
-impl PluginRuntimeProvider for RejectingBridge {
+impl PluginRuntimeAdapter for RejectingBridge {
     fn prepare(
         &mut self,
-        _candidate: RuntimePluginCandidate<'_>,
+        _candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         Err("runtime rejected artifact".into())
     }
@@ -432,7 +433,7 @@ impl PluginInstance for RejectingBridge {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
@@ -477,7 +478,7 @@ fn runtime_rejection_after_build_preserves_build_report_and_rolls_back() {
     };
     assert!(matches!(
         *error,
-        crate::LiveReconciliationError::Runtime(KernelError::RuntimePrepare { .. })
+        crate::LiveReconciliationError::Runtime(KernelError::PluginRuntimePreparation { .. })
     ));
     assert_eq!(report.evidence.provenance(), ["isolated-stage:fixture"]);
     assert_eq!(kernel.graph_generation(), Some(&active_generation));

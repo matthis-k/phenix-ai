@@ -1,5 +1,5 @@
 use crate::{
-    CapabilityGenerationId, ClientConnectionId, GraphGenerationId, InterfaceId, PluginId, RuntimeId,
+    ClientConnectionId, GenerationId, InterfaceId, PluginId, PluginRuntimeId, ReferenceGenerationId,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -153,59 +153,59 @@ impl<'de> Deserialize<'de> for ReferenceId {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum CapabilityOwnerId {
+pub enum ReferenceOwnerId {
     Plugin(PluginId),
     Client(ClientConnectionId),
-    Runtime(RuntimeId),
+    Runtime(PluginRuntimeId),
 }
 
-impl CapabilityOwnerId {
+impl ReferenceOwnerId {
     #[must_use]
     pub const fn plugin(provider: PluginId) -> Self {
         Self::Plugin(provider)
     }
 }
 
-impl From<PluginId> for CapabilityOwnerId {
+impl From<PluginId> for ReferenceOwnerId {
     fn from(value: PluginId) -> Self {
         Self::Plugin(value)
     }
 }
 
-impl From<ClientConnectionId> for CapabilityOwnerId {
+impl From<ClientConnectionId> for ReferenceOwnerId {
     fn from(value: ClientConnectionId) -> Self {
         Self::Client(value)
     }
 }
 
-impl From<RuntimeId> for CapabilityOwnerId {
-    fn from(value: RuntimeId) -> Self {
+impl From<PluginRuntimeId> for ReferenceOwnerId {
+    fn from(value: PluginRuntimeId) -> Self {
         Self::Runtime(value)
     }
 }
 
-impl From<&GraphGenerationId> for CapabilityGenerationId {
-    fn from(value: &GraphGenerationId) -> Self {
-        Self::parse(value.as_str()).expect("graph generation ids are capability generation ids")
+impl From<&GenerationId> for ReferenceGenerationId {
+    fn from(value: &GenerationId) -> Self {
+        Self::parse(value.as_str()).expect("generation ids are valid reference generation ids")
     }
 }
 
-macro_rules! capability_ref {
+macro_rules! typed_reference {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
         #[serde(deny_unknown_fields)]
         pub struct $name {
             contract: ContractId,
-            owner: CapabilityOwnerId,
-            generation: CapabilityGenerationId,
+            owner: ReferenceOwnerId,
+            generation: ReferenceGenerationId,
             id: ReferenceId,
         }
 
         impl $name {
             pub fn new(
                 contract: ContractId,
-                owner: CapabilityOwnerId,
-                generation: CapabilityGenerationId,
+                owner: ReferenceOwnerId,
+                generation: ReferenceGenerationId,
                 id: ReferenceId,
             ) -> Self {
                 Self {
@@ -220,24 +220,24 @@ macro_rules! capability_ref {
                 &self.contract
             }
 
-            pub fn owner(&self) -> &CapabilityOwnerId {
+            pub fn owner(&self) -> &ReferenceOwnerId {
                 &self.owner
             }
 
-            pub fn generation(&self) -> &CapabilityGenerationId {
+            pub fn generation(&self) -> &ReferenceGenerationId {
                 &self.generation
             }
 
             pub fn for_plugin(
                 contract: ContractId,
                 provider: PluginId,
-                generation: &GraphGenerationId,
+                generation: &GenerationId,
                 id: ReferenceId,
             ) -> Self {
                 Self::new(
                     contract,
-                    CapabilityOwnerId::Plugin(provider),
-                    CapabilityGenerationId::from(generation),
+                    ReferenceOwnerId::Plugin(provider),
+                    ReferenceGenerationId::from(generation),
                     id,
                 )
             }
@@ -249,8 +249,8 @@ macro_rules! capability_ref {
     };
 }
 
-capability_ref!(CallableRef);
-capability_ref!(ObjectRef);
+typed_reference!(CallableRef);
+typed_reference!(ObjectRef);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
@@ -1519,11 +1519,11 @@ mod tests {
     }
 
     #[test]
-    fn capability_references_preserve_non_plugin_owners_without_aliasing_them_to_plugins() {
+    fn typed_referenceerences_preserve_non_plugin_owners_without_aliasing_them_to_plugins() {
         let reference = CallableRef::new(
             ContractId::parse("fixture.callback@1").unwrap(),
-            CapabilityOwnerId::Client(ClientConnectionId::parse("client.connection").unwrap()),
-            CapabilityGenerationId::parse("connection.generation").unwrap(),
+            ReferenceOwnerId::Client(ClientConnectionId::parse("client.connection").unwrap()),
+            ReferenceGenerationId::parse("connection.generation").unwrap(),
             ReferenceId::parse("callback").unwrap(),
         );
 
@@ -1540,15 +1540,15 @@ mod tests {
     fn plugin_references_keep_plugin_ownership_distinct_from_client_ownership() {
         let reference = ObjectRef::new(
             ContractId::parse("fixture.object@1").unwrap(),
-            CapabilityOwnerId::Plugin(PluginId::parse("fixture.plugin").unwrap()),
-            CapabilityGenerationId::parse("sha256:fixture").unwrap(),
+            ReferenceOwnerId::Plugin(PluginId::parse("fixture.plugin").unwrap()),
+            ReferenceGenerationId::parse("sha256:fixture").unwrap(),
             ReferenceId::parse("object").unwrap(),
         );
 
         assert_eq!(
             reference.generation(),
-            &CapabilityGenerationId::parse("sha256:fixture").unwrap()
+            &ReferenceGenerationId::parse("sha256:fixture").unwrap()
         );
-        assert!(matches!(reference.owner(), CapabilityOwnerId::Plugin(_)));
+        assert!(matches!(reference.owner(), ReferenceOwnerId::Plugin(_)));
     }
 }

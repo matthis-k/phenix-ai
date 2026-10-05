@@ -1,7 +1,7 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentId, ComponentInterface, ComponentManifest, ContextCommand,
+    Authority, ComponentId, ComponentInterface, ComponentManifest, ContextCommand,
     ContextDescriptor, ContextResourceId, ContextResourceRevision, ContextResponse,
-    ContextRevisionId, InterfaceId, PluginContext, PluginInstance, PluginManifest,
+    ContextRevisionId, InterfaceId, PermissionId, PluginContext, PluginInstance, PluginManifest,
     ResourceNamespace, TransactionOp, CONTEXT_SERVICE,
 };
 use phenix_sdk::StaticPluginDefinition;
@@ -196,8 +196,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[cfg(test)]

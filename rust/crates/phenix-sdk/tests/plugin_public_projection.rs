@@ -1,4 +1,4 @@
-use phenix_core::{Kernel, ResolvedHarness, ResolvedHarnessActivation, ServiceId};
+use phenix_core::{Kernel, ResolvedGeneration, ResolvedGenerationActivation, ServiceId};
 use phenix_sdk::{
     Authority, HasPhenixSchema, StaticPluginComponents, StaticPluginDefinition,
     StaticPluginPublicProjection,
@@ -98,7 +98,7 @@ struct CountResponse {
 }
 
 fn recursive_authority() -> Authority {
-    Authority::new([phenix_sdk::CapabilityId::parse("fixture.recursive.read").unwrap()])
+    Authority::new([phenix_sdk::PermissionId::parse("fixture.recursive.read").unwrap()])
 }
 
 #[phenix_sdk::interface("fixture.recursive-public/public/status@1")]
@@ -382,7 +382,7 @@ fn recursive_exposure_projects_and_dispatches_real_nested_state() {
     assert_eq!(RecursivePlugin::component_manifests().len(), 2);
 
     let graph = phenix_sdk::StaticPluginGraph::compose::<RecursivePlugin>().unwrap();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [RecursivePlugin::manifest()],
         RecursivePlugin::component_manifests(),
         std::iter::empty(),
@@ -400,7 +400,7 @@ fn recursive_exposure_projects_and_dispatches_real_nested_state() {
             plugin.__phenix_into_plugin_instance(),
         )
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     assert_eq!(invoke_count(&mut kernel, "root_sync", 3).count, 3);
@@ -416,7 +416,7 @@ fn recursive_exposure_projects_and_dispatches_real_nested_state() {
 
 #[test]
 fn final_recursive_collision_uses_component_graph_validation() {
-    let error = ResolvedHarness::resolve(
+    let error = ResolvedGeneration::resolve(
         [CollisionPlugin::manifest()],
         CollisionPlugin::component_manifests(),
         std::iter::empty(),

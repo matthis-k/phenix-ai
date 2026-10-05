@@ -1,10 +1,10 @@
 use crate::{
-    runtime_provider_service, Authority, ComponentExport, ComponentId, ComponentImport,
+    plugin_runtime_adapter_service, Authority, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, InterfaceId, InterfaceSchema, InvocationOutcome, Kernel,
     PhenixValue, PluginArtifact, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, PluginRuntimeProvider, ResolvedHarness, ResolvedHarnessActivation,
-    ResolvedImportHandle, RuntimeId, RuntimePluginCandidate, ServiceContribution, ServiceId,
-    ServiceRole,
+    PluginManifest, PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId,
+    ResolvedGeneration, ResolvedGenerationActivation, ResolvedImportHandle, ServiceContribution,
+    ServiceId, ServiceRole,
 };
 use std::collections::BTreeMap;
 
@@ -104,10 +104,10 @@ impl PluginInstance for EchoProvider {
 
 struct EchoRuntimeBridge;
 
-impl PluginRuntimeProvider for EchoRuntimeBridge {
+impl PluginRuntimeAdapter for EchoRuntimeBridge {
     fn prepare(
         &mut self,
-        _candidate: RuntimePluginCandidate<'_>,
+        _candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         Ok(Box::new(EchoProvider("runtime")))
     }
@@ -118,7 +118,7 @@ impl PluginInstance for EchoRuntimeBridge {
         Ok(())
     }
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         Some(self)
     }
 }
@@ -147,14 +147,14 @@ fn embedded_provider_manifest() -> PluginManifest {
     }
 }
 
-fn runtime_bridge_manifest(runtime: &RuntimeId) -> PluginManifest {
+fn runtime_bridge_manifest(runtime: &PluginRuntimeId) -> PluginManifest {
     PluginManifest {
         id: plugin("fixture.runtime-bridge"),
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: Vec::new(),
         services: vec![ServiceContribution {
-            service: runtime_provider_service(runtime),
+            service: plugin_runtime_adapter_service(runtime),
             role: ServiceRole::Terminal,
             priority: 0,
             required_authority: Authority::default(),
@@ -164,7 +164,7 @@ fn runtime_bridge_manifest(runtime: &RuntimeId) -> PluginManifest {
     }
 }
 
-fn runtime_provider_manifest(runtime: RuntimeId) -> PluginManifest {
+fn plugin_runtime_adapter_manifest(runtime: PluginRuntimeId) -> PluginManifest {
     PluginManifest {
         id: plugin("fixture.provider"),
         version: 1,
@@ -219,7 +219,7 @@ fn components() -> [ComponentManifest; 2] {
     ]
 }
 
-fn handle(resolved: &ResolvedHarness) -> ResolvedImportHandle {
+fn handle(resolved: &ResolvedGeneration) -> ResolvedImportHandle {
     resolved
         .component_graph()
         .import_handle(
@@ -249,7 +249,7 @@ fn invoke(handle: &ResolvedImportHandle, kernel: &mut Kernel) -> PhenixValue {
 fn typed_component_consumer_is_runtime_agnostic() {
     let consumer = consumer_manifest();
     let embedded_provider = embedded_provider_manifest();
-    let embedded_resolved = ResolvedHarness::resolve(
+    let embedded_resolved = ResolvedGeneration::resolve(
         [consumer.clone(), embedded_provider.clone()],
         components(),
         [],
@@ -259,7 +259,7 @@ fn typed_component_consumer_is_runtime_agnostic() {
     let embedded_handle = handle(&embedded_resolved);
     let mut embedded_kernel = Kernel::new(embedded_resolved.kernel_config().clone());
     embedded_kernel
-        .activate_resolved_harness(&embedded_resolved)
+        .activate_resolved_generation(&embedded_resolved)
         .unwrap();
     embedded_kernel
         .register_embedded_factory(consumer.id.clone(), || Box::new(Noop))
@@ -269,11 +269,11 @@ fn typed_component_consumer_is_runtime_agnostic() {
         .unwrap();
     embedded_kernel.activate_all().unwrap();
 
-    let runtime = RuntimeId::parse("fixture.runtime").unwrap();
+    let runtime = PluginRuntimeId::parse("fixture.runtime").unwrap();
     let bridge = runtime_bridge_manifest(&runtime);
-    let runtime_provider = runtime_provider_manifest(runtime);
-    let runtime_resolved = ResolvedHarness::resolve(
-        [consumer.clone(), bridge.clone(), runtime_provider],
+    let plugin_runtime_adapter = plugin_runtime_adapter_manifest(runtime);
+    let runtime_resolved = ResolvedGeneration::resolve(
+        [consumer.clone(), bridge.clone(), plugin_runtime_adapter],
         components(),
         [],
         &Authority::default(),
@@ -282,7 +282,7 @@ fn typed_component_consumer_is_runtime_agnostic() {
     let runtime_handle = handle(&runtime_resolved);
     let mut runtime_kernel = Kernel::new(runtime_resolved.kernel_config().clone());
     runtime_kernel
-        .activate_resolved_harness(&runtime_resolved)
+        .activate_resolved_generation(&runtime_resolved)
         .unwrap();
     runtime_kernel
         .register_embedded_factory(consumer.id, || Box::new(Noop))
@@ -306,7 +306,7 @@ fn typed_component_consumer_is_runtime_agnostic() {
 fn structural_domain_error_survives_nested_import() {
     let consumer = consumer_manifest();
     let provider = embedded_provider_manifest();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [consumer.clone(), provider.clone()],
         components(),
         [],
@@ -314,7 +314,7 @@ fn structural_domain_error_survives_nested_import() {
     )
     .unwrap();
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(consumer.id, || Box::new(RelayConsumer))
         .unwrap();
@@ -344,11 +344,11 @@ fn structural_domain_error_survives_nested_import() {
 #[test]
 fn structural_domain_error_survives_runtime_bridge() {
     let consumer = consumer_manifest();
-    let runtime = RuntimeId::parse("fixture.runtime").unwrap();
+    let runtime = PluginRuntimeId::parse("fixture.runtime").unwrap();
     let bridge = runtime_bridge_manifest(&runtime);
-    let runtime_provider = runtime_provider_manifest(runtime);
-    let resolved = ResolvedHarness::resolve(
-        [consumer.clone(), bridge.clone(), runtime_provider],
+    let plugin_runtime_adapter = plugin_runtime_adapter_manifest(runtime);
+    let resolved = ResolvedGeneration::resolve(
+        [consumer.clone(), bridge.clone(), plugin_runtime_adapter],
         components(),
         [],
         &Authority::default(),
@@ -356,7 +356,7 @@ fn structural_domain_error_survives_runtime_bridge() {
     .unwrap();
     let handle = handle(&resolved);
     let mut kernel = Kernel::new(resolved.kernel_config().clone());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(consumer.id, || Box::new(Noop))
         .unwrap();

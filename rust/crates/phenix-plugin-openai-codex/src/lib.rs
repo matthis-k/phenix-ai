@@ -3,9 +3,9 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use phenix_core::{
-    model_inference_service, Authority, CapabilityId, ComponentExport, ComponentId,
-    ComponentInterface, ComponentManifest, ModelInferenceInterface, ModelInferenceRequest,
-    ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    model_inference_service, Authority, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    PermissionId, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_provider_sdk::{
@@ -83,9 +83,9 @@ pub fn openai_codex_manifest() -> PluginManifest {
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::new(
             network
-                .capabilities()
+                .permissions()
                 .cloned()
-                .chain(secrets.capabilities().cloned()),
+                .chain(secrets.permissions().cloned()),
         ),
     }
 }
@@ -139,8 +139,8 @@ fn secrets_authority() -> Authority {
     Authority::new([capability(SECRETS_MANAGE_CAPABILITY)])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static provider capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static provider capability is valid")
 }
 
 #[derive(Default)]

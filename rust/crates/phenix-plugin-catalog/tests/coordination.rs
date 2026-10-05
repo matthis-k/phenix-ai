@@ -1,6 +1,7 @@
 use phenix_core::{
     Authority, Bytes, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
-    PhenixValue, PluginId, Project, ResolvedHarness, ResolvedHarnessActivation, RoutingProfileId,
+    PhenixValue, PluginId, Project, ResolvedGeneration, ResolvedGenerationActivation,
+    RoutingProfileId,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -57,7 +58,7 @@ fn kernel(path: &PathBuf) -> Kernel {
     let execution_id = execution.id.clone();
     let models = model_routing_manifest(authority.clone());
     let models_id = models.id.clone();
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         [execution.clone(), context.clone(), models.clone()],
         [
             execution_component_manifest(authority.clone()),
@@ -73,7 +74,7 @@ fn kernel(path: &PathBuf) -> Kernel {
         KernelConfig::new([execution, context, models]).unwrap(),
         persistence,
     );
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(execution_id, execution_factory)
         .unwrap();

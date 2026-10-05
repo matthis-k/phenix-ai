@@ -1,11 +1,11 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentGraphError, ComponentId, ComponentImport,
+    Authority, ComponentExport, ComponentGraphError, ComponentId, ComponentImport,
     ComponentManifest, ConfigContribution, ConfigContributionSource, ConfigMergeError,
     ConfigNamespace, ConfigSourceClass, ConfigurationFrontendId, ConfigurationFrontendMetadata,
-    FrontendConfigContribution, FrontendConfigError, InterfaceId, PluginExecution, PluginId,
-    PluginManifest, ResolvedHarness, ResolvedHarnessError,
+    FrontendConfigContribution, FrontendConfigError, GenerationResolutionError, InterfaceId,
+    PermissionId, PluginExecution, PluginId, PluginManifest, ResolvedGeneration,
 };
-use phenix_harness::{HarnessBuildError, HarnessBuilder};
+use phenix_harness::{PhenixRuntimeBuildError, PhenixRuntimeBuilder};
 use std::collections::BTreeSet;
 
 fn plugin(value: &str) -> PluginId {
@@ -20,8 +20,8 @@ fn interface(value: &str) -> InterfaceId {
     InterfaceId::parse(value).unwrap()
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn owner(id: &str, authority: Authority) -> PluginManifest {
@@ -38,7 +38,7 @@ fn owner(id: &str, authority: Authority) -> PluginManifest {
 
 #[test]
 fn harness_fails_closed_before_execution_when_required_component_import_is_missing() {
-    let mut builder = HarnessBuilder::new();
+    let mut builder = PhenixRuntimeBuilder::new();
     builder.add_manifest(owner("consumer-owner", Authority::default()));
     builder.add_component(ComponentManifest {
         listeners: Vec::new(),
@@ -60,7 +60,7 @@ fn harness_fails_closed_before_execution_when_required_component_import_is_missi
     };
     assert!(matches!(
         error,
-        HarnessBuildError::Resolution(ResolvedHarnessError::ComponentGraph(
+        PhenixRuntimeBuildError::Resolution(GenerationResolutionError::ComponentGraph(
             ComponentGraphError::MissingRequiredImport { .. }
         ))
     ));
@@ -72,7 +72,7 @@ fn harness_exposes_the_resolved_component_binding_and_attenuated_authority() {
     let write = capability("fixture.write");
     let harness_authority = Authority::new([read.clone(), write.clone()]);
 
-    let mut builder = HarnessBuilder::new();
+    let mut builder = PhenixRuntimeBuilder::new();
     builder.set_component_authority(harness_authority.clone());
     builder.add_manifest(owner(
         "consumer-owner",
@@ -147,7 +147,7 @@ fn configuration_frontend_cannot_bypass_source_authority_or_stable_semantics() {
         requested_authority: Authority::default(),
     };
 
-    let denied = ResolvedHarness::resolve_frontends(
+    let denied = ResolvedGeneration::resolve_frontends(
         [],
         [],
         [metadata.clone()],
@@ -160,13 +160,13 @@ fn configuration_frontend_cannot_bypass_source_authority_or_stable_semantics() {
     .unwrap_err();
     assert_eq!(
         denied,
-        ResolvedHarnessError::ConfigurationFrontend {
+        GenerationResolutionError::ConfigurationFrontend {
             frontend: frontend.clone(),
             error: FrontendConfigError::SourceAuthorityDenied,
         }
     );
 
-    let unstable = ResolvedHarness::resolve_frontends(
+    let unstable = ResolvedGeneration::resolve_frontends(
         [],
         [],
         [metadata],
@@ -179,7 +179,7 @@ fn configuration_frontend_cannot_bypass_source_authority_or_stable_semantics() {
     .unwrap_err();
     assert_eq!(
         unstable,
-        ResolvedHarnessError::ConfigurationFrontend {
+        GenerationResolutionError::ConfigurationFrontend {
             frontend,
             error: FrontendConfigError::EnvironmentBindingChangesSemantics,
         }
@@ -203,14 +203,14 @@ fn canonical_contribution(frontend: &str, value: serde_json::Value) -> ConfigCon
 
 #[test]
 fn harness_builder_exposes_the_canonical_resolved_generation() {
-    let mut baseline = HarnessBuilder::new();
+    let mut baseline = PhenixRuntimeBuilder::new();
     baseline.add_config_contribution(canonical_contribution(
         "phenix-config-nix",
         serde_json::json!({"mode":"strict"}),
     ));
     let baseline = baseline.build().unwrap();
 
-    let mut changed = HarnessBuilder::new();
+    let mut changed = PhenixRuntimeBuilder::new();
     changed.add_config_contribution(canonical_contribution(
         "phenix-config-lua",
         serde_json::json!({"mode":"relaxed"}),
@@ -218,11 +218,15 @@ fn harness_builder_exposes_the_canonical_resolved_generation() {
     let changed = changed.build().unwrap();
 
     assert_eq!(
-        baseline.resolved_harness().configuration().entries().len(),
+        baseline
+            .resolved_generation()
+            .configuration()
+            .entries()
+            .len(),
         1
     );
     assert_eq!(
-        baseline.resolved_harness().configuration().entries()[0].attributions[0]
+        baseline.resolved_generation().configuration().entries()[0].attributions[0]
             .source
             .frontend
             .as_str(),
@@ -233,7 +237,7 @@ fn harness_builder_exposes_the_canonical_resolved_generation() {
 
 #[test]
 fn harness_builder_rejects_configuration_conflicts_before_activation() {
-    let mut builder = HarnessBuilder::new();
+    let mut builder = PhenixRuntimeBuilder::new();
     builder.add_config_contribution(canonical_contribution(
         "phenix-config-nix",
         serde_json::json!({"mode":"strict"}),
@@ -249,7 +253,7 @@ fn harness_builder_rejects_configuration_conflicts_before_activation() {
     };
     assert!(matches!(
         error,
-        HarnessBuildError::Resolution(ResolvedHarnessError::ConfigurationMerge(
+        PhenixRuntimeBuildError::Resolution(GenerationResolutionError::ConfigurationMerge(
             ConfigMergeError::ConflictingContributions { .. }
         ))
     ));

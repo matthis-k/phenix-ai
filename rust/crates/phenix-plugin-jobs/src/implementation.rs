@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, PluginInstance, PluginManifest, ResourceNamespace, ServiceId,
+    Authority, PermissionId, PluginInstance, PluginManifest, ResourceNamespace, ServiceId,
     TransactionOp,
 };
 use phenix_sdk::{
@@ -80,8 +80,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn handle(context: &JobContext<'_, '_>, command: JobCommand) -> Result<JobResponse, String> {
@@ -325,7 +325,8 @@ mod tests {
     use super::*;
     use crate::job_component_manifest;
     use phenix_core::{
-        Kernel, LocalPersistence, PhenixValue, Project, ResolvedHarness, ResolvedHarnessActivation,
+        Kernel, LocalPersistence, PhenixValue, Project, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use std::{
         fs,
@@ -347,7 +348,7 @@ mod tests {
     fn kernel(path: &PathBuf) -> Kernel {
         let manifest = job_manifest();
         let plugin = manifest.id.clone();
-        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+        let resolved = ResolvedGeneration::resolve_with_durable_schemas(
             [manifest],
             [job_component_manifest()],
             job_durable_schema_registrations(),
@@ -357,7 +358,7 @@ mod tests {
         .unwrap();
         let persistence = LocalPersistence::open(path).unwrap();
         let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, job_factory)
             .unwrap();

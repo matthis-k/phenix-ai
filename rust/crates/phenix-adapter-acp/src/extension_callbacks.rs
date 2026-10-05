@@ -125,10 +125,10 @@ fn callback_projection_with_descriptor<T: ApplicationTransport>(
 mod tests {
     use super::*;
     use phenix_application_interface::types::{
-        CapabilityInvokeInput, CapabilityInvokeResult, Empty, PermissionRequest,
+        CallableInvocation, CallableInvocationResult, Empty, PermissionRequest,
     };
     use phenix_core::{
-        CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ReferenceId,
+        CallableRef, ClientConnectionId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
         SessionId,
     };
     use std::future::ready;
@@ -168,20 +168,20 @@ mod tests {
         contract("phenix.application.capability-call@1")
     }
 
-    fn request() -> CapabilityInvokeInput {
-        CapabilityInvokeInput {
+    fn request() -> CallableInvocation {
+        CallableInvocation {
             callable: PhenixValue::Callable(CallableRef::new(
                 ContractId::parse("fixture.callback@1").expect("callable contract"),
-                CapabilityOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
-                CapabilityGenerationId::parse("generation-1").unwrap(),
+                ReferenceOwnerId::Client(ClientConnectionId::parse("fixture-client").unwrap()),
+                ReferenceGenerationId::parse("generation-1").unwrap(),
                 ReferenceId::parse("callback-1").unwrap(),
             )),
             input: PhenixValue::String("continue?".to_owned()),
         }
     }
 
-    fn response() -> CapabilityInvokeResult {
-        CapabilityInvokeResult {
+    fn response() -> CallableInvocationResult {
+        CallableInvocationResult {
             output: PhenixValue::String("yes".to_owned()),
         }
     }
@@ -210,7 +210,7 @@ mod tests {
     fn callback_response_round_trips_typed_application_value() {
         let adapter = adapter(&["phenix.application.capability.capabilities@1"]);
         let expected = response();
-        let translated: CapabilityInvokeResult = adapter
+        let translated: CallableInvocationResult = adapter
             .extension_callback_response(&callback_id(), &encoded_response(&expected))
             .expect("typed callback response");
         assert_eq!(translated, expected);
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn callback_response_rejects_the_wrong_descriptor_shape() {
         let adapter = adapter(&["phenix.application.capability.capabilities@1"]);
-        let result = adapter.extension_callback_response::<CapabilityInvokeResult>(
+        let result = adapter.extension_callback_response::<CallableInvocationResult>(
             &callback_id(),
             &encoded_response(&Empty {}),
         );

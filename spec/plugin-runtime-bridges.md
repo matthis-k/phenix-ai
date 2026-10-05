@@ -4,8 +4,8 @@ status: implemented
 coverage:
   - rust/crates/phenix-core/src/plugin_build_loading_regression.rs
   - rust/crates/phenix-core/src/plugin_management_regression.rs
-  - rust/crates/phenix-core/src/runtime_provider_regression.rs
-  - rust/crates/phenix-core/src/runtime_provider_host_regression.rs
+  - rust/crates/phenix-core/src/plugin_runtime_adapter_regression.rs
+  - rust/crates/phenix-core/src/plugin_runtime_adapter_host_regression.rs
   - rust/crates/phenix-core/tests/kernel_concurrency_contract.rs
 
 ## Purpose
@@ -46,7 +46,7 @@ Every non-embedded runtime resolves through a Runtime Provider already available
 
 Runtime-provider dependencies are acyclic and must terminate at `embedded`. Missing providers and dependency cycles fail candidate preparation before graph commit.
 
-The Provider's own authority is derived independently from the guest Plugin's authority. `runtime_provider_host_regression.rs` verifies this separation and the host cancellation surface.
+The Provider's own authority is derived independently from the guest Plugin's authority. `plugin_runtime_adapter_host_regression.rs` verifies this separation and the host cancellation surface.
 
 ## Plugin management
 
@@ -159,6 +159,6 @@ Post-commit retirement failure is operational failure and does not roll the grap
 
 ## Resident replacement trials
 
-The implemented baseline commits replacement and then stops retired instances. `spec/selectable-harness-generations.md` proposes a development extension where compatible old and candidate generations may remain resident for explicit root execution before promotion.
+The implemented baseline commits replacement and then stops retired instances. `spec/selectable-generations.md` proposes a development extension where compatible old and candidate generations may remain resident for explicit root execution before promotion.
 
 This does not add a reload lifecycle. Build, resolution, Plugin preparation, authority, persistence ownership, and Runtime Provider semantics remain the same. The extension changes generation residency and root selection, not the Plugin API.

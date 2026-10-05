@@ -1,7 +1,7 @@
 use crate::{
-    ComponentId, ConfigurationFrontendId, GraphGenerationId, GraphReconciler, PluginId,
+    ComponentId, ConfigurationFrontendId, GenerationId, GraphReconciler, PluginId,
     ReconciliationAction, ReconciliationPreview, ReloadPolicy, ResolvedCompositionMetadata,
-    ResolvedHarness,
+    ResolvedGeneration,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -144,12 +144,12 @@ impl CompositionMetadataDiff {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MetadataReconciliationError {
     ActiveGenerationMismatch {
-        graph: GraphGenerationId,
-        metadata: GraphGenerationId,
+        graph: GenerationId,
+        metadata: GenerationId,
     },
     CandidateGenerationMismatch {
-        graph: GraphGenerationId,
-        metadata: GraphGenerationId,
+        graph: GenerationId,
+        metadata: GenerationId,
     },
     DrainRequired {
         component: ComponentId,
@@ -220,7 +220,7 @@ impl GraphReconciler {
     pub fn preview_candidate_with_metadata(
         &self,
         active_metadata: &ResolvedCompositionMetadata,
-        candidate: &ResolvedHarness,
+        candidate: &ResolvedGeneration,
         candidate_metadata: &ResolvedCompositionMetadata,
     ) -> Result<MetadataReconciliationPreview, MetadataReconciliationError> {
         if active_metadata.generation() != self.active().generation() {
@@ -461,8 +461,8 @@ where
 }
 
 fn component_survives(
-    previous: &ResolvedHarness,
-    next: &ResolvedHarness,
+    previous: &ResolvedGeneration,
+    next: &ResolvedGeneration,
     component: &ComponentId,
 ) -> bool {
     previous

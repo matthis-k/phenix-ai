@@ -1,6 +1,6 @@
 use crate::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
-    PluginExecution, PluginId, PluginManifest, ProviderCompositionPolicy, ResolvedHarness,
+    PluginExecution, PluginId, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
 };
 
 fn plugin(id: &str) -> PluginManifest {
@@ -65,7 +65,7 @@ fn provider_rebinding_requires_a_new_resolved_generation() {
         plugin("provider-b-package"),
     ];
 
-    let active = ResolvedHarness::resolve_with_provider_policy(
+    let active = ResolvedGeneration::resolve_with_provider_policy(
         plugins.clone(),
         [consumer.clone(), provider_a.clone()],
         [],
@@ -73,7 +73,7 @@ fn provider_rebinding_requires_a_new_resolved_generation() {
         &Authority::default(),
     )
     .unwrap();
-    let candidate = ResolvedHarness::resolve_with_provider_policy(
+    let candidate = ResolvedGeneration::resolve_with_provider_policy(
         plugins,
         [consumer.clone(), provider_a, provider_b],
         [],

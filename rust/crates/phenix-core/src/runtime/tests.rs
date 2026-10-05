@@ -12,8 +12,8 @@ fn plugin(value: &str) -> PluginId {
     PluginId::parse(value).unwrap()
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn service(value: &str) -> ServiceId {

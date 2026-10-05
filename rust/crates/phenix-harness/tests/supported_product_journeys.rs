@@ -7,7 +7,7 @@ use phenix_core::{
 use phenix_harness::{
     default_suite_authority,
     model_surface_fixture::{model_surface_response, ModelSurfaceReport},
-    HarnessBuilder, PhenixHarness,
+    PhenixRuntime, PhenixRuntimeBuilder,
 };
 use phenix_plugin_catalog::{
     artifact_component_manifest, model_inference_service, planning_component_manifest,
@@ -30,7 +30,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn invoke(harness: &mut PhenixHarness, service: &str, input: Value) -> Value {
+fn invoke(harness: &mut PhenixRuntime, service: &str, input: Value) -> Value {
     match service {
         "phenix.repository.worker-queue@1" => {
             let request: RepositoryWorkSnapshot = serde_json::from_value(input).unwrap();
@@ -104,7 +104,7 @@ fn invoke(harness: &mut PhenixHarness, service: &str, input: Value) -> Value {
 }
 
 fn invoke_structural_value<Request>(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     service: &str,
     request: &Request,
 ) -> PhenixValue
@@ -124,7 +124,7 @@ where
 }
 
 fn invoke_structural_json<Request, Response>(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     service: &str,
     input: Value,
 ) -> Value
@@ -141,7 +141,7 @@ where
 }
 
 fn invoke_component_structural_json<Request, Response>(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     component: ComponentManifest,
     service: &str,
     input: Value,
@@ -171,7 +171,7 @@ where
 }
 
 fn invoke_structural<Request, Response>(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     service: &str,
     request: &Request,
 ) -> Response
@@ -194,7 +194,7 @@ where
 }
 
 fn invoke_value_raw(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
     service: &ServiceId,
     request: &PhenixValue,
 ) -> PhenixValue {
@@ -307,7 +307,7 @@ impl PluginInstance for EchoTool {
 
 #[test]
 fn supported_harness_routes_first_party_domains_through_kernel_services() {
-    let mut harness = PhenixHarness::default_suite().unwrap();
+    let mut harness = PhenixRuntime::default_suite().unwrap();
     harness.activate().unwrap();
 
     let repository = invoke(
@@ -445,7 +445,7 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
 fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
     let provider = "fixture.model-provider";
     let tool_service = ServiceId::parse("fixture.echo@1").unwrap();
-    let mut builder = HarnessBuilder::with_default_suite().unwrap();
+    let mut builder = PhenixRuntimeBuilder::with_default_suite().unwrap();
     builder
         .add_embedded(
             fixture_manifest(provider, model_inference_service()),
@@ -623,7 +623,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
 #[test]
 fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     let provider = "fixture.introspection-provider";
-    let mut builder = HarnessBuilder::with_default_suite().unwrap();
+    let mut builder = PhenixRuntimeBuilder::with_default_suite().unwrap();
     builder
         .add_embedded(
             fixture_manifest(provider, model_inference_service()),
@@ -818,7 +818,7 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
 fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
     let hook_service = ServiceId::parse("phenix.hooks@1").unwrap();
 
-    let mut default = HarnessBuilder::with_default_suite()
+    let mut default = PhenixRuntimeBuilder::with_default_suite()
         .unwrap()
         .build()
         .unwrap();
@@ -837,7 +837,7 @@ fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
     assert!(error.to_string().contains("no eligible provider"));
 
     let selected = BTreeSet::new();
-    let mut replacement_builder = HarnessBuilder::with_selected_suite(&selected).unwrap();
+    let mut replacement_builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
     replacement_builder
         .add_embedded(
             fixture_manifest("fixture.hooks", hook_service.clone()),

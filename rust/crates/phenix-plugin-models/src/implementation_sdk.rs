@@ -3,9 +3,9 @@ pub use phenix_core::{
     MODEL_INFERENCE_SERVICE,
 };
 use phenix_core::{
-    ArtifactRevision, Authority, CapabilityId, ComponentInterface, DurableSchema,
-    InvocationOutcome, KernelError, PhenixValue, PluginContext, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginManifest, Project, ResourceNamespace, RoutingProfileId,
+    ArtifactRevision, Authority, ComponentInterface, DurableSchema, InvocationOutcome, KernelError,
+    PermissionId, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResourceNamespace, RoutingProfileId,
     ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
@@ -76,8 +76,8 @@ fn model_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(MODEL_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[derive(Default)]

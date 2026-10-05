@@ -4,8 +4,8 @@
 use phenix_client::ServiceOutput;
 use phenix_client::{ServiceRequest, ServiceResponse};
 use phenix_core::{
-    Authority, GraphGenerationId, Kernel, KernelError, PluginManifest, ResolvedHarness,
-    ResolvedHarnessActivation, ResolvedHarnessActivationError, ResolvedHarnessError, ServiceId,
+    Authority, GenerationId, GenerationResolutionError, Kernel, KernelError, PluginManifest,
+    ResolvedGeneration, ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
 };
 use serde_json::Value;
 use std::{
@@ -19,16 +19,16 @@ use std::{
 /// manifests therefore exposes no first-party services.
 pub struct Runtime {
     kernel: Kernel,
-    resolved: ResolvedHarness,
+    resolved: ResolvedGeneration,
 }
 
 #[derive(Debug)]
-pub enum RuntimeBuildError {
-    Resolution(ResolvedHarnessError),
-    Activation(ResolvedHarnessActivationError),
+pub enum PhenixRuntimeBuildError {
+    Resolution(GenerationResolutionError),
+    Activation(ResolvedGenerationActivationError),
 }
 
-impl fmt::Display for RuntimeBuildError {
+impl fmt::Display for PhenixRuntimeBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Resolution(error) => fmt::Display::fmt(error, formatter),
@@ -39,16 +39,16 @@ impl fmt::Display for RuntimeBuildError {
     }
 }
 
-impl std::error::Error for RuntimeBuildError {}
+impl std::error::Error for PhenixRuntimeBuildError {}
 
-impl From<ResolvedHarnessError> for RuntimeBuildError {
-    fn from(error: ResolvedHarnessError) -> Self {
+impl From<GenerationResolutionError> for PhenixRuntimeBuildError {
+    fn from(error: GenerationResolutionError) -> Self {
         Self::Resolution(error)
     }
 }
 
-impl From<ResolvedHarnessActivationError> for RuntimeBuildError {
-    fn from(error: ResolvedHarnessActivationError) -> Self {
+impl From<ResolvedGenerationActivationError> for PhenixRuntimeBuildError {
+    fn from(error: ResolvedGenerationActivationError) -> Self {
         Self::Activation(error)
     }
 }
@@ -56,10 +56,10 @@ impl From<ResolvedHarnessActivationError> for RuntimeBuildError {
 impl Runtime {
     pub fn new(
         manifests: impl IntoIterator<Item = PluginManifest>,
-    ) -> Result<Self, RuntimeBuildError> {
-        let resolved = ResolvedHarness::resolve(manifests, [], [], &Authority::default())?;
+    ) -> Result<Self, PhenixRuntimeBuildError> {
+        let resolved = ResolvedGeneration::resolve(manifests, [], [], &Authority::default())?;
         let mut kernel = Kernel::new(resolved.kernel_config().clone());
-        kernel.activate_resolved_harness(&resolved)?;
+        kernel.activate_resolved_generation(&resolved)?;
         Ok(Self { kernel, resolved })
     }
 
@@ -73,12 +73,12 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn resolved_harness(&self) -> &ResolvedHarness {
+    pub fn resolved_generation(&self) -> &ResolvedGeneration {
         &self.resolved
     }
 
     #[must_use]
-    pub fn generation(&self) -> &GraphGenerationId {
+    pub fn generation(&self) -> &GenerationId {
         self.resolved.generation()
     }
 
@@ -98,11 +98,11 @@ impl Runtime {
 
 impl Default for Runtime {
     fn default() -> Self {
-        let resolved = ResolvedHarness::resolve([], [], [], &Authority::default())
+        let resolved = ResolvedGeneration::resolve([], [], [], &Authority::default())
             .expect("empty runtime composition is valid");
         let mut kernel = Kernel::new(resolved.kernel_config().clone());
         kernel
-            .activate_resolved_harness(&resolved)
+            .activate_resolved_generation(&resolved)
             .expect("empty resolved runtime composition activates");
         Self { kernel, resolved }
     }

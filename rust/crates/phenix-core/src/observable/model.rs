@@ -517,7 +517,7 @@ pub struct ObservableRef(ObjectRef);
 impl ObservableRef {
     pub fn new(
         provider: PluginId,
-        generation: crate::GraphGenerationId,
+        generation: crate::GenerationId,
         id: ReferenceId,
     ) -> Self {
         Self(ObjectRef::for_plugin(

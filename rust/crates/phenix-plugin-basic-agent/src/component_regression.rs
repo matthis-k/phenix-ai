@@ -5,11 +5,11 @@ use crate::{
     BasicContextInterface, BasicSkillsInterface, BasicToolsInterface,
 };
 use phenix_core::{
-    Authority, CapabilityId, ComponentExport, ComponentGraphError, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, InterfaceId, Kernel, KernelConfig, ModelId, PhenixValue,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    ResolvedComponentGraph, ResolvedHarness, ResolvedHarnessActivation, ResolvedHarnessError,
-    ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentGraphError, ComponentId, ComponentImport,
+    ComponentInterface, ComponentManifest, GenerationResolutionError, InterfaceId, Kernel,
+    KernelConfig, ModelId, PermissionId, PhenixValue, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResolvedComponentGraph, ResolvedGeneration,
+    ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
     model_inference_service, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
@@ -180,7 +180,7 @@ fn assert_basic_interface_is_replaceable(
     interface: InterfaceId,
     suffix: &str,
 ) {
-    let extra = CapabilityId::parse(format!("fixture.{suffix}.extra")).unwrap();
+    let extra = PermissionId::parse(format!("fixture.{suffix}.extra")).unwrap();
     let consumer_authority = Authority::new([extra.clone()]);
     let consumer_plugin = format!("fixture.{suffix}-consumer");
     let consumer_component_id = format!("fixture.{suffix}-consumer");
@@ -258,7 +258,7 @@ fn assert_basic_interface_is_replaceable(
 #[test]
 fn omitting_basic_and_replacement_model_leaves_required_import_unresolved() {
     let consumer = consumer_manifest();
-    let error = ResolvedHarness::resolve(
+    let error = ResolvedGeneration::resolve(
         [consumer.clone()],
         [consumer_component()],
         [],
@@ -268,7 +268,7 @@ fn omitting_basic_and_replacement_model_leaves_required_import_unresolved() {
 
     assert!(matches!(
         error,
-        ResolvedHarnessError::ComponentGraph(ComponentGraphError::MissingRequiredImport {
+        GenerationResolutionError::ComponentGraph(ComponentGraphError::MissingRequiredImport {
             component: missing_component,
             interface: missing_interface,
         }) if missing_component == component("fixture.consumer")
@@ -282,7 +282,7 @@ fn replacement_component_satisfies_the_same_basic_model_import_without_consumer_
     let replacement = replacement_manifest();
     let consumer = consumer_manifest();
     let manifests = [basic.clone(), replacement.clone(), consumer.clone()];
-    let resolved = ResolvedHarness::resolve(
+    let resolved = ResolvedGeneration::resolve(
         manifests.clone(),
         [
             basic_model_component_manifest(),
@@ -304,7 +304,7 @@ fn replacement_component_satisfies_the_same_basic_model_import_without_consumer_
     assert_eq!(binding.exporter(), &component("fixture.replacement"));
 
     let mut kernel = Kernel::new(KernelConfig::new(manifests).unwrap());
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel
         .register_embedded_factory(basic.id, basic_model_factory)
         .unwrap();

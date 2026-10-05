@@ -1,5 +1,5 @@
 use phenix_core::{
-    ArtifactRevision, Authority, CapabilityId, ContentLocator, ContentReference, PluginContext,
+    ArtifactRevision, Authority, ContentLocator, ContentReference, PermissionId, PluginContext,
     PluginInstance, PluginManifest, ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
@@ -222,8 +222,8 @@ fn persistence_authority() -> Authority {
     ])
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn handle(
@@ -565,7 +565,7 @@ fn read_result_key(id: &str) -> String {
 mod tests {
     use super::*;
     use crate::artifact_component_manifest;
-    use phenix_core::{Kernel, LocalPersistence, ResolvedHarness, ResolvedHarnessActivation};
+    use phenix_core::{Kernel, LocalPersistence, ResolvedGeneration, ResolvedGenerationActivation};
     use std::{
         fs,
         path::PathBuf,
@@ -576,8 +576,8 @@ mod tests {
         artifact_manifest().maximum_authority
     }
 
-    fn resolved() -> ResolvedHarness {
-        ResolvedHarness::resolve_with_durable_schemas(
+    fn resolved() -> ResolvedGeneration {
+        ResolvedGeneration::resolve_with_durable_schemas(
             [artifact_manifest()],
             [artifact_component_manifest()],
             artifact_durable_schema_registrations(),
@@ -591,7 +591,7 @@ mod tests {
         let resolved = resolved();
         let plugin = artifact_manifest().id;
         let mut kernel = Kernel::new(resolved.kernel_config().clone());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, artifact_factory)
             .unwrap();
@@ -604,7 +604,7 @@ mod tests {
         let plugin = artifact_manifest().id;
         let persistence = LocalPersistence::open(path).unwrap();
         let mut kernel = Kernel::with_persistence(resolved.kernel_config().clone(), persistence);
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(plugin, artifact_factory)
             .unwrap();

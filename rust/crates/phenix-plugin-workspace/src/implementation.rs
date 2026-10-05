@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    Authority, ComponentInterface, DurableSchema, PermissionId, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, SdkClient,
     ServiceContribution, ServiceId, TransactionOp,
 };
@@ -92,8 +92,8 @@ pub fn workspace_service() -> ServiceId {
     ServiceId::parse(WORKSPACE_SERVICE).expect("static service id is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 fn workspace_state_namespace() -> ResourceNamespace {
@@ -1076,7 +1076,7 @@ mod tests {
     use crate::workspace_component_manifest;
     use phenix_core::{
         ComponentExport, ComponentId, ComponentManifest, Kernel, KernelConfig, PhenixValue,
-        Project, ResolvedHarness, ResolvedHarnessActivation,
+        Project, ResolvedGeneration, ResolvedGenerationActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -1297,7 +1297,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         let environment = local_environment_manifest();
         let environment_id = environment.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [workspace.clone(), environment.clone()],
             [
                 workspace_component_manifest(),
@@ -1308,7 +1308,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
 
         let workspace_root = root.clone();
         kernel
@@ -1387,7 +1387,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         let environment = local_environment_manifest();
         let environment_id = environment.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [workspace.clone(), environment.clone()],
             [
                 workspace_component_manifest(),
@@ -1398,7 +1398,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
 
         kernel
             .register_embedded_factory(workspace_id, move || {
@@ -1422,7 +1422,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         let environment = fixture_environment_manifest();
         let environment_id = environment.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [workspace.clone(), environment.clone()],
             [
                 workspace_component_manifest(),
@@ -1433,7 +1433,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
 
         let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
         assert!(!virtual_root.exists());
@@ -1639,7 +1639,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         let environment = fixture_environment_manifest();
         let environment_id = environment.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [workspace.clone(), environment.clone()],
             [
                 workspace_component_manifest(),
@@ -1650,7 +1650,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
 
         let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
         kernel
@@ -1722,7 +1722,7 @@ mod tests {
         let workspace_id = workspace.id.clone();
         let environment = fixture_environment_manifest();
         let environment_id = environment.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [workspace.clone(), environment.clone()],
             [
                 workspace_component_manifest(),
@@ -1733,7 +1733,7 @@ mod tests {
         )
         .unwrap();
         let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
 
         let root = PathBuf::from("/virtual/project");
         let outside = PathBuf::from("/virtual/outside/secret.txt");

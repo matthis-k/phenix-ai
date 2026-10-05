@@ -1632,42 +1632,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-backend"
-version = "0.1.0"
-dependencies = [
- "phenix-domain",
-]
-
-[[package]]
-name = "phenix-backend-acp"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "phenix-backend",
- "phenix-domain",
- "rmcp",
- "serde_json",
-]
-
-[[package]]
-name = "phenix-backend-native"
-version = "0.1.0"
-dependencies = [
- "base64",
- "futures",
- "genai",
- "getrandom 0.4.3",
- "phenix-backend",
- "phenix-domain",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "phenix-binding-generator"
 version = "0.1.0"
 dependencies = [
@@ -1764,6 +1728,42 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "phenix-model-adapter"
+version = "0.1.0"
+dependencies = [
+ "phenix-domain",
+]
+
+[[package]]
+name = "phenix-model-adapter-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "phenix-domain",
+ "phenix-model-adapter",
+ "rmcp",
+ "serde_json",
+]
+
+[[package]]
+name = "phenix-model-adapter-native"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures",
+ "genai",
+ "getrandom 0.4.3",
+ "phenix-domain",
+ "phenix-model-adapter",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "url",
 ]
 
 [[package]]

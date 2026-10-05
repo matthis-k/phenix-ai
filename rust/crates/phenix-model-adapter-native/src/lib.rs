@@ -12,14 +12,16 @@ use genai::chat::{
 };
 use genai::resolver::AuthResolver;
 use genai::Client as ProviderClient;
-use phenix_backend::{
-    Backend, BackendCapabilities, BackendError, BackendEvent, BackendExecutionRequest, BackendHost,
-    BackendSession, BackendSessionRequest, PreparedToolSurface, ToolInvocation, ToolPresentation,
-};
 use phenix_domain::{
     AuthenticationInput, AuthenticationMethodDescriptor, AuthenticationMethodId,
-    AuthenticationMethodKind, AuthenticationState, BackendCatalog, BackendId, InferenceEffort,
-    InferenceOptions, ModelDescriptor, ModelId, ModelTarget, ProviderId, SessionId,
+    AuthenticationMethodKind, AuthenticationState, InferenceEffort, InferenceOptions,
+    ModelAdapterCatalog, ModelAdapterId, ModelDescriptor, ModelId, ModelProviderId, ModelTarget,
+    SessionId,
+};
+use phenix_model_adapter::{
+    ModelAdapter, ModelAdapterError, ModelAdapterFeatures, ModelAdapterHost, ModelEvent,
+    ModelExecutionRequest, ModelSession, ModelSessionRequest, PreparedToolSurface, ToolInvocation,
+    ToolPresentation,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,25 +30,26 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub const BACKEND_ID: &str = "phenix";
+pub const MODEL_ADAPTER_ID: &str = "phenix";
 
-fn parse_configured_model(value: &str) -> Result<ModelTarget, BackendError> {
+fn parse_configured_model(value: &str) -> Result<ModelTarget, ModelAdapterError> {
     let (provider, model) = value.split_once('/').ok_or_else(|| {
-        BackendError::Protocol(format!(
+        ModelAdapterError::Protocol(format!(
             "Phenix model selection {value:?} must be provider/model"
         ))
     })?;
     if provider.trim().is_empty() || model.trim().is_empty() {
-        return Err(BackendError::Protocol(format!(
+        return Err(ModelAdapterError::Protocol(format!(
             "Phenix model selection {value:?} must be provider/model"
         )));
     }
     let target = ModelTarget {
-        backend: BackendId::parse(BACKEND_ID)
-            .map_err(|error| BackendError::Protocol(error.to_string()))?,
-        provider: ProviderId::parse(provider)
-            .map_err(|error| BackendError::Protocol(error.to_string()))?,
-        model: ModelId::parse(model).map_err(|error| BackendError::Protocol(error.to_string()))?,
+        adapter: ModelAdapterId::parse(MODEL_ADAPTER_ID)
+            .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
+        provider: ModelProviderId::parse(provider)
+            .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
+        model: ModelId::parse(model)
+            .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
         inference: InferenceOptions::default(),
     };
     validate_model_target(&target)?;
@@ -57,11 +60,11 @@ fn model_wire_value(target: &ModelTarget) -> String {
     format!("{}/{}", target.provider, target.model)
 }
 
-fn validate_model_target(target: &ModelTarget) -> Result<(), BackendError> {
-    if target.backend.as_str() != BACKEND_ID {
-        return Err(BackendError::Unsupported(format!(
-            "Phenix backend cannot serve target backend {}",
-            target.backend
+fn validate_model_target(target: &ModelTarget) -> Result<(), ModelAdapterError> {
+    if target.adapter.as_str() != MODEL_ADAPTER_ID {
+        return Err(ModelAdapterError::Unsupported(format!(
+            "Phenix adapter cannot serve target adapter {}",
+            target.adapter
         )));
     }
     if providers::is_gateway_provider(&target.provider) {
@@ -83,7 +86,7 @@ fn provider_reasoning_effort(effort: &InferenceEffort) -> ReasoningEffort {
     }
 }
 
-fn provider_execution_error(context: &str, error: impl Display) -> BackendError {
+fn provider_execution_error(context: &str, error: impl Display) -> ModelAdapterError {
     let message = error.to_string();
     let normalized = message.to_ascii_lowercase();
     let overflow = [
@@ -97,18 +100,18 @@ fn provider_execution_error(context: &str, error: impl Display) -> BackendError 
     .iter()
     .any(|needle| normalized.contains(needle));
     if overflow {
-        BackendError::ContextOverflow(format!("{context}: {message}"))
+        ModelAdapterError::ContextOverflow(format!("{context}: {message}"))
     } else {
-        BackendError::Transport(format!("{context}: {message}"))
+        ModelAdapterError::Transport(format!("{context}: {message}"))
     }
 }
 
 fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
     tools: &PreparedToolSurface,
-    host: &mut dyn BackendHost,
+    host: &mut dyn ModelAdapterHost,
     fn_name: &str,
     fn_arguments: &T,
-) -> Result<String, BackendError> {
+) -> Result<String, ModelAdapterError> {
     let Some(descriptor) = tools
         .callables()
         .iter()
@@ -134,26 +137,26 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
     }) {
         Ok(result) if result.success => Ok(result.output),
         Ok(result) => Ok(json!({ "error": result.output }).to_string()),
-        Err(BackendError::Protocol(error)) => {
+        Err(ModelAdapterError::Protocol(error)) => {
             Ok(json!({ "error": format!("tool dispatch failed: {error}") }).to_string())
         }
         Err(error) => Err(error),
     }
 }
 
-pub struct PhenixBackend {
+pub struct NativeModelAdapter {
     runtime: Arc<tokio::runtime::Runtime>,
     provider: Arc<ProviderClient>,
     codex_provider: Arc<ProviderClient>,
     credentials: CredentialStore,
     models: Vec<ModelTarget>,
     max_tool_rounds: Option<NonZeroUsize>,
-    persistent_sessions: BTreeMap<SessionId, Arc<PhenixSession>>,
+    persistent_sessions: BTreeMap<SessionId, Arc<NativeModelSession>>,
 }
 
-impl PhenixBackend {
-    pub fn from_environment() -> Result<Self, BackendError> {
-        let credentials = CredentialStore::discover().map_err(BackendError::Protocol)?;
+impl NativeModelAdapter {
+    pub fn from_environment() -> Result<Self, ModelAdapterError> {
+        let credentials = CredentialStore::discover().map_err(ModelAdapterError::Protocol)?;
         let resolver_store = credentials.clone();
         let auth_resolver =
             AuthResolver::from_resolver_fn(move |model| resolver_store.auth_for_model(model));
@@ -188,7 +191,9 @@ impl PhenixBackend {
             .enable_all()
             .build()
             .map_err(|error| {
-                BackendError::Transport(format!("cannot start Phenix provider runtime: {error}"))
+                ModelAdapterError::Transport(format!(
+                    "cannot start native model adapter Tokio runtime: {error}"
+                ))
             })?;
         Ok(Self {
             runtime: Arc::new(runtime),
@@ -201,20 +206,20 @@ impl PhenixBackend {
         })
     }
 
-    fn validate_request(&self, request: &BackendSessionRequest) -> Result<(), BackendError> {
+    fn validate_request(&self, request: &ModelSessionRequest) -> Result<(), ModelAdapterError> {
         validate_model_target(&request.model)?;
         if !request.tools.is_empty()
             && request.tools.presentation() != Some(ToolPresentation::Native)
         {
-            return Err(BackendError::Unsupported(
-                "Phenix backend requires native runtime tool presentation".to_owned(),
+            return Err(ModelAdapterError::Unsupported(
+                "Phenix adapter requires native runtime tool presentation".to_owned(),
             ));
         }
         Ok(())
     }
 
-    fn new_session(&self, request: BackendSessionRequest) -> Arc<PhenixSession> {
-        Arc::new(PhenixSession {
+    fn new_session(&self, request: ModelSessionRequest) -> Arc<NativeModelSession> {
+        Arc::new(NativeModelSession {
             runtime: Arc::clone(&self.runtime),
             provider: Arc::clone(&self.provider),
             codex_provider: Arc::clone(&self.codex_provider),
@@ -229,18 +234,18 @@ impl PhenixBackend {
     }
 }
 
-impl Backend for PhenixBackend {
-    fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities {
+impl ModelAdapter for NativeModelAdapter {
+    fn features(&self) -> ModelAdapterFeatures {
+        ModelAdapterFeatures {
             tool_presentations: BTreeSet::from([ToolPresentation::Native]),
             images: false,
             persistent_sessions: true,
         }
     }
 
-    fn catalog(&mut self) -> Result<BackendCatalog, BackendError> {
-        let backend = BackendId::parse(BACKEND_ID)
-            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+    fn catalog(&mut self) -> Result<ModelAdapterCatalog, ModelAdapterError> {
+        let adapter = ModelAdapterId::parse(MODEL_ADAPTER_ID)
+            .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?;
         let auth_providers = self
             .models
             .iter()
@@ -250,15 +255,15 @@ impl Backend for PhenixBackend {
             .models
             .iter()
             .map(|target| model_descriptor(&self.credentials, target))
-            .collect::<Result<Vec<_>, BackendError>>()?;
+            .collect::<Result<Vec<_>, ModelAdapterError>>()?;
         let mut authentication_methods = Vec::new();
         if auth_providers.contains(oauth::PROVIDER) {
             authentication_methods.push(AuthenticationMethodDescriptor {
                 id: AuthenticationMethodId::parse(oauth::PROVIDER)
-                    .map_err(|error| BackendError::Protocol(error.to_string()))?,
-                backend: backend.clone(),
-                provider: ProviderId::parse(oauth::PROVIDER)
-                    .map_err(|error| BackendError::Protocol(error.to_string()))?,
+                    .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
+                adapter: adapter.clone(),
+                provider: ModelProviderId::parse(oauth::PROVIDER)
+                    .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
                 kind: AuthenticationMethodKind::Agent,
                 name: "OpenAI Codex (ChatGPT OAuth)".to_owned(),
                 description: Some("Browser OAuth for ChatGPT subscription access".to_owned()),
@@ -271,10 +276,10 @@ impl Backend for PhenixBackend {
             }
             authentication_methods.push(AuthenticationMethodDescriptor {
                 id: AuthenticationMethodId::parse(*provider)
-                    .map_err(|error| BackendError::Protocol(error.to_string()))?,
-                backend: backend.clone(),
-                provider: ProviderId::parse(*provider)
-                    .map_err(|error| BackendError::Protocol(error.to_string()))?,
+                    .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
+                adapter: adapter.clone(),
+                provider: ModelProviderId::parse(*provider)
+                    .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?,
                 kind: AuthenticationMethodKind::ApiKey,
                 name: providers::environment_name(provider)
                     .expect("known API-key provider has a name")
@@ -285,8 +290,8 @@ impl Backend for PhenixBackend {
         }
         let mut any_authenticated = false;
         for provider in &auth_providers {
-            let provider_id = ProviderId::parse(*provider)
-                .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            let provider_id = ModelProviderId::parse(*provider)
+                .map_err(|error| ModelAdapterError::Protocol(error.to_string()))?;
             if provider_has_valid_auth(&self.credentials, &provider_id)? {
                 any_authenticated = true;
                 break;
@@ -296,63 +301,63 @@ impl Backend for PhenixBackend {
             AuthenticationState::NotRequired
         } else if any_authenticated {
             // Authentication is provider-specific while the ACP catalog exposes one
-            // backend-wide state. Treat the backend as usable once any configured route
+            // adapter-wide state. Treat the adapter as usable once any configured route
             // has credentials, and let the selected provider report its own missing key.
             AuthenticationState::Authenticated
         } else {
             AuthenticationState::Required
         };
-        Ok(BackendCatalog {
-            backend,
+        Ok(ModelAdapterCatalog {
+            adapter,
             models,
             authentication_state,
             authentication_methods,
         })
     }
 
-    fn authenticate(&mut self, method: &AuthenticationMethodId) -> Result<(), BackendError> {
+    fn authenticate(&mut self, method: &AuthenticationMethodId) -> Result<(), ModelAdapterError> {
         if method.as_str() != oauth::PROVIDER {
-            return Err(BackendError::Unsupported(format!(
-                "Phenix backend authentication method {method} requires typed authentication input"
+            return Err(ModelAdapterError::Unsupported(format!(
+                "Phenix adapter authentication method {method} requires typed authentication input"
             )));
         }
         self.runtime
             .block_on(oauth::login(&self.credentials))
-            .map_err(BackendError::Transport)
+            .map_err(ModelAdapterError::Transport)
     }
 
     fn authenticate_with_input(
         &mut self,
         method: &AuthenticationMethodId,
         input: Option<&AuthenticationInput>,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), ModelAdapterError> {
         if method.as_str() == oauth::PROVIDER {
             if input.is_some() {
-                return Err(BackendError::Protocol(
+                return Err(ModelAdapterError::Protocol(
                     "OpenAI Codex OAuth does not accept an API-key payload".to_owned(),
                 ));
             }
             return self.authenticate(method);
         }
         if !providers::is_api_key_auth_provider(method.as_str()) {
-            return Err(BackendError::Unsupported(format!(
-                "Phenix backend does not expose authentication method {method}"
+            return Err(ModelAdapterError::Unsupported(format!(
+                "Phenix adapter does not expose authentication method {method}"
             )));
         }
         let Some(AuthenticationInput::ApiKey { secret }) = input else {
-            return Err(BackendError::Protocol(format!(
+            return Err(ModelAdapterError::Protocol(format!(
                 "Phenix authentication method {method} requires an API key"
             )));
         };
         self.credentials
             .save_api_key(method.as_str(), secret)
-            .map_err(BackendError::Protocol)
+            .map_err(ModelAdapterError::Protocol)
     }
 
     fn open_session(
         &mut self,
-        request: BackendSessionRequest,
-    ) -> Result<Arc<dyn BackendSession>, BackendError> {
+        request: ModelSessionRequest,
+    ) -> Result<Arc<dyn ModelSession>, ModelAdapterError> {
         self.validate_request(&request)?;
         Ok(self.new_session(request))
     }
@@ -360,8 +365,8 @@ impl Backend for PhenixBackend {
     fn open_persistent_session(
         &mut self,
         session_id: &SessionId,
-        request: BackendSessionRequest,
-    ) -> Result<Arc<dyn BackendSession>, BackendError> {
+        request: ModelSessionRequest,
+    ) -> Result<Arc<dyn ModelSession>, ModelAdapterError> {
         self.validate_request(&request)?;
         if let Some(session) = self.persistent_sessions.get(session_id) {
             session.set_request(request.model, request.tools)?;
@@ -373,13 +378,16 @@ impl Backend for PhenixBackend {
         Ok(session)
     }
 
-    fn close_persistent_session(&mut self, session_id: &SessionId) -> Result<(), BackendError> {
+    fn close_persistent_session(
+        &mut self,
+        session_id: &SessionId,
+    ) -> Result<(), ModelAdapterError> {
         self.persistent_sessions.remove(session_id);
         Ok(())
     }
 }
 
-struct PhenixSession {
+struct NativeModelSession {
     runtime: Arc<tokio::runtime::Runtime>,
     provider: Arc<ProviderClient>,
     codex_provider: Arc<ProviderClient>,
@@ -392,42 +400,44 @@ struct PhenixSession {
     cancelled: AtomicBool,
 }
 
-impl PhenixSession {
+impl NativeModelSession {
     fn set_request(
         &self,
         model: ModelTarget,
         tools: PreparedToolSurface,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), ModelAdapterError> {
         *self
             .model
             .lock()
-            .map_err(|_| BackendError::Protocol("Phenix model lock poisoned".to_owned()))? = model;
+            .map_err(|_| ModelAdapterError::Protocol("Phenix model lock poisoned".to_owned()))? =
+            model;
         *self
             .tools
             .lock()
-            .map_err(|_| BackendError::Protocol("Phenix tool lock poisoned".to_owned()))? = tools;
+            .map_err(|_| ModelAdapterError::Protocol("Phenix tool lock poisoned".to_owned()))? =
+            tools;
         Ok(())
     }
 
     async fn execute_turn(
         &self,
         prompt: String,
-        host: &mut dyn BackendHost,
-    ) -> Result<Vec<ChatMessage>, BackendError> {
+        host: &mut dyn ModelAdapterHost,
+    ) -> Result<Vec<ChatMessage>, ModelAdapterError> {
         let model = self
             .model
             .lock()
-            .map_err(|_| BackendError::Protocol("Phenix model lock poisoned".to_owned()))?
+            .map_err(|_| ModelAdapterError::Protocol("Phenix model lock poisoned".to_owned()))?
             .clone();
         let tools = self
             .tools
             .lock()
-            .map_err(|_| BackendError::Protocol("Phenix tool lock poisoned".to_owned()))?
+            .map_err(|_| ModelAdapterError::Protocol("Phenix tool lock poisoned".to_owned()))?
             .clone();
         let mut history = self
             .history
             .lock()
-            .map_err(|_| BackendError::Protocol("Phenix history lock poisoned".to_owned()))?
+            .map_err(|_| ModelAdapterError::Protocol("Phenix history lock poisoned".to_owned()))?
             .clone();
         history.push(ChatMessage::user(prompt));
 
@@ -445,7 +455,7 @@ impl PhenixSession {
                         .resolve_service_target(provider_model)
                         .await
                         .map_err(|error| {
-                            BackendError::Transport(format!(
+                            ModelAdapterError::Transport(format!(
                                 "cannot resolve provider target for {}: {error}",
                                 model_wire_value(&model)
                             ))
@@ -461,7 +471,7 @@ impl PhenixSession {
                     .with_description(descriptor.description.clone())
                     .with_schema(schema))
             })
-            .collect::<Result<Vec<_>, BackendError>>()?;
+            .collect::<Result<Vec<_>, ModelAdapterError>>()?;
         let reasoning_effort = model
             .inference
             .effort
@@ -472,7 +482,7 @@ impl PhenixSession {
         loop {
             if let Some(limit) = self.max_tool_rounds {
                 if tool_rounds >= limit.get() {
-                    return Err(BackendError::Protocol(format!(
+                    return Err(ModelAdapterError::Protocol(format!(
                         "provider exceeded {limit} consecutive tool rounds"
                     )));
                 }
@@ -502,10 +512,10 @@ impl PhenixSession {
                     .map_err(|error| provider_execution_error("provider stream failed", error))?
                 {
                     ChatStreamEvent::Chunk(chunk) => {
-                        host.emit(BackendEvent::ContentDelta(chunk.content))?;
+                        host.emit(ModelEvent::ContentDelta(chunk.content))?;
                     }
                     ChatStreamEvent::ReasoningChunk(chunk) => {
-                        host.emit(BackendEvent::ReasoningDelta(chunk.content))?;
+                        host.emit(ModelEvent::ReasoningDelta(chunk.content))?;
                     }
                     ChatStreamEvent::End(end) => captured = end.captured_content,
                     _ => {}
@@ -532,20 +542,19 @@ impl PhenixSession {
     }
 }
 
-impl BackendSession for PhenixSession {
+impl ModelSession for NativeModelSession {
     fn execute(
         &self,
-        request: BackendExecutionRequest,
-        host: &mut dyn BackendHost,
-    ) -> Result<(), BackendError> {
+        request: ModelExecutionRequest,
+        host: &mut dyn ModelAdapterHost,
+    ) -> Result<(), ModelAdapterError> {
         {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|_| BackendError::Protocol("Phenix active lock poisoned".to_owned()))?;
+            let mut active = self.active.lock().map_err(|_| {
+                ModelAdapterError::Protocol("Phenix active lock poisoned".to_owned())
+            })?;
             if *active {
-                return Err(BackendError::Protocol(
-                    "Phenix backend session is already executing".to_owned(),
+                return Err(ModelAdapterError::Protocol(
+                    "Phenix adapter session is already executing".to_owned(),
                 ));
             }
             *active = true;
@@ -558,16 +567,14 @@ impl BackendSession for PhenixSession {
             *active = false;
         }
         if let Ok(history) = &result {
-            *self
-                .history
-                .lock()
-                .map_err(|_| BackendError::Protocol("Phenix history lock poisoned".to_owned()))? =
-                history.clone();
+            *self.history.lock().map_err(|_| {
+                ModelAdapterError::Protocol("Phenix history lock poisoned".to_owned())
+            })? = history.clone();
         }
         result.map(|_| ())
     }
 
-    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), BackendError> {
+    fn cancel(&self, _execution_id: &phenix_domain::ExecutionId) -> Result<(), ModelAdapterError> {
         self.cancelled.store(true, Ordering::Release);
         Ok(())
     }
@@ -575,8 +582,8 @@ impl BackendSession for PhenixSession {
 
 fn provider_has_valid_auth(
     credentials: &CredentialStore,
-    provider: &ProviderId,
-) -> Result<bool, BackendError> {
+    provider: &ModelProviderId,
+) -> Result<bool, ModelAdapterError> {
     let Some(provider) = providers::canonical_auth_provider(provider) else {
         // Supported providers without an auth adapter, such as local Ollama,
         // do not require credentials and remain selectable.
@@ -584,7 +591,7 @@ fn provider_has_valid_auth(
     };
     let stored = credentials
         .resolve(provider)
-        .map_err(BackendError::Protocol)?;
+        .map_err(ModelAdapterError::Protocol)?;
     if provider == oauth::PROVIDER {
         return Ok(matches!(stored, Some(StoredCredential::OAuth { .. })));
     }
@@ -601,7 +608,7 @@ fn provider_has_valid_auth(
 fn model_descriptor(
     credentials: &CredentialStore,
     target: &ModelTarget,
-) -> Result<ModelDescriptor, BackendError> {
+) -> Result<ModelDescriptor, ModelAdapterError> {
     Ok(ModelDescriptor {
         target: target.clone(),
         name: model_wire_value(target),
@@ -610,26 +617,26 @@ fn model_descriptor(
     })
 }
 
-fn configured_max_tool_rounds() -> Result<Option<NonZeroUsize>, BackendError> {
+fn configured_max_tool_rounds() -> Result<Option<NonZeroUsize>, ModelAdapterError> {
     let value = std::env::var("PHENIX_MAX_TOOL_ROUNDS").ok();
     parse_max_tool_rounds(value.as_deref())
 }
 
-fn parse_max_tool_rounds(value: Option<&str>) -> Result<Option<NonZeroUsize>, BackendError> {
+fn parse_max_tool_rounds(value: Option<&str>) -> Result<Option<NonZeroUsize>, ModelAdapterError> {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
     let parsed = value.parse::<usize>().map_err(|error| {
-        BackendError::Protocol(format!(
+        ModelAdapterError::Protocol(format!(
             "PHENIX_MAX_TOOL_ROUNDS must be a positive integer: {error}"
         ))
     })?;
     NonZeroUsize::new(parsed).map(Some).ok_or_else(|| {
-        BackendError::Protocol("PHENIX_MAX_TOOL_ROUNDS must be greater than zero".to_owned())
+        ModelAdapterError::Protocol("PHENIX_MAX_TOOL_ROUNDS must be greater than zero".to_owned())
     })
 }
 
-fn configured_models() -> Result<Vec<ModelTarget>, BackendError> {
+fn configured_models() -> Result<Vec<ModelTarget>, ModelAdapterError> {
     let source = std::env::var("PHENIX_MODELS")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -648,7 +655,7 @@ fn configured_models() -> Result<Vec<ModelTarget>, BackendError> {
         }
     }
     if models.is_empty() {
-        return Err(BackendError::Protocol(
+        return Err(ModelAdapterError::Protocol(
             "Phenix model catalog must contain at least one provider/model".to_owned(),
         ));
     }
@@ -658,10 +665,11 @@ fn configured_models() -> Result<Vec<ModelTarget>, BackendError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_backend::{ToolProvision, ToolResult};
     use phenix_domain::{
-        CallableDescriptor, CallableId, CallableKind, CallablePolicy, CapabilitySet, PhenixSchema,
+        CallableDescriptor, CallableFeatureSet, CallableId, CallableKind, CallablePolicy,
+        PhenixSchema,
     };
+    use phenix_model_adapter::{ToolProvision, ToolResult};
     use serde_json::json;
 
     #[test]
@@ -671,11 +679,11 @@ mod tests {
                 "provider request failed",
                 "context_length_exceeded: maximum context length reached"
             ),
-            BackendError::ContextOverflow(_)
+            ModelAdapterError::ContextOverflow(_)
         ));
         assert!(matches!(
             provider_execution_error("provider request failed", "connection reset"),
-            BackendError::Transport(_)
+            ModelAdapterError::Transport(_)
         ));
     }
 
@@ -720,7 +728,7 @@ mod tests {
     #[test]
     fn model_identity_remains_nominal_and_rejects_aliases() {
         let target = parse_configured_model("openai-codex/gpt-5.6-sol").unwrap();
-        assert_eq!(target.backend.as_str(), BACKEND_ID);
+        assert_eq!(target.adapter.as_str(), MODEL_ADAPTER_ID);
         assert_eq!(target.provider.as_str(), "openai-codex");
         assert_eq!(target.model.as_str(), "gpt-5.6-sol");
         assert_eq!(
@@ -740,14 +748,14 @@ mod tests {
 
     #[test]
     fn native_backend_negotiates_native_tools() {
-        let capabilities = BackendCapabilities {
+        let features = ModelAdapterFeatures {
             tool_presentations: BTreeSet::from([ToolPresentation::Native]),
             images: false,
             persistent_sessions: true,
         };
-        let surface = ToolProvision::default().prepare(&capabilities).unwrap();
+        let surface = ToolProvision::default().prepare(&features).unwrap();
         assert!(surface.is_empty());
-        assert!(capabilities.persistent_sessions);
+        assert!(features.persistent_sessions);
     }
 
     #[test]
@@ -757,11 +765,11 @@ mod tests {
         assert_eq!(parse_max_tool_rounds(Some("7")).unwrap().unwrap().get(), 7);
         assert!(matches!(
             parse_max_tool_rounds(Some("0")),
-            Err(BackendError::Protocol(_))
+            Err(ModelAdapterError::Protocol(_))
         ));
         assert!(matches!(
             parse_max_tool_rounds(Some("many")),
-            Err(BackendError::Protocol(_))
+            Err(ModelAdapterError::Protocol(_))
         ));
     }
 
@@ -785,11 +793,11 @@ mod tests {
                 description: "test read".to_owned(),
                 input_schema: PhenixSchema::Map(Box::new(PhenixSchema::Any)),
                 output_schema: PhenixSchema::Map(Box::new(PhenixSchema::Any)),
-                capabilities: CapabilitySet::default(),
+                features: CallableFeatureSet::default(),
                 policy: CallablePolicy::default(),
             }],
         }
-        .prepare(&BackendCapabilities {
+        .prepare(&ModelAdapterFeatures {
             tool_presentations: BTreeSet::from([ToolPresentation::Native]),
             images: false,
             persistent_sessions: false,
@@ -798,16 +806,19 @@ mod tests {
     }
 
     struct TestToolHost {
-        result: Result<ToolResult, BackendError>,
+        result: Result<ToolResult, ModelAdapterError>,
         calls: usize,
     }
 
-    impl BackendHost for TestToolHost {
-        fn emit(&mut self, _event: BackendEvent) -> Result<(), BackendError> {
+    impl ModelAdapterHost for TestToolHost {
+        fn emit(&mut self, _event: ModelEvent) -> Result<(), ModelAdapterError> {
             Ok(())
         }
 
-        fn invoke_tool(&mut self, _invocation: ToolInvocation) -> Result<ToolResult, BackendError> {
+        fn invoke_tool(
+            &mut self,
+            _invocation: ToolInvocation,
+        ) -> Result<ToolResult, ModelAdapterError> {
             self.calls += 1;
             self.result.clone()
         }
@@ -848,21 +859,21 @@ mod tests {
         assert_eq!(host.calls, 2, "unknown tools must not reach the host");
 
         let mut protocol_host = TestToolHost {
-            result: Err(BackendError::Protocol("bad tool request".to_owned())),
+            result: Err(ModelAdapterError::Protocol("bad tool request".to_owned())),
             calls: 0,
         };
         let protocol = dispatch_tool_call(&tools, &mut protocol_host, "read", &json!({})).unwrap();
         assert!(protocol.contains("tool dispatch failed"));
 
         let mut transport_host = TestToolHost {
-            result: Err(BackendError::Transport(
+            result: Err(ModelAdapterError::Transport(
                 "persistence unavailable".to_owned(),
             )),
             calls: 0,
         };
         assert!(matches!(
             dispatch_tool_call(&tools, &mut transport_host, "read", &json!({})),
-            Err(BackendError::Transport(_))
+            Err(ModelAdapterError::Transport(_))
         ));
     }
 }

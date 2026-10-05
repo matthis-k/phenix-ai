@@ -3,7 +3,7 @@
 status: implemented
 coverage:
   - rust/crates/phenix-core/src/runtime/tests.rs
-  - rust/crates/phenix-core/src/runtime_provider_host_regression.rs
+  - rust/crates/phenix-core/src/plugin_runtime_adapter_host_regression.rs
   - rust/crates/phenix-core/src/third_party_component_regression.rs
   - rust/crates/phenix-core/src/host_authority_regression.rs
   - rust/crates/phenix-core/src/runtime_component_parity_regression.rs

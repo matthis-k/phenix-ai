@@ -1,15 +1,15 @@
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_sdk_application,
-    serve_stdio_with_events_and_callbacks, ChannelTransport, ClientCapabilityCallbacks,
-    ClientCapabilityIdentity, SdkApplicationService,
+    serve_stdio_with_events_and_callbacks, ChannelTransport, ClientCallableCallbacks,
+    ClientReferenceIdentity, SdkApplicationService,
 };
 use phenix_application_interface::types::ExecutionChange;
 use phenix_core::{
-    CallableId, CapabilityGenerationId, ClientConnectionId, ContractId, ModelToolCall,
-    ModelToolDescriptor, ObservableRegistration, ObservableStore, PhenixValue, PluginId,
-    PluginManifest, ResolvedSdkContributions, RuntimeId, SdkContribution, SdkNamespace,
-    SdkObservableResource, SdkResourceId, SessionId, SharedCapabilityRegistry, SnapshotPolicy,
-    Type, ValueId, ValuePath,
+    CallableId, ClientConnectionId, ContractId, ModelToolCall, ModelToolDescriptor,
+    ObservableRegistration, ObservableStore, PhenixValue, PluginId, PluginManifest,
+    PluginRuntimeId, ReferenceGenerationId, ResolvedSdkContributions, SdkContribution,
+    SdkNamespace, SdkObservableResource, SdkResourceId, SessionId, SharedCallableRegistry,
+    SnapshotPolicy, Type, ValueId, ValuePath,
 };
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -47,19 +47,18 @@ async fn main() {
     )
     .expect("fixture SDK resolves");
 
-    let capabilities = SharedCapabilityRegistry::default();
-    let (client_callbacks, callback_receiver) = ClientCapabilityCallbacks::bounded(8);
+    let capabilities = SharedCallableRegistry::default();
+    let (client_callbacks, callback_receiver) = ClientCallableCallbacks::bounded(8);
     let service = SdkApplicationService::new(
         &sdk,
         &store,
         capabilities,
-        RuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
-        CapabilityGenerationId::parse("fixture-generation")
-            .expect("fixture generation id is valid"),
+        PluginRuntimeId::parse("fixture.runtime").expect("fixture runtime id is valid"),
+        ReferenceGenerationId::parse("fixture-generation").expect("fixture generation id is valid"),
         client_callbacks,
-        ClientCapabilityIdentity::new(
+        ClientReferenceIdentity::new(
             ClientConnectionId::parse("lua-client-1").expect("fixture client id is valid"),
-            CapabilityGenerationId::parse("connection-1")
+            ReferenceGenerationId::parse("connection-1")
                 .expect("fixture client generation is valid"),
         ),
     )

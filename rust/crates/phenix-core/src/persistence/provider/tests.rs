@@ -49,11 +49,11 @@ impl PersistenceProvider for MockProvider {
 
 struct MockBackend {
     probe: Arc<Mutex<Probe>>,
-    features: BTreeSet<BackendFeature>,
+    features: BTreeSet<PersistenceBackendFeature>,
 }
 
 impl PersistenceBackend for MockBackend {
-    fn supported_features(&self) -> BTreeSet<BackendFeature> {
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature> {
         self.features.clone()
     }
 
@@ -91,7 +91,7 @@ fn binding() -> StoreBinding {
     StoreBinding::new(crate::StoreBindingId::parse("fixture").unwrap(), "mock-v1").unwrap()
 }
 
-fn schema(feature: BackendFeature) -> DurableSchemaRegistration {
+fn schema(feature: PersistenceBackendFeature) -> DurableSchemaRegistration {
     DurableSchemaRegistration::new(
         plugin("fixture.owner"),
         DurableSchema::requiring(
@@ -108,7 +108,7 @@ fn unsupported_feature_rejects_candidate_before_provider_opens_store() {
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
-            [BackendFeature::Transactions],
+            [PersistenceBackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -120,7 +120,7 @@ fn unsupported_feature_rejects_candidate_before_provider_opens_store() {
             [],
             &BTreeSet::new(),
             binding(),
-            &[schema(BackendFeature::IndexedRange)],
+            &[schema(PersistenceBackendFeature::IndexedRange)],
             None,
             None,
         ),
@@ -137,7 +137,7 @@ fn eligible_candidate_opens_store_then_materializes_complete_schema_plan() {
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.provider"),
-            [BackendFeature::Transactions],
+            [PersistenceBackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -148,7 +148,7 @@ fn eligible_candidate_opens_store_then_materializes_complete_schema_plan() {
         [],
         &BTreeSet::new(),
         binding(),
-        &[schema(BackendFeature::Transactions)],
+        &[schema(PersistenceBackendFeature::Transactions)],
         None,
         None,
     )
@@ -169,7 +169,7 @@ fn prepare_transition(
 ) {
     let active_provider = PersistenceProviderDescriptor::new(
         plugin("fixture.active"),
-        [BackendFeature::Transactions],
+        [PersistenceBackendFeature::Transactions],
         ["old-v1".to_owned()],
     );
     let active = resolve_persistence_bootstrap(
@@ -186,7 +186,7 @@ fn prepare_transition(
     let mut provider = MockProvider {
         descriptor: PersistenceProviderDescriptor::new(
             plugin("fixture.candidate"),
-            [BackendFeature::Transactions],
+            [PersistenceBackendFeature::Transactions],
             ["mock-v1".to_owned()],
         ),
         probe: Arc::clone(&probe),
@@ -196,7 +196,7 @@ fn prepare_transition(
         [],
         &BTreeSet::new(),
         binding(),
-        &[schema(BackendFeature::Transactions)],
+        &[schema(PersistenceBackendFeature::Transactions)],
         Some(&active),
         Some(transition),
     );

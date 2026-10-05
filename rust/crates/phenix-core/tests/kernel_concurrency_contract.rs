@@ -1,6 +1,6 @@
 use phenix_core::{
     Authority, Kernel, KernelConfig, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, ResolvedHarness, ResolvedHarnessActivation, ServiceContribution, ServiceId,
+    PluginManifest, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId,
     ServiceRole,
 };
 use std::{
@@ -101,7 +101,7 @@ fn blocked_plugin_task_does_not_stall_unrelated_kernel_transition() {
         manifest(blocking_id.as_str(), Some(service.clone())),
         manifest(probe_id.as_str(), None),
     ];
-    let resolved = ResolvedHarness::resolve(manifests.clone(), [], [], &Authority::default())
+    let resolved = ResolvedGeneration::resolve(manifests.clone(), [], [], &Authority::default())
         .unwrap();
     let mut kernel = Kernel::new(KernelConfig::new(manifests).unwrap());
     let gate = Arc::new((Mutex::new(GateState::default()), Condvar::new()));
@@ -122,7 +122,7 @@ fn blocked_plugin_task_does_not_stall_unrelated_kernel_transition() {
             })
         })
         .unwrap();
-    kernel.activate_resolved_harness(&resolved).unwrap();
+    kernel.activate_resolved_generation(&resolved).unwrap();
     kernel.activate_all().unwrap();
 
     assert_eq!(

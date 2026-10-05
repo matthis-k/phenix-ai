@@ -1,7 +1,7 @@
 use crate::{
-    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, GraphGenerationId,
-    InterfaceId, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
-    ResolvedProviderPlan, ResourceNamespace, RuntimeId, ServiceId, ServiceRole,
+    ArtifactRevision, Authority, ComponentGraphError, ComponentId, EventError, GenerationId,
+    InterfaceId, PluginExecution, PluginId, PluginManifest, PluginRuntimeId,
+    ResolvedComponentGraph, ResolvedProviderPlan, ResourceNamespace, ServiceId, ServiceRole,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,33 +11,33 @@ use std::{
 };
 
 pub const EMBEDDED_RUNTIME: &str = "embedded";
-pub const RUNTIME_PROVIDER_SERVICE_PREFIX: &str = "phenix.kernel.runtime-provider/";
-const RUNTIME_PROVIDER_SERVICE_VERSION: &str = "@1";
+pub const PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX: &str = "phenix.kernel.plugin-runtime-adapter/";
+const PLUGIN_RUNTIME_ADAPTER_SERVICE_VERSION: &str = "@1";
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub struct RuntimeBinding {
+pub struct PluginRuntimeBinding {
     pub guest: PluginId,
-    pub runtime: RuntimeId,
-    pub provider: PluginId,
+    pub runtime: PluginRuntimeId,
+    pub adapter_plugin: PluginId,
     pub artifact_revision: ArtifactRevision,
 }
 
 #[must_use]
-pub fn runtime_provider_service(runtime: &RuntimeId) -> ServiceId {
+pub fn plugin_runtime_adapter_service(runtime: &PluginRuntimeId) -> ServiceId {
     ServiceId::parse(format!(
-        "{RUNTIME_PROVIDER_SERVICE_PREFIX}{}{RUNTIME_PROVIDER_SERVICE_VERSION}",
+        "{PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX}{}{PLUGIN_RUNTIME_ADAPTER_SERVICE_VERSION}",
         runtime.as_str()
     ))
-    .expect("runtime provider service id is derived from a validated runtime id")
+    .expect("plugin runtime adapter service id is derived from a validated plugin runtime id")
 }
 
 #[must_use]
-pub fn runtime_provider_runtime(service: &ServiceId) -> Option<RuntimeId> {
+pub fn plugin_runtime_adapter_id_from_service(service: &ServiceId) -> Option<PluginRuntimeId> {
     let runtime = service
         .as_str()
-        .strip_prefix(RUNTIME_PROVIDER_SERVICE_PREFIX)?
-        .strip_suffix(RUNTIME_PROVIDER_SERVICE_VERSION)?;
-    RuntimeId::parse(runtime).ok()
+        .strip_prefix(PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX)?
+        .strip_suffix(PLUGIN_RUNTIME_ADAPTER_SERVICE_VERSION)?;
+    PluginRuntimeId::parse(runtime).ok()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,24 +92,24 @@ pub enum KernelError {
     EmbeddedFactoryMissing(PluginId),
     WrongExecutionKind(PluginId),
     ComponentGraph(ComponentGraphError),
-    RuntimeProviderUnavailable(RuntimeId),
-    DuplicateRuntimeProvider {
-        runtime: RuntimeId,
+    PluginRuntimeAdapterUnavailable(PluginRuntimeId),
+    DuplicatePluginRuntimeAdapter {
+        runtime: PluginRuntimeId,
         first: PluginId,
         second: PluginId,
     },
-    ReservedRuntimeProvider(PluginId),
-    RuntimeProviderNotExecutable {
-        runtime: RuntimeId,
-        provider: PluginId,
+    ReservedPluginRuntimeAdapter(PluginId),
+    PluginRuntimeAdapterNotExecutable {
+        runtime: PluginRuntimeId,
+        adapter_plugin: PluginId,
     },
-    RuntimeProviderContractUnavailable {
-        runtime: RuntimeId,
-        provider: PluginId,
+    PluginRuntimeAdapterContractUnavailable {
+        runtime: PluginRuntimeId,
+        adapter_plugin: PluginId,
     },
-    RuntimePrepare {
+    PluginRuntimePreparation {
         plugin: PluginId,
-        runtime: RuntimeId,
+        runtime: PluginRuntimeId,
         message: String,
     },
     PluginStart {
@@ -124,23 +124,23 @@ pub enum KernelError {
     },
     EventTopology(EventError),
     ResolvedGenerationMissing,
-    UnknownGeneration(GraphGenerationId),
-    DefaultGenerationCannotRetire(GraphGenerationId),
+    UnknownGeneration(GenerationId),
+    DefaultGenerationCannotRetire(GenerationId),
     GenerationInUse {
-        generation: GraphGenerationId,
+        generation: GenerationId,
         active_roots: usize,
     },
     ResidentGenerationDurableMismatch {
-        active: GraphGenerationId,
-        candidate: GraphGenerationId,
+        active: GenerationId,
+        candidate: GenerationId,
     },
-    GenerationAuthorityExpansion(GraphGenerationId),
+    GenerationAuthorityExpansion(GenerationId),
     PinnedBindingUnavailable {
         component: ComponentId,
         interface: InterfaceId,
     },
     PinnedBindingChanged {
-        generation: GraphGenerationId,
+        generation: GenerationId,
         component: ComponentId,
         interface: InterfaceId,
     },
@@ -228,32 +228,38 @@ impl Display for KernelError {
                 "plugin execution kind does not match requested host: {plugin}"
             ),
             Self::ComponentGraph(error) => write!(f, "component graph resolution failed: {error}"),
-            Self::RuntimeProviderUnavailable(runtime) => {
-                write!(f, "runtime provider is unavailable: {runtime}")
+            Self::PluginRuntimeAdapterUnavailable(runtime) => {
+                write!(f, "plugin runtime adapter is unavailable for runtime {runtime}")
             }
-            Self::DuplicateRuntimeProvider {
+            Self::DuplicatePluginRuntimeAdapter {
                 runtime,
                 first,
                 second,
             } => write!(
                 f,
-                "runtime {runtime} has multiple providers: {first} and {second}"
+                "runtime {runtime} has multiple plugin runtime adapters: {first} and {second}"
             ),
-            Self::ReservedRuntimeProvider(plugin) => {
+            Self::ReservedPluginRuntimeAdapter(plugin) => {
                 write!(
                     f,
                     "plugin {plugin} cannot provide the Core-owned embedded runtime"
                 )
             }
-            Self::RuntimeProviderNotExecutable { runtime, provider } => write!(
+            Self::PluginRuntimeAdapterNotExecutable {
+                runtime,
+                adapter_plugin,
+            } => write!(
                 f,
-                "runtime provider {provider} for {runtime} is not executable"
+                "plugin runtime adapter {adapter_plugin} for {runtime} is not executable"
             ),
-            Self::RuntimeProviderContractUnavailable { runtime, provider } => write!(
+            Self::PluginRuntimeAdapterContractUnavailable {
+                runtime,
+                adapter_plugin,
+            } => write!(
                 f,
-                "plugin {provider} does not expose the runtime-provider contract for {runtime}"
+                "plugin {adapter_plugin} does not expose the plugin runtime adapter contract for {runtime}"
             ),
-            Self::RuntimePrepare {
+            Self::PluginRuntimePreparation {
                 plugin,
                 runtime,
                 message,
@@ -280,14 +286,14 @@ impl Display for KernelError {
             Self::UnknownGeneration(generation) => {
                 write!(
                     f,
-                    "graph generation is not resident: {}",
+                    "generation is not resident: {}",
                     generation.as_str()
                 )
             }
             Self::DefaultGenerationCannotRetire(generation) => {
                 write!(
                     f,
-                    "default graph generation cannot retire: {}",
+                    "default generation cannot retire: {}",
                     generation.as_str()
                 )
             }
@@ -296,18 +302,18 @@ impl Display for KernelError {
                 active_roots,
             } => write!(
                 f,
-                "graph generation {} has {active_roots} active root execution(s)",
+                "generation {} has {active_roots} active root execution(s)",
                 generation.as_str()
             ),
             Self::ResidentGenerationDurableMismatch { active, candidate } => write!(
                 f,
-                "graph generation {} cannot reside beside {}: durable schemas differ",
+                "generation {} cannot reside beside {}: durable schemas differ",
                 candidate.as_str(),
                 active.as_str()
             ),
             Self::GenerationAuthorityExpansion(generation) => write!(
                 f,
-                "graph generation {} exceeds the kernel's initial authority ceiling",
+                "generation {} exceeds the kernel's initial authority ceiling",
                 generation.as_str()
             ),
             Self::PinnedBindingUnavailable {
@@ -323,7 +329,7 @@ impl Display for KernelError {
                 interface,
             } => write!(
                 f,
-                "graph generation {} changes pinned component binding {component}/{interface}",
+                "generation {} changes pinned component binding {component}/{interface}",
                 generation.as_str()
             ),
             Self::PluginStop { plugin, message } => {
@@ -483,8 +489,8 @@ pub struct KernelConfig {
     activation_order: Vec<PluginId>,
     namespace_owners: BTreeMap<ResourceNamespace, PluginId>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
-    runtime_providers: BTreeMap<RuntimeId, PluginId>,
-    runtime_bindings: BTreeMap<PluginId, RuntimeBinding>,
+    plugin_runtime_adapters: BTreeMap<PluginRuntimeId, PluginId>,
+    plugin_runtime_bindings: BTreeMap<PluginId, PluginRuntimeBinding>,
     policy_identity: KernelPolicyIdentity,
 }
 
@@ -500,17 +506,18 @@ impl KernelConfig {
 
         let namespace_owners = validate_namespaces(&indexed)?;
         validate_contributions(&indexed)?;
-        let runtime_providers = resolve_runtime_providers(&indexed)?;
-        let runtime_bindings = resolve_runtime_bindings(&indexed, &runtime_providers)?;
-        let activation_order = dependency_order(&indexed, &runtime_bindings)?;
+        let plugin_runtime_adapters = resolve_plugin_runtime_adapters(&indexed)?;
+        let plugin_runtime_bindings =
+            resolve_plugin_runtime_bindings(&indexed, &plugin_runtime_adapters)?;
+        let activation_order = dependency_order(&indexed, &plugin_runtime_bindings)?;
 
         Ok(Self {
             manifests: indexed,
             activation_order,
             namespace_owners,
             layer_policies: BTreeMap::new(),
-            runtime_providers,
-            runtime_bindings,
+            plugin_runtime_adapters,
+            plugin_runtime_bindings,
             policy_identity: KernelPolicyIdentity::fresh(),
         })
     }
@@ -531,16 +538,16 @@ impl KernelConfig {
         &self.activation_order
     }
 
-    pub fn runtime_provider(&self, runtime: &RuntimeId) -> Option<&PluginId> {
-        self.runtime_providers.get(runtime)
+    pub fn plugin_runtime_adapter(&self, runtime: &PluginRuntimeId) -> Option<&PluginId> {
+        self.plugin_runtime_adapters.get(runtime)
     }
 
-    pub fn runtime_binding(&self, plugin: &PluginId) -> Option<&RuntimeBinding> {
-        self.runtime_bindings.get(plugin)
+    pub fn plugin_runtime_binding(&self, plugin: &PluginId) -> Option<&PluginRuntimeBinding> {
+        self.plugin_runtime_bindings.get(plugin)
     }
 
-    pub fn runtime_bindings(&self) -> impl Iterator<Item = &RuntimeBinding> {
-        self.runtime_bindings.values()
+    pub fn plugin_runtime_bindings(&self) -> impl Iterator<Item = &PluginRuntimeBinding> {
+        self.plugin_runtime_bindings.values()
     }
 
     pub fn resource_owner(&self, namespace: &ResourceNamespace) -> Option<&PluginId> {
@@ -855,28 +862,31 @@ fn validate_contributions(
     Ok(())
 }
 
-fn resolve_runtime_providers(
+fn resolve_plugin_runtime_adapters(
     manifests: &BTreeMap<PluginId, PluginManifest>,
-) -> Result<BTreeMap<RuntimeId, PluginId>, KernelError> {
-    let mut providers = BTreeMap::new();
+) -> Result<BTreeMap<PluginRuntimeId, PluginId>, KernelError> {
+    let mut adapters = BTreeMap::new();
     for manifest in manifests.values() {
         for contribution in &manifest.services {
-            let Some(runtime) = runtime_provider_runtime(&contribution.service) else {
+            let Some(runtime) = plugin_runtime_adapter_id_from_service(&contribution.service)
+            else {
                 continue;
             };
             if runtime.as_str() == EMBEDDED_RUNTIME {
-                return Err(KernelError::ReservedRuntimeProvider(manifest.id.clone()));
+                return Err(KernelError::ReservedPluginRuntimeAdapter(
+                    manifest.id.clone(),
+                ));
             }
             if contribution.role != ServiceRole::Terminal
                 || matches!(manifest.execution, PluginExecution::ResourceOnly)
             {
-                return Err(KernelError::RuntimeProviderNotExecutable {
+                return Err(KernelError::PluginRuntimeAdapterNotExecutable {
                     runtime,
-                    provider: manifest.id.clone(),
+                    adapter_plugin: manifest.id.clone(),
                 });
             }
-            if let Some(first) = providers.insert(runtime.clone(), manifest.id.clone()) {
-                return Err(KernelError::DuplicateRuntimeProvider {
+            if let Some(first) = adapters.insert(runtime.clone(), manifest.id.clone()) {
+                return Err(KernelError::DuplicatePluginRuntimeAdapter {
                     runtime,
                     first,
                     second: manifest.id.clone(),
@@ -884,31 +894,33 @@ fn resolve_runtime_providers(
             }
         }
     }
-    Ok(providers)
+    Ok(adapters)
 }
 
-fn resolve_runtime_bindings(
+fn resolve_plugin_runtime_bindings(
     manifests: &BTreeMap<PluginId, PluginManifest>,
-    providers: &BTreeMap<RuntimeId, PluginId>,
-) -> Result<BTreeMap<PluginId, RuntimeBinding>, KernelError> {
+    adapters: &BTreeMap<PluginRuntimeId, PluginId>,
+) -> Result<BTreeMap<PluginId, PluginRuntimeBinding>, KernelError> {
     let mut bindings = BTreeMap::new();
     for manifest in manifests.values() {
         let PluginExecution::Runtime { runtime, artifact } = &manifest.execution else {
             continue;
         };
         if runtime.as_str() == EMBEDDED_RUNTIME {
-            return Err(KernelError::RuntimeProviderUnavailable(runtime.clone()));
+            return Err(KernelError::PluginRuntimeAdapterUnavailable(
+                runtime.clone(),
+            ));
         }
-        let provider = providers
+        let adapter_plugin = adapters
             .get(runtime)
-            .ok_or_else(|| KernelError::RuntimeProviderUnavailable(runtime.clone()))?
+            .ok_or_else(|| KernelError::PluginRuntimeAdapterUnavailable(runtime.clone()))?
             .clone();
         bindings.insert(
             manifest.id.clone(),
-            RuntimeBinding {
+            PluginRuntimeBinding {
                 guest: manifest.id.clone(),
                 runtime: runtime.clone(),
-                provider,
+                adapter_plugin,
                 artifact_revision: artifact.revision.clone(),
             },
         );
@@ -918,7 +930,7 @@ fn resolve_runtime_bindings(
 
 fn dependency_order(
     manifests: &BTreeMap<PluginId, PluginManifest>,
-    runtime_bindings: &BTreeMap<PluginId, RuntimeBinding>,
+    plugin_runtime_bindings: &BTreeMap<PluginId, PluginRuntimeBinding>,
 ) -> Result<Vec<PluginId>, KernelError> {
     for manifest in manifests.values() {
         for dependency in &manifest.dependencies {
@@ -940,7 +952,7 @@ fn dependency_order(
     fn visit(
         plugin: &PluginId,
         manifests: &BTreeMap<PluginId, PluginManifest>,
-        runtime_bindings: &BTreeMap<PluginId, RuntimeBinding>,
+        plugin_runtime_bindings: &BTreeMap<PluginId, PluginRuntimeBinding>,
         visits: &mut BTreeMap<PluginId, Visit>,
         order: &mut Vec<PluginId>,
     ) -> Result<(), KernelError> {
@@ -951,13 +963,19 @@ fn dependency_order(
         }
         visits.insert(plugin.clone(), Visit::Visiting);
         for dependency in &manifests[plugin].dependencies {
-            visit(dependency, manifests, runtime_bindings, visits, order)?;
-        }
-        if let Some(binding) = runtime_bindings.get(plugin) {
             visit(
-                &binding.provider,
+                dependency,
                 manifests,
-                runtime_bindings,
+                plugin_runtime_bindings,
+                visits,
+                order,
+            )?;
+        }
+        if let Some(binding) = plugin_runtime_bindings.get(plugin) {
+            visit(
+                &binding.adapter_plugin,
+                manifests,
+                plugin_runtime_bindings,
                 visits,
                 order,
             )?;
@@ -970,7 +988,13 @@ fn dependency_order(
     let mut visits = BTreeMap::new();
     let mut order = Vec::new();
     for plugin in manifests.keys() {
-        visit(plugin, manifests, runtime_bindings, &mut visits, &mut order)?;
+        visit(
+            plugin,
+            manifests,
+            plugin_runtime_bindings,
+            &mut visits,
+            &mut order,
+        )?;
     }
     Ok(order)
 }
@@ -978,7 +1002,7 @@ fn dependency_order(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CapabilityId, ServiceContribution, ServiceRole};
+    use crate::{PermissionId, ServiceContribution, ServiceRole};
 
     fn plugin(value: &str) -> PluginId {
         PluginId::parse(value).unwrap()
@@ -988,8 +1012,8 @@ mod tests {
         ServiceId::parse(value).unwrap()
     }
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn manifest(id: &str, priority: i32, required: Authority) -> PluginManifest {

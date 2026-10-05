@@ -234,9 +234,10 @@ mod tests {
     use super::*;
     use crate::{sdk_component_manifest, sdk_factory, sdk_manifest};
     use phenix_core::{
-        CapabilityId, ComponentExport, ComponentImport, ComponentManifest, InterfaceId, Kernel,
-        KernelConfig, PluginExecution, PluginId, PluginInstance, PluginManifest, ResolvedHarness,
-        ResolvedHarnessActivation, ServiceContribution, ServiceId, ServiceRole,
+        ComponentExport, ComponentImport, ComponentManifest, InterfaceId, Kernel, KernelConfig,
+        PermissionId, PluginExecution, PluginId, PluginInstance, PluginManifest,
+        ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId,
+        ServiceRole,
     };
     use phenix_plugin_options_test::{
         options_component_manifest, options_factory, options_manifest,
@@ -310,7 +311,7 @@ mod tests {
                     value: request.value,
                     has_persistence_authority: host
                         .authority()
-                        .permits(&CapabilityId::parse("kernel.persistence.read").unwrap()),
+                        .permits(&PermissionId::parse("kernel.persistence.read").unwrap()),
                 })
                 .map_err(|error| error.to_string())
         }
@@ -386,7 +387,7 @@ mod tests {
                 echo_has_persistence_authority: echo.has_persistence_authority,
                 has_persistence_authority: call
                     .authority
-                    .permits(&CapabilityId::parse("kernel.persistence.read").unwrap()),
+                    .permits(&PermissionId::parse("kernel.persistence.read").unwrap()),
             })
             .map_err(|error| error.to_string())
         }
@@ -394,9 +395,9 @@ mod tests {
 
     fn authority() -> Authority {
         Authority::new([
-            CapabilityId::parse("kernel.persistence.schema").unwrap(),
-            CapabilityId::parse("kernel.persistence.read").unwrap(),
-            CapabilityId::parse("kernel.persistence.write").unwrap(),
+            PermissionId::parse("kernel.persistence.schema").unwrap(),
+            PermissionId::parse("kernel.persistence.read").unwrap(),
+            PermissionId::parse("kernel.persistence.write").unwrap(),
         ])
     }
 
@@ -502,7 +503,7 @@ mod tests {
             consumer.clone(),
         ];
         let durable_schemas = phenix_plugin_options_test::options_durable_schema_registrations();
-        let resolved = ResolvedHarness::resolve_with_durable_schemas(
+        let resolved = ResolvedGeneration::resolve_with_durable_schemas(
             manifests.clone(),
             [
                 session_component_manifest(),
@@ -532,7 +533,7 @@ mod tests {
         kernel
             .register_embedded_factory(consumer.id, || Box::new(ConsumerPlugin))
             .unwrap();
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel.activate_all().unwrap();
 
         let output = kernel

@@ -1,16 +1,16 @@
 use crate::{
     plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
-    ArtifactRevision, Authority, CallCancellationToken, CapabilityId, ComponentGraphError,
-    ComponentId, ComponentInterface, ComponentInvocationError, DurableSchema,
-    DurableSchemaRegistration, EventAdmissionReceipt, EventBus, EventEnvelope, EventError,
-    EventHandler, EventSubscription, EventTypeId, GraphGenerationId, InterfaceId, KernelConfig,
-    KernelError, KernelEvent, KernelPolicyIdentity, LocalPersistence, PersistenceBackend,
-    PluginArtifact, PluginExecution, PluginId, PluginManifest, ProviderBinding,
+    ArtifactRevision, Authority, CallCancellationToken, ComponentGraphError, ComponentId,
+    ComponentInterface, ComponentInvocationError, DurableSchema, DurableSchemaRegistration,
+    EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
+    EventTypeId, GenerationId, GenerationTopology, InterfaceId, KernelConfig, KernelError,
+    KernelEvent, KernelPolicyIdentity, LocalPersistence, PermissionId, PersistenceBackend,
+    PluginArtifact, PluginExecution, PluginId, PluginManifest, PluginRuntimeId, ProviderBinding,
     ProviderFallbackReason, ProviderSelectionReason, ResolvedComponentGraph,
     ResolvedDispatchTopology, ResolvedImportHandle, ResolvedLayerPlan, ResolvedListener,
     ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace,
-    RuntimeGeneration, RuntimeId, SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata,
-    TaskRuntime, TaskScope, TransactionOp,
+    SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
+    TransactionOp,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -71,7 +71,7 @@ pub struct ServiceParticipantProvenance {
 pub struct ProviderEndpointProvenance {
     pub component: ComponentId,
     pub plugin: PluginId,
-    pub runtime: Option<RuntimeId>,
+    pub runtime: Option<PluginRuntimeId>,
     pub artifact_revision: Option<ArtifactRevision>,
 }
 
@@ -129,7 +129,7 @@ impl ComponentProviderProvenance {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceInvocationProvenance {
-    pub graph_generation: Option<GraphGenerationId>,
+    pub graph_generation: Option<GenerationId>,
     pub policy_identity: KernelPolicyIdentity,
     pub service: ServiceId,
     pub planned_chain: ResolvedServiceChain,
@@ -149,7 +149,7 @@ struct PendingParticipantProvenance {
 
 #[derive(Clone, Debug)]
 struct InvocationTrace {
-    graph_generation: Option<GraphGenerationId>,
+    graph_generation: Option<GenerationId>,
     service: ServiceId,
     planned_chain: ResolvedServiceChain,
     component_provider: Option<ComponentProviderProvenance>,
@@ -162,7 +162,7 @@ impl InvocationTrace {
     fn new(
         chain: &ResolvedServiceChain,
         caller_authority: &Authority,
-        graph_generation: Option<&GraphGenerationId>,
+        graph_generation: Option<&GenerationId>,
         component_provider: Option<ComponentProviderProvenance>,
     ) -> Self {
         Self {
@@ -292,7 +292,7 @@ impl RootExecutionConstraints {
 
 #[derive(Clone)]
 pub(super) struct CallScope {
-    generation: Arc<RuntimeGeneration>,
+    generation: Arc<GenerationTopology>,
     authority: Authority,
     pinned_bindings: Arc<BTreeMap<(ComponentId, InterfaceId), ResolvedImportHandle>>,
     cancellation: Option<CallCancellationToken>,
@@ -302,7 +302,7 @@ pub(super) struct CallScope {
 }
 
 impl CallScope {
-    pub(super) fn external(generation: Arc<RuntimeGeneration>, authority: &Authority) -> Self {
+    pub(super) fn external(generation: Arc<GenerationTopology>, authority: &Authority) -> Self {
         Self::external_with_constraints(
             generation,
             &RootExecutionConstraints {
@@ -313,7 +313,7 @@ impl CallScope {
     }
 
     pub(super) fn external_with_constraints(
-        generation: Arc<RuntimeGeneration>,
+        generation: Arc<GenerationTopology>,
         constraints: &RootExecutionConstraints,
     ) -> Self {
         Self {
@@ -328,7 +328,7 @@ impl CallScope {
     }
 
     pub(super) fn root(
-        generation: Arc<RuntimeGeneration>,
+        generation: Arc<GenerationTopology>,
         plugin: &PluginId,
         authority: &Authority,
         cancellation: Option<CallCancellationToken>,
@@ -346,7 +346,7 @@ impl CallScope {
     }
 
     pub(super) fn root_with_constraints(
-        generation: Arc<RuntimeGeneration>,
+        generation: Arc<GenerationTopology>,
         plugin: &PluginId,
         authority: &Authority,
         constraints: &RootExecutionConstraints,
@@ -428,23 +428,23 @@ pub enum LayerResult {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct RuntimePluginCandidate<'a> {
+pub struct PluginRuntimeCandidate<'a> {
     pub manifest: &'a PluginManifest,
     pub artifact: &'a PluginArtifact,
     pub guest_authority: &'a Authority,
 }
 
-pub trait PluginRuntimeProvider: Send {
+pub trait PluginRuntimeAdapter: Send {
     fn prepare(
         &mut self,
-        candidate: RuntimePluginCandidate<'_>,
+        candidate: PluginRuntimeCandidate<'_>,
     ) -> Result<Box<dyn PluginInstance>, String>;
 
-    /// Canonical preparation entry point. Core supplies the runtime provider's own host separately
+    /// Canonical preparation entry point. Core supplies the adapter plugin's own host separately
     /// from the guest authority carried by `candidate`.
     fn prepare_with_host(
         &mut self,
-        candidate: RuntimePluginCandidate<'_>,
+        candidate: PluginRuntimeCandidate<'_>,
         _host: &PluginHost<'_>,
     ) -> Result<Box<dyn PluginInstance>, String> {
         self.prepare(candidate)
@@ -488,7 +488,7 @@ pub trait SharedPluginInvocation: Send + Sync {
 pub trait PluginInstance: Send {
     fn start(&mut self, host: &PluginHost<'_>) -> Result<(), String>;
 
-    fn runtime_provider(&mut self) -> Option<&mut dyn PluginRuntimeProvider> {
+    fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
         None
     }
 
@@ -531,7 +531,7 @@ pub trait PluginInstance: Send {
     fn bind_listener(
         &mut self,
         listener: &ResolvedListener,
-        _generation: &GraphGenerationId,
+        _generation: &GenerationId,
     ) -> Result<Arc<dyn EventHandler>, String> {
         Err(format!(
             "plugin does not implement listener {}/{}",
@@ -543,7 +543,7 @@ pub trait PluginInstance: Send {
     fn bind_plugin_listener(
         &mut self,
         _listener: &ResolvedListener,
-        _generation: &GraphGenerationId,
+        _generation: &GenerationId,
     ) -> Option<Result<Arc<dyn PluginListener>, String>> {
         None
     }
@@ -739,7 +739,7 @@ struct RuntimeServices<'a> {
 }
 
 struct GenerationRuntimeState {
-    runtime: RuntimeGeneration,
+    runtime: GenerationTopology,
     authority_ceiling: Option<Authority>,
     lifecycle_constraints: Option<RootExecutionConstraints>,
     durable_schemas: Vec<DurableSchemaRegistration>,
@@ -758,7 +758,7 @@ impl GenerationRuntimeState {
             .map(|manifest| (manifest.id.clone(), PluginState::Registered))
             .collect();
         Self {
-            runtime: RuntimeGeneration::bootstrap(config),
+            runtime: GenerationTopology::bootstrap(config),
             authority_ceiling: None,
             lifecycle_constraints: None,
             durable_schemas: Vec::new(),
@@ -799,7 +799,7 @@ fn constrain_authority_to_ceiling(
 /// changes while allowing the Kernel to admit other roots or stage resident
 /// generations concurrently.
 pub struct RootExecutionHandle {
-    runtime: Arc<RuntimeGeneration>,
+    runtime: Arc<GenerationTopology>,
     constraints: RootExecutionConstraints,
     states: BTreeMap<PluginId, PluginState>,
     instances: BTreeMap<PluginId, Arc<Mutex<Box<dyn PluginInstance>>>>,
@@ -833,7 +833,7 @@ impl Clone for RootExecutionHandle {
 
 impl RootExecutionHandle {
     #[must_use]
-    pub fn generation(&self) -> Option<&GraphGenerationId> {
+    pub fn generation(&self) -> Option<&GenerationId> {
         self.runtime.generation()
     }
 
@@ -857,7 +857,7 @@ impl Drop for RootExecutionHandle {
 
 pub struct Kernel {
     generation_state: GenerationRuntimeState,
-    resident_generations: BTreeMap<GraphGenerationId, GenerationRuntimeState>,
+    resident_generations: BTreeMap<GenerationId, GenerationRuntimeState>,
     authority_ceiling: Option<Authority>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     prepared_embedded_instances: BTreeMap<PluginId, Box<dyn PluginInstance>>,

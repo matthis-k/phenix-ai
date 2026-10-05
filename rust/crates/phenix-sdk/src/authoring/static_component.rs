@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn layer_service_preserves_explicit_authority() {
         let authority =
-            Authority::new([phenix_core::CapabilityId::parse("models.invoke").unwrap()]);
+            Authority::new([phenix_core::PermissionId::parse("models.invoke").unwrap()]);
         let layer = StaticComponentLayer::with_authority::<Models>("policy", 17, authority.clone());
 
         assert_eq!(layer.required_authority, authority);

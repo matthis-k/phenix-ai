@@ -33,7 +33,7 @@ impl Store {}
 #[phenix_sdk::plugin(
     id = "fixture.manifest",
     authority = phenix_sdk::Authority::new([
-        phenix_sdk::CapabilityId::parse("fixture.read").unwrap()
+        phenix_sdk::PermissionId::parse("fixture.read").unwrap()
     ])
 )]
 struct Plugin {

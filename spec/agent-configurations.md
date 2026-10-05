@@ -63,7 +63,7 @@ advanced
 -> advanced-only dependencies
 ```
 
-The resolved harness contains both assembly manifests. This keeps the configuration ancestry inspectable.
+The resolved generation contains both assembly manifests. This keeps the configuration ancestry inspectable.
 
 ## Regression requirements
 

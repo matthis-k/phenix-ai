@@ -1,10 +1,10 @@
 use crate::{
-    Authority, CapabilityId, ComponentExport, ComponentId, ComponentImport, ComponentManifest,
-    InterfaceId, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
+    PermissionId, PluginExecution, PluginId, PluginManifest, ResolvedComponentGraph,
 };
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 fn plugin(id: &str, authority: Authority) -> PluginManifest {

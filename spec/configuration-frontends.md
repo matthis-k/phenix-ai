@@ -32,11 +32,11 @@ Configuration frontend
 ConfigContribution
   declarative, attributable configuration data consumed by the canonical resolver
 
-ResolvedHarness
+ResolvedGeneration
   immutable, inspectable resolved runtime composition with a stable semantic identity
 
 Graph generation
-  one activated ResolvedHarness revision
+  one activated ResolvedGeneration revision
 
 Reconciler
   plans and applies safe transitions between valid graph generations in development mode
@@ -151,7 +151,7 @@ compatibility validation
 durable ownership validation
 environment-binding validation
 semantic identity calculation
-ResolvedHarness construction
+ResolvedGeneration construction
 ```
 
 A configuration frontend must not directly mutate the live component/service registry, install providers, grant authority, or alter bindings.
@@ -171,7 +171,7 @@ project discovery -----/                               v
                                                 canonical resolver
                                                        |
                                                        v
-                                                ResolvedHarness
+                                                ResolvedGeneration
                                                        |
                                                        v
                                                     runtime
@@ -290,7 +290,7 @@ external config + package metadata + resources
                  resolver
                     |
                     v
-        ResolvedHarness generation N
+        ResolvedGeneration generation N
                     |
                     v
                   runtime
@@ -307,7 +307,7 @@ A frontend must not allow ambient filesystem state, environment variables, remot
 
 ## Graph generations
 
-Each valid `ResolvedHarness` is a graph generation with its own semantic identity.
+Each valid `ResolvedGeneration` is a graph generation with its own semantic identity.
 
 Running work is pinned to the generation whose semantics it started under unless a contract explicitly defines safe migration.
 
@@ -511,7 +511,7 @@ Diagnostics must preserve source attribution so a user can trace a resolved sett
 
 This contract is complete when:
 
-- there is one canonical resolver from declarative contributions + metadata to `ResolvedHarness`;
+- there is one canonical resolver from declarative contributions + metadata to `ResolvedGeneration`;
 - arbitrary configuration frontends can extend the user-facing API without adding core-domain concepts;
 - configuration frontends cannot bypass runtime component/interface/capability semantics;
 - manifests are rich enough to validate and diff candidate compositions before activation;
@@ -524,6 +524,6 @@ This contract is complete when:
 
 ## Selectable development generations
 
-`spec/selectable-harness-generations.md` defines the proposed runtime extension for retaining more than one validated `ResolvedHarness` during development.
+`spec/selectable-generations.md` defines the proposed runtime extension for retaining more than one validated `ResolvedGeneration` during development.
 
 Configuration frontends still only produce declarative candidate input. They do not choose a generation for an in-flight call, widen the root authority ceiling, or replace pinned host bindings. Promotion changes the default generation only after the candidate passes those runtime checks.

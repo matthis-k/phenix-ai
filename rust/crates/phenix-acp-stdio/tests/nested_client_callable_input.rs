@@ -1,38 +1,36 @@
-use phenix_acp_stdio::{
-    ClientCapabilityCallbacks, ClientCapabilityIdentity, SdkApplicationService,
-};
+use phenix_acp_stdio::{ClientCallableCallbacks, ClientReferenceIdentity, SdkApplicationService};
 use phenix_application_interface::{
-    types::{CapabilityInvokeInput, CapabilityInvokeResult},
-    InvokeCapability, Operation,
+    types::{CallableInvocation, CallableInvocationResult},
+    InvokeCallableReference, Operation,
 };
 use phenix_core::{
-    CallableRef, CapabilityGenerationId, CapabilityOwnerId, ClientConnectionId, ContractId, Key,
-    ObservableStore, PhenixValue, ReferenceId, ResolvedSdkContributions, RuntimeId,
-    SdkContribution, SharedCapabilityRegistry, Type, ValueCodec,
+    CallableRef, ClientConnectionId, ContractId, Key, ObservableStore, PhenixValue,
+    PluginRuntimeId, ReferenceGenerationId, ReferenceId, ReferenceOwnerId,
+    ResolvedSdkContributions, SdkContribution, SharedCallableRegistry, Type, ValueCodec,
 };
 use std::collections::BTreeMap;
 
 #[test]
 fn capability_invocation_admits_client_callables_nested_in_its_input() {
-    let capabilities = SharedCapabilityRegistry::default();
-    let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+    let capabilities = SharedCallableRegistry::default();
+    let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
     let owner = ClientConnectionId::parse("fixture-client").unwrap();
-    let client_generation = CapabilityGenerationId::parse("fixture-client-generation").unwrap();
+    let client_generation = ReferenceGenerationId::parse("fixture-client-generation").unwrap();
     let sdk = ResolvedSdkContributions::resolve(&[], &[], Vec::<SdkContribution>::new()).unwrap();
     let service = SdkApplicationService::new(
         &sdk,
         &ObservableStore::default(),
         capabilities.clone(),
-        RuntimeId::parse("fixture-sdk-runtime").unwrap(),
-        CapabilityGenerationId::parse("fixture-sdk-generation").unwrap(),
+        PluginRuntimeId::parse("fixture-sdk-runtime").unwrap(),
+        ReferenceGenerationId::parse("fixture-sdk-generation").unwrap(),
         callbacks,
-        ClientCapabilityIdentity::new(owner.clone(), client_generation.clone()),
+        ClientReferenceIdentity::new(owner.clone(), client_generation.clone()),
     )
     .unwrap();
 
     let callback = CallableRef::new(
         ContractId::parse("fixture.client-callback@1").unwrap(),
-        CapabilityOwnerId::Client(owner),
+        ReferenceOwnerId::Client(owner),
         client_generation,
         ReferenceId::parse("callback").unwrap(),
     );
@@ -43,8 +41,8 @@ fn capability_invocation_admits_client_callables_nested_in_its_input() {
     };
     let outer = CallableRef::new(
         ContractId::parse("fixture.outer-capability@1").unwrap(),
-        CapabilityOwnerId::Runtime(RuntimeId::parse("fixture-runtime").unwrap()),
-        CapabilityGenerationId::parse("fixture-runtime-generation").unwrap(),
+        ReferenceOwnerId::Runtime(PluginRuntimeId::parse("fixture-runtime").unwrap()),
+        ReferenceGenerationId::parse("fixture-runtime-generation").unwrap(),
         ReferenceId::parse("outer").unwrap(),
     );
     let callback_key = Key::parse("callback").unwrap();
@@ -65,8 +63,8 @@ fn capability_invocation_admits_client_callables_nested_in_its_input() {
 
     let result = service
         .invoke(
-            &ContractId::parse(InvokeCapability::ID).unwrap(),
-            CapabilityInvokeInput {
+            &ContractId::parse(InvokeCallableReference::ID).unwrap(),
+            CallableInvocation {
                 callable: PhenixValue::Callable(outer),
                 input: PhenixValue::Table(BTreeMap::from([(
                     callback_key,
@@ -77,7 +75,9 @@ fn capability_invocation_admits_client_callables_nested_in_its_input() {
         )
         .unwrap();
     assert_eq!(
-        CapabilityInvokeResult::from_value(&result).unwrap().output,
+        CallableInvocationResult::from_value(&result)
+            .unwrap()
+            .output,
         PhenixValue::Unit
     );
     assert_eq!(capabilities.schema(&callback).unwrap(), callback_schema);

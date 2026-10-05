@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, BackendFeature, CapabilityGenerationId, DurableSchema, Kernel, KernelConfig,
-    LocalPersistence, ModelId, NamespaceTransaction, PersistenceBackend, PersistenceError,
+    Authority, CapabilityGenerationId, DurableSchema, Kernel, KernelConfig, LocalPersistence,
+    ModelId, NamespaceTransaction, PersistenceBackend, PersistenceBackendFeature, PersistenceError,
     PhenixValue, PluginId, Project, ResourceNamespace, SchemaMigration, ServiceId, ValueError,
 };
 use phenix_plugin_execution::{
@@ -48,7 +48,7 @@ struct FailFirstTransaction {
 }
 
 impl PersistenceBackend for FailFirstTransaction {
-    fn supported_features(&self) -> BTreeSet<BackendFeature> {
+    fn supported_features(&self) -> BTreeSet<PersistenceBackendFeature> {
         self.inner.supported_features()
     }
 

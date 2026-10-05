@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, Kernel, KernelConfig, PluginExecution, PluginHost, PluginId,
+    Authority, Kernel, KernelConfig, PermissionId, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, ServiceContribution, ServiceId,
 };
 
@@ -11,8 +11,8 @@ fn service(value: &str) -> ServiceId {
     ServiceId::parse(value).unwrap()
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).unwrap()
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).unwrap()
 }
 
 struct Downstream;

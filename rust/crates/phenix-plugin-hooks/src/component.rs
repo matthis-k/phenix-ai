@@ -59,7 +59,7 @@ pub fn hook_component_manifest(maximum_authority: Authority) -> ComponentManifes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{CapabilityId, ComponentGraphError, ResolvedComponentGraph};
+    use phenix_core::{ComponentGraphError, PermissionId, ResolvedComponentGraph};
     use phenix_plugin_context::{context_component_manifest, context_manifest};
     use phenix_plugin_execution::{execution_component_manifest, execution_manifest};
 
@@ -136,7 +136,7 @@ mod tests {
             execution.exporter(),
             &execution_component_manifest(authority()).id
         );
-        let persistence_read = CapabilityId::parse("kernel.persistence.read").unwrap();
+        let persistence_read = PermissionId::parse("kernel.persistence.read").unwrap();
         assert!(context.effective_authority().permits(&persistence_read));
         assert!(execution.effective_authority().permits(&persistence_read));
     }

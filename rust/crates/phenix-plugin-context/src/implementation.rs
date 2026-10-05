@@ -1,6 +1,6 @@
 use crate::context_component_id;
 use phenix_core::{
-    Authority, Bytes, CapabilityId, ComponentInterface, ContextResourceId, ContextRevisionId,
+    Authority, Bytes, PermissionId, ComponentInterface, ContextResourceId, ContextRevisionId,
     DurableSchema, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
     PluginManifest, ResourceNamespace, SdkClient, ServiceContribution, ServiceId, TransactionOp,
 };
@@ -71,8 +71,8 @@ fn context_namespace() -> ResourceNamespace {
     ResourceNamespace::parse(CONTEXT_NAMESPACE).expect("static namespace is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 struct ContextPlugin;
@@ -489,8 +489,8 @@ fn parent_path(path: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Kernel, KernelConfig, LocalPersistence, PluginState, ResolvedHarness,
-        ResolvedHarnessActivation,
+        Kernel, KernelConfig, LocalPersistence, PluginState, ResolvedGeneration,
+        ResolvedGenerationActivation,
     };
     use phenix_plugin_execution::{
         execution_component_manifest, execution_factory, execution_manifest,
@@ -521,7 +521,7 @@ mod tests {
         let context_plugin = context_manifest.id.clone();
         let execution_manifest = execution_manifest(authority());
         let execution_plugin = execution_manifest.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [execution_manifest.clone(), context_manifest.clone()],
             [
                 execution_component_manifest(authority()),
@@ -536,7 +536,7 @@ mod tests {
             KernelConfig::new([execution_manifest, context_manifest]).unwrap(),
             persistence,
         );
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(execution_plugin.clone(), execution_factory)
             .unwrap();

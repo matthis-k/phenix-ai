@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn host_and_event_fields_preserve_capability_and_payload_identity() {
         let host = StaticComponentHost::of::<Host<Models>>("models_host");
-        let authority = Authority::new([phenix_core::CapabilityId::parse("clock.read").unwrap()]);
+        let authority = Authority::new([phenix_core::PermissionId::parse("clock.read").unwrap()]);
         let authorized_host = StaticComponentHost::with_authority::<Host<Models>>(
             "authorized_models_host",
             authority.clone(),

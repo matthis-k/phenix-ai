@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityId, ComponentInterface, DurableSchema, PluginContext, PluginExecution,
+    Authority, ComponentInterface, DurableSchema, PermissionId, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, ServiceContribution,
     ServiceId, TransactionOp, ValueCodec,
 };
@@ -116,8 +116,8 @@ fn workspace_service() -> ServiceId {
     ServiceId::parse(WORKSPACE_SERVICE).expect("static workspace service id is valid")
 }
 
-fn capability(value: &str) -> CapabilityId {
-    CapabilityId::parse(value).expect("static capability is valid")
+fn capability(value: &str) -> PermissionId {
+    PermissionId::parse(value).expect("static capability is valid")
 }
 
 #[derive(Default)]
@@ -4029,7 +4029,7 @@ mod tests {
     use super::*;
     use phenix_core::{
         Kernel, KernelConfig, LocalPersistence, PersistenceBackend, PhenixValue, Project,
-        ResolvedHarness, ResolvedHarnessActivation,
+        ResolvedGeneration, ResolvedGenerationActivation,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -4086,7 +4086,7 @@ mod tests {
                 .chain(workspace.maximum_authority.capabilities())
                 .cloned(),
         );
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [language.clone(), environment.clone(), workspace.clone()],
             [
                 local_environment_component_manifest(),
@@ -4101,7 +4101,7 @@ mod tests {
             KernelConfig::new([language, environment, workspace]).unwrap(),
             persistence,
         );
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(language_id, language_factory)
             .unwrap();

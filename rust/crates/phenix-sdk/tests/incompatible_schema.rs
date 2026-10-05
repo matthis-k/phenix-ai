@@ -1,4 +1,4 @@
-use phenix_core::{Authority, PluginId, ResolvedHarness};
+use phenix_core::{Authority, PluginId, ResolvedGeneration};
 use phenix_sdk::{Call, Required, StaticPluginDefinition};
 
 #[phenix_sdk::interface("fixture.incompatible.models@1")]
@@ -59,7 +59,7 @@ struct IncompatibleConsumerPlugin {
 #[test]
 fn incompatible_component_schemas_fail_before_activation() {
     let authority = Authority::default();
-    let error = ResolvedHarness::resolve(
+    let error = ResolvedGeneration::resolve(
         [
             <incompatible_provider::Plugin as StaticPluginDefinition>::manifest(),
             <IncompatibleConsumerPlugin as StaticPluginDefinition>::manifest(),
@@ -162,7 +162,7 @@ where
         + phenix_sdk::StaticPluginResources,
 {
     let authority = Authority::default();
-    ResolvedHarness::resolve(
+    ResolvedGeneration::resolve(
         [
             P::manifest(),
             <ReplacementConsumerPlugin as StaticPluginDefinition>::manifest(),

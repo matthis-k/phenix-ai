@@ -444,8 +444,9 @@ fn validate_identity(label: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use phenix_core::{
-        Authority, CapabilityId, Kernel, KernelConfig, LocalPersistence, PluginExecution, PluginId,
-        PluginManifest, Project, ResolvedHarness, ResolvedHarnessActivation, ServiceContribution,
+        Authority, Kernel, KernelConfig, LocalPersistence, PermissionId, PluginExecution, PluginId,
+        PluginManifest, Project, ResolvedGeneration, ResolvedGenerationActivation,
+        ServiceContribution,
     };
     use phenix_plugin_environment_local::{
         local_environment_component_manifest, local_environment_factory_for,
@@ -458,8 +459,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    fn capability(value: &str) -> CapabilityId {
-        CapabilityId::parse(value).unwrap()
+    fn capability(value: &str) -> PermissionId {
+        PermissionId::parse(value).unwrap()
     }
 
     fn authority() -> Authority {
@@ -506,7 +507,7 @@ mod tests {
         let environment_id = environment.id.clone();
         let workspace = phenix_plugin_workspace::workspace_manifest();
         let workspace_id = workspace.id.clone();
-        let resolved = ResolvedHarness::resolve(
+        let resolved = ResolvedGeneration::resolve(
             [review.clone(), environment.clone(), workspace.clone()],
             [
                 local_environment_component_manifest(),
@@ -521,7 +522,7 @@ mod tests {
             KernelConfig::new([review, environment, workspace]).unwrap(),
             persistence,
         );
-        kernel.activate_resolved_harness(&resolved).unwrap();
+        kernel.activate_resolved_generation(&resolved).unwrap();
         kernel
             .register_embedded_factory(review_id, execution_review_factory)
             .unwrap();

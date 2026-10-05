@@ -46,7 +46,7 @@ operations! {
     ListCallables: "callable-list", "callables", SessionInput => Callables;
     InvokeCallable: "callable-invoke", "callables", CallableInvokeInput => CallableResult;
     GetSdk: "sdk-get", "sdk", Empty => SdkValue;
-    InvokeCapability: "capability-invoke", "capabilities", CapabilityInvokeInput => CapabilityInvokeResult;
+    InvokeCallableReference: "capability-invoke", "capabilities", CallableInvocation => CallableInvocationResult;
     AddClientTool: "client-tool-add", "client-tools", ClientToolAddInput => ClientToolAdmission;
     RemoveClientTool: "client-tool-remove", "client-tools", ClientToolRemoveInput => Acknowledged;
     SetInteractionHandlers: "interaction-handlers-set", "interaction", SetInteractionHandlersInput => Acknowledged;
@@ -118,8 +118,8 @@ pub fn application_descriptor() -> ApplicationDescriptor {
         ObservableChange,
         ObservablePayload,
         ObservableDelivery,
-        CapabilityInvokeInput,
-        CapabilityInvokeResult,
+        CallableInvocation,
+        CallableInvocationResult,
         ClientToolDefinition,
         ClientToolAddInput,
         ClientToolAdmission,
@@ -219,8 +219,8 @@ pub fn application_descriptor() -> ApplicationDescriptor {
     callback!(
         "capability-call",
         "capabilities",
-        CapabilityInvokeInput,
-        CapabilityInvokeResult,
+        CallableInvocation,
+        CallableInvocationResult,
         Data
     );
     descriptor

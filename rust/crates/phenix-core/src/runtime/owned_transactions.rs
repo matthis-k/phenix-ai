@@ -1,6 +1,6 @@
 use super::{PluginHost, PERSISTENCE_WRITE};
 use crate::{
-    CallCancellationToken, CapabilityId, KernelError, NamespaceTransaction, ResourceNamespace,
+    CallCancellationToken, KernelError, NamespaceTransaction, PermissionId, ResourceNamespace,
     TransactionOp,
 };
 
@@ -32,7 +32,7 @@ impl PluginHost<'_> {
         );
 
         let result = (|| {
-            let write = CapabilityId::parse(PERSISTENCE_WRITE)
+            let write = PermissionId::parse(PERSISTENCE_WRITE)
                 .expect("kernel persistence write capability is valid");
             if !self.authority().permits(&write) {
                 return Err(KernelError::HostOperationDenied {
