@@ -25,11 +25,11 @@ This document extends `spec/plugin-authoring-macro.md`, `spec/plugin-contributio
 
 **PluginHost.** The kernel-owned execution boundary for one executable Plugin instance.
 
-**Runtime Provider.** A Plugin that maps another Execution Runtime onto the canonical Plugin API.
+**Plugin Runtime Adapter.** A Plugin that maps another Execution Runtime onto the canonical Plugin API.
 
 **Host Capability.** An authority-bearing handle for a kernel- or environment-owned operation such as filesystem, process, network, clock, credentials, terminal, or frontend callback access.
 
-These roles are distinct. A Runtime Provider translates execution. It does not gain composition authority. A Host Capability grants one bounded operation. It does not expose mutable kernel internals.
+These roles are distinct. A Plugin Runtime Adapter translates execution. It does not gain composition authority. A Host Capability grants one bounded operation. It does not expose mutable kernel internals.
 
 ## Kernel ownership
 
@@ -43,7 +43,7 @@ The kernel owns:
 - Event delivery;
 - controller and task scheduling;
 - cancellation and live-call tracking;
-- normalized Host Capability and Runtime Provider failures;
+- normalized Host Capability and Plugin Runtime Adapter failures;
 - provenance.
 
 A Plugin never receives mutable access to the kernel runtime, raw registries, Persistence Provider handles, or database connections.
@@ -58,16 +58,16 @@ Plugin API
   +-- embedded runtime
   |     `-- generated or generic Rust PluginInstance adapter
   |
-  +-- Runtime Provider plugin
+  +-- Plugin Runtime Adapter plugin
   |     `-- guest plugin in WASM, TypeScript, Python, process, remote, ...
   |
   `-- resource-only plugin
         `-- no executable instance
 ```
 
-Core initially supplies only `embedded`. Other Execution Runtimes are supplied by ordinary Runtime Provider Plugins as defined in `spec/plugin-runtime-bridges.md`.
+Core initially supplies only `embedded`. Other Execution Runtimes are supplied by ordinary Plugin Runtime Adapter Plugins as defined in `spec/plugin-runtime-bridges.md`.
 
-A Runtime Provider may use a process Transport internally. An "external plugin" is therefore an execution arrangement, not a second semantic Plugin model.
+A Plugin Runtime Adapter may use a process Transport internally. An "external plugin" is therefore an execution arrangement, not a second semantic Plugin model.
 
 Rust dynamic libraries are not an implicit Execution Runtime.
 
@@ -118,7 +118,7 @@ pin Graph Generation
   -> establish Effective Authority
   -> create live-call scope
   -> enter resolved Layer/Provider chain
-  -> adapt through Runtime Provider when required
+  -> adapt through Plugin Runtime Adapter when required
   -> normalize result or error to PhenixValue
   -> record provenance
   -> close live-call scope
@@ -130,11 +130,11 @@ Callbacks from a Plugin re-enter ordinary kernel dispatch and authority enforcem
 
 ## Runtime providers
 
-A Runtime Provider receives authority for its own bridge implementation and a separate attenuated guest `PluginHost` for the guest Plugin.
+A Plugin Runtime Adapter receives authority for its own bridge implementation and a separate attenuated guest `PluginHost` for the guest Plugin.
 
-Runtime Provider authority never becomes guest Plugin authority.
+Plugin Runtime Adapter authority never becomes guest Plugin authority.
 
-The Runtime Provider may translate:
+The Plugin Runtime Adapter may translate:
 
 - Plugin Artifacts;
 - lifecycle calls;
@@ -152,7 +152,7 @@ Cancellation may:
 
 - prevent undispatched work from starting;
 - signal an embedded worker through an explicit cancellation handle;
-- send correlated cancellation to a Runtime Provider;
+- send correlated cancellation to a Plugin Runtime Adapter;
 - terminate a guest process or runtime instance when policy permits hard cancellation;
 - reject late results from cancelled scopes.
 
@@ -166,7 +166,7 @@ Kernel-facing execution failures distinguish at least:
 - authority denied;
 - invalid structural request or response;
 - Provider execution failure;
-- Runtime Provider or protocol failure;
+- Plugin Runtime Adapter or protocol failure;
 - cancelled;
 - Host Capability denied;
 - guest crashed or disconnected.
@@ -188,7 +188,7 @@ If a first-party implementation requires a capability that an equivalent third-p
 - Host Capabilities remain generic and authority-bearing.
 - Product-domain behavior uses ordinary neutral Interfaces rather than private Host methods.
 - Plugin callbacks cannot bypass Graph resolution, authority, or Plugin Resource ownership.
-- Runtime Provider authority is separate from guest Plugin authority.
+- Plugin Runtime Adapter authority is separate from guest Plugin authority.
 - Runtime-local handles are Graph Generation-bound and never reconstructed as Durable State.
 - First-party Plugins receive no private privileged path.
 
@@ -202,6 +202,6 @@ If a first-party implementation requires a capability that an equivalent third-p
 - product concepts are absent from the generic Host API;
 - callbacks re-enter normal Graph and authority checks;
 - cancellation and crash/disconnect always close live-call scopes;
-- Runtime Provider authority cannot leak into guest Plugin authority;
+- Plugin Runtime Adapter authority cannot leak into guest Plugin authority;
 - a resource-only Plugin activates without an executable runtime;
 - static Rust Plugin authors do not maintain manual `PluginFactory` wiring.
