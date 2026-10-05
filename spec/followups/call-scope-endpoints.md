@@ -323,7 +323,7 @@ Preserve #495:
 Preserve #469:
 
 - PluginHost remains the executable plugin boundary
-- runtime-provider authority and guest authority remain separate
+- plugin-runtime-adapter authority and guest authority remain separate
 - live calls remain generation scoped
 
 ## Tests
