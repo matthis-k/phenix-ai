@@ -205,7 +205,7 @@ jobs:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/integration-model-adapter-acp\",\"source\":{\"job\":\"integration-model-adapter-acp\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-66085e40dda1 -- invoke"
+        run: "printf '%s\\n' '{\"command\":\"jobs/integration-model-adapter-acp\",\"source\":{\"job\":\"integration-model-adapter-acp\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-91c71028182a -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}

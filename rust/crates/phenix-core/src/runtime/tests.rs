@@ -22,7 +22,7 @@ fn service(value: &str) -> ServiceId {
 
 fn test_host<'a>(
     kernel: &'a Kernel,
-    generation: Arc<RuntimeGeneration>,
+    generation: Arc<GenerationTopology>,
     plugin: &'a PluginId,
     authority: &Authority,
     prepared_mutations: &'a PreparedMutationScope,
@@ -545,7 +545,7 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
             &owner_transactions,
         )
         .unwrap();
-    let generation = Arc::new(RuntimeGeneration::bootstrap_with_component_graph(
+    let generation = Arc::new(GenerationTopology::bootstrap_with_component_graph(
         kernel.config().clone(),
         graph,
     ));
@@ -668,7 +668,7 @@ fn prepared_mutation_cannot_be_transferred_to_another_authorized_importer() {
             &TransactionContext::unscoped(),
         )
         .unwrap();
-    let generation = Arc::new(RuntimeGeneration::bootstrap_with_component_graph(
+    let generation = Arc::new(GenerationTopology::bootstrap_with_component_graph(
         kernel.config().clone(),
         graph,
     ));
