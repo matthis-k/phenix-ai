@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, DurableSchema, Kernel, KernelConfig, LocalPersistence,
+    Authority, ModelFeatureGenerationId, DurableSchema, Kernel, KernelConfig, LocalPersistence,
     ModelId, NamespaceTransaction, PersistenceBackend, PersistenceBackendFeature, PersistenceError,
     PhenixValue, PluginId, Project, ResourceNamespace, SchemaMigration, ServiceId, ValueError,
 };
@@ -135,14 +135,14 @@ fn plan() -> StepPlan {
         mandatory_input_tokens: 100,
         reducible_input_tokens: 0,
         output_reserve_tokens: 50,
-        required_capabilities: BTreeSet::new(),
+        required_features: BTreeSet::new(),
     };
     StepPlan {
         policy_revision: "policy-1".into(),
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: false,
         },
         context,
@@ -180,7 +180,7 @@ fn route() -> RouteDecision {
             model: ModelId::parse("model.fixture").unwrap(),
             options: BTreeMap::new(),
         },
-        capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+        feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
         policy_revision: "route-policy-1".into(),
         candidate_ordinal: 0,
         estimate: None,
