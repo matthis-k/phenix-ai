@@ -352,14 +352,13 @@ fn accept(
                     .iter()
                     .enumerate()
                     .find(|(_, file)| file.path == conflict.path)
+                    && let Some(file) = current.record.files.get_mut(index)
                 {
-                    if let Some(file) = current.record.files.get_mut(index) {
-                        file.conflict = Some(format!(
-                            "expected {}, observed {}",
-                            version_label(&conflict.expected_version),
-                            version_label(&conflict.observed_version)
-                        ));
-                    }
+                    file.conflict = Some(format!(
+                        "expected {}, observed {}",
+                        version_label(&conflict.expected_version),
+                        version_label(&conflict.observed_version)
+                    ));
                 }
             }
             let message = if conflicts.len() == 1 {
