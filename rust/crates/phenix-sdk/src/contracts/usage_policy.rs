@@ -6,8 +6,8 @@ use phenix_core::{CallableId, SkillId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Model/runtime capability required before optional tool schemas may be deferred.
-pub const DEFERRED_TOOL_SCHEMAS_CAPABILITY: &str = "tools.deferred_schemas";
+/// Model/runtime feature required before optional tool schemas may be deferred.
+pub const DEFERRED_TOOL_SCHEMAS_FEATURE: &str = "tools.deferred_schemas";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +37,7 @@ pub struct TaskRequirements {
     pub request_input_tokens: u64,
     pub context: ContextDemand,
     #[serde(default)]
-    pub required_capabilities: BTreeSet<String>,
+    pub required_features: BTreeSet<String>,
     #[serde(default)]
     pub required_tools: BTreeSet<CallableId>,
     #[serde(default)]
@@ -230,8 +230,8 @@ impl UsagePolicy {
 
         let deferred_tool_schemas = input
             .task
-            .required_capabilities
-            .contains(DEFERRED_TOOL_SCHEMAS_CAPABILITY);
+            .required_features
+            .contains(DEFERRED_TOOL_SCHEMAS_FEATURE);
         let eager_tools = input
             .task
             .required_tools
@@ -292,7 +292,7 @@ impl UsagePolicy {
             ),
             routing: RoutingRequirements {
                 context: routing_context,
-                required_features: input.task.required_capabilities.clone(),
+                required_features: input.task.required_features.clone(),
                 require_known_capacity: self.require_known_capacity,
             },
             context: planned_context.clone(),
@@ -388,7 +388,7 @@ mod tests {
             task: TaskRequirements {
                 request_input_tokens: 0,
                 context,
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
                 required_tools: BTreeSet::new(),
                 optional_tools: BTreeSet::new(),
                 required_skills: BTreeSet::new(),
@@ -414,7 +414,7 @@ mod tests {
             mandatory_input_tokens: 800,
             reducible_input_tokens: 500,
             output_reserve_tokens: 200,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
         let plan = policy().plan(&request).unwrap();
 
@@ -432,7 +432,7 @@ mod tests {
             mandatory_input_tokens: 1_001,
             reducible_input_tokens: 0,
             output_reserve_tokens: 100,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
 
         assert_eq!(
@@ -450,7 +450,7 @@ mod tests {
             mandatory_input_tokens: 200,
             reducible_input_tokens: 600,
             output_reserve_tokens: 100,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
         request.task.request_input_tokens = 300;
 
@@ -471,7 +471,7 @@ mod tests {
             mandatory_input_tokens: 701,
             reducible_input_tokens: 0,
             output_reserve_tokens: 100,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
         request.task.request_input_tokens = 300;
 
@@ -509,12 +509,12 @@ mod tests {
     }
 
     #[test]
-    fn deferred_tool_capability_keeps_optional_schemas_out_of_the_initial_set() {
+    fn deferred_tool_feature_keeps_optional_schemas_out_of_the_initial_set() {
         let mut request = input(ContextDemand::default());
         request
             .task
-            .required_capabilities
-            .insert(DEFERRED_TOOL_SCHEMAS_CAPABILITY.into());
+            .required_features
+            .insert(DEFERRED_TOOL_SCHEMAS_FEATURE.into());
         request
             .task
             .required_tools
@@ -536,8 +536,8 @@ mod tests {
         );
         assert!(plan
             .routing
-            .required_capabilities
-            .contains(DEFERRED_TOOL_SCHEMAS_CAPABILITY));
+            .required_features
+            .contains(DEFERRED_TOOL_SCHEMAS_FEATURE));
     }
 
     #[test]
@@ -565,7 +565,7 @@ mod tests {
             mandatory_input_tokens: 800,
             reducible_input_tokens: 500,
             output_reserve_tokens: 200,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
         let baseline = policy().plan(&request).unwrap();
 
@@ -600,7 +600,7 @@ mod tests {
             mandatory_input_tokens: 400,
             reducible_input_tokens: 400,
             output_reserve_tokens: 100,
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
         });
         request.remaining.fresh_input_tokens = 600;
         request.remaining.attempts = 1;
