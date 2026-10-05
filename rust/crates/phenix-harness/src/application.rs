@@ -911,16 +911,16 @@ impl ApplicationWorker {
                 self.routing_profile_authenticated(&profile, &provider_authentication);
             available.push(selection_info(&profile, authenticated, &provider_names)?);
         }
-        if !available.iter().any(|item| item.id == selected) {
-            if let ModelResponse::Profile {
+        if !available.iter().any(|item| item.id == selected)
+            && let ModelResponse::Profile {
                 profile: Some(profile),
             } = self.invoke_model_command(ModelCommand::GetProfile {
                 id: selected.clone(),
-            })? {
-                let authenticated =
-                    self.routing_profile_authenticated(&profile, &provider_authentication);
-                available.push(selection_info(&profile, authenticated, &provider_names)?);
-            }
+            })?
+        {
+            let authenticated =
+                self.routing_profile_authenticated(&profile, &provider_authentication);
+            available.push(selection_info(&profile, authenticated, &provider_names)?);
         }
         available.sort_by(|left, right| {
             selection_presentation_rank(&left.presentation)
@@ -2556,10 +2556,9 @@ impl ApplicationWorker {
                 .get(&provider)
                 .copied()
                 .unwrap_or(true)
+                && let Ok(provider_name) = self.refresh_provider_model_catalog(&provider)
             {
-                if let Ok(provider_name) = self.refresh_provider_model_catalog(&provider) {
-                    provider_names.insert(provider, provider_name);
-                }
+                provider_names.insert(provider, provider_name);
             }
         }
         provider_names
@@ -4137,18 +4136,18 @@ async fn serve_application_worker_with_execution_capacity(
         if input_closed && active.is_empty() && deferred.is_empty() {
             break;
         }
-        if active.is_empty() {
-            if let Some(invocation) = deferred.pop_front() {
-                dispatch_application_invocation(
-                    &mut worker,
-                    &service,
-                    &execution_sender,
-                    &weak_control_transport,
-                    &mut active,
-                    invocation,
-                );
-                continue;
-            }
+        if active.is_empty()
+            && let Some(invocation) = deferred.pop_front()
+        {
+            dispatch_application_invocation(
+                &mut worker,
+                &service,
+                &execution_sender,
+                &weak_control_transport,
+                &mut active,
+                invocation,
+            );
+            continue;
         }
         tokio::select! {
             invocation = receiver.recv(), if !input_closed => {
