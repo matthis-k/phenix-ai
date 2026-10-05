@@ -275,6 +275,54 @@ mod profile_store {
     }
 
     #[test]
+    fn packaged_profiles_do_not_adopt_foreign_identity() {
+        let path = temp_db("routing-packaged-foreign");
+        let profile = profile();
+        let mut kernel = kernel_with(&path);
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            },
+        )
+        .unwrap();
+
+        let error = invoke_routing(
+            &mut kernel,
+            ModelCommand::PreparePackagedProfiles {
+                profiles: vec![profile],
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("already owned outside packaged configuration"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_catalog_does_not_adopt_foreign_identity() {
+        let path = temp_db("routing-provider-catalog-foreign");
+        let provider = "provider.catalog";
+        let profile = RoutingProfile {
+            id: RoutingProfileId::parse("catalog.model-a").unwrap(),
+            default_target: target(provider, "model-a"),
+            fallback_targets: Vec::new(),
+            callable_targets: BTreeMap::new(),
+        };
+        let mut kernel = kernel_with(&path);
+        invoke_routing(
+            &mut kernel,
+            ModelCommand::RegisterProfile {
+                profile: profile.clone(),
+            },
+        )
+        .unwrap();
+
+        let error = apply_provider_catalog(&mut kernel, provider, vec![profile]).unwrap_err();
+        assert!(error.contains("already owned outside provider catalog"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn provider_catalog_refresh_retires_missing_models_without_deleting_durable_routes() {
         let path = temp_db("routing-provider-catalog");
         let provider = "provider.catalog";
