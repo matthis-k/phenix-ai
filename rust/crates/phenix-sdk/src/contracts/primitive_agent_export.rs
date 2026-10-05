@@ -662,21 +662,19 @@ pub fn select_continuation_export(
     }
     match &request.mode {
         ContinuationExportMode::Delta { base_packet_digest } => {
-            if acknowledged_base_digest == Some(base_packet_digest.as_str()) {
-                if let Some(delta) = delta {
-                    if delta.base_packet_digest == *base_packet_digest
-                        && delta.target_packet_digest == full_packet.packet_digest
-                        && delta.recipient_identity == request.recipient.identity
-                        && delta.resolver_binding == request.recipient.resolver_binding
-                        && delta.schema_version == CONTINUATION_PACKET_SCHEMA_VERSION
-                    {
-                        let required_bytes = encoded_len(&delta)?;
-                        if required_bytes <= request.budget.max_bytes
-                            && validate_token_budget(request, measurements.delta_tokens).is_none()
-                        {
-                            return Ok(ContinuationExportResult::Delta { delta });
-                        }
-                    }
+            if acknowledged_base_digest == Some(base_packet_digest.as_str())
+                && let Some(delta) = delta
+                && delta.base_packet_digest == *base_packet_digest
+                && delta.target_packet_digest == full_packet.packet_digest
+                && delta.recipient_identity == request.recipient.identity
+                && delta.resolver_binding == request.recipient.resolver_binding
+                && delta.schema_version == CONTINUATION_PACKET_SCHEMA_VERSION
+            {
+                let required_bytes = encoded_len(&delta)?;
+                if required_bytes <= request.budget.max_bytes
+                    && validate_token_budget(request, measurements.delta_tokens).is_none()
+                {
+                    return Ok(ContinuationExportResult::Delta { delta });
                 }
             }
         }
