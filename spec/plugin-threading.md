@@ -14,11 +14,11 @@ coverage:
 
 Define the kernel and `PluginHost` concurrency boundary without constraining a Plugin's private implementation.
 
-The canonical Plugin API is synchronous and message-oriented. Core does not require an async executor. A Plugin or Runtime Provider may use async internally, but executor-specific types do not cross the Plugin API.
+The canonical Plugin API is synchronous and message-oriented. Core does not require an async executor. A Plugin or Plugin Runtime Adapter may use async internally, but executor-specific types do not cross the Plugin API.
 
 ## Boundary rule
 
-Kernel, `PluginHost`, Interface metadata, cross-Plugin dispatch, and Runtime Provider contracts do not require:
+Kernel, `PluginHost`, Interface metadata, cross-Plugin dispatch, and Plugin Runtime Adapter contracts do not require:
 
 - `Future` or async `Stream` as ABI types;
 - Tokio, async-std, or another executor as a Core dependency;
@@ -27,7 +27,7 @@ Kernel, `PluginHost`, Interface metadata, cross-Plugin dispatch, and Runtime Pro
 
 `PluginInstance` lifecycle and invocation callbacks are synchronous. A caller may legitimately wait for short work to complete inline.
 
-Long blocking work is explicit. Plugin code that must wait without stalling unrelated kernel work uses the kernel-owned task scope exposed by `PluginHost` or an equivalent bounded worker owned by a Runtime Provider. Core does not silently move every Plugin invocation onto a hidden executor or worker pool.
+Long blocking work is explicit. Plugin code that must wait without stalling unrelated kernel work uses the kernel-owned task scope exposed by `PluginHost` or an equivalent bounded worker owned by a Plugin Runtime Adapter. Core does not silently move every Plugin invocation onto a hidden executor or worker pool.
 
 ## Rust authoring versus Plugin API
 
@@ -35,7 +35,7 @@ Rust authoring syntax and the Plugin API are separate concerns.
 
 A Rust Plugin may use ordinary synchronous methods. A Plugin implementation may also use `async fn` internally when its dependencies or private design justify it.
 
-If the authoring SDK accepts an async handler, generated or generic plumbing adapts it behind the synchronous Plugin API boundary. No `Future`, executor handle, or async stream becomes part of Interface metadata, cross-Plugin dispatch, Runtime Provider protocol, lifecycle semantics, or cancellation semantics.
+If the authoring SDK accepts an async handler, generated or generic plumbing adapts it behind the synchronous Plugin API boundary. No `Future`, executor handle, or async stream becomes part of Interface metadata, cross-Plugin dispatch, Plugin Runtime Adapter protocol, lifecycle semantics, or cancellation semantics.
 
 Private implementations may own an executor. For example, the Provider SDK may block its synchronous Plugin callback on a private Tokio runtime. That executor remains an implementation detail of that Plugin crate.
 
@@ -48,7 +48,7 @@ short kernel or Plugin operation
   -> synchronous call
 
 long or blocking Plugin work
-  -> PluginHost task scope or Runtime Provider worker
+  -> PluginHost task scope or Plugin Runtime Adapter worker
   -> dedicated thread or bounded blocking worker pool
   -> typed result or Interface message
 
@@ -91,11 +91,11 @@ A blocked worker must not retain broad kernel mutable-state locks or kernel pers
 
 Embedded native Plugin code remains trusted in-process code. Core cannot prevent arbitrary native code from blocking its own caller thread or taking private locks. Long blocking work that must not stall the caller must use the explicit task/worker boundary.
 
-## Runtime Providers
+## Plugin Runtime Adapters
 
-Runtime Providers expose the same synchronous Plugin API to Core and may use any private concurrency implementation behind it.
+Plugin Runtime Adapters expose the same synchronous Plugin API to Core and may use any private concurrency implementation behind it.
 
-A Runtime Provider may translate cancellation into a correlated guest request, process termination, socket closure, or another runtime-specific mechanism. Executor types remain private to the bridge.
+A Plugin Runtime Adapter may translate cancellation into a correlated guest request, process termination, socket closure, or another runtime-specific mechanism. Executor types remain private to the bridge.
 
 Process-backed runtime behavior, transport correlation, and isolation are owned by `spec/plugin-process-runtime-bridge.md`; those additive features are not prerequisites for the executor-independent Core contract.
 
@@ -103,7 +103,7 @@ Process-backed runtime behavior, transport correlation, and isolation are owned 
 
 Core and `PluginHost` use blocking-native standard synchronization and do not depend on Tokio or another async runtime.
 
-A Plugin, Provider implementation, adapter, or Runtime Provider may depend on an async executor when its private implementation requires one. That dependency must not escape into canonical Plugin contracts.
+A Plugin, Provider implementation, adapter, or Plugin Runtime Adapter may depend on an async executor when its private implementation requires one. That dependency must not escape into canonical Plugin contracts.
 
 ## Invariants
 
@@ -116,7 +116,7 @@ A Plugin, Provider implementation, adapter, or Runtime Provider may depend on an
 - Late results from cancelled live-call scopes are rejected.
 - Task authority and Graph Generation are pinned when work is spawned.
 - CPU work and blocking I/O use appropriate scheduling mechanisms.
-- Runtime Provider bridges expose no executor-specific types through the canonical Plugin API.
+- Plugin Runtime Adapter bridges expose no executor-specific types through the canonical Plugin API.
 
 ## Regression coverage
 
@@ -125,7 +125,7 @@ The repository verifies that:
 - task cancellation is explicit, authority-attenuated, and Graph Generation-scoped;
 - live-call cancellation is owner- and generation-scoped;
 - service dispatch rejects a result after its live-call token is cancelled;
-- Runtime Provider hosts receive the same explicit cancellation boundary;
+- Plugin Runtime Adapter hosts receive the same explicit cancellation boundary;
 - a blocked `PluginHost` task does not prevent an unrelated kernel transition;
 - Rust authoring may adapt private async handlers behind the synchronous Plugin API;
 - the Provider SDK may use a private Tokio runtime without exposing it through Plugin contracts.
