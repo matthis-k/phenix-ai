@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
     KernelConfig, LocalPersistence, ModelId, ModelInferenceRequest, ModelInferenceResponse,
     PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, ReferenceGenerationId, ResolvedGeneration,
+    PluginManifest, Project, ModelFeatureGenerationId, ResolvedGeneration,
     ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
@@ -479,7 +479,7 @@ fn setup(kernel: &mut Kernel) {
         &ModelCommand::PublishModelFeatures {
             features: EffectiveModelFeatures {
                 target: target(),
-                generation: ReferenceGenerationId::parse("generation-1").unwrap(),
+                generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                 context: ContextControl::ReplaceableTurns,
                 capacity: CapacityKnowledge::Known {
                     limits: ModelLimits {
