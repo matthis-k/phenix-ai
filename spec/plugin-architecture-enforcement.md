@@ -96,9 +96,9 @@ Source checks do not infer runtime correctness from file names or grep implement
 
 Rust regressions own semantic guarantees such as:
 
-- Runtime Providers use the open canonical runtime-provider interface;
+- Plugin Runtime Adapters use the open canonical plugin-runtime-adapter interface;
 - runtime dependency cycles are rejected;
-- guest and Runtime Provider authority remain separate;
+- guest and Plugin Runtime Adapter authority remain separate;
 - Plugin management commits one resolved Graph Generation atomically;
 - failed candidate preparation or start preserves the previous generation;
 - attribute-only static Plugins execute through generated canonical adapters.
