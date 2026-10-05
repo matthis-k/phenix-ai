@@ -206,15 +206,15 @@ impl PluginInstance for InvocationDefaultsPlugin {
 
 fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
     let policy = RecoveryClassifierPolicy::default();
-    if let Some(limit) = policy.max_prompt_bytes {
-        if request.prompt.len() > limit as usize {
-            return Ok(ContextRecoveryDecision::Sufficient);
-        }
+    if let Some(limit) = policy.max_prompt_bytes
+        && request.prompt.len() > limit as usize
+    {
+        return Ok(ContextRecoveryDecision::Sufficient);
     }
-    if let Some(limit) = policy.max_anchors {
-        if request.state.anchors.len() > limit as usize {
-            return Err(format!("recovery anchors exceed {limit} entries"));
-        }
+    if let Some(limit) = policy.max_anchors
+        && request.state.anchors.len() > limit as usize
+    {
+        return Err(format!("recovery anchors exceed {limit} entries"));
     }
     if matches!(
         recovery_cold_gate(&request.state),
@@ -283,10 +283,10 @@ fn resolve_routing_option(
             session: Some(OptionSubjectId::parse(session.as_str().to_owned())?),
             agent: None,
         };
-        if let Some(option) = resolve_option(context, session_context)? {
-            if option.source == OptionValueSource::Session {
-                return Ok(Some(option));
-            }
+        if let Some(option) = resolve_option(context, session_context)?
+            && option.source == OptionValueSource::Session
+        {
+            return Ok(Some(option));
         }
     }
     resolve_option(context, invocation_option_context(request)?)
