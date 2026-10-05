@@ -1,6 +1,6 @@
 use crate::{execution_factory, execution_manifest, step_attempt_service};
 use phenix_core::{
-    Authority, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    Authority, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId,
     PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{

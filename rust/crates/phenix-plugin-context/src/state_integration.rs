@@ -1,7 +1,7 @@
 use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
-    ArtifactRevision, Authority, Bytes, ModelFeatureGenerationId, ContextResourceId, Kernel,
-    KernelConfig, LocalPersistence, ModelId, PhenixValue, PluginId, PluginState, Project,
+    ArtifactRevision, Authority, Bytes, ContextResourceId, Kernel, KernelConfig, LocalPersistence,
+    ModelFeatureGenerationId, ModelId, PhenixValue, PluginId, PluginState, Project,
     ResolvedGeneration, ResolvedGenerationActivation, RuntimeTraceBuffer, RuntimeTraceEvent,
 };
 use phenix_plugin_execution::{

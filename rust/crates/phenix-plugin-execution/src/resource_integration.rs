@@ -1,6 +1,6 @@
 use crate::{execution_factory, execution_manifest, execution_resource_service};
 use phenix_core::{
-    ArtifactRevision, Authority, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence,
+    ArtifactRevision, Authority, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId,
     ModelId, PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{

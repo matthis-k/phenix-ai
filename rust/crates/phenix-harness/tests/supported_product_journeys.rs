@@ -1,8 +1,8 @@
 use phenix_core::{
-    Authority, ModelFeatureGenerationId, ComponentManifest, ContextResourceId, ContextResourceKind,
-    ContextScope, Key, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginExecution,
-    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
-    ServiceContribution, ServiceId, SessionId, ValueError,
+    Authority, ComponentManifest, ContextResourceId, ContextResourceKind, ContextScope, Key,
+    ModelFeatureGenerationId, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
+    RoutingProfileId, ServiceContribution, ServiceId, SessionId, ValueError,
 };
 use phenix_harness::{
     default_suite_authority,

@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, Bytes, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    Authority, Bytes, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId,
     PhenixValue, PluginId, Project, ResolvedGeneration, ResolvedGenerationActivation,
     RoutingProfileId,
 };
