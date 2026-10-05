@@ -265,7 +265,7 @@ impl DelegatedTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{ModelFeatureGenerationId, ModelId, PluginId};
     use phenix_sdk::{
         BudgetReservation, ContextDemand, DelegatedWorkResources, ModelTarget, ReasoningBudget,
         RetryBudget, RouteDecision, RoutingEstimate, RoutingRequirements, SkillProvisionBudget,
@@ -291,7 +291,7 @@ mod tests {
                         model: ModelId::parse("model.fixture").unwrap(),
                         options: BTreeMap::new(),
                     },
-                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                     policy_revision: "route-1".into(),
                     candidate_ordinal: 0,
                     estimate: None::<RoutingEstimate>,
@@ -327,7 +327,7 @@ mod tests {
             historical_estimator_snapshot: None,
             routing: RoutingRequirements {
                 context: ContextDemand::default(),
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
                 require_known_capacity: false,
             },
             context: ContextDemand::default(),
