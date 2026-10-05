@@ -37,6 +37,7 @@ pub(super) fn prepare(
     profiles: Vec<RoutingProfile>,
 ) -> Result<ModelResponse, String> {
     let (old_manifest, mut ownership) = manifest(context)?;
+    let initial_adoption = old_manifest.is_none();
     let old_index = read_raw(context, PROFILE_INDEX)?;
     let mut current = load_profiles(context)?
         .into_iter()
@@ -77,12 +78,19 @@ pub(super) fn prepare(
             ));
         }
     }
-    for id in desired.keys() {
-        if current.contains_key(id) && !ownership.owned.contains_key(id) {
-            return Err(format!(
-                "routing profile is already owned outside packaged configuration: {id}"
-            ));
+    for (id, profile) in &desired {
+        let Some(existing) = current.get(id) else {
+            continue;
+        };
+        if ownership.owned.contains_key(id) {
+            continue;
         }
+        if initial_adoption && existing == profile {
+            continue;
+        }
+        return Err(format!(
+            "routing profile is already owned outside packaged configuration: {id}"
+        ));
     }
     ownership.active = desired.keys().cloned().collect();
     for (id, profile) in desired {
