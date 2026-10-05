@@ -22,7 +22,7 @@ use phenix_sdk::{
     invocation_clock_service, invocation_defaults_service, invocation_service,
     step_attempt_service, AttemptOutcome, CapacityKnowledge, ContextCommand, ContextControl,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
-    ContextScope, DefaultInvocationCommand, DelegationResourcePolicy, EffectiveModelCapabilities,
+    ContextScope, DefaultInvocationCommand, DelegationResourcePolicy, EffectiveModelFeatures,
     ExecutionAuthority, ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse,
     InvocationClockInterface, InvocationClockResponse, InvocationCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationIntent, InvocationParams,
@@ -345,8 +345,8 @@ fn setup(kernel: &mut Kernel) {
     let _: ModelResponse = invoke(
         kernel,
         phenix_sdk::model_routing_service(),
-        &ModelCommand::PublishCapabilities {
-            capabilities: EffectiveModelCapabilities {
+        &ModelCommand::PublishModelFeatures {
+            features: EffectiveModelFeatures {
                 target: target(),
                 generation: ReferenceGenerationId::parse("generation-1").unwrap(),
                 context: ContextControl::ReplaceableTurns,
@@ -422,8 +422,8 @@ fn params(revision: &str) -> InvocationParams {
         },
         intent: InvocationIntent {
             output_reserve_tokens: 256,
-            required_context_capabilities: BTreeSet::new(),
-            required_capabilities: BTreeSet::new(),
+            required_context_features: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             required_tools: BTreeSet::new(),
             optional_tools: BTreeSet::new(),
             required_skills: BTreeSet::new(),
