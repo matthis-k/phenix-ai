@@ -1,9 +1,9 @@
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, Kernel,
-    KernelConfig, LocalPersistence, ModelId, ModelInferenceRequest, ModelInferenceResponse,
-    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, Project, ModelFeatureGenerationId, ResolvedGeneration,
-    ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole, ValueError,
+    KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId, ModelInferenceRequest,
+    ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginManifest, Project, ResolvedGeneration, ResolvedGenerationActivation,
+    ServiceContribution, ServiceId, ServiceRole, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
