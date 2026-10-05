@@ -1,6 +1,6 @@
 use crate::{context_component_manifest, context_factory, context_manifest};
 use phenix_core::{
-    ArtifactRevision, Authority, Bytes, CapabilityGenerationId, ContextResourceId, Kernel,
+    ArtifactRevision, Authority, Bytes, ModelFeatureGenerationId, ContextResourceId, Kernel,
     KernelConfig, LocalPersistence, ModelId, PhenixValue, PluginId, PluginState, Project,
     ResolvedGeneration, ResolvedGenerationActivation, RuntimeTraceBuffer, RuntimeTraceEvent,
 };
@@ -117,14 +117,14 @@ fn plan(input_tokens: u64) -> StepPlan {
         mandatory_input_tokens: input_tokens,
         reducible_input_tokens: 0,
         output_reserve_tokens: 128,
-        required_capabilities: BTreeSet::new(),
+        required_features: BTreeSet::new(),
     };
     StepPlan {
         policy_revision: "policy-1".into(),
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: false,
         },
         context,
@@ -436,7 +436,7 @@ fn completed_delegated_result_reenters_through_exact_context_and_ordinary_admiss
                     model: ModelId::parse("model.fixture").unwrap(),
                     options: BTreeMap::new(),
                 },
-                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "route-1".into(),
                 candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
