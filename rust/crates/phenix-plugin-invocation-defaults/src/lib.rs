@@ -368,8 +368,8 @@ fn invocation_params(
         },
         intent: InvocationIntent {
             output_reserve_tokens: 0,
-            required_context_capabilities: BTreeSet::new(),
-            required_capabilities: BTreeSet::new(),
+            required_context_features: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             required_tools: BTreeSet::new(),
             optional_tools,
             required_skills: BTreeSet::new(),
