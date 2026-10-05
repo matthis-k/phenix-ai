@@ -10,7 +10,8 @@ use phenix_sdk::{
     CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
     MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, memory_context_service, memory_service,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MEMORY_CONTEXT_MAX_PROMPT_BYTES,
+    memory_context_service, memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -298,8 +299,10 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
     if !(1..=20).contains(&request.limit) {
         return Err("memory.context recall limit must be between 1 and 20".into());
     }
-    if request.prompt.len() > 4096 {
-        return Err("memory.context prompt exceeds 4096 bytes".into());
+    if request.prompt.len() > MEMORY_CONTEXT_MAX_PROMPT_BYTES {
+        return Err(format!(
+            "memory.context prompt exceeds {MEMORY_CONTEXT_MAX_PROMPT_BYTES} bytes"
+        ));
     }
     if request.known.len() > 32 {
         return Err("memory.context known anchors exceed 32".into());
