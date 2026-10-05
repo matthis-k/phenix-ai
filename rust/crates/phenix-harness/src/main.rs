@@ -31,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Frontend protocol selected for this harness process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Mode {
     Acp,
