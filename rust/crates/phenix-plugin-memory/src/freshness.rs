@@ -77,13 +77,14 @@ pub(crate) fn observe_revision_change(
             dependency.revision = Some(revision.to_owned());
         }
     }
-    if let Some(reference) = state.canonical_reference.as_mut() {
-        if reference.service == *service && reference.resource == resource {
-            if reference.revision.as_deref() != Some(revision) {
-                affected = true;
-            }
-            reference.revision = Some(revision.to_owned());
+    if let Some(reference) = state.canonical_reference.as_mut()
+        && reference.service == *service
+        && reference.resource == resource
+    {
+        if reference.revision.as_deref() != Some(revision) {
+            affected = true;
         }
+        reference.revision = Some(revision.to_owned());
     }
 
     if affected && state.freshness == MemoryFreshness::Current {
