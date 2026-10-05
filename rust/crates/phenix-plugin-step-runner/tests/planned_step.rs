@@ -1,8 +1,8 @@
 use phenix_core::{
     ArtifactRevision, Authority, ComponentInterface, InvocationOutcome, Kernel, KernelConfig,
-    LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
-    ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, ModelFeatureGenerationId, ResolvedGeneration,
+    LocalPersistence, ModelFeatureGenerationId, ModelId, ModelInferenceFailure,
+    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, Project, ResolvedGeneration,
     ResolvedGenerationActivation, ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
