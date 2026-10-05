@@ -1,7 +1,6 @@
 //! Packaged profiles retain their IDs for durable sessions when retired.
 use super::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const MANIFEST: &str = "configuration/packaged-v1";
@@ -30,66 +29,11 @@ pub(super) fn ownership(
     Ok((manifest.owned.keys().cloned().collect(), manifest.active))
 }
 
-fn normalize(mut profile: RoutingProfile) -> RoutingProfile {
-    for target in std::iter::once(&mut profile.default_target)
-        .chain(profile.fallback_targets.iter_mut())
-        .chain(profile.callable_targets.values_mut())
-    {
-        if matches!(target.options.get("backend"), Some(phenix_core::PhenixValue::String(value)) if value == "phenix")
-        {
-            target.options.remove("backend");
-        }
-        if matches!(
-            target.options.get("inference"),
-            Some(phenix_core::PhenixValue::Unit)
-        ) {
-            target.options.remove("inference");
-        }
-    }
-    profile
-}
-
-fn generated(profile: &RoutingProfile) -> Result<bool, String> {
-    if !profile.fallback_targets.is_empty() || !profile.callable_targets.is_empty() {
-        return Ok(false);
-    }
-    // #579 may already have normalized values while preserving their old hashed IDs.
-    for backend in [false, true] {
-        for inference in [false, true] {
-            let mut target = profile.default_target.clone();
-            if backend {
-                target.options.insert(
-                    "backend".into(),
-                    phenix_core::PhenixValue::String("phenix".into()),
-                );
-            }
-            if inference && !target.options.contains_key("inference") {
-                target
-                    .options
-                    .insert("inference".into(), phenix_core::PhenixValue::Unit);
-            }
-            let hash =
-                Sha256::digest(serde_json::to_vec(&target).map_err(|error| error.to_string())?);
-            let suffix = hash[..8]
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
-            if profile.id.as_str()
-                == format!("model.{}.{}.{suffix}", target.provider_plugin, target.model)
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
 pub(super) fn prepare(
     context: &ModelContext<'_, '_>,
     profiles: Vec<RoutingProfile>,
 ) -> Result<ModelResponse, String> {
     let (old_manifest, mut ownership) = manifest(context)?;
-    let initial_adoption = old_manifest.is_none();
     let old_index = read_raw(context, PROFILE_INDEX)?;
     let mut current = load_profiles(context)?
         .into_iter()
@@ -124,15 +68,6 @@ pub(super) fn prepare(
             expected: old_index,
         },
     ];
-    // Recognize old content-addressed records by recomputing the full ID, never by prefix.
-    for profile in current.values() {
-        if initial_adoption && generated(profile)? {
-            ownership
-                .owned
-                .entry(profile.id.clone())
-                .or_insert_with(|| profile.clone());
-        }
-    }
     for (id, expected) in &ownership.owned {
         if current.get(id) != Some(expected) {
             return Err(format!(
@@ -142,18 +77,8 @@ pub(super) fn prepare(
     }
     for (id, profile) in &desired {
         if let Some(existing) = current.get(id) {
-            if !ownership.owned.contains_key(id) && normalize(existing.clone()) != *profile {
+            if !ownership.owned.contains_key(id) && existing != profile {
                 return Err(format!("routing profile identity is immutable: {id}"));
-            }
-        }
-    }
-    // Normalize legacy metadata in the same transaction as desired-state application.
-    for (id, existing) in &mut current {
-        let normalized = normalize(existing.clone());
-        if normalized != *existing {
-            *existing = normalized;
-            if ownership.owned.contains_key(id) {
-                ownership.owned.insert(id.clone(), existing.clone());
             }
         }
     }
