@@ -292,8 +292,8 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
     if request.scopes.is_empty() {
         return Err("memory.context recall requires at least one scope".into());
     }
-    if !(1..=4).contains(&request.needs.len()) {
-        return Err("memory.context recall requires between 1 and 4 needs".into());
+    if request.needs.is_empty() {
+        return Err("memory.context recall requires at least one need".into());
     }
     if !(1..=20).contains(&request.limit) {
         return Err("memory.context recall limit must be between 1 and 20".into());
@@ -304,8 +304,8 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
     let mut distinct = BTreeSet::new();
     for need in &request.needs {
         let query = need_query(need);
-        if query.trim().is_empty() || query.len() > 512 {
-            return Err("memory.context need query must be 1..=512 bytes".into());
+        if query.trim().is_empty() {
+            return Err("memory.context need query must not be empty".into());
         }
         if !distinct.insert(need.clone()) {
             return Err("memory.context needs must be distinct".into());
@@ -319,15 +319,17 @@ mod recall_validation_tests {
     use super::*;
 
     #[test]
-    fn long_prompts_are_not_rejected_without_an_explicit_policy_limit() {
+    fn recall_does_not_reimpose_classifier_policy_limits() {
         let request = MemoryContextRecallRequest {
             request_id: "request-1".into(),
             scopes: vec![phenix_sdk::MemoryScope::Global],
             prompt: "x".repeat(8 * 1024),
             known: Vec::new(),
-            needs: vec![ContextNeed::Task {
-                query: "task".into(),
-            }],
+            needs: (0..8)
+                .map(|index| ContextNeed::Task {
+                    query: format!("{index}:{}", "q".repeat(1024)),
+                })
+                .collect(),
             at: 1,
             limit: 8,
         };
