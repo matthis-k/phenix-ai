@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, Bytes, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
+    Authority, Bytes, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence, ModelId,
     PhenixValue, PluginId, Project, ResolvedGeneration, ResolvedGenerationActivation,
     RoutingProfileId,
 };
@@ -17,7 +17,7 @@ use phenix_sdk::{
     BudgetReservationPurpose, BudgetReservationRequest, CachePlacement, CapacityKnowledge,
     ContextAdmissionRequest, ContextCandidate, ContextCommand, ContextControl, ContextDemand,
     ContextProjectionForm, ContextResponse, ContextRetention, ContextSource,
-    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
+    DelegationResourcePolicy, EffectiveModelFeatures, ExecutionAuthority, ExecutionCommand,
     ExecutionResourceCommand, ExecutionResourceResponse, ModelCommand, ModelLimits, ModelResponse,
     ModelTarget, ProjectionRevision, ReasoningBudget, RetryBudget, RootBudgetLedger,
     RootBudgetLimits, RouteEligibility, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
@@ -142,14 +142,14 @@ fn plan() -> StepPlan {
         mandatory_input_tokens: 500,
         reducible_input_tokens: 250,
         output_reserve_tokens: 128,
-        required_capabilities: BTreeSet::new(),
+        required_features: BTreeSet::new(),
     };
     StepPlan {
         policy_revision: "policy-1".into(),
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: true,
         },
         context,
@@ -224,10 +224,10 @@ fn target(provider: &str, model: &str) -> ModelTarget {
     }
 }
 
-fn capabilities(target: ModelTarget, context_window_tokens: u64) -> EffectiveModelCapabilities {
-    EffectiveModelCapabilities {
+fn features(target: ModelTarget, context_window_tokens: u64) -> EffectiveModelFeatures {
+    EffectiveModelFeatures {
         target,
-        generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+        generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
         context: ContextControl::ReplaceableTurns,
         capacity: CapacityKnowledge::Known {
             limits: ModelLimits {
@@ -302,15 +302,15 @@ fn configure_routing(kernel: &mut Kernel, plan: &StepPlan) -> phenix_sdk::RouteD
     .unwrap();
     invoke_models(
         kernel,
-        ModelCommand::PublishCapabilities {
-            capabilities: capabilities(small.clone(), 700),
+        ModelCommand::PublishModelFeatures {
+            features: features(small.clone(), 700),
         },
     )
     .unwrap();
     invoke_models(
         kernel,
-        ModelCommand::PublishCapabilities {
-            capabilities: capabilities(large.clone(), 4_096),
+        ModelCommand::PublishModelFeatures {
+            features: features(large.clone(), 4_096),
         },
     )
     .unwrap();
