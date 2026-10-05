@@ -585,9 +585,9 @@ mod tests {
         .unwrap();
 
         let error = apply_configuration(&mut harness, sample_runtime()).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("routing profile is already owned outside packaged configuration: router.test"));
+        assert!(error.to_string().contains(
+            "routing profile is already owned outside packaged configuration: router.test"
+        ));
         assert!(matches!(
             invoke_configuration(
                 &mut harness,
