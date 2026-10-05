@@ -257,7 +257,11 @@ mod profile_store {
         for target in legacy["fallback_targets"].as_array_mut().unwrap() {
             set_legacy_options(target);
         }
-        for target in legacy["callable_targets"].as_object_mut().unwrap().values_mut() {
+        for target in legacy["callable_targets"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
             set_legacy_options(target);
         }
 
@@ -318,10 +322,7 @@ mod profile_store {
             },
         )
         .unwrap();
-        assert!(matches!(
-            prepared,
-            ModelResponse::PreparedProfiles { .. }
-        ));
+        assert!(matches!(prepared, ModelResponse::PreparedProfiles { .. }));
         let _ = fs::remove_file(path);
     }
 
@@ -380,10 +381,7 @@ mod profile_store {
             },
         )
         .unwrap();
-        assert!(matches!(
-            response,
-            ModelResponse::PreparedProfiles { .. }
-        ));
+        assert!(matches!(response, ModelResponse::PreparedProfiles { .. }));
         let _ = fs::remove_file(path);
     }
 
