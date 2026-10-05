@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, CapabilityGenerationId, ComponentManifest, ContextResourceId, ContextResourceKind,
+    Authority, ModelFeatureGenerationId, ComponentManifest, ContextResourceId, ContextResourceKind,
     ContextScope, Key, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
     ServiceContribution, ServiceId, SessionId, ValueError,
@@ -21,7 +21,7 @@ use phenix_plugin_catalog::{
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextInjectionLifetime, ContextInjectionRequester,
-    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionResourceCommand,
+    DelegationResourcePolicy, EffectiveModelFeatures, ExecutionResourceCommand,
     ExecutionResourceResponse, InvocationCommand, InvocationIntent, InvocationParams,
     InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
     RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
@@ -481,10 +481,10 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
     let _: ModelResponse = invoke_structural(
         &mut harness,
         "phenix.models.routing@1",
-        &ModelCommand::PublishCapabilities {
-            capabilities: EffectiveModelCapabilities {
+        &ModelCommand::PublishModelFeatures {
+            features: EffectiveModelFeatures {
                 target: profile.default_target.clone(),
-                generation: CapabilityGenerationId::parse("fixture-generation").unwrap(),
+                generation: ModelFeatureGenerationId::parse("fixture-generation").unwrap(),
                 context: ContextControl::ReplaceableTurns,
                 capacity: CapacityKnowledge::Known {
                     limits: ModelLimits {
@@ -552,8 +552,8 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                 },
                 intent: InvocationIntent {
                     output_reserve_tokens: 256,
-                    required_context_capabilities: BTreeSet::new(),
-                    required_capabilities: BTreeSet::new(),
+                    required_context_features: BTreeSet::new(),
+                    required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
                     required_skills: BTreeSet::new(),
@@ -654,10 +654,10 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     let _: ModelResponse = invoke_structural(
         &mut harness,
         "phenix.models.routing@1",
-        &ModelCommand::PublishCapabilities {
-            capabilities: EffectiveModelCapabilities {
+        &ModelCommand::PublishModelFeatures {
+            features: EffectiveModelFeatures {
                 target,
-                generation: CapabilityGenerationId::parse("introspection-generation").unwrap(),
+                generation: ModelFeatureGenerationId::parse("introspection-generation").unwrap(),
                 context: ContextControl::ReplaceableTurns,
                 capacity: CapacityKnowledge::Known {
                     limits: ModelLimits {
@@ -763,8 +763,8 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                 },
                 intent: InvocationIntent {
                     output_reserve_tokens: 1_024,
-                    required_context_capabilities: BTreeSet::new(),
-                    required_capabilities: BTreeSet::new(),
+                    required_context_features: BTreeSet::new(),
+                    required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::from([tool_id]),
                     required_skills: BTreeSet::new(),
