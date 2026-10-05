@@ -1146,10 +1146,9 @@ fn pump(lua: &Lua, core: &Rc<FacadeCore>, budget: usize) -> LuaResult<Table> {
         .lock()
         .ok()
         .and_then(|error| error.clone())
+        && core.state.borrow().phase != FacadePhase::Failed
     {
-        if core.state.borrow().phase != FacadePhase::Failed {
-            fail_core(core, error);
-        }
+        fail_core(core, error);
     }
 
     for _ in 0..budget {
@@ -1540,10 +1539,10 @@ fn latest_execution_state(
         if execution_id.is_none() {
             execution_id = Some(candidate.clone());
         }
-        if execution_id.as_deref() == Some(candidate.as_str()) {
-            if let ExecutionChange::State { state } = update {
-                return (execution_id, Some(state));
-            }
+        if execution_id.as_deref() == Some(candidate.as_str())
+            && let ExecutionChange::State { state } = update
+        {
+            return (execution_id, Some(state));
         }
     }
     (execution_id, None)
