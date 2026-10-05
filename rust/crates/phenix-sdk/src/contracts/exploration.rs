@@ -308,8 +308,8 @@ pub fn prepare_exploration_delegation(
     let max_result_bytes = (*max_result_bytes).min(plan.delegation.max_result_bytes);
     if !input
         .delegated_authority
-        .capabilities
-        .is_subset(&input.parent_authority.capabilities)
+        .permissions
+        .is_subset(&input.parent_authority.permissions)
     {
         return Err(ExplorationPreparationError::AuthorityExpanded);
     }
