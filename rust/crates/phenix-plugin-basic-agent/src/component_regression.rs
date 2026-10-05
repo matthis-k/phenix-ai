@@ -1,8 +1,8 @@
 use crate::{
+    BasicContextInterface, BasicSkillsInterface, BasicToolsInterface,
     basic_context_component_manifest, basic_context_manifest, basic_model_component_manifest,
     basic_model_factory, basic_model_manifest, basic_skills_component_manifest,
     basic_skills_manifest, basic_tools_component_manifest, basic_tools_manifest,
-    BasicContextInterface, BasicSkillsInterface, BasicToolsInterface,
 };
 use phenix_core::{
     Authority, ComponentExport, ComponentGraphError, ComponentId, ComponentImport,
@@ -12,7 +12,7 @@ use phenix_core::{
     ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
-    model_inference_service, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
 };
 use std::collections::BTreeMap;
 

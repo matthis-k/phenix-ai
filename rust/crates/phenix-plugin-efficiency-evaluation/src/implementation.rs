@@ -4,12 +4,12 @@ use phenix_core::{
     PluginInstance, PluginManifest, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    derive_efficiency_task_record_from_attempts, efficiency_evaluation_service,
     EfficiencyDurableTaskEvidence, EfficiencyEvaluationCommand, EfficiencyEvaluationInterface,
     EfficiencyEvaluationResponse, EfficiencyOutcomeEvidenceCommand,
     EfficiencyOutcomeEvidenceInterface, EfficiencyOutcomeEvidenceRequest,
     EfficiencyOutcomeEvidenceResponse, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptResponse,
+    StepAttemptResponse, derive_efficiency_task_record_from_attempts,
+    efficiency_evaluation_service,
 };
 
 pub const EFFICIENCY_EVALUATION_PLUGIN: &str = "phenix.efficiency-evaluation";
@@ -29,7 +29,7 @@ pub fn efficiency_evaluation_manifest() -> PluginManifest {
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: vec![
-            PluginId::parse("phenix.execution").expect("static execution plugin id is valid")
+            PluginId::parse("phenix.execution").expect("static execution plugin id is valid"),
         ],
         services: vec![ServiceContribution {
             role: phenix_core::ServiceRole::Terminal,

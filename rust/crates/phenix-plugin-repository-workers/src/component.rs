@@ -1,4 +1,4 @@
-use crate::{repository_worker_manifest, REPOSITORY_WORK_QUEUE_SERVICE};
+use crate::{REPOSITORY_WORK_QUEUE_SERVICE, repository_worker_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
     PluginId,

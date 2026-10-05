@@ -3,8 +3,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeSet;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, spanned::Spanned, Attribute, Expr, ExprLit,
-    Fields, ImplItem, ItemImpl, ItemStruct, Lit, LitStr, Meta, Token, Type,
+    Attribute, Expr, ExprLit, Fields, ImplItem, ItemImpl, ItemStruct, Lit, LitStr, Meta, Token,
+    Type, parse::Parser, parse_quote, punctuated::Punctuated, spanned::Spanned,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {

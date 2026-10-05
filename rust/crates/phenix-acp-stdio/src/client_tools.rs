@@ -1,10 +1,10 @@
 use crate::transport::SdkApplicationService;
 use phenix_application_interface::{
+    InvokeCallable, Operation,
     types::{
         ApplicationError, CallableInvokeInput, CallableResult, ExecutionChange, PermissionRequest,
         PermissionResponse,
     },
-    InvokeCallable, Operation,
 };
 use phenix_core::{ModelToolCall, ModelToolDescriptor, SessionId, ValueCodec};
 use std::collections::BTreeMap;
@@ -131,8 +131,8 @@ mod tests {
     use super::*;
     use crate::transport::{ClientCallableCallbacks, ClientReferenceIdentity};
     use phenix_application_interface::{
-        types::{CallableInvocationResult, ClientToolAddInput, ClientToolDefinition},
         AddClientTool,
+        types::{CallableInvocationResult, ClientToolAddInput, ClientToolDefinition},
     };
     use phenix_core::{
         CallableId, CallableRef, ClientConnectionId, ContractId, ObservableStore, PhenixValue,

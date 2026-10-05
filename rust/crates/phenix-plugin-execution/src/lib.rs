@@ -19,22 +19,22 @@ mod tool_schedule;
 
 pub use component::*;
 pub use configuration::{
-    execution_configuration_service, AgentDefinition, CallablePolicy,
+    AgentDefinition, CallablePolicy, EXECUTION_CONFIGURATION_SERVICE,
     ExecutionConfigurationCommand, ExecutionConfigurationResponse, OrchestrationDefinition,
-    OrchestrationNode, EXECUTION_CONFIGURATION_SERVICE,
+    OrchestrationNode, execution_configuration_service,
 };
 pub use phenix_sdk::{
-    execution_inspection_service, execution_resource_service, step_attempt_service,
-    step_transaction_service, ExecutionInspectionCommand, ExecutionInspectionInterface,
-    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceInterface,
-    ExecutionResourceResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
+    EXECUTION_INSPECTION_SERVICE, EXECUTION_RESOURCE_SERVICE, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
+    ExecutionResourceInterface, ExecutionResourceResponse, STEP_ATTEMPT_SERVICE,
+    STEP_TRANSACTION_SERVICE, StepAttemptCommand, StepAttemptInterface, StepAttemptPhase,
     StepAttemptRecord, StepAttemptResponse, StepTransactionCommand, StepTransactionInterface,
-    StepTransactionResponse, EXECUTION_INSPECTION_SERVICE, EXECUTION_RESOURCE_SERVICE,
-    STEP_ATTEMPT_SERVICE, STEP_TRANSACTION_SERVICE,
+    StepTransactionResponse, execution_inspection_service, execution_resource_service,
+    step_attempt_service, step_transaction_service,
 };
 pub use review::{
-    execution_review_service, ExecutionReviewCommand, ExecutionReviewInterface,
-    ExecutionReviewResponse, PreparedReviewFile, EXECUTION_REVIEW_SERVICE,
+    EXECUTION_REVIEW_SERVICE, ExecutionReviewCommand, ExecutionReviewInterface,
+    ExecutionReviewResponse, PreparedReviewFile, execution_review_service,
 };
 pub use tool_schedule::{ScheduledToolBatch, ToolCallPlan, ToolConcurrency, ToolScheduler};
 

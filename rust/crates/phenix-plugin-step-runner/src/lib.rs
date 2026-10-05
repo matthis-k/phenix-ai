@@ -9,13 +9,12 @@ use phenix_core::{
     ServiceId, ServiceRole,
 };
 use phenix_sdk::{
-    context_service, default_invocation_service, helper_invocation_service, invocation_service,
-    step_runner_service, ContextAnchor, ContextCommand, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextInterface, ContextInvocationPreparation,
-    ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
-    ContextRecoveryRequest, ContextRecoveryResponse, ContextResourceKind, ContextResponse,
-    ContextScope, DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand,
-    ExecutionInterface, ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
+    ContextAnchor, ContextCommand, ContextInjectionLifetime, ContextInjectionRequester,
+    ContextInterface, ContextInvocationPreparation, ContextRecoveryCommand,
+    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
+    ContextRecoveryResponse, ContextResourceKind, ContextResponse, ContextScope,
+    DefaultInvocationCommand, DefaultInvocationInterface, ExecutionCommand, ExecutionInterface,
+    ExecutionResponse, HelperInvocationCommand, HelperInvocationInterface,
     HelperInvocationResponse, InvocationClockCommand, InvocationClockInterface,
     InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
@@ -23,11 +22,12 @@ use phenix_sdk::{
     MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
     MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
     StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
-    StepRunnerResponse, UsageAttemptKind,
+    StepRunnerResponse, UsageAttemptKind, context_service, default_invocation_service,
+    helper_invocation_service, invocation_service, step_runner_service,
 };
 use std::collections::BTreeSet;
 
-pub use runner::{step_runner_component_id, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN};
+pub use runner::{STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN, step_runner_component_id};
 
 pub const HELPER_INVOCATION_COMPONENT: &str = "phenix.helper-invocation";
 
@@ -611,10 +611,12 @@ mod tests {
             helper_invocation_service(),
             step_runner_service(),
         ] {
-            assert!(manifest
-                .services
-                .iter()
-                .any(|contribution| contribution.service == service));
+            assert!(
+                manifest
+                    .services
+                    .iter()
+                    .any(|contribution| contribution.service == service)
+            );
         }
 
         let central = step_runner_component_manifest(authority.clone());
@@ -623,15 +625,19 @@ mod tests {
             DefaultInvocationInterface::interface_id(),
             phenix_sdk::StepRunnerInterface::interface_id(),
         ] {
-            assert!(central
+            assert!(
+                central
+                    .exports
+                    .iter()
+                    .any(|export| export.interface == interface)
+            );
+        }
+        assert!(
+            !central
                 .exports
                 .iter()
-                .any(|export| export.interface == interface));
-        }
-        assert!(!central
-            .exports
-            .iter()
-            .any(|export| export.interface == HelperInvocationInterface::interface_id()));
+                .any(|export| export.interface == HelperInvocationInterface::interface_id())
+        );
         assert!(central.imports.iter().any(|import| {
             import.interface == ContextRecoveryInterface::interface_id() && !import.required
         }));
@@ -646,10 +652,12 @@ mod tests {
             helper.exports[0].interface,
             HelperInvocationInterface::interface_id()
         );
-        assert!(!helper
-            .imports
-            .iter()
-            .any(|import| import.interface == ContextInterface::interface_id()));
+        assert!(
+            !helper
+                .imports
+                .iter()
+                .any(|import| import.interface == ContextInterface::interface_id())
+        );
         assert!(!helper.imports.iter().any(|import| {
             import.interface == MemoryContextInterface::interface_id()
                 || import.interface == MemoryInterface::interface_id()

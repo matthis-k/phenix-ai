@@ -15,16 +15,18 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
 fn model_options() -> Vec<SessionConfigOption> {
-    vec![SessionConfigOption::select(
-        "model",
-        "Model",
-        "fixture-model",
-        vec![SessionConfigSelectOption::new(
+    vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
             "fixture-model",
-            "Fixture Model",
-        )],
-    )
-    .category(SessionConfigOptionCategory::Model)]
+            vec![SessionConfigSelectOption::new(
+                "fixture-model",
+                "Fixture Model",
+            )],
+        )
+        .category(SessionConfigOptionCategory::Model),
+    ]
 }
 
 async fn run() -> Result<(), agent_client_protocol::Error> {

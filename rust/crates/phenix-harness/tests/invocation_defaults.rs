@@ -1,11 +1,11 @@
 use phenix_core::{Bytes, CallableId, PhenixValue, Project, SessionId};
 use phenix_harness::{
-    default_suite_authority, PhenixRuntime, PhenixRuntimeBuilder, INVOCATION_DEFAULTS_PLUGIN,
+    INVOCATION_DEFAULTS_PLUGIN, PhenixRuntime, PhenixRuntimeBuilder, default_suite_authority,
 };
 use phenix_sdk::{
-    invocation_defaults_service, options_service, InvocationDefaultsCommand,
-    InvocationDefaultsResponse, InvocationRequest, OptionCommand, OptionKey, OptionResponse,
-    OptionScope, OptionSubjectId, OptionValue,
+    InvocationDefaultsCommand, InvocationDefaultsResponse, InvocationRequest, OptionCommand,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue,
+    invocation_defaults_service, options_service,
 };
 use std::collections::BTreeSet;
 
@@ -18,11 +18,13 @@ fn extracted_defaults_work_without_options_plugin() {
         .unwrap();
     harness.activate().unwrap();
 
-    assert!(!harness
-        .kernel()
-        .config()
-        .manifests()
-        .any(|manifest| manifest.id.as_str() == "phenix.options"));
+    assert!(
+        !harness
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.options")
+    );
 
     let command = InvocationDefaultsCommand::Resolve {
         request: InvocationRequest {

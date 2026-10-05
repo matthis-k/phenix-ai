@@ -1,14 +1,13 @@
 use crate::component_attr::{
-    export_descriptor, export_error_type, export_signature_types, is_call_context_parameter,
-    parse_export, value_response_type, ExportContribution,
+    ExportContribution, export_descriptor, export_error_type, export_signature_types,
+    is_call_context_parameter, parse_export, value_response_type,
 };
 use crate::interface_attr::validate_interface_id;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, Attribute, Expr, ExprLit, Fields, FnArg,
-    Ident, ImplItem, Item, ItemImpl, ItemMod, ItemStruct, Lit, LitStr, Meta, ReturnType, Token,
-    Type,
+    Attribute, Expr, ExprLit, Fields, FnArg, Ident, ImplItem, Item, ItemImpl, ItemMod, ItemStruct,
+    Lit, LitStr, Meta, ReturnType, Token, Type, parse::Parser, parse_quote, punctuated::Punctuated,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
@@ -849,13 +848,13 @@ fn validate_stateless_value_signature(
     }
 
     let mut inputs = signature.inputs.iter();
-    if let Some(context) = inputs.next() {
-        if !is_stateless_read_context_parameter(context) {
-            return Err(syn::Error::new_spanned(
-                context,
-                "public stateless values accept only an optional &ReadContext",
-            ));
-        }
+    if let Some(context) = inputs.next()
+        && !is_stateless_read_context_parameter(context)
+    {
+        return Err(syn::Error::new_spanned(
+            context,
+            "public stateless values accept only an optional &ReadContext",
+        ));
     }
     if inputs.next().is_some() {
         return Err(syn::Error::new_spanned(
@@ -1424,19 +1423,19 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
             "plugin field attribute must begin with a field role",
         ));
     };
-    if let Meta::List(event) = &first {
-        if event.path.is_ident("event") {
-            if let Some(argument) = arguments.next() {
-                return Err(syn::Error::new_spanned(
-                    argument,
-                    "event fields do not accept additional metadata",
-                ));
-            }
-            let event = syn::parse2::<LitStr>(event.tokens.clone())?;
-            validate_static_id(&event.value(), "event")
-                .map_err(|error| syn::Error::new_spanned(&event, error))?;
-            return Ok(FieldRole::Event { event });
+    if let Meta::List(event) = &first
+        && event.path.is_ident("event")
+    {
+        if let Some(argument) = arguments.next() {
+            return Err(syn::Error::new_spanned(
+                argument,
+                "event fields do not accept additional metadata",
+            ));
         }
+        let event = syn::parse2::<LitStr>(event.tokens.clone())?;
+        validate_static_id(&event.value(), "event")
+            .map_err(|error| syn::Error::new_spanned(&event, error))?;
+        return Ok(FieldRole::Event { event });
     }
     let Meta::Path(role) = first else {
         return Err(syn::Error::new_spanned(
@@ -1508,37 +1507,36 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
     let mut id = None;
     let mut features = Vec::new();
     for argument in arguments {
-        if kind == "resource" {
-            if let Meta::List(feature_list) = &argument {
-                if feature_list.path.is_ident("features") {
-                    if !features.is_empty() {
-                        return Err(syn::Error::new_spanned(
-                            argument,
-                            "duplicate resource features",
-                        ));
-                    }
-                    let values = Punctuated::<Ident, Token![,]>::parse_terminated
-                        .parse2(feature_list.tokens.clone())?;
-                    for feature in values {
-                        if !matches!(
-                            feature.to_string().as_str(),
-                            "Transactions"
-                                | "UniqueKeys"
-                                | "ForeignKeys"
-                                | "OrderedAppend"
-                                | "IndexedRange"
-                                | "Migrations"
-                        ) {
-                            return Err(syn::Error::new_spanned(
-                                feature,
-                                "unsupported resource backend feature",
-                            ));
-                        }
-                        features.push(feature);
-                    }
-                    continue;
-                }
+        if kind == "resource"
+            && let Meta::List(feature_list) = &argument
+            && feature_list.path.is_ident("features")
+        {
+            if !features.is_empty() {
+                return Err(syn::Error::new_spanned(
+                    argument,
+                    "duplicate resource features",
+                ));
             }
+            let values = Punctuated::<Ident, Token![,]>::parse_terminated
+                .parse2(feature_list.tokens.clone())?;
+            for feature in values {
+                if !matches!(
+                    feature.to_string().as_str(),
+                    "Transactions"
+                        | "UniqueKeys"
+                        | "ForeignKeys"
+                        | "OrderedAppend"
+                        | "IndexedRange"
+                        | "Migrations"
+                ) {
+                    return Err(syn::Error::new_spanned(
+                        feature,
+                        "unsupported resource backend feature",
+                    ));
+                }
+                features.push(feature);
+            }
+            continue;
         }
 
         let Meta::NameValue(argument) = argument else {
@@ -1674,14 +1672,18 @@ mod tests {
 
     #[test]
     fn plugin_version_rejects_zero_and_duplicates() {
-        assert!(plugin_version(quote!(version = 0))
-            .unwrap_err()
-            .to_string()
-            .contains("positive integer"));
-        assert!(plugin_version(quote!(version = 1, version = 2))
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate plugin version"));
+        assert!(
+            plugin_version(quote!(version = 0))
+                .unwrap_err()
+                .to_string()
+                .contains("positive integer")
+        );
+        assert!(
+            plugin_version(quote!(version = 1, version = 2))
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate plugin version")
+        );
     }
 
     #[test]
@@ -1720,9 +1722,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("require exactly one payload type"));
+        assert!(
+            error
+                .to_string()
+                .contains("require exactly one payload type")
+        );
     }
 
     #[test]
@@ -1774,9 +1778,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("accept only an optional &ReadContext"));
+        assert!(
+            error
+                .to_string()
+                .contains("accept only an optional &ReadContext")
+        );
     }
 
     #[test]
@@ -1841,8 +1847,10 @@ mod tests {
             "pub type Plugin = super :: super :: super :: __PhenixDependency_Plugin_sessions"
         ));
         assert!(output.contains("pub mod models"));
-        assert!(output
-            .contains("type __PhenixDependency_Plugin_models = phenix_plugin_models :: Plugin"));
+        assert!(
+            output
+                .contains("type __PhenixDependency_Plugin_models = phenix_plugin_models :: Plugin")
+        );
         assert!(output.contains(
             "pub type Plugin = super :: super :: super :: __PhenixDependency_Plugin_models"
         ));
@@ -1933,9 +1941,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("duplicate component id `phenix.components.api`"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate component id `phenix.components.api`")
+        );
     }
 
     #[test]
@@ -1953,9 +1963,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("duplicate resource id `phenix.resources.state`"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate resource id `phenix.resources.state`")
+        );
     }
 
     #[test]
@@ -2006,9 +2018,11 @@ mod tests {
             Ok(_) => panic!("unknown backend feature must be rejected"),
             Err(error) => error,
         };
-        assert!(error
-            .to_string()
-            .contains("unsupported resource backend feature"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported resource backend feature")
+        );
     }
 
     #[test]
@@ -2049,9 +2063,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("resource-only plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("resource-only plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2072,9 +2088,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("resource-only plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("resource-only plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2108,9 +2126,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("stateless embedded-handler form"));
+        assert!(
+            error
+                .to_string()
+                .contains("stateless embedded-handler form")
+        );
     }
 
     #[test]
@@ -2132,9 +2152,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2156,9 +2178,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2193,8 +2217,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot use the stateless embedded-handler form"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot use the stateless embedded-handler form")
+        );
     }
 }

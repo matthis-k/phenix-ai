@@ -128,23 +128,29 @@ mod tests {
             &execution_component_manifest(authority()).id
         );
         assert_eq!(resource_handle.effective_authority(), &authority());
-        assert!(graph
-            .import_handle(
-                &context_component_id(),
-                &ContextCompactionInterface::interface_id()
-            )
-            .unwrap()
-            .is_none());
-        assert!(graph
-            .import_handle(
-                &context_component_id(),
-                &ContextExpansionInterface::interface_id()
-            )
-            .unwrap()
-            .is_none());
-        assert!(graph
-            .import_handle(&context_component_id(), &LanguageInterface::interface_id())
-            .unwrap()
-            .is_none());
+        assert!(
+            graph
+                .import_handle(
+                    &context_component_id(),
+                    &ContextCompactionInterface::interface_id()
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            graph
+                .import_handle(
+                    &context_component_id(),
+                    &ContextExpansionInterface::interface_id()
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            graph
+                .import_handle(&context_component_id(), &LanguageInterface::interface_id())
+                .unwrap()
+                .is_none()
+        );
     }
 }

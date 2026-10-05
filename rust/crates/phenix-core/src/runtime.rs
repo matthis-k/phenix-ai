@@ -1,5 +1,4 @@
 use crate::{
-    plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
     ArtifactRevision, Authority, CallCancellationToken, ComponentGraphError, ComponentId,
     ComponentInterface, ComponentInvocationError, DurableSchema, DurableSchemaRegistration,
     EventAdmissionReceipt, EventBus, EventEnvelope, EventError, EventHandler, EventSubscription,
@@ -11,13 +10,14 @@ use crate::{
     ResolvedProviderPlan, ResolvedServiceChain, ResolvedTerminalPlan, ResourceNamespace,
     SchemaMigration, ServiceId, ServiceRole, SkillResourceMetadata, TaskRuntime, TaskScope,
     TransactionOp,
+    plugin::prepared_mutation::{PreparedMutationScope, TransactionContext},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    panic::{catch_unwind, AssertUnwindSafe},
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -35,8 +35,8 @@ mod trace;
 
 pub use listener::PluginListener;
 pub use trace::{
-    ProvenanceBuffer, RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant,
-    RuntimeTraceSink, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
+    DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY, ProvenanceBuffer,
+    RuntimeTraceBuffer, RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink,
 };
 
 const PERSISTENCE_SCHEMA: &str = "kernel.persistence.schema";

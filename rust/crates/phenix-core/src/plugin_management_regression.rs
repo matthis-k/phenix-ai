@@ -1,20 +1,20 @@
 use crate::{
-    plugin_runtime_adapter_service, ArtifactRevision, Authority, CallableId, ComponentEntryTrigger,
-    ComponentExport, ComponentId, ComponentImport, ComponentManifest, ComponentProcessArgument,
-    EntryTriggerKind, GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact,
-    PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution,
-    PluginBuildExecutor, PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost,
-    PluginId, PluginInstance, PluginLoadRequest, PluginManagementContext, PluginManagementError,
-    PluginManagementPolicy, PluginManagementRequest, PluginManagementResult, PluginManifest,
-    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId, PluginSetRequest, PluginState,
-    PluginUnloadRequest, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution,
-    ServiceId, ServiceRole,
+    ArtifactRevision, Authority, CallableId, ComponentEntryTrigger, ComponentExport, ComponentId,
+    ComponentImport, ComponentManifest, ComponentProcessArgument, EntryTriggerKind,
+    GraphReconciler, InterfaceId, Kernel, KernelError, PluginArtifact, PluginArtifactInput,
+    PluginArtifactStore, PluginArtifactStoreError, PluginBuildExecution, PluginBuildExecutor,
+    PluginBuildFailure, PluginBuildPlan, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginLoadRequest, PluginManagementContext, PluginManagementError, PluginManagementPolicy,
+    PluginManagementRequest, PluginManagementResult, PluginManifest, PluginRuntimeAdapter,
+    PluginRuntimeCandidate, PluginRuntimeId, PluginSetRequest, PluginState, PluginUnloadRequest,
+    ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceId, ServiceRole,
+    plugin_runtime_adapter_service,
 };
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -402,9 +402,11 @@ fn trial_management_stages_candidate_without_changing_the_active_generation() {
             .generation(),
         &result.generation
     );
-    assert!(kernel
-        .resident_generation_ids()
-        .contains(&result.generation));
+    assert!(
+        kernel
+            .resident_generation_ids()
+            .contains(&result.generation)
+    );
     assert_eq!(starts.load(Ordering::Relaxed), 2);
     assert_eq!(stops.load(Ordering::Relaxed), 0);
     assert_eq!(
@@ -554,10 +556,12 @@ fn load_activates_a_new_guest_in_a_new_generation() {
         Some(&result.reconciliation.active_generation)
     );
     assert_eq!(kernel.config().manifest(&guest.id), Some(&guest));
-    assert!(kernel
-        .component_graph()
-        .component(&guest_component.id)
-        .is_some());
+    assert!(
+        kernel
+            .component_graph()
+            .component(&guest_component.id)
+            .is_some()
+    );
     assert_eq!(kernel.state(&guest.id), Some(PluginState::Active));
     assert_eq!(guest_starts.load(Ordering::Relaxed), 1);
 }

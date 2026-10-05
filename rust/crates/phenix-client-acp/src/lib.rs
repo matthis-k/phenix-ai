@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use agent_client_protocol::schema::{
+    ProtocolVersion,
     v1::{
         AgentNotification, AgentRequest, CancelNotification, CloseSessionRequest,
         CloseSessionResponse, ExtNotification, ExtRequest, ExtResponse, InitializeRequest,
@@ -9,7 +10,6 @@ use agent_client_protocol::schema::{
         ResumeSessionResponse, SessionNotification, SetSessionConfigOptionRequest,
         SetSessionConfigOptionResponse,
     },
-    ProtocolVersion,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client as AcpRole, ConnectTo, ConnectionTo, ErrorCode,
@@ -25,11 +25,11 @@ use std::{
     future::Future,
     num::NonZeroUsize,
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
 };
 
 pub use phenix_application_interface::{
-    application_descriptor, types::ApplicationError, INTERFACE_ID,
+    INTERFACE_ID, application_descriptor, types::ApplicationError,
 };
 
 pub mod generated {

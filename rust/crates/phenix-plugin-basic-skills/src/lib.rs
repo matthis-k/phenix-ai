@@ -1,7 +1,7 @@
 use phenix_core::{
     Authority, ComponentId, ComponentInterface, ComponentManifest, InterfaceId, PermissionId,
-    PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SkillCommand,
-    SkillDefinition, SkillId, SkillResponse, TransactionOp, SKILL_SERVICE,
+    PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SKILL_SERVICE, SkillCommand,
+    SkillDefinition, SkillId, SkillResponse, TransactionOp,
 };
 use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 

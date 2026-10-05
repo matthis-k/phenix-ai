@@ -2,6 +2,7 @@
 
 mod mcp_bridge;
 
+use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AuthMethod, AuthenticateRequest, CancelNotification, ConnectMcpRequest, ContentBlock,
     ContentChunk, DisconnectMcpRequest, ErrorCode, InitializeRequest, MessageMcpNotification,
@@ -9,7 +10,6 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionRequest, RequestPermissionResponse, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, TextContent,
 };
-use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use mcp_bridge::{BridgeToolRequest, ToolBridge};
 use phenix_domain::{
@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
@@ -702,12 +702,11 @@ async fn run_persistent_session(
         .builder()
         .on_receive_notification(
             async move |notification: SessionNotification, _connection| {
-                if let Some(event) = normalize_update(notification.update) {
-                    if let Ok(events) = notification_events.lock() {
-                        if let Some(events) = events.as_ref() {
-                            let _ = events.send(WorkerMessage::Event(event));
-                        }
-                    }
+                if let Some(event) = normalize_update(notification.update)
+                    && let Ok(events_guard) = notification_events.lock()
+                    && let Some(events) = events_guard.as_ref()
+                {
+                    let _ = events.send(WorkerMessage::Event(event));
                 }
                 Ok(())
             },
@@ -833,17 +832,16 @@ async fn run_persistent_session(
                     })?;
                     *active = Some(command.events.clone());
                 }
-                if bridge_available {
-                    if let Err(error) =
+                if bridge_available
+                    && let Err(error) =
                         bridge.bind_execution(&command.tools, command.events.clone())
-                    {
-                        if let Ok(mut active) = active_events.lock() {
-                            *active = None;
-                        }
-                        let message = error.to_string();
-                        let _ = command.events.send(WorkerMessage::Done(Err(error)));
-                        return Err(agent_client_protocol::Error::internal_error().data(message));
+                {
+                    if let Ok(mut active) = active_events.lock() {
+                        *active = None;
                     }
+                    let message = error.to_string();
+                    let _ = command.events.send(WorkerMessage::Done(Err(error)));
+                    return Err(agent_client_protocol::Error::internal_error().data(message));
                 }
                 let cancel_forwarder = spawn_cancel_forwarder(
                     connection.clone(),
@@ -1246,8 +1244,10 @@ mod tests {
     fn acp_backend_advertises_persistent_sessions_and_native_tool_bridge() {
         let features = AcpModelAdapter::new(config()).features();
         assert!(features.persistent_sessions);
-        assert!(features
-            .tool_presentations
-            .contains(&ToolPresentation::AcpExtension));
+        assert!(
+            features
+                .tool_presentations
+                .contains(&ToolPresentation::AcpExtension)
+        );
     }
 }

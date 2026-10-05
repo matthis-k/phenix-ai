@@ -254,14 +254,16 @@ mod profile_store {
                 },
             )
             .unwrap();
-            assert!(invoke_routing(
-                &mut kernel,
-                ModelCommand::RegisterProfile {
-                    profile: profile.clone(),
-                },
-            )
-            .unwrap_err()
-            .contains("already registered"));
+            assert!(
+                invoke_routing(
+                    &mut kernel,
+                    ModelCommand::RegisterProfile {
+                        profile: profile.clone(),
+                    },
+                )
+                .unwrap_err()
+                .contains("already registered")
+            );
         }
         let mut restored = kernel_with(&path);
         let ModelResponse::Profiles { profiles } =
@@ -431,15 +433,17 @@ mod profile_store {
                 }
             );
 
-            assert!(invoke_routing(
-                &mut kernel,
-                ModelCommand::ReplaceProfile {
-                    expected: original,
-                    profile: replacement.clone(),
-                },
-            )
-            .unwrap_err()
-            .contains("replacement conflict"));
+            assert!(
+                invoke_routing(
+                    &mut kernel,
+                    ModelCommand::ReplaceProfile {
+                        expected: original,
+                        profile: replacement.clone(),
+                    },
+                )
+                .unwrap_err()
+                .contains("replacement conflict")
+            );
         }
 
         let mut restored = kernel_with(&path);

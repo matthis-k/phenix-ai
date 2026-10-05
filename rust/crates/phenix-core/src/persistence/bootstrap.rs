@@ -183,7 +183,10 @@ impl Display for PersistenceBootstrapError {
                 write!(f, "duplicate Persistence Provider descriptor: {provider}")
             }
             Self::ProviderUnavailable(provider) => {
-                write!(f, "selected Persistence Provider is unavailable: {provider}")
+                write!(
+                    f,
+                    "selected Persistence Provider is unavailable: {provider}"
+                )
             }
             Self::BootstrapDependencyUnavailable {
                 provider,

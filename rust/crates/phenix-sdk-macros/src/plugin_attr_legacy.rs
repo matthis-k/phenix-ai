@@ -5,8 +5,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeSet;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, Attribute, Expr, ExprLit, Fields, Ident,
-    ImplItem, Item, ItemImpl, ItemStruct, Lit, LitStr, Meta, Token, Type,
+    Attribute, Expr, ExprLit, Fields, Ident, ImplItem, Item, ItemImpl, ItemStruct, Lit, LitStr,
+    Meta, Token, Type, parse::Parser, parse_quote, punctuated::Punctuated,
 };
 
 const ROOT_FIELD: &str = "__phenix_root";
@@ -865,7 +865,7 @@ fn has_root_fields(item: &ItemStruct) -> syn::Result<bool> {
             };
             match first {
                 Meta::Path(path) if path.is_ident("import") || path.is_ident("host") => {
-                    return Ok(true)
+                    return Ok(true);
                 }
                 Meta::List(list) if list.path.is_ident("event") => return Ok(true),
                 _ => {}
@@ -1195,7 +1195,9 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert!(output.contains("StaticComponentBehavior for __PhenixPluginRootComponentForPlugin"));
+        assert!(
+            output.contains("StaticComponentBehavior for __PhenixPluginRootComponentForPlugin")
+        );
         assert!(output.contains("StaticComponentRuntimeDispatch for Plugin"));
         assert!(output.contains("root_exposed_interface"));
         assert!(output.contains("fixture.changed"));
@@ -1276,9 +1278,11 @@ mod tests {
             ),
         )
         .unwrap_err();
-        assert!(destination
-            .to_string()
-            .contains("duplicate remap destination"));
+        assert!(
+            destination
+                .to_string()
+                .contains("duplicate remap destination")
+        );
     }
 
     #[test]

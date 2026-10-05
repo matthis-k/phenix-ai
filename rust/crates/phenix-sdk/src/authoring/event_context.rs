@@ -1,4 +1,4 @@
-use super::{phenix_context, PhenixPluginContext};
+use super::{PhenixPluginContext, phenix_context};
 use phenix_core::{
     Authority, ComponentId, EventEnvelope, EventTypeId, GenerationId, PluginHost, PluginId,
 };

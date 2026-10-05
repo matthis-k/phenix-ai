@@ -19,8 +19,8 @@ mod state_service;
 pub use component::*;
 pub use implementation_state::context_factory;
 pub use prompt::{
-    assemble_prompt, PromptAssembly, PromptSection, PromptSectionKind, PromptSectionRole,
-    PHENIX_HARNESS_IDENTITY,
+    PHENIX_HARNESS_IDENTITY, PromptAssembly, PromptSection, PromptSectionKind, PromptSectionRole,
+    assemble_prompt,
 };
 
 #[must_use]

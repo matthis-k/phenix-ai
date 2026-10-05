@@ -6,9 +6,9 @@ use std::{
     fmt::{self, Display, Formatter},
     num::NonZeroUsize,
     sync::{
+        Arc, Condvar, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Condvar, Mutex,
     },
     thread,
 };
@@ -1140,9 +1140,11 @@ mod tests {
         );
 
         drop(transition);
-        assert!(completed_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("ambient admission must resume after topology transition"));
+        assert!(
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("ambient admission must resume after topology transition")
+        );
     }
 
     #[test]

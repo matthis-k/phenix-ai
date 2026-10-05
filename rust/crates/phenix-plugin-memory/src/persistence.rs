@@ -1,9 +1,9 @@
 use crate::{
     error::{MemoryError, MemoryResult},
-    implementation::{memory_namespace, MemoryContext},
+    implementation::{MemoryContext, memory_namespace},
 };
 use phenix_core::TransactionOp;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
 
 pub(crate) fn insert_record<T: Serialize>(
@@ -50,12 +50,12 @@ pub(crate) fn insert_record_with_sidecar_secondary_and_updates<
             "immutable record already exists: {id}"
         )));
     }
-    if let Some((sidecar_key, _)) = sidecar {
-        if read_raw(context, sidecar_key)?.is_some() {
-            return Err(MemoryError::Conflict(format!(
-                "derived record state already exists: {id}"
-            )));
-        }
+    if let Some((sidecar_key, _)) = sidecar
+        && read_raw(context, sidecar_key)?.is_some()
+    {
+        return Err(MemoryError::Conflict(format!(
+            "derived record state already exists: {id}"
+        )));
     }
 
     ids.push(id.to_owned());

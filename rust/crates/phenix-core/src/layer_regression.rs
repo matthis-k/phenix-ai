@@ -4,8 +4,8 @@ use crate::{
     ServiceRole,
 };
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 fn plugin(value: &str) -> PluginId {

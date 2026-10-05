@@ -1,23 +1,23 @@
 #![forbid(unsafe_code)]
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use phenix_core::{
-    model_inference_service, Authority, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
-    PermissionId, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PermissionId,
+    PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, ServiceContribution, ServiceId, ServiceRole, model_inference_service,
 };
 use phenix_provider_sdk::{
+    AuthDescriptor, AuthKind, Endpoint, HttpMethod, NETWORK_HTTP_CAPABILITY, Protocol,
+    ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface, ProviderAuthMethod,
+    ProviderAuthResponse, ProviderAuthenticationResult, ProviderError, ProviderModel,
+    ProviderModelOrigin, ProviderModelsCommand, ProviderModelsInterface, ProviderModelsResponse,
+    ProviderRequest, ProviderResponse, RateLimits, SECRETS_MANAGE_CAPABILITY,
     encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, AuthDescriptor, AuthKind, Endpoint,
-    HttpMethod, Protocol, ProtocolAdapter, ProviderAuthCommand, ProviderAuthInterface,
-    ProviderAuthMethod, ProviderAuthResponse, ProviderAuthenticationResult, ProviderError,
-    ProviderModel, ProviderModelOrigin, ProviderModelsCommand, ProviderModelsInterface,
-    ProviderModelsResponse, ProviderRequest, ProviderResponse, RateLimits, NETWORK_HTTP_CAPABILITY,
-    SECRETS_MANAGE_CAPABILITY,
+    provider_http_client_builder, provider_models_service,
 };
-use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -308,13 +308,13 @@ fn decode_codex_response(
         })?;
         match event.get("type").and_then(Value::as_str) {
             Some("response.output_item.done") => {
-                if let Some(item) = event.get("item") {
-                    if matches!(
+                if let Some(item) = event.get("item")
+                    && matches!(
                         item.get("type").and_then(Value::as_str),
                         Some("message" | "function_call")
-                    ) {
-                        output_items.push(item.clone());
-                    }
+                    )
+                {
+                    output_items.push(item.clone());
                 }
             }
             Some("response.output_text.delta") => {
@@ -1473,15 +1473,19 @@ mod tests {
     #[test]
     fn codex_provider_owns_its_declared_model_catalog() {
         let manifest = openai_codex_manifest();
-        assert!(manifest
-            .services
-            .iter()
-            .any(|service| service.service == provider_models_service()));
+        assert!(
+            manifest
+                .services
+                .iter()
+                .any(|service| service.service == provider_models_service())
+        );
         let component = openai_codex_component_manifest();
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == ProviderModelsInterface::interface_id()));
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == ProviderModelsInterface::interface_id())
+        );
         assert_eq!(
             DECLARED_MODELS,
             &["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"]

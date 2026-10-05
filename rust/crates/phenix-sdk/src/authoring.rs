@@ -468,10 +468,10 @@ pub use static_component::{
 };
 pub use static_config::{StaticPluginConfigDescriptor, StaticPluginConfiguration};
 pub use static_dispatch::{
-    block_on_static, decode_exact_runtime, decode_projected_runtime, encode_result_runtime,
-    encode_runtime, LayerContext, StaticComponentDispatch, StaticComponentRuntimeDispatch,
+    LayerContext, StaticComponentDispatch, StaticComponentRuntimeDispatch,
     StaticPluginComponentDispatch, StaticPluginInstance, StaticPluginInvoke, StaticPluginStart,
-    StaticPluginStop,
+    StaticPluginStop, block_on_static, decode_exact_runtime, decode_projected_runtime,
+    encode_result_runtime, encode_runtime,
 };
 pub use static_import::{
     Call, Emit, Host, Optional, Required, StaticComponentEvent, StaticComponentHost,
@@ -492,6 +492,6 @@ impl std::fmt::Debug for StaticPluginGraph {
 
 #[doc(hidden)]
 pub use plugin::{
-    __phenix_plugin, dispatch_exact_provider, dispatch_projected_provider, listener_subscription,
-    listener_subscription_with_authority, HookName, ListenerDeclaration, ListenerProjection,
+    __phenix_plugin, HookName, ListenerDeclaration, ListenerProjection, dispatch_exact_provider,
+    dispatch_projected_provider, listener_subscription, listener_subscription_with_authority,
 };

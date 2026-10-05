@@ -133,10 +133,10 @@ impl CompatibilityMetadata {
         if self.minimum_kernel_version == 0 {
             return Err(CompositionMetadataError::ZeroVersion);
         }
-        if let Some(maximum) = self.maximum_kernel_version {
-            if maximum < self.minimum_kernel_version {
-                return Err(CompositionMetadataError::InvalidCompatibilityRange);
-            }
+        if let Some(maximum) = self.maximum_kernel_version
+            && maximum < self.minimum_kernel_version
+        {
+            return Err(CompositionMetadataError::InvalidCompatibilityRange);
         }
         if KERNEL_COMPATIBILITY_VERSION < self.minimum_kernel_version
             || self

@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 exclude = [
   "crates/phenix-sdk/tests/fixtures/external-consumer",
 ]
@@ -53,6 +53,9 @@ members = [
   "crates/phenix-model-adapter-acp",
   "crates/phenix-model-adapter-native",
 ]
+
+[workspace.package]
+edition = "2024"
 
 [workspace.dependencies]
 agent-client-protocol = { version = "2.0.0", features = ["unstable_auth_methods", "unstable_elicitation", "unstable_end_turn_token_usage", "unstable_session_fork", "unstable_mcp_over_acp"] }

@@ -3,8 +3,8 @@ use phenix_core::{
     TransactionOp,
 };
 use phenix_sdk::{
-    JobCommand, JobResponse, RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState,
-    StaticPluginDefinition, JOB_SERVICE,
+    JOB_SERVICE, JobCommand, JobResponse, RuntimeResourceKind, RuntimeResourceRecord,
+    RuntimeResourceState, StaticPluginDefinition,
 };
 use std::collections::BTreeSet;
 

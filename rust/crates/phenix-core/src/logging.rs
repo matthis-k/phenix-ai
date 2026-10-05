@@ -194,7 +194,7 @@ impl StructuredLogReader {
             LogSink::Directory(root) => root.join("phenix.log"),
             LogSink::AppendFile(path) | LogSink::TruncateFile(path) => path.clone(),
             LogSink::Stderr | LogSink::Stdout => {
-                return Err("configured log sink is not readable as a local file".into())
+                return Err("configured log sink is not readable as a local file".into());
             }
         };
         let mut reference_store = sink
@@ -229,7 +229,7 @@ impl StructuredLogReader {
                 return Ok(StructuredLogPage {
                     records: Vec::new(),
                     next_cursor: None,
-                })
+                });
             }
             Err(error) => return Err(format!("{}: {error}", self.path.display())),
         };

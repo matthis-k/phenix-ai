@@ -9,13 +9,13 @@ use phenix_plugin_language::{
     language_component_manifest, language_factory, language_manifest, language_service,
 };
 use phenix_sdk::{
-    helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
     CodeEntityFacet, CodeEntityFacetRevisions, CodeEntityRevision, DocumentProvenance,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse, LanguageCommand,
     LanguageDocumentIdentity, LanguageResponse, LogicalCodeEntity, MemoryCanonicalReference,
     MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind, MemoryRecallQuery,
     MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope, MemorySourceReference,
-    ProviderEpoch,
+    ProviderEpoch, helper_invocation_service, memory_resolve_callable, memory_service,
+    memory_validate_callable,
 };
 use std::{
     collections::BTreeMap,
@@ -176,12 +176,12 @@ impl PluginInstance for RevalidationProvider {
                 b"\"keep_current\"".to_vec()
             }
             ("deterministic-route", callable) => {
-                return Err(format!("deterministic revalidation invoked {callable}"))
+                return Err(format!("deterministic revalidation invoked {callable}"));
             }
             (profile, callable) => {
                 return Err(format!(
                     "unexpected revalidation helper: {profile}/{callable}"
-                ))
+                ));
             }
         };
         serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {

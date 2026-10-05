@@ -154,10 +154,12 @@ mod tests {
             "fixture.resource-owner.plans"
         );
         assert_eq!(resource.schema.version, 3);
-        assert!(resource
-            .schema
-            .required_features
-            .contains(&PersistenceBackendFeature::Transactions));
+        assert!(
+            resource
+                .schema
+                .required_features
+                .contains(&PersistenceBackendFeature::Transactions)
+        );
         assert!(resource.resource_type.ends_with("::Store"));
     }
 
@@ -173,9 +175,11 @@ mod tests {
             "fixture.resource-owner.plans"
         );
         assert_eq!(schemas[0].version, 3);
-        assert!(schemas[0]
-            .required_features
-            .contains(&PersistenceBackendFeature::Transactions));
+        assert!(
+            schemas[0]
+                .required_features
+                .contains(&PersistenceBackendFeature::Transactions)
+        );
         assert_eq!(registrations[0].owner, owner);
         assert_eq!(registrations[0].schema, schemas[0]);
     }

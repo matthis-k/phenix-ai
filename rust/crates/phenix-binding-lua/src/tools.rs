@@ -1,7 +1,7 @@
 use super::*;
 use phenix_application_interface::{
-    types::{ClientToolAddInput, ClientToolAdmission, ClientToolDefinition, ClientToolRemoveInput},
     AddClientTool, RemoveClientTool,
+    types::{ClientToolAddInput, ClientToolAdmission, ClientToolDefinition, ClientToolRemoveInput},
 };
 use phenix_core::{CallableId, SessionId};
 

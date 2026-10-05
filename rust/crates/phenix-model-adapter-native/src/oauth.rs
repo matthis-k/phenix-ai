@@ -1,8 +1,8 @@
 use crate::credentials::{CredentialStore, StoredCredential};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use genai::resolver::AuthData;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use genai::Headers;
+use genai::resolver::AuthData;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;

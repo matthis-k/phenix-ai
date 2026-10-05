@@ -1,15 +1,15 @@
 use phenix_application_interface::{
+    CreateSession, DecideReview, Operation,
     types::{
         ReviewDecision, ReviewDecisionInput, ReviewHunk, ReviewRecord, ReviewState, SessionChange,
         SessionCreateInput, SessionInfo,
     },
-    CreateSession, DecideReview, Operation,
 };
 use phenix_core::{ContractId, PhenixValue, Project, ValueCodec};
-use phenix_harness::{application::ApplicationWorker, default_suite_authority, PhenixRuntime};
+use phenix_harness::{PhenixRuntime, application::ApplicationWorker, default_suite_authority};
 use phenix_plugin_catalog::{
-    execution_review_service, ExecutionReviewCommand, ExecutionReviewResponse, PreparedReviewFile,
-    WorkspaceFileVersion,
+    ExecutionReviewCommand, ExecutionReviewResponse, PreparedReviewFile, WorkspaceFileVersion,
+    execution_review_service,
 };
 
 fn invoke_application<O: Operation>(worker: &mut ApplicationWorker, input: O::Input) -> O::Output {

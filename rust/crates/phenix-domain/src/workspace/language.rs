@@ -1,7 +1,7 @@
 use crate::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::{btree_map::Entry, BTreeMap};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
@@ -472,15 +472,17 @@ mod tests {
             preferred_provider: None,
         });
         let mut manager = LanguageServiceManager::default();
-        assert!(manager
-            .reconcile(
-                &workspace,
-                &kind(),
-                &configuration,
-                [frontend(1, "frontend")],
-                &BTreeMap::new(),
-            )
-            .is_none());
+        assert!(
+            manager
+                .reconcile(
+                    &workspace,
+                    &kind(),
+                    &configuration,
+                    [frontend(1, "frontend")],
+                    &BTreeMap::new(),
+                )
+                .is_none()
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::{Contract, ContractValue, PhenixValue};
 use serde::{
-    de::Error as _, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+    Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeStruct,
 };
 
 impl Serialize for ContractValue {

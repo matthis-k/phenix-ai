@@ -1,5 +1,5 @@
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::collections::BTreeSet;
 use std::fmt::{self, Display, Formatter};
 

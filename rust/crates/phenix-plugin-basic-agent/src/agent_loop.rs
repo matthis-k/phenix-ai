@@ -6,9 +6,9 @@ use phenix_core::{
     ServiceRole, SessionId, SharedPluginInvocation, ValueCodec,
 };
 use phenix_sdk::{
-    agent_diagnostic_event_type, AgentDiagnosticEvent, DefaultInvocationCommand,
+    AGENT_DIAGNOSTIC_EVENT_VERSION, AgentDiagnosticEvent, DefaultInvocationCommand,
     DefaultInvocationInterface, InvocationRequest, StepRunnerResponse, ToolObservation,
-    AGENT_DIAGNOSTIC_EVENT_VERSION,
+    agent_diagnostic_event_type,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -485,21 +485,21 @@ fn run(
     );
 
     loop {
-        if let Some(limit) = policy.max_model_turns() {
-            if usage.model_calls >= limit.get() {
-                let failure = AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() };
-                emit_agent_diagnostic(
-                    context,
-                    AgentDiagnosticEvent::RunFailed {
-                        execution_id: execution_id.clone(),
-                        session_id: session_id.clone(),
-                        reason: format!("{failure:?}"),
-                        model_calls: usage.model_calls,
-                        tool_calls: usage.tool_calls,
-                    },
-                );
-                return Ok(AgentLoopResponse::Failed { failure, usage });
-            }
+        if let Some(limit) = policy.max_model_turns()
+            && usage.model_calls >= limit.get()
+        {
+            let failure = AgentLoopFailure::ModelTurnLimitExceeded { limit: limit.get() };
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunFailed {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    reason: format!("{failure:?}"),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
+            return Ok(AgentLoopResponse::Failed { failure, usage });
         }
         if context
             .kernel
@@ -621,24 +621,24 @@ fn run(
             return Ok(AgentLoopResponse::Completed { output, usage });
         }
 
-        if let Some(limit) = policy.max_tool_calls_per_turn() {
-            if actual > limit.get() {
-                let failure = AgentLoopFailure::ToolCallLimitExceeded {
-                    limit: limit.get(),
-                    actual,
-                };
-                emit_agent_diagnostic(
-                    context,
-                    AgentDiagnosticEvent::RunFailed {
-                        execution_id: execution_id.clone(),
-                        session_id: session_id.clone(),
-                        reason: format!("{failure:?}"),
-                        model_calls: usage.model_calls,
-                        tool_calls: usage.tool_calls,
-                    },
-                );
-                return Ok(AgentLoopResponse::Failed { failure, usage });
-            }
+        if let Some(limit) = policy.max_tool_calls_per_turn()
+            && actual > limit.get()
+        {
+            let failure = AgentLoopFailure::ToolCallLimitExceeded {
+                limit: limit.get(),
+                actual,
+            };
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::RunFailed {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    reason: format!("{failure:?}"),
+                    model_calls: usage.model_calls,
+                    tool_calls: usage.tool_calls,
+                },
+            );
+            return Ok(AgentLoopResponse::Failed { failure, usage });
         }
 
         let mut tool_results = Vec::with_capacity(tool_calls.len());

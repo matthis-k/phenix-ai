@@ -5,10 +5,10 @@ use phenix_core::{
 };
 use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
-    ProcessStreamRecovery, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
-    WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
-    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, WORKSPACE_SERVICE,
+    ProcessStreamRecovery, WORKSPACE_SERVICE, WorkspaceCapabilities, WorkspaceCommand,
+    WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch,
+    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -738,7 +738,7 @@ fn list_path(
             return Err(format!(
                 "list {}: environment returned unexpected response {other:?}",
                 path.display()
-            ))
+            ));
         }
     };
     let Some(kind) = kind else {
@@ -845,7 +845,7 @@ fn search_path(
             return Err(format!(
                 "search {}: environment returned unexpected response {other:?}",
                 path.display()
-            ))
+            ));
         }
     };
     match kind {
@@ -1082,7 +1082,7 @@ mod tests {
         local_environment_component_manifest, local_environment_factory_for,
         local_environment_manifest,
     };
-    use phenix_sdk::{environment_service, ProcessStreamRecovery};
+    use phenix_sdk::{ProcessStreamRecovery, environment_service};
     use std::{
         fs,
         process::Command,
@@ -1281,7 +1281,7 @@ mod tests {
                 other => {
                     return Err(format!(
                         "unexpected escaping fixture environment command: {other:?}"
-                    ))
+                    ));
                 }
             };
 
@@ -1708,12 +1708,16 @@ mod tests {
         );
 
         let commands = commands.lock().unwrap();
-        assert!(commands
-            .iter()
-            .any(|command| matches!(command, EnvironmentCommand::Describe)));
-        assert!(!commands
-            .iter()
-            .any(|command| matches!(command, EnvironmentCommand::WriteFile { .. })));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, EnvironmentCommand::Describe))
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, EnvironmentCommand::WriteFile { .. }))
+        );
     }
 
     #[test]
@@ -1820,15 +1824,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(conflict.contains("version conflict"));
-        assert!(invoke(
-            &mut kernel,
-            WorkspaceCommand::Read {
-                path: "../outside".into(),
-            },
-            &read,
-        )
-        .unwrap_err()
-        .contains("escapes"));
+        assert!(
+            invoke(
+                &mut kernel,
+                WorkspaceCommand::Read {
+                    path: "../outside".into(),
+                },
+                &read,
+            )
+            .unwrap_err()
+            .contains("escapes")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

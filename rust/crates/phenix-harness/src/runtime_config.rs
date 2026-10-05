@@ -1,14 +1,14 @@
-use super::{default_suite_authority, PhenixRuntime};
+use super::{PhenixRuntime, default_suite_authority};
 use phenix_core::{
     Authority, CallableId, ModelFeatureGenerationId, ModelId, PhenixValue, PluginId, Project,
     RoutingProfileId, ServiceId, ValueError,
 };
 use phenix_plugin_catalog::{
-    execution_configuration_service, model_routing_service, options_service, AgentDefinition,
-    ExecutionConfigurationCommand, ExecutionConfigurationResponse, ModelCommand, ModelResponse,
-    ModelTarget, OptionAssignment, OptionCommand, OptionKey, OptionResponse, OptionScope,
-    OptionStartupPrecedence, OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
-    COMMON_PROVIDERS,
+    AgentDefinition, COMMON_PROVIDERS, ExecutionConfigurationCommand,
+    ExecutionConfigurationResponse, ModelCommand, ModelResponse, ModelTarget, OptionAssignment,
+    OptionCommand, OptionKey, OptionResponse, OptionScope, OptionStartupPrecedence,
+    OptionSubjectId, OptionValue, OrchestrationDefinition, RoutingProfile,
+    execution_configuration_service, model_routing_service, options_service,
 };
 use phenix_sdk::{
     CacheFeatures, CapacityKnowledge, ContextControl, EffectiveModelFeatures, FeatureSupport,
@@ -486,9 +486,11 @@ mod tests {
             "inference": null
         }))
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("inference must be omitted instead of null"));
+        assert!(
+            error
+                .to_string()
+                .contains("inference must be omitted instead of null")
+        );
     }
 
     #[test]
@@ -771,10 +773,12 @@ mod tests {
             &default_suite_authority(),
         )
         .unwrap();
-        assert!(apply_configuration(&mut harness, sample_runtime())
-            .unwrap_err()
-            .to_string()
-            .contains("changed outside configuration"));
+        assert!(
+            apply_configuration(&mut harness, sample_runtime())
+                .unwrap_err()
+                .to_string()
+                .contains("changed outside configuration")
+        );
         let retained: ModelResponse = invoke_projected(
             &mut harness,
             &model_routing_service(),

@@ -6,15 +6,15 @@ mod runtime;
 mod store;
 mod types;
 
-pub use protocol::{normalize_http_error, Protocol, ProtocolAdapter};
+pub use protocol::{Protocol, ProtocolAdapter, normalize_http_error};
 pub use store::*;
 pub use types::*;
 
 use phenix_core::{
-    model_inference_service, Authority, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, InterfaceId, InvocationOutcome, ModelId, ModelInferenceInterface,
-    ModelInferenceResponse, PermissionId, PhenixValue, PluginExecution, PluginId, PluginInstance,
-    PluginManifest, ServiceContribution, ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentInterface, ComponentManifest, InterfaceId,
+    InvocationOutcome, ModelId, ModelInferenceInterface, ModelInferenceResponse, PermissionId,
+    PhenixValue, PluginExecution, PluginId, PluginInstance, PluginManifest, ServiceContribution,
+    ServiceId, ServiceRole, model_inference_service,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -531,21 +531,29 @@ mod tests {
         );
         let manifest = definition.manifest();
         assert_eq!(manifest.services.len(), 3);
-        assert!(manifest
-            .maximum_authority
-            .permits(&capability(NETWORK_HTTP_CAPABILITY)));
-        assert!(manifest
-            .maximum_authority
-            .permits(&capability(SECRETS_MANAGE_CAPABILITY)));
+        assert!(
+            manifest
+                .maximum_authority
+                .permits(&capability(NETWORK_HTTP_CAPABILITY))
+        );
+        assert!(
+            manifest
+                .maximum_authority
+                .permits(&capability(SECRETS_MANAGE_CAPABILITY))
+        );
         let component = definition.component_manifest();
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == ModelInferenceInterface::interface_id()));
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == ProviderAuthInterface::interface_id()));
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == ModelInferenceInterface::interface_id())
+        );
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == ProviderAuthInterface::interface_id())
+        );
     }
 
     #[test]
@@ -577,9 +585,11 @@ mod tests {
         );
         let manifest = definition.manifest();
         assert_eq!(manifest.services.len(), 2);
-        assert!(!manifest
-            .maximum_authority
-            .permits(&capability(SECRETS_MANAGE_CAPABILITY)));
+        assert!(
+            !manifest
+                .maximum_authority
+                .permits(&capability(SECRETS_MANAGE_CAPABILITY))
+        );
         assert_eq!(definition.component_manifest().exports.len(), 2);
     }
 
@@ -613,10 +623,12 @@ mod tests {
         .with_declared_models([ModelId::parse("model-declared").unwrap()])
         .with_model_thinking(ModelId::parse("model-live").unwrap(), ["low", "high"]);
         let manifest = definition.manifest();
-        assert!(manifest
-            .services
-            .iter()
-            .any(|service| service.service == provider_models_service()));
+        assert!(
+            manifest
+                .services
+                .iter()
+                .any(|service| service.service == provider_models_service())
+        );
         let plugin = manifest.id.clone();
         let mut kernel = Kernel::new(KernelConfig::new([manifest]).unwrap());
         kernel
@@ -719,11 +731,13 @@ mod tests {
             auth::Definition::none(),
         )
         .with_declared_models([ModelId::parse("model-a").unwrap()]);
-        assert!(definition
-            .manifest()
-            .services
-            .iter()
-            .any(|service| service.service == provider_models_service()));
+        assert!(
+            definition
+                .manifest()
+                .services
+                .iter()
+                .any(|service| service.service == provider_models_service())
+        );
     }
 
     #[test]

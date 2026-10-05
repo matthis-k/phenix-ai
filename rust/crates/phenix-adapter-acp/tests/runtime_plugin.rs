@@ -1,4 +1,4 @@
-use phenix_adapter_acp::{adapter_acp_factory, adapter_acp_manifest, Plugin, ACP_ADAPTER_PLUGIN};
+use phenix_adapter_acp::{ACP_ADAPTER_PLUGIN, Plugin, adapter_acp_factory, adapter_acp_manifest};
 use phenix_core::PluginExecution;
 use phenix_sdk::StaticPluginDefinition;
 

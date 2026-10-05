@@ -4,8 +4,8 @@ use phenix_core::{
     ServiceParticipantOutcome, SessionId,
 };
 use phenix_plugin_sessions::{
-    session_factory, session_manifest, session_service, SessionCommand, SessionRecord,
-    SessionResponse,
+    SessionCommand, SessionRecord, SessionResponse, session_factory, session_manifest,
+    session_service,
 };
 
 fn authority() -> Authority {
@@ -107,13 +107,15 @@ fn disabled_optional_session_tree_layer_leaves_basic_sessions_usable() {
         create(&mut kernel, "root"),
         SessionResponse::Created { .. }
     ));
-    assert!(kernel
-        .service_invocation_provenance()
-        .last()
-        .unwrap()
-        .planned_chain
-        .layers
-        .is_empty());
+    assert!(
+        kernel
+            .service_invocation_provenance()
+            .last()
+            .unwrap()
+            .planned_chain
+            .layers
+            .is_empty()
+    );
 }
 
 #[test]

@@ -5,20 +5,20 @@ use phenix_core::{
     PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    application::serve_configured_application, default_suite_authority,
-    invocation_defaults_manifest, PhenixRuntime, PhenixRuntimeBuilder,
+    PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
+    default_suite_authority, invocation_defaults_manifest,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_manifest, advanced_agent_configuration_manifest, agent_loop_manifest,
-    artifact_manifest, basic_agent_configuration_manifest, basic_context_manifest,
-    basic_model_manifest, basic_product_configuration_manifest, basic_skills_manifest,
-    basic_tools_manifest, benchmark_outcome_manifest, cli_manifest, common_provider_definitions,
-    context_manifest, debug_manifest, efficiency_evaluation_manifest, execution_manifest,
-    frontend_manifest, full_product_configuration_manifest, hook_manifest, job_manifest,
-    language_manifest, local_environment_manifest, memory_manifest, model_routing_manifest,
-    openai_codex_manifest, options_manifest, planning_manifest, providers_manifest,
-    repository_worker_manifest, sdk_manifest, session_manifest, session_tree_manifest,
-    step_runner_manifest, workspace_manifest, OptionStartupPrecedence,
+    OptionStartupPrecedence, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    agent_loop_manifest, artifact_manifest, basic_agent_configuration_manifest,
+    basic_context_manifest, basic_model_manifest, basic_product_configuration_manifest,
+    basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
+    common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
+    execution_manifest, frontend_manifest, full_product_configuration_manifest, hook_manifest,
+    job_manifest, language_manifest, local_environment_manifest, memory_manifest,
+    model_routing_manifest, openai_codex_manifest, options_manifest, planning_manifest,
+    providers_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
+    session_tree_manifest, step_runner_manifest, workspace_manifest,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -110,7 +110,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     io::ErrorKind::InvalidInput,
                     format!("invalid PHENIX_SETTINGS_PRECEDENCE: {value}"),
                 )
-                .into())
+                .into());
             }
             Err(error) => return Err(error.into()),
         };

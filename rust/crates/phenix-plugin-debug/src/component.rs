@@ -1,13 +1,13 @@
-use crate::{debug_manifest, DEBUG_SERVICE};
+use crate::{DEBUG_SERVICE, debug_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentListener, ComponentManifest, EventFailurePolicy, HasPhenixSchema, InterfaceId,
     InterfaceSchema, ListenerProjection, PhenixSchema, PhenixValue, SubscriptionId,
 };
 use phenix_sdk::{
-    agent_diagnostic_event_type, model_diagnostic_event_type, ContextInterface, FrontendInterface,
-    JobInterface, ModelRoutingInterface, PlanningInterface, SessionInterface,
-    AGENT_DIAGNOSTIC_EVENT_VERSION, MODEL_DIAGNOSTIC_EVENT_VERSION,
+    AGENT_DIAGNOSTIC_EVENT_VERSION, ContextInterface, FrontendInterface, JobInterface,
+    MODEL_DIAGNOSTIC_EVENT_VERSION, ModelRoutingInterface, PlanningInterface, SessionInterface,
+    agent_diagnostic_event_type, model_diagnostic_event_type,
 };
 
 pub struct DebugInterface;
@@ -141,14 +141,18 @@ mod tests {
         )
         .unwrap();
 
-        assert!(graph
-            .import_handle(&debug_component_id(), &SessionInterface::interface_id())
-            .unwrap()
-            .is_some());
-        assert!(graph
-            .import_handle(&debug_component_id(), &ContextInterface::interface_id())
-            .unwrap()
-            .is_none());
+        assert!(
+            graph
+                .import_handle(&debug_component_id(), &SessionInterface::interface_id())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            graph
+                .import_handle(&debug_component_id(), &ContextInterface::interface_id())
+                .unwrap()
+                .is_none()
+        );
         let manifest = debug_component_manifest(authority);
         assert_eq!(manifest.listeners.len(), 2);
         let model_listener = manifest

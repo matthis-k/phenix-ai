@@ -130,9 +130,11 @@ fn process_roundtrip_routes_and_restores_plugin_owned_state() {
     let ContextResponse::Resources { descriptors } = structural_output(&second[1]["output"]) else {
         panic!("context list returned the wrong response")
     };
-    assert!(descriptors
-        .iter()
-        .any(|descriptor| descriptor.resource_id.as_str() == "process:context"));
+    assert!(
+        descriptors
+            .iter()
+            .any(|descriptor| descriptor.resource_id.as_str() == "process:context")
+    );
 
     let _ = fs::remove_file(&state);
 }

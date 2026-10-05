@@ -5,7 +5,7 @@ use phenix_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fmt::Display,
 };
 

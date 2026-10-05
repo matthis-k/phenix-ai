@@ -4,8 +4,8 @@ use phenix_core::{
 };
 use phenix_sdk::{
     DecisionRecord, ExplorationCandidate, ExplorationCostEstimate, ExplorationOpportunity,
-    HistoryEntry, HistoryKind, ObjectiveRecord, PlanRecord, PlanStep, PlanningCommand,
-    PlanningInterface, PlanningResponse, StaticPluginDefinition, PLANNING_SERVICE,
+    HistoryEntry, HistoryKind, ObjectiveRecord, PLANNING_SERVICE, PlanRecord, PlanStep,
+    PlanningCommand, PlanningInterface, PlanningResponse, StaticPluginDefinition,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -873,9 +873,11 @@ mod tests {
             supersedes: None,
         };
         invoke(&mut kernel, first.clone()).unwrap();
-        assert!(invoke(&mut kernel, first)
-            .unwrap_err()
-            .contains("already exists"));
+        assert!(
+            invoke(&mut kernel, first)
+                .unwrap_err()
+                .contains("already exists")
+        );
         let replacement = invoke(
             &mut kernel,
             PlanningCommand::RecordDecision {

@@ -1,7 +1,7 @@
 use crate::{
     ClientConnectionId, GenerationId, InterfaceId, PluginId, PluginRuntimeId, ReferenceGenerationId,
 };
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -1362,12 +1362,14 @@ mod tests {
             parsed.get("label").unwrap().value::<String>().unwrap(),
             "ok"
         );
-        assert!(contract
-            .parse(PhenixValue::Table(BTreeMap::from([(
-                key("covered"),
-                PhenixValue::String("wrong".into())
-            )])))
-            .is_err());
+        assert!(
+            contract
+                .parse(PhenixValue::Table(BTreeMap::from([(
+                    key("covered"),
+                    PhenixValue::String("wrong".into())
+                )])))
+                .is_err()
+        );
     }
 
     #[test]

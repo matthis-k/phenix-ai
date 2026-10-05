@@ -452,14 +452,18 @@ mod tests {
     fn manifest_depends_on_workspace_and_cannot_self_grant_shell() {
         let denied = cli_manifest(Authority::default());
         assert_eq!(denied.dependencies, vec![plugin(WORKSPACE_PLUGIN)]);
-        assert!(!denied
-            .maximum_authority
-            .permits(&capability(WORKSPACE_SHELL)));
+        assert!(
+            !denied
+                .maximum_authority
+                .permits(&capability(WORKSPACE_SHELL))
+        );
 
         let granted = cli_manifest(Authority::new([capability(WORKSPACE_SHELL)]));
-        assert!(granted
-            .maximum_authority
-            .permits(&capability(WORKSPACE_SHELL)));
+        assert!(
+            granted
+                .maximum_authority
+                .permits(&capability(WORKSPACE_SHELL))
+        );
     }
 
     #[test]

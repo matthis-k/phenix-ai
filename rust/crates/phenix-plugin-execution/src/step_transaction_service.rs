@@ -4,8 +4,8 @@ use phenix_core::{
     TransactionOp,
 };
 use phenix_sdk::{
-    step_transaction_service, StepTransactionCommand, StepTransactionInterface,
-    StepTransactionResponse,
+    StepTransactionCommand, StepTransactionInterface, StepTransactionResponse,
+    step_transaction_service,
 };
 
 const MAX_STEP_TRANSACTION_CONFLICT_RETRIES: usize = 8;

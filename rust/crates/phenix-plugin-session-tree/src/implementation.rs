@@ -5,8 +5,8 @@ use phenix_core::{
     ResourceNamespace, SdkClient, ServiceContribution, ServiceId, SessionId, TransactionOp,
 };
 use phenix_sdk::{
-    session_service, SessionCommand, SessionInterface, SessionMutationInterface, SessionRecord,
-    SessionResponse,
+    SessionCommand, SessionInterface, SessionMutationInterface, SessionRecord, SessionResponse,
+    session_service,
 };
 use serde::{Deserialize, Serialize};
 
@@ -610,15 +610,17 @@ mod tests {
                 session: phenix_sdk::SessionRecord::new(session("root")),
             },
         );
-        assert!(invoke_tree(
-            &mut kernel,
-            SessionTreeCommand::Link {
-                session_id: session("missing"),
-                parent_session_id: Some(session("root")),
-            },
-        )
-        .unwrap_err()
-        .contains("unknown session"));
+        assert!(
+            invoke_tree(
+                &mut kernel,
+                SessionTreeCommand::Link {
+                    session_id: session("missing"),
+                    parent_session_id: Some(session("root")),
+                },
+            )
+            .unwrap_err()
+            .contains("unknown session")
+        );
         let _ = fs::remove_file(path);
     }
 }

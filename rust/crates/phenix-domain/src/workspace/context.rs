@@ -1,7 +1,7 @@
 use super::PlanId;
 use crate::{ConfigRevisionId, DecisionId, ExecutionId, ObjectiveId, WorkspaceId};
 use serde::{Deserialize, Serialize};
-use std::collections::{btree_map::Entry, BTreeMap};
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 

@@ -7,22 +7,22 @@ use phenix_core::{
     ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    delegated_worker_service, select_route, step_runner_service, AttemptOutcome,
-    AttemptUsageRecord, BudgetActual, BudgetReservationPurpose, BudgetReservationRequest,
-    ContextAdmissionRequest, ContextCommand, ContextInjectionLifetime, ContextInjectionRequester,
-    ContextInterface, ContextResponse, ContextSource, DelegatedFinding, DelegatedWorkerCommand,
-    DelegatedWorkerInterface, DelegatedWorkerResponse, DelegatedWorkerResult,
-    DelegatedWorkerTaskRecord, DelegationResourcePolicy, ExecutionCommand, ExecutionInterface,
-    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
-    ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand, ModelDispatchCommand,
-    ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
-    ModelRoutingInterface, PlannedStepRequest, ProjectionRevision, ReacquisitionUsage,
-    ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy, RoutingCandidate,
-    RoutingEstimateMode, RoutingEvidence, StepAttemptCommand, StepAttemptInterface,
-    StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand, StepRunnerInterface,
-    StepRunnerResponse, StepSettlementBasis, StepTransactionCommand, StepTransactionInterface,
-    StepTransactionResponse, UsageAttemptKind, UsageAttribution, UsagePlanningInput, UsagePolicy,
-    WorkerTaskState,
+    AttemptOutcome, AttemptUsageRecord, BudgetActual, BudgetReservationPurpose,
+    BudgetReservationRequest, ContextAdmissionRequest, ContextCommand, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextInterface, ContextResponse, ContextSource, DelegatedFinding,
+    DelegatedWorkerCommand, DelegatedWorkerInterface, DelegatedWorkerResponse,
+    DelegatedWorkerResult, DelegatedWorkerTaskRecord, DelegationResourcePolicy, ExecutionCommand,
+    ExecutionInterface, ExecutionResourceCommand, ExecutionResourceInterface,
+    ExecutionResourceResponse, ExecutionResponse, ExecutionState, InvocationIntent, ModelCommand,
+    ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
+    ModelResponse, ModelRoutingInterface, PlannedStepRequest, ProjectionRevision,
+    ReacquisitionUsage, ReasoningBudget, RouteDecision, RouteSelection, RouteSelectionPolicy,
+    RoutingCandidate, RoutingEstimateMode, RoutingEvidence, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptRecord, StepAttemptResponse, StepPlan, StepRunnerCommand,
+    StepRunnerInterface, StepRunnerResponse, StepSettlementBasis, StepTransactionCommand,
+    StepTransactionInterface, StepTransactionResponse, UsageAttemptKind, UsageAttribution,
+    UsagePlanningInput, UsagePolicy, WorkerTaskState, delegated_worker_service, select_route,
+    step_runner_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -637,7 +637,7 @@ fn ensure_delegated_execution(
         other => {
             return Err(format!(
                 "unexpected delegated execution lookup response: {other:?}"
-            ))
+            ));
         }
     };
     if execution.parent_execution.as_deref() != Some(record.task.parent_execution.as_str()) {
@@ -739,7 +739,7 @@ fn delegated_actual(
         (Some(total), Some(remaining)) => Some(total.saturating_sub(remaining)),
         (None, None) => None,
         (Some(_), None) => {
-            return Err("finite delegated cost reservation lost its remaining cost bound".into())
+            return Err("finite delegated cost reservation lost its remaining cost bound".into());
         }
         (None, Some(_)) => None,
     };
@@ -1530,7 +1530,7 @@ fn run_attempt_with_retry_route(
                             &attribution.attempt_id,
                             Some(&reservation_id),
                             format!("context materialization failed: {error}"),
-                        )
+                        );
                     }
                 };
             let ContextResponse::InvocationMaterialized { materialization } = materialized else {
@@ -2166,28 +2166,27 @@ fn parent_reservation(
     if matches!(
         attribution.kind,
         UsageAttemptKind::Delegated | UsageAttemptKind::Retry
-    ) {
-        if let Some(task_id) = attribution.task_id.as_ref() {
-            let response: ExecutionResourceResponse = context
-                .sdk
-                .resources
-                .invoke_projected(&ExecutionResourceCommand::GetDelegatedReservation {
-                    task_id: task_id.clone(),
-                })
-                .map_err(|error| error.to_string())?;
-            let ExecutionResourceResponse::DelegatedReservation {
-                reservation: Some(reservation),
-            } = response
-            else {
-                return Err(format!(
-                    "delegated task has no budget reservation: {task_id}"
-                ));
-            };
-            if reservation.root_execution_id != attribution.root_execution_id {
-                return Err("delegated reservation belongs to a different root execution".into());
-            }
-            return Ok(Some(reservation.reservation_id));
+    ) && let Some(task_id) = attribution.task_id.as_ref()
+    {
+        let response: ExecutionResourceResponse = context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::GetDelegatedReservation {
+                task_id: task_id.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        let ExecutionResourceResponse::DelegatedReservation {
+            reservation: Some(reservation),
+        } = response
+        else {
+            return Err(format!(
+                "delegated task has no budget reservation: {task_id}"
+            ));
+        };
+        if reservation.root_execution_id != attribution.root_execution_id {
+            return Err("delegated reservation belongs to a different root execution".into());
         }
+        return Ok(Some(reservation.reservation_id));
     }
 
     Ok(None)
@@ -2467,9 +2466,11 @@ mod tests {
 
     #[test]
     fn manifest_uses_typed_imports_instead_of_plugin_dependencies() {
-        assert!(step_runner_manifest(Authority::default())
-            .dependencies
-            .is_empty());
+        assert!(
+            step_runner_manifest(Authority::default())
+                .dependencies
+                .is_empty()
+        );
     }
 
     #[test]

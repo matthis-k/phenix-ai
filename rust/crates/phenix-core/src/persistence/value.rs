@@ -190,7 +190,7 @@ impl ValueCodec for NamespaceTransaction {
                 return Err(ValueError::TypeMismatch {
                     expected: TypeKind::List,
                     actual: other.kind(),
-                })
+                });
             }
         };
         Ok(Self {

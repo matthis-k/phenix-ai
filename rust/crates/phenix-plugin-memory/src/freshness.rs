@@ -77,13 +77,14 @@ pub(crate) fn observe_revision_change(
             dependency.revision = Some(revision.to_owned());
         }
     }
-    if let Some(reference) = state.canonical_reference.as_mut() {
-        if reference.service == *service && reference.resource == resource {
-            if reference.revision.as_deref() != Some(revision) {
-                affected = true;
-            }
-            reference.revision = Some(revision.to_owned());
+    if let Some(reference) = state.canonical_reference.as_mut()
+        && reference.service == *service
+        && reference.resource == resource
+    {
+        if reference.revision.as_deref() != Some(revision) {
+            affected = true;
         }
+        reference.revision = Some(revision.to_owned());
     }
 
     if affected && state.freshness == MemoryFreshness::Current {
@@ -154,9 +155,11 @@ mod tests {
             .push(code_dependency(CodeEntityFacet::Body, "body-revision-1"));
 
         let state = initial_state(&record, None);
-        assert!(state
-            .dependencies
-            .contains(&record.supporting_dependencies[0]));
+        assert!(
+            state
+                .dependencies
+                .contains(&record.supporting_dependencies[0])
+        );
         assert!(state.dependencies.iter().any(|dependency| {
             dependency.service.as_str() == "fixture.history@1"
                 && dependency.resource == "turn/1"

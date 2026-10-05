@@ -5,8 +5,8 @@ use crate::{
     ResolvedGenerationActivation, ServiceId,
 };
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 struct Echo;

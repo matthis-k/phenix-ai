@@ -1,6 +1,6 @@
 use phenix_domain::PhenixSchema;
 use phenix_model_adapter::ModelAdapterError;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 pub(crate) fn json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
     let schema = match schema {

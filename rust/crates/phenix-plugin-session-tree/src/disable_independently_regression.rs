@@ -1,11 +1,11 @@
-use crate::{session_tree_service, SessionTreeCommand};
+use crate::{SessionTreeCommand, session_tree_service};
 use phenix_core::{
     Authority, Kernel, KernelConfig, PhenixValue, Project, ResolvedGeneration,
     ResolvedGenerationActivation, SessionId,
 };
 use phenix_plugin_sessions::{
-    session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
-    SessionRecord, SessionResponse,
+    SessionCommand, SessionRecord, SessionResponse, session_component_manifest, session_factory,
+    session_manifest, session_service,
 };
 
 #[test]

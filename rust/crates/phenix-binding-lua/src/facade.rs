@@ -1,5 +1,13 @@
 use super::*;
 use phenix_application_interface::{
+    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
+    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
+    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
+    ListDefaultSelections as AppListDefaultSelections, ListSelections as AppListSelections,
+    ListSessions as AppListSessions, Prompt as AppPrompt, QueryLogs as AppQueryLogs,
+    ReadLogReference as AppReadLogReference, RenameSession as AppRenameSession,
+    ResumeSession as AppResumeSession, SelectDefaultSelection as AppSelectDefaultSelection,
+    SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
     types::{
         Acknowledged, AuthenticateInput, AuthenticationMethods, AuthenticationResult, Content,
         ElicitationRequest, ElicitationResponse, Empty, ExecutionChange, ExecutionState,
@@ -10,14 +18,6 @@ use phenix_application_interface::{
         SessionProjection, SessionResumeInput, SessionSnapshot, SessionUpdate,
         SetInteractionHandlersInput,
     },
-    Authenticate as AppAuthenticate, Cancel as AppCancel, CloseSession as AppCloseSession,
-    CreateSession as AppCreateSession, DecideReview as AppDecideReview,
-    DiscoverAuthentication as AppDiscoverAuthentication, GetProvenance as AppGetProvenance,
-    ListDefaultSelections as AppListDefaultSelections, ListSelections as AppListSelections,
-    ListSessions as AppListSessions, Prompt as AppPrompt, QueryLogs as AppQueryLogs,
-    ReadLogReference as AppReadLogReference, RenameSession as AppRenameSession,
-    ResumeSession as AppResumeSession, SelectDefaultSelection as AppSelectDefaultSelection,
-    SelectSelection as AppSelectSelection, SetInteractionHandlers as AppSetInteractionHandlers,
 };
 use phenix_core::{
     ContentReference, ReferenceId, ReferenceOwnerId, RoutingProfileId, SessionId, ValueCodec,
@@ -370,7 +370,7 @@ impl UserData for FacadeClient {
                     _ => {
                         return Err(lua_error(BindingError::conversion(
                             "review decision must be accept or reject",
-                        )))
+                        )));
                     }
                 };
                 let request = application_request::<AppDecideReview>(
@@ -1146,10 +1146,9 @@ fn pump(lua: &Lua, core: &Rc<FacadeCore>, budget: usize) -> LuaResult<Table> {
         .lock()
         .ok()
         .and_then(|error| error.clone())
+        && core.state.borrow().phase != FacadePhase::Failed
     {
-        if core.state.borrow().phase != FacadePhase::Failed {
-            fail_core(core, error);
-        }
+        fail_core(core, error);
     }
 
     for _ in 0..budget {
@@ -1406,7 +1405,7 @@ fn form_schema(lua: &Lua, schema: &Type) -> Result<Table, BindingError> {
         _ => {
             return Err(BindingError::conversion(
                 "unsupported_schema: elicitation schema is not supported by the Lua facade",
-            ))
+            ));
         }
     }
     Ok(result)
@@ -1540,10 +1539,10 @@ fn latest_execution_state(
         if execution_id.is_none() {
             execution_id = Some(candidate.clone());
         }
-        if execution_id.as_deref() == Some(candidate.as_str()) {
-            if let ExecutionChange::State { state } = update {
-                return (execution_id, Some(state));
-            }
+        if execution_id.as_deref() == Some(candidate.as_str())
+            && let ExecutionChange::State { state } = update
+        {
+            return (execution_id, Some(state));
         }
     }
     (execution_id, None)

@@ -120,10 +120,12 @@ mod tests {
             manifest.exports[1].interface,
             ModelDispatchInterface::interface_id()
         );
-        assert!(manifest
-            .exports
-            .iter()
-            .all(|export| export.required_authority == persistence_authority()));
+        assert!(
+            manifest
+                .exports
+                .iter()
+                .all(|export| export.required_authority == persistence_authority())
+        );
     }
 
     #[test]
@@ -153,10 +155,12 @@ mod tests {
             ModelRoutingInterface::interface_id(),
             ModelDispatchInterface::interface_id(),
         ] {
-            assert!(graph
-                .import_handle(&component("fixture.model-consumer"), &interface)
-                .unwrap()
-                .is_some());
+            assert!(
+                graph
+                    .import_handle(&component("fixture.model-consumer"), &interface)
+                    .unwrap()
+                    .is_some()
+            );
         }
     }
 }

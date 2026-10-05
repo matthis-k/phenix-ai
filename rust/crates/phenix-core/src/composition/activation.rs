@@ -115,15 +115,15 @@ impl ResolvedGenerationActivation for Kernel {
     ) -> Result<(), ResolvedGenerationActivationError> {
         validate_resolved_generation_configuration(self, resolved)?;
 
-        if let Some(active) = self.graph_generation() {
-            if active != resolved.generation() {
-                return Err(
-                    ResolvedGenerationActivationError::DifferentGenerationAlreadyActive {
-                        active: active.clone(),
-                        requested: resolved.generation().clone(),
-                    },
-                );
-            }
+        if let Some(active) = self.graph_generation()
+            && active != resolved.generation()
+        {
+            return Err(
+                ResolvedGenerationActivationError::DifferentGenerationAlreadyActive {
+                    active: active.clone(),
+                    requested: resolved.generation().clone(),
+                },
+            );
         }
 
         self.prepare_durable_schemas(resolved.durable_schemas())

@@ -6,8 +6,8 @@ use phenix_core::{
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -17,21 +17,25 @@ static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        System.alloc(layout)
+        // SAFETY: `GlobalAlloc::alloc` supplies a valid layout; the request is forwarded unchanged.
+        unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout);
+        // SAFETY: `GlobalAlloc::dealloc` supplies the allocation pointer and layout to release.
+        unsafe { System.dealloc(ptr, layout) };
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        System.alloc_zeroed(layout)
+        // SAFETY: `GlobalAlloc::alloc_zeroed` supplies a valid layout; the request is forwarded unchanged.
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        System.realloc(ptr, layout, new_size)
+        // SAFETY: `GlobalAlloc::realloc` supplies a valid allocation, layout, and requested size.
+        unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
 

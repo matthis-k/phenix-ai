@@ -13,7 +13,7 @@ pub use phenix_sdk::{
     CodeEntityRelations, CodeEntityRevision, CodeQuery, CodeQueryAnchor, CodeQueryBudget,
     CodeQueryCoverage, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection, CodeQueryRelation,
     CodeQueryResult, CodeQuerySelection, CodeQueryTraversal, CodeRelationKind, DiagnosticsResult,
-    DocumentProvenance, FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity,
-    LanguageObservation, LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch,
-    LanguageResponse, LogicalCodeEntity, ProviderEpoch, LANGUAGE_SERVICE,
+    DocumentProvenance, FileRevisionFallback, LANGUAGE_SERVICE, LanguageCommand,
+    LanguageDocumentIdentity, LanguageObservation, LanguageOperationKind, LanguageOperationResult,
+    LanguageProviderEpoch, LanguageResponse, LogicalCodeEntity, ProviderEpoch,
 };

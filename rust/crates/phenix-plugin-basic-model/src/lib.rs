@@ -12,7 +12,7 @@ pub const BASIC_MODEL_COMPONENT: &str = "phenix.basic-model";
 
 #[phenix_sdk::plugin("phenix.basic-model")]
 mod plugin {
-    use super::{BTreeMap, ModelInferenceRequest, ModelInferenceResponse, BASIC_MODEL_PLUGIN};
+    use super::{BASIC_MODEL_PLUGIN, BTreeMap, ModelInferenceRequest, ModelInferenceResponse};
 
     #[phenix(export("phenix.models.inference@1"), terminal, priority = 10)]
     fn infer(request: ModelInferenceRequest) -> ModelInferenceResponse {

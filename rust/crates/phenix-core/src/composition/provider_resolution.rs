@@ -156,16 +156,22 @@ mod tests {
     #[test]
     fn fallback_requires_contract_and_product_policy() {
         let interface = interface();
-        assert!(!ProviderCompositionPolicy::new()
-            .with_interface_fallback(interface.clone())
-            .fallback_enabled(&interface));
-        assert!(!ProviderCompositionPolicy::new()
-            .with_fallback_enabled(interface.clone())
-            .fallback_enabled(&interface));
-        assert!(ProviderCompositionPolicy::new()
-            .with_interface_fallback(interface.clone())
-            .with_fallback_enabled(interface.clone())
-            .fallback_enabled(&interface));
+        assert!(
+            !ProviderCompositionPolicy::new()
+                .with_interface_fallback(interface.clone())
+                .fallback_enabled(&interface)
+        );
+        assert!(
+            !ProviderCompositionPolicy::new()
+                .with_fallback_enabled(interface.clone())
+                .fallback_enabled(&interface)
+        );
+        assert!(
+            ProviderCompositionPolicy::new()
+                .with_interface_fallback(interface.clone())
+                .with_fallback_enabled(interface.clone())
+                .fallback_enabled(&interface)
+        );
     }
 
     #[test]

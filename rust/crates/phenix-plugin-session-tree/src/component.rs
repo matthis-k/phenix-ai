@@ -1,4 +1,4 @@
-use crate::{session_tree_manifest, SessionTreeInterface};
+use crate::{SessionTreeInterface, session_tree_manifest};
 use phenix_core::{
     ComponentExport, ComponentId, ComponentImport, ComponentInterface, ComponentManifest, PluginId,
 };
@@ -104,9 +104,10 @@ mod tests {
         assert_eq!(handle.exporter(), &session_component_manifest().id);
         assert_eq!(handle.owning_plugin(), &session_manifest().id);
         let tree = graph.component(&session_tree_component_id()).unwrap();
-        assert!(tree
-            .imports
-            .iter()
-            .any(|import| import.interface == SessionInterface::interface_id()));
+        assert!(
+            tree.imports
+                .iter()
+                .any(|import| import.interface == SessionInterface::interface_id())
+        );
     }
 }

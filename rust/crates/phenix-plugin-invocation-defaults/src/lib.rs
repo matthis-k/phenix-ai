@@ -5,16 +5,16 @@ use phenix_core::{
     RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
+    ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
+    ContextRecoveryRequest, ContextRecoveryResponse, DelegationResourcePolicy,
+    HelperInvocationRequest, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
+    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
+    OptionValueSource, OptionsInterface, RecoveryClassifierPolicy, RecoveryColdGate,
+    ResolvedOption, RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
-    recovery_cold_gate, validate_recovery_decision, ContextNeed, ContextRecoveryCommand,
-    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
-    ContextRecoveryResponse, DelegationResourcePolicy, HelperInvocationRequest,
-    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
-    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
-    InvocationIntent, InvocationParams, InvocationRequest, OptionCommand, OptionContext, OptionKey,
-    OptionResponse, OptionSubjectId, OptionValue, OptionValueSource, OptionsInterface,
-    RecoveryClassifierPolicy, RecoveryColdGate, ResolvedOption, RouteSelectionPolicy,
-    RoutingEstimateMode, UsagePolicy,
+    recovery_cold_gate, validate_recovery_decision,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -206,15 +206,15 @@ impl PluginInstance for InvocationDefaultsPlugin {
 
 fn assess_recovery(request: &ContextRecoveryRequest) -> Result<ContextRecoveryDecision, String> {
     let policy = RecoveryClassifierPolicy::default();
-    if let Some(limit) = policy.max_prompt_bytes {
-        if request.prompt.len() > limit as usize {
-            return Ok(ContextRecoveryDecision::Sufficient);
-        }
+    if let Some(limit) = policy.max_prompt_bytes
+        && request.prompt.len() > limit as usize
+    {
+        return Ok(ContextRecoveryDecision::Sufficient);
     }
-    if let Some(limit) = policy.max_anchors {
-        if request.state.anchors.len() > limit as usize {
-            return Err(format!("recovery anchors exceed {limit} entries"));
-        }
+    if let Some(limit) = policy.max_anchors
+        && request.state.anchors.len() > limit as usize
+    {
+        return Err(format!("recovery anchors exceed {limit} entries"));
     }
     if matches!(
         recovery_cold_gate(&request.state),
@@ -283,10 +283,10 @@ fn resolve_routing_option(
             session: Some(OptionSubjectId::parse(session.as_str().to_owned())?),
             agent: None,
         };
-        if let Some(option) = resolve_option(context, session_context)? {
-            if option.source == OptionValueSource::Session {
-                return Ok(Some(option));
-            }
+        if let Some(option) = resolve_option(context, session_context)?
+            && option.source == OptionValueSource::Session
+        {
+            return Ok(Some(option));
         }
     }
     resolve_option(context, invocation_option_context(request)?)
@@ -420,18 +420,24 @@ mod tests {
         assert_eq!(manifest.services.len(), 3);
 
         let component = invocation_defaults_component_manifest(authority);
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == InvocationDefaultsInterface::interface_id()));
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == InvocationClockInterface::interface_id()));
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == ContextRecoveryInterface::interface_id()));
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == InvocationDefaultsInterface::interface_id())
+        );
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == InvocationClockInterface::interface_id())
+        );
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == ContextRecoveryInterface::interface_id())
+        );
     }
 
     #[test]

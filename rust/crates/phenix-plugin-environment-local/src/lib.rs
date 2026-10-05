@@ -7,14 +7,14 @@ use phenix_core::{
     ServiceId,
 };
 use phenix_sdk::{
-    environment_service, EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry,
-    EnvironmentFileKind, EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse,
-    ProcessStreamRecovery,
+    EnvironmentCommand, EnvironmentDescription, EnvironmentDirEntry, EnvironmentFileKind,
+    EnvironmentFilesystemPolicy, EnvironmentInterface, EnvironmentResponse, ProcessStreamRecovery,
+    environment_service,
 };
 use rustix::{
     fs::{self as rfs, Dir, FileType, Mode, OFlags, ResolveFlags},
     io::Errno,
-    process::{kill_process_group, Pid, Signal},
+    process::{Pid, Signal, kill_process_group},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -431,7 +431,7 @@ impl LocalEnvironment {
                     return Err(format!(
                         "open confined parent {}: {error}",
                         accumulated.display()
-                    ))
+                    ));
                 }
             }
         }
@@ -1608,16 +1608,18 @@ test -n "$found""#
             ),
             EnvironmentResponse::File { content: Some(content) } if content == b"outside"
         ));
-        assert!(invoke_result(
-            &mut kernel,
-            EnvironmentCommand::WriteFile {
-                path: outside_write.to_string_lossy().into_owned(),
-                content: b"nope".to_vec(),
-                create_parents: false,
-            },
-        )
-        .unwrap_err()
-        .contains("denies path outside working directory"));
+        assert!(
+            invoke_result(
+                &mut kernel,
+                EnvironmentCommand::WriteFile {
+                    path: outside_write.to_string_lossy().into_owned(),
+                    content: b"nope".to_vec(),
+                    create_parents: false,
+                },
+            )
+            .unwrap_err()
+            .contains("denies path outside working directory")
+        );
 
         let process = invoke(
             &mut kernel,
@@ -1674,14 +1676,16 @@ test -n "$found""#
         let mut kernel =
             restricted_kernel(&root, EnvironmentFilesystemPolicy::WorkingDirectoryOnly);
 
-        assert!(invoke_result(
-            &mut kernel,
-            EnvironmentCommand::ReadFile {
-                path: outside_read.to_string_lossy().into_owned(),
-            },
-        )
-        .unwrap_err()
-        .contains("denies path outside working directory"));
+        assert!(
+            invoke_result(
+                &mut kernel,
+                EnvironmentCommand::ReadFile {
+                    path: outside_read.to_string_lossy().into_owned(),
+                },
+            )
+            .unwrap_err()
+            .contains("denies path outside working directory")
+        );
 
         let process = invoke(
             &mut kernel,

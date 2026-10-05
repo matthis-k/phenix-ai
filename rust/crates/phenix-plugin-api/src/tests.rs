@@ -47,9 +47,9 @@ where
 fn projected<T>(bytes: &[u8]) -> T
 where
     for<'value> T: TryFrom<
-        phenix_core::Project<&'value phenix_core::PhenixValue>,
-        Error = phenix_core::ValueError,
-    >,
+            phenix_core::Project<&'value phenix_core::PhenixValue>,
+            Error = phenix_core::ValueError,
+        >,
 {
     serde_json::from_slice::<phenix_core::PhenixValue>(bytes)
         .unwrap()
@@ -225,17 +225,19 @@ fn session_open_uses_scoped_options() {
         )
         .unwrap();
 
-    assert!(kernel
-        .invoke(
-            &sdk_session_service(),
-            &abi(&SdkSessionCommand::Open {
-                id: "root".into(),
-                agent: Some("planner".into()),
-            }),
-            &authority,
-            None,
-        )
-        .is_err());
+    assert!(
+        kernel
+            .invoke(
+                &sdk_session_service(),
+                &abi(&SdkSessionCommand::Open {
+                    id: "root".into(),
+                    agent: Some("planner".into()),
+                }),
+                &authority,
+                None,
+            )
+            .is_err()
+    );
 }
 
 #[test]

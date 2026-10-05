@@ -1,5 +1,5 @@
 use crate::{
-    context_service_state::{MemoryContextServiceState, MEMORY_CONTEXT_STATE_KEY},
+    context_service_state::{MEMORY_CONTEXT_STATE_KEY, MemoryContextServiceState},
     implementation,
 };
 use phenix_core::{
@@ -7,10 +7,10 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    memory_context_service, memory_service, CandidateCompleteness, ContextAnchor, ContextNeed,
-    MemoryAssociationObservation, MemoryCommand, MemoryContextCandidate, MemoryContextCommand,
-    MemoryContextInterface, MemoryContextMatch, MemoryContextRecallRequest, MemoryContextResponse,
-    MemoryFreshness, MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse,
+    CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
+    MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, memory_context_service, memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 

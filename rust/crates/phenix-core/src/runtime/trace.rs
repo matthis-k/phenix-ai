@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     num::NonZeroUsize,
-    panic::{catch_unwind, AssertUnwindSafe},
+    panic::{AssertUnwindSafe, catch_unwind},
 };
 
 pub const DEFAULT_RUNTIME_TRACE_CAPACITY: usize = 256;

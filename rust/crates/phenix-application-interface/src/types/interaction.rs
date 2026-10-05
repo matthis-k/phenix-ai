@@ -290,7 +290,7 @@ fn normalize_table(
             None => {
                 return Err(ElicitationValidationError::InvalidValue {
                     message: format!("missing table field {key}"),
-                })
+                });
             }
         };
         normalized.insert(key.clone(), value);

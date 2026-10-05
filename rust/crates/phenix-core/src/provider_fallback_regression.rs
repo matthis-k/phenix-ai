@@ -5,8 +5,8 @@ use crate::{
     ProviderSelectionReason, ResolvedGeneration, ResolvedGenerationActivation, ServiceId,
 };
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 struct Echo;
@@ -240,15 +240,17 @@ fn fallback_is_generation_pinned_and_execution_failure_never_switches_provider()
     kernel.activate_all().unwrap();
     primary_fail.store(true, Ordering::Release);
     let fallback_calls_before_failure = fallback_calls.load(Ordering::Acquire);
-    assert!(kernel
-        .invoke_component(
-            &component("consumer-component"),
-            &ServiceId::parse("fixture.provider-fallback.consumer@1").unwrap(),
-            &serde_json::to_vec(&PhenixValue::String("fail".into())).unwrap(),
-            &Authority::default(),
-            &plugin("consumer"),
-        )
-        .is_err());
+    assert!(
+        kernel
+            .invoke_component(
+                &component("consumer-component"),
+                &ServiceId::parse("fixture.provider-fallback.consumer@1").unwrap(),
+                &serde_json::to_vec(&PhenixValue::String("fail".into())).unwrap(),
+                &Authority::default(),
+                &plugin("consumer"),
+            )
+            .is_err()
+    );
     assert_eq!(primary_calls.load(Ordering::Acquire), 1);
     assert_eq!(
         fallback_calls.load(Ordering::Acquire),

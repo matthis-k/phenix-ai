@@ -1,4 +1,4 @@
-use crate::{Plugin, ARTIFACT_SERVICE};
+use crate::{ARTIFACT_SERVICE, Plugin};
 use phenix_core::{ComponentId, ComponentInterface, ComponentManifest, InterfaceId};
 use phenix_sdk::StaticPluginDefinition;
 

@@ -1,10 +1,10 @@
-use phenix_adapter_acp::{wire, ApplicationAdapter};
+use phenix_adapter_acp::{ApplicationAdapter, wire};
 use phenix_application_interface::{
+    ApplicationTransport, Cancel, CloseSession, Operation, ResumeSession,
     types::{
         Acknowledged, ApplicationError, SessionInfo, SessionInput, SessionResumeInput,
         SessionSnapshot,
     },
-    ApplicationTransport, Cancel, CloseSession, Operation, ResumeSession,
 };
 use phenix_core::{ContractId, PhenixValue, SessionId, ValueCodec};
 use std::sync::{Arc, Mutex};

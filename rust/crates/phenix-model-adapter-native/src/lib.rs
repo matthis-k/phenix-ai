@@ -7,11 +7,11 @@ mod schema_adapter;
 
 use credentials::{CredentialStore, StoredCredential};
 use futures::StreamExt;
+use genai::Client as ProviderClient;
 use genai::chat::{
     ChatMessage, ChatOptions, ChatRequest, ChatStreamEvent, ReasoningEffort, Tool, ToolResponse,
 };
 use genai::resolver::AuthResolver;
-use genai::Client as ProviderClient;
 use phenix_domain::{
     AuthenticationInput, AuthenticationMethodDescriptor, AuthenticationMethodId,
     AuthenticationMethodKind, AuthenticationState, InferenceEffort, InferenceOptions,
@@ -128,7 +128,7 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
             return Ok(json!({
                 "error": format!("cannot encode tool arguments: {error}")
             })
-            .to_string())
+            .to_string());
         }
     };
     match host.invoke_tool(ToolInvocation {
@@ -480,12 +480,12 @@ impl NativeModelSession {
         let mut tool_rounds = 0usize;
 
         loop {
-            if let Some(limit) = self.max_tool_rounds {
-                if tool_rounds >= limit.get() {
-                    return Err(ModelAdapterError::Protocol(format!(
-                        "provider exceeded {limit} consecutive tool rounds"
-                    )));
-                }
+            if let Some(limit) = self.max_tool_rounds
+                && tool_rounds >= limit.get()
+            {
+                return Err(ModelAdapterError::Protocol(format!(
+                    "provider exceeded {limit} consecutive tool rounds"
+                )));
             }
             tool_rounds += 1;
             if self.cancelled.load(Ordering::Acquire) {

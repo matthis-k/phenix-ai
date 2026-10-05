@@ -101,8 +101,8 @@ mod service {
 }
 
 pub use service::{
-    repository_work_queue_service, repository_worker_factory, repository_worker_manifest,
-    REPOSITORY_WORK_QUEUE_SERVICE,
+    REPOSITORY_WORK_QUEUE_SERVICE, repository_work_queue_service, repository_worker_factory,
+    repository_worker_manifest,
 };
 
 #[cfg(test)]

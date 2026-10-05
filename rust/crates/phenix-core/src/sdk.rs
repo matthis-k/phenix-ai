@@ -773,7 +773,7 @@ fn parse_listen_input(
         _ => {
             return Err(CallableError::SchemaMismatch {
                 message: "observable listen input is missing listener".to_owned(),
-            })
+            });
         }
     };
     Ok((
@@ -1138,7 +1138,7 @@ fn insert_binding(
                 return Err(SdkResolutionError::ConflictingBindingPath {
                     namespace: namespace.clone(),
                     path: path.to_vec(),
-                })
+                });
             }
         };
     insert_binding(
@@ -1318,11 +1318,13 @@ mod tests {
 
         let resolved = ResolvedSdkContributions::resolve(&plugins, &[], [testing]).unwrap();
 
-        assert!(resolved
-            .get(&SdkNamespace::parse("testing").unwrap())
-            .unwrap()
-            .resources
-            .contains(&SdkResourceId::parse("sdk/rust/testing").unwrap()));
+        assert!(
+            resolved
+                .get(&SdkNamespace::parse("testing").unwrap())
+                .unwrap()
+                .resources
+                .contains(&SdkResourceId::parse("sdk/rust/testing").unwrap())
+        );
     }
 
     #[test]
@@ -1387,9 +1389,11 @@ mod tests {
 
     #[test]
     fn empty_composition_has_no_sdk_namespaces() {
-        assert!(ResolvedSdkContributions::resolve(&[], &[], [])
-            .unwrap()
-            .is_empty());
+        assert!(
+            ResolvedSdkContributions::resolve(&[], &[], [])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -9,9 +9,9 @@ use phenix_core::{
     RootExecutionConstraints, RootExecutionHandle, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
-    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
-    artifact_component_manifest, artifact_factory, artifact_manifest,
+    AGENT_LOOP_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
+    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
+    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
     basic_context_manifest, basic_model_component_manifest, basic_model_factory,
     basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,
@@ -37,7 +37,7 @@ use phenix_plugin_catalog::{
     session_component_manifest, session_factory, session_manifest, session_tree_component_manifest,
     session_tree_factory, session_tree_manifest, step_runner_component_manifest,
     step_runner_factory, step_runner_manifest, workspace_component_manifest, workspace_factory,
-    workspace_manifest, AGENT_LOOP_PLUGIN,
+    workspace_manifest,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -48,7 +48,7 @@ use std::{
 
 pub mod application;
 mod basic_suite;
-pub use invocation_defaults::{invocation_defaults_manifest, INVOCATION_DEFAULTS_PLUGIN};
+pub use invocation_defaults::{INVOCATION_DEFAULTS_PLUGIN, invocation_defaults_manifest};
 use phenix_plugin_invocation_defaults as invocation_defaults;
 pub mod model_surface_fixture;
 mod persistence;
@@ -827,14 +827,14 @@ mod tests {
         ServiceContribution, ServiceId, ServiceRole, SessionId,
     };
     use phenix_plugin_catalog::{
-        artifact_manifest, artifact_service, context_manifest, context_service,
-        efficiency_evaluation_service, memory_service, planning_manifest, planning_service,
-        repository_work_queue_service, sdk_contribution, session_manifest, session_service,
-        ArtifactCommand, ArtifactProvenance, ArtifactResponse, ContextCommand, ContextDescriptor,
+        ADVANCED_AGENT_CONFIGURATION, ArtifactCommand, ArtifactProvenance, ArtifactResponse,
+        BASIC_AGENT_CONFIGURATION, BASIC_PRODUCT_CONFIGURATION, ContextCommand, ContextDescriptor,
         ContextResourceKind, ContextResponse, ContextScope, EfficiencyCollectionRequest,
-        EfficiencyEvaluationCommand, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-        SessionCommand, SessionResponse, ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION,
-        BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION,
+        EfficiencyEvaluationCommand, FULL_PRODUCT_CONFIGURATION, PlanningCommand, PlanningResponse,
+        RepositoryWorkSnapshot, SessionCommand, SessionResponse, artifact_manifest,
+        artifact_service, context_manifest, context_service, efficiency_evaluation_service,
+        memory_service, planning_manifest, planning_service, repository_work_queue_service,
+        sdk_contribution, session_manifest, session_service,
     };
 
     fn plugin(value: &str) -> PluginId {
@@ -1223,9 +1223,11 @@ mod tests {
                 .unwrap(),
             b"trial"
         );
-        assert!(harness
-            .selectable_generations()
-            .contains(&active_generation));
+        assert!(
+            harness
+                .selectable_generations()
+                .contains(&active_generation)
+        );
         assert_eq!(
             harness
                 .invoke_in_generation(&active_generation, &service, b"input", &constraints, None,)
@@ -1304,22 +1306,28 @@ mod tests {
     fn benchmark_outcomes_are_opt_in_but_selectable() {
         let benchmark = benchmark_outcome_manifest().id.as_str().to_owned();
         let default = PhenixRuntimeBuilder::with_default_suite().unwrap();
-        assert!(!default
-            .manifests
-            .iter()
-            .any(|manifest| manifest.id.as_str() == benchmark));
+        assert!(
+            !default
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id.as_str() == benchmark)
+        );
 
         let selected =
             PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([benchmark.clone()]))
                 .unwrap();
-        assert!(selected
-            .manifests
-            .iter()
-            .any(|manifest| manifest.id.as_str() == benchmark));
-        assert!(selected
-            .components
-            .iter()
-            .any(|component| component.owner.as_str() == benchmark));
+        assert!(
+            selected
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id.as_str() == benchmark)
+        );
+        assert!(
+            selected
+                .components
+                .iter()
+                .any(|component| component.owner.as_str() == benchmark)
+        );
     }
 
     #[test]
@@ -1332,10 +1340,12 @@ mod tests {
         let builder =
             PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([evaluation])).unwrap();
 
-        assert!(builder
-            .manifests
-            .iter()
-            .any(|manifest| manifest.id.as_str() == execution));
+        assert!(
+            builder
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id.as_str() == execution)
+        );
     }
 
     #[test]
@@ -1347,20 +1357,26 @@ mod tests {
             id: SessionId::parse("missing").unwrap(),
         })
         .unwrap();
-        assert!(harness
-            .invoke(&session_service(), &input, &session_authority(), None)
-            .is_err());
+        assert!(
+            harness
+                .invoke(&session_service(), &input, &session_authority(), None)
+                .is_err()
+        );
         let context = serde_json::to_vec(&ContextCommand::List).unwrap();
-        assert!(harness
-            .invoke(&context_service(), &context, &context_authority(), None)
-            .is_err());
+        assert!(
+            harness
+                .invoke(&context_service(), &context, &context_authority(), None)
+                .is_err()
+        );
         let planning = serde_json::to_vec(&PlanningCommand::GetObjective {
             id: "missing".into(),
         })
         .unwrap();
-        assert!(harness
-            .invoke(&planning_service(), &planning, &planning_authority(), None)
-            .is_err());
+        assert!(
+            harness
+                .invoke(&planning_service(), &planning, &planning_authority(), None)
+                .is_err()
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use phenix_core::ModelInferenceFailure;
 use reqwest::header::{HeaderName as ReqwestHeaderName, HeaderValue};
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
@@ -695,21 +695,27 @@ mod tests {
 
     #[test]
     fn auth_parse_rejects_impossible_runtime_tokens() {
-        assert!(serde_json::from_value::<Auth>(serde_json::json!({
-            "type":"api_token",
-            "source":{"type":"literal","token":""}
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<Auth>(serde_json::json!({
-            "type":"api_token",
-            "source":{"type":"environment","variable":"1INVALID"}
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<Auth>(serde_json::json!({
-            "type":"oauth",
-            "access_token":"bad\nvalue"
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<Auth>(serde_json::json!({
+                "type":"api_token",
+                "source":{"type":"literal","token":""}
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<Auth>(serde_json::json!({
+                "type":"api_token",
+                "source":{"type":"environment","variable":"1INVALID"}
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<Auth>(serde_json::json!({
+                "type":"oauth",
+                "access_token":"bad\nvalue"
+            }))
+            .is_err()
+        );
     }
 
     #[test]

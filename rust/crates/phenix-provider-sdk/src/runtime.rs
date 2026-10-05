@@ -1,16 +1,16 @@
 use crate::{
-    encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth,
-    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
-    ProviderError, ProviderModel, ProviderModelOrigin, ProviderModelsCommand,
-    ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
+    ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod,
+    ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderModel, ProviderModelOrigin,
+    ProviderModelsCommand, ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec,
+    RateLimits, Token, encode_model_inference_outcome, normalize_http_error, provider_auth_service,
+    provider_http_client_builder, provider_models_service,
 };
 use phenix_core::{
-    model_inference_service, ArtifactRevision, ComponentInterface, ModelId,
-    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
-    PluginContext, PluginHost, PluginInstance, ServiceId,
+    ArtifactRevision, ComponentInterface, ModelId, ModelInferenceInterface, ModelInferenceRequest,
+    ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
+    model_inference_service,
 };
-use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
 use std::{
     collections::BTreeMap,
     sync::{Arc, OnceLock},
@@ -71,23 +71,23 @@ impl ProviderPlugin {
             return Ok(None);
         }
         let store = self.credentials()?;
-        if self.spec.auth.oauth.is_some() {
-            if let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::OAuth)? {
-                if auth.is_expired() {
-                    return Err(ProviderError::Authentication {
-                        message: format!(
-                            "OAuth credential for {} is expired; add a refreshed credential",
-                            self.spec.id
-                        ),
-                    });
-                }
-                return Ok(Some(auth));
+        if self.spec.auth.oauth.is_some()
+            && let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::OAuth)?
+        {
+            if auth.is_expired() {
+                return Err(ProviderError::Authentication {
+                    message: format!(
+                        "OAuth credential for {} is expired; add a refreshed credential",
+                        self.spec.id
+                    ),
+                });
             }
+            return Ok(Some(auth));
         }
-        if self.spec.auth.api_token.is_some() {
-            if let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::ApiToken)? {
-                return Ok(Some(auth));
-            }
+        if self.spec.auth.api_token.is_some()
+            && let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::ApiToken)?
+        {
+            return Ok(Some(auth));
         }
         if let Some(auth) = self.spec.default_auth.clone() {
             if auth.is_expired() {

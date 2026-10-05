@@ -1,7 +1,7 @@
 use phenix_core::{Authority, KernelAccess, KernelError, PluginContext, PluginId};
 use phenix_provider_sdk::{
-    provider_auth_service, Auth, AuthDescriptor, AuthKind, ProviderAuthCommand,
-    ProviderAuthResponse,
+    Auth, AuthDescriptor, AuthKind, ProviderAuthCommand, ProviderAuthResponse,
+    provider_auth_service,
 };
 use std::{
     error::Error,

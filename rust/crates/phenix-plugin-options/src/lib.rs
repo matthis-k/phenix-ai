@@ -6,7 +6,7 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
@@ -1107,20 +1107,24 @@ mod tests {
     #[test]
     fn option_scope_and_value_type_are_enforced_before_state_changes() {
         let mut state = OptionState::default().with_defaults().unwrap();
-        assert!(state
-            .set(
-                &key("session.max_turns"),
-                OptionScope::Agent(subject("worker")),
-                OptionValue::Integer(10),
-            )
-            .is_err());
-        assert!(state
-            .set(
-                &key("session.max_turns"),
-                OptionScope::Global,
-                OptionValue::String("ten".into()),
-            )
-            .is_err());
+        assert!(
+            state
+                .set(
+                    &key("session.max_turns"),
+                    OptionScope::Agent(subject("worker")),
+                    OptionValue::Integer(10),
+                )
+                .is_err()
+        );
+        assert!(
+            state
+                .set(
+                    &key("session.max_turns"),
+                    OptionScope::Global,
+                    OptionValue::String("ten".into()),
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -1134,16 +1138,18 @@ mod tests {
         .unwrap();
         assert!(state.define(definition.clone()).unwrap());
         assert!(!state.define(definition).unwrap());
-        assert!(state
-            .define(
-                OptionDefinition::new(
-                    key("testing.capture_events"),
-                    OptionValue::String("no".into()),
-                    [OptionScopeKind::Global],
+        assert!(
+            state
+                .define(
+                    OptionDefinition::new(
+                        key("testing.capture_events"),
+                        OptionValue::String("no".into()),
+                        [OptionScopeKind::Global],
+                    )
+                    .unwrap()
                 )
-                .unwrap()
-            )
-            .is_err());
+                .is_err()
+        );
     }
 
     #[test]
@@ -1158,20 +1164,24 @@ mod tests {
     fn repeated_updates_do_not_change_state() {
         let mut state = OptionState::default().with_defaults().unwrap();
         let key = key("model.default");
-        assert!(state
-            .set(
-                &key,
-                OptionScope::Global,
-                OptionValue::String("configured".into()),
-            )
-            .unwrap());
-        assert!(!state
-            .set(
-                &key,
-                OptionScope::Global,
-                OptionValue::String("configured".into()),
-            )
-            .unwrap());
+        assert!(
+            state
+                .set(
+                    &key,
+                    OptionScope::Global,
+                    OptionValue::String("configured".into()),
+                )
+                .unwrap()
+        );
+        assert!(
+            !state
+                .set(
+                    &key,
+                    OptionScope::Global,
+                    OptionValue::String("configured".into()),
+                )
+                .unwrap()
+        );
         assert!(state.unset(&key, &OptionScope::Global).unwrap());
         assert!(!state.unset(&key, &OptionScope::Global).unwrap());
     }

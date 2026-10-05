@@ -173,13 +173,13 @@ impl UsagePolicy {
         if input.execution_state != ExecutionState::Active {
             return Err(UsagePlanError::ExecutionNotActive);
         }
-        if let Some(deadline_at_ms) = input.task.deadline_at_ms {
-            if input.now_ms >= deadline_at_ms {
-                return Err(UsagePlanError::DeadlineExceeded {
-                    deadline_at_ms,
-                    now_ms: input.now_ms,
-                });
-            }
+        if let Some(deadline_at_ms) = input.task.deadline_at_ms
+            && input.now_ms >= deadline_at_ms
+        {
+            return Err(UsagePlanError::DeadlineExceeded {
+                deadline_at_ms,
+                now_ms: input.now_ms,
+            });
         }
         if input.remaining.attempts == 0 {
             return Err(UsagePlanError::NoAttemptsRemaining);
@@ -219,13 +219,13 @@ impl UsagePolicy {
         }
 
         let required_tools = u32::try_from(input.task.required_tools.len()).unwrap_or(u32::MAX);
-        if let Some(limit) = self.max_tool_schemas {
-            if required_tools > limit {
-                return Err(UsagePlanError::RequiredToolSetExceedsBudget {
-                    requested: required_tools,
-                    allowed: limit,
-                });
-            }
+        if let Some(limit) = self.max_tool_schemas
+            && required_tools > limit
+        {
+            return Err(UsagePlanError::RequiredToolSetExceedsBudget {
+                requested: required_tools,
+                allowed: limit,
+            });
         }
 
         let deferred_tool_schemas = input
@@ -240,23 +240,23 @@ impl UsagePolicy {
             .collect::<BTreeSet<_>>();
         if !deferred_tool_schemas {
             let eager_tool_count = u32::try_from(eager_tools.len()).unwrap_or(u32::MAX);
-            if let Some(limit) = self.max_tool_schemas {
-                if eager_tool_count > limit {
-                    return Err(UsagePlanError::EagerToolSetExceedsBudget {
-                        requested: eager_tool_count,
-                        allowed: limit,
-                    });
-                }
-            }
-        }
-        let required_skills = u32::try_from(input.task.required_skills.len()).unwrap_or(u32::MAX);
-        if let Some(limit) = self.max_skills {
-            if required_skills > limit {
-                return Err(UsagePlanError::RequiredSkillSetExceedsBudget {
-                    requested: required_skills,
+            if let Some(limit) = self.max_tool_schemas
+                && eager_tool_count > limit
+            {
+                return Err(UsagePlanError::EagerToolSetExceedsBudget {
+                    requested: eager_tool_count,
                     allowed: limit,
                 });
             }
+        }
+        let required_skills = u32::try_from(input.task.required_skills.len()).unwrap_or(u32::MAX);
+        if let Some(limit) = self.max_skills
+            && required_skills > limit
+        {
+            return Err(UsagePlanError::RequiredSkillSetExceedsBudget {
+                requested: required_skills,
+                allowed: limit,
+            });
         }
 
         let reducible_budget = fresh_input_budget.saturating_sub(mandatory_input_tokens);
@@ -534,10 +534,11 @@ mod tests {
             plan.tools.expandable,
             BTreeSet::from([CallableId::parse("tool.large").unwrap()])
         );
-        assert!(plan
-            .routing
-            .required_features
-            .contains(DEFERRED_TOOL_SCHEMAS_FEATURE));
+        assert!(
+            plan.routing
+                .required_features
+                .contains(DEFERRED_TOOL_SCHEMAS_FEATURE)
+        );
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelFeatures, ModelTurnUsage};
-pub use phenix_core::{
-    model_inference_service, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
-    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
-    MODEL_INFERENCE_SERVICE,
-};
 use phenix_core::{
     CallableId, ComponentInterface, EventTypeId, InterfaceId, ModelFeatureGenerationId, ModelId,
     PhenixValue, PluginId, PreparedMutationHandle, RoutingProfileId, ServiceId,
+};
+pub use phenix_core::{
+    MODEL_INFERENCE_SERVICE, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    model_inference_service,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -278,16 +278,16 @@ pub fn select_route(
     }
 
     let eligible_count = u32::try_from(eligible.len()).unwrap_or(u32::MAX);
-    if let Some(limit) = policy.max_candidate_attempts {
-        if eligible_count > limit {
-            eligible.sort_by_key(|candidate| candidate.ordinal);
-            eligible.truncate(limit as usize);
-            if eligible.is_empty() {
-                return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
-                    eligible: eligible_count,
-                    allowed: limit,
-                });
-            }
+    if let Some(limit) = policy.max_candidate_attempts
+        && eligible_count > limit
+    {
+        eligible.sort_by_key(|candidate| candidate.ordinal);
+        eligible.truncate(limit as usize);
+        if eligible.is_empty() {
+            return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
+                eligible: eligible_count,
+                allowed: limit,
+            });
         }
     }
 

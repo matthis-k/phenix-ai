@@ -17,18 +17,18 @@ use phenix_plugin_step_runner::{
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
 };
 use phenix_sdk::{
-    delegated_worker_service, execution_resource_service, execution_service, model_routing_service,
-    step_attempt_service, step_runner_service, AttemptOutcome, BudgetReservation,
-    BudgetReservationPurpose, BudgetReservationRequest, CapacityKnowledge, ContextCandidate,
-    ContextControl, ContextDemand, ContextRetention, ContextSource, DelegatedWorkResources,
-    DelegatedWorkerCommand, DelegatedWorkerResponse, DelegationResourcePolicy,
-    DelegationTaskBinding, EffectiveModelFeatures, ExecutionAuthority, ExecutionCommand,
-    ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, ModelCommand,
-    ModelLimits, ModelResponse, ModelTarget, PlannedStepRequest, RouteSelectionPolicy,
-    RoutingEstimateMode, RoutingProfile, StepAttemptCommand, StepAttemptPhase, StepAttemptRecord,
-    StepAttemptResponse, StepRunnerCommand, StepRunnerResponse, StepSettlementBasis,
-    TaskRequirements, UsageAttemptKind, UsageAttribution, UsagePolicy, WorkerTaskRecord,
-    WorkerTaskState,
+    AttemptOutcome, BudgetReservation, BudgetReservationPurpose, BudgetReservationRequest,
+    CapacityKnowledge, ContextCandidate, ContextControl, ContextDemand, ContextRetention,
+    ContextSource, DelegatedWorkResources, DelegatedWorkerCommand, DelegatedWorkerResponse,
+    DelegationResourcePolicy, DelegationTaskBinding, EffectiveModelFeatures, ExecutionAuthority,
+    ExecutionCommand, ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse,
+    ModelCommand, ModelLimits, ModelResponse, ModelTarget, PlannedStepRequest,
+    RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile, StepAttemptCommand,
+    StepAttemptPhase, StepAttemptRecord, StepAttemptResponse, StepRunnerCommand,
+    StepRunnerResponse, StepSettlementBasis, TaskRequirements, UsageAttemptKind, UsageAttribution,
+    UsagePolicy, WorkerTaskRecord, WorkerTaskState, delegated_worker_service,
+    execution_resource_service, execution_service, model_routing_service, step_attempt_service,
+    step_runner_service,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -750,22 +750,26 @@ mod retry_budget {
         setup_root(&mut kernel);
         setup_routing(&mut kernel, false);
 
-        assert!(invoke::<_, StepRunnerResponse>(
-            &mut kernel,
-            step_runner_service(),
-            &StepRunnerCommand::Run {
-                request: request(1_000),
-            },
-        )
-        .is_err());
-        assert!(invoke::<_, StepRunnerResponse>(
-            &mut kernel,
-            step_runner_service(),
-            &StepRunnerCommand::Run {
-                request: retry_request("attempt-2", "attempt-1", 2),
-            },
-        )
-        .is_err());
+        assert!(
+            invoke::<_, StepRunnerResponse>(
+                &mut kernel,
+                step_runner_service(),
+                &StepRunnerCommand::Run {
+                    request: request(1_000),
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            invoke::<_, StepRunnerResponse>(
+                &mut kernel,
+                step_runner_service(),
+                &StepRunnerCommand::Run {
+                    request: retry_request("attempt-2", "attempt-1", 2),
+                },
+            )
+            .is_err()
+        );
 
         let error = invoke::<_, StepRunnerResponse>(
             &mut kernel,
@@ -907,9 +911,11 @@ mod delegated_worker_runtime {
         assert!(parent_admitted);
         let result = task.result.expect("completed delegated task has a result");
         assert_eq!(result.findings.len(), 1);
-        assert!(result.findings[0]
-            .summary
-            .contains("inspect delegated subsystem"));
+        assert!(
+            result.findings[0]
+                .summary
+                .contains("inspect delegated subsystem")
+        );
 
         let attempts: StepAttemptResponse = invoke(
             &mut kernel,

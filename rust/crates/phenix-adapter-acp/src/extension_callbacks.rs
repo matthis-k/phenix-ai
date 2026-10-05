@@ -1,6 +1,6 @@
-use crate::{extension_catalog, wire, ApplicationAdapter};
+use crate::{ApplicationAdapter, extension_catalog, wire};
 use phenix_application_interface::{
-    application_descriptor, types::ApplicationError, ApplicationTransport,
+    ApplicationTransport, application_descriptor, types::ApplicationError,
 };
 use phenix_core::{ContractId, PhenixContract, PhenixValue, ValueCodec};
 use std::sync::Arc;

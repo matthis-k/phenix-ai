@@ -1,7 +1,7 @@
-use phenix_adapter_acp::{wire, ApplicationAdapter};
+use phenix_adapter_acp::{ApplicationAdapter, wire};
 use phenix_application_interface::{
-    types::{ApplicationError, SessionInfo},
     ApplicationTransport, CreateSession, Operation,
+    types::{ApplicationError, SessionInfo},
 };
 use phenix_core::{ContractId, PhenixValue, SessionId, ValueCodec};
 use std::sync::{Arc, Mutex};

@@ -1,5 +1,5 @@
 use crate::{
-    default_suite_authority, PhenixRuntime, PhenixRuntimeBuildError, PhenixRuntimeBuilder,
+    PhenixRuntime, PhenixRuntimeBuildError, PhenixRuntimeBuilder, default_suite_authority,
 };
 use phenix_core::{KernelError, PersistenceBackend};
 use phenix_plugin_catalog::{
@@ -48,14 +48,15 @@ impl PhenixRuntime {
 mod tests {
     use super::*;
     use phenix_core::{
-        context_service, model_inference_service, skill_service, tool_service, CallableId,
-        ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
-        ContextScope, InterfaceId, LocalPersistence, ModelId, ModelInferenceRequest,
-        ModelInferenceResponse, PhenixSchema, PhenixValue, Project, SessionId, SkillCommand,
-        SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
+        CallableId, ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind,
+        ContextResponse, ContextScope, InterfaceId, LocalPersistence, ModelId,
+        ModelInferenceRequest, ModelInferenceResponse, PhenixSchema, PhenixValue, Project,
+        SessionId, SkillCommand, SkillDefinition, SkillId, SkillResponse, ToolCommand,
+        ToolDefinition, ToolResponse, context_service, model_inference_service, skill_service,
+        tool_service,
     };
     use phenix_plugin_catalog::{
-        context_component_id, memory_component_id, session_service, SessionCommand, SessionResponse,
+        SessionCommand, SessionResponse, context_component_id, memory_component_id, session_service,
     };
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -144,11 +145,13 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert!(default
-            .kernel()
-            .config()
-            .manifests()
-            .any(|manifest| manifest.id.as_str() == "phenix.memory"));
+        assert!(
+            default
+                .kernel()
+                .config()
+                .manifests()
+                .any(|manifest| manifest.id.as_str() == "phenix.memory")
+        );
         for interface in ["context.compact@1", "context.expand@1"] {
             let handle = default
                 .component_graph()
@@ -165,11 +168,13 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert!(!basic
-            .kernel()
-            .config()
-            .manifests()
-            .any(|manifest| manifest.id.as_str() == "phenix.memory"));
+        assert!(
+            !basic
+                .kernel()
+                .config()
+                .manifests()
+                .any(|manifest| manifest.id.as_str() == "phenix.memory")
+        );
     }
 
     #[test]

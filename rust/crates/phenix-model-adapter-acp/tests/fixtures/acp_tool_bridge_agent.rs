@@ -8,7 +8,7 @@ use agent_client_protocol::schema::v1::{
     SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Agent, Stdio};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -17,16 +17,18 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
 fn model_options() -> Vec<SessionConfigOption> {
-    vec![SessionConfigOption::select(
-        "model",
-        "Model",
-        "fixture-model",
-        vec![SessionConfigSelectOption::new(
+    vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
             "fixture-model",
-            "Fixture Model",
-        )],
-    )
-    .category(SessionConfigOptionCategory::Model)]
+            vec![SessionConfigSelectOption::new(
+                "fixture-model",
+                "Fixture Model",
+            )],
+        )
+        .category(SessionConfigOptionCategory::Model),
+    ]
 }
 
 fn params(value: Value) -> Map<String, Value> {

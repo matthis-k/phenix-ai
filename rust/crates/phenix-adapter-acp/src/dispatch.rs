@@ -1,14 +1,13 @@
 use crate::{extension_meta, wire};
 use phenix_application_interface::{
-    application_descriptor,
+    ApplicationClient, ApplicationDescriptor, ApplicationTransport, Cancel, Capabilities,
+    CloseSession, CreateSession, ListSelections, ListSessions, Operation, Prompt, ResumeSession,
+    SelectSelection, application_descriptor,
     types::{
         Acknowledged, ApplicationError, Content as ApplicationContent, PageInput, PromptInput,
         SelectionPresentation, SelectionSelectInput, Selections, SessionCreateInput, SessionInput,
         SessionSnapshot, StopReason as ApplicationStopReason,
     },
-    ApplicationClient, ApplicationDescriptor, ApplicationTransport, Cancel, Capabilities,
-    CloseSession, CreateSession, ListSelections, ListSessions, Operation, Prompt, ResumeSession,
-    SelectSelection,
 };
 use phenix_core::{ContractId, PhenixValue, RoutingProfileId, SessionId};
 use std::path::Path;

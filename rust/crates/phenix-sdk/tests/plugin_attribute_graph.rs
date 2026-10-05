@@ -148,12 +148,16 @@ fn plugin_resource_field_preserves_identity_schema_and_backend_features() {
     assert_eq!(resources[0].id.as_str(), "fixture.attr.plans");
     assert_eq!(resources[0].schema.version, 3);
     assert_eq!(resources[0].field, "plans");
-    assert!(resources[0]
-        .schema
-        .required_features
-        .contains(&phenix_sdk::PersistenceBackendFeature::Transactions));
-    assert!(resources[0]
-        .schema
-        .required_features
-        .contains(&phenix_sdk::PersistenceBackendFeature::Migrations));
+    assert!(
+        resources[0]
+            .schema
+            .required_features
+            .contains(&phenix_sdk::PersistenceBackendFeature::Transactions)
+    );
+    assert!(
+        resources[0]
+            .schema
+            .required_features
+            .contains(&phenix_sdk::PersistenceBackendFeature::Migrations)
+    );
 }

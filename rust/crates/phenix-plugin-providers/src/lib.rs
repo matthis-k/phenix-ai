@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{Authority, ModelId, PluginExecution, PluginId, PluginManifest};
-use phenix_provider_sdk::{auth, Auth, Endpoint, Protocol, ProviderDefinition};
+use phenix_provider_sdk::{Auth, Endpoint, Protocol, ProviderDefinition, auth};
 
 pub const PROVIDERS_PLUGIN: &str = "phenix.providers";
 

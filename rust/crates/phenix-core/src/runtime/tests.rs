@@ -4,8 +4,8 @@ use crate::{
     ServiceContribution,
 };
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 fn plugin(value: &str) -> PluginId {
@@ -560,9 +560,11 @@ fn prepared_transaction_requires_write_authority_on_foreign_typed_import() {
         .transact_prepared(&[caller_mutation, owner_mutation])
         .unwrap_err();
     assert!(matches!(denied, KernelError::HostOperationDenied { .. }));
-    assert!(denied
-        .to_string()
-        .contains("without authorized typed import"));
+    assert!(
+        denied
+            .to_string()
+            .contains("without authorized typed import")
+    );
 }
 
 #[test]
