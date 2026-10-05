@@ -71,23 +71,23 @@ impl ProviderPlugin {
             return Ok(None);
         }
         let store = self.credentials()?;
-        if self.spec.auth.oauth.is_some() {
-            if let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::OAuth)? {
-                if auth.is_expired() {
-                    return Err(ProviderError::Authentication {
-                        message: format!(
-                            "OAuth credential for {} is expired; add a refreshed credential",
-                            self.spec.id
-                        ),
-                    });
-                }
-                return Ok(Some(auth));
+        if self.spec.auth.oauth.is_some()
+            && let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::OAuth)?
+        {
+            if auth.is_expired() {
+                return Err(ProviderError::Authentication {
+                    message: format!(
+                        "OAuth credential for {} is expired; add a refreshed credential",
+                        self.spec.id
+                    ),
+                });
             }
+            return Ok(Some(auth));
         }
-        if self.spec.auth.api_token.is_some() {
-            if let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::ApiToken)? {
-                return Ok(Some(auth));
-            }
+        if self.spec.auth.api_token.is_some()
+            && let Some(auth) = store.resolve(self.spec.id.as_str(), AuthKind::ApiToken)?
+        {
+            return Ok(Some(auth));
         }
         if let Some(auth) = self.spec.default_auth.clone() {
             if auth.is_expired() {
