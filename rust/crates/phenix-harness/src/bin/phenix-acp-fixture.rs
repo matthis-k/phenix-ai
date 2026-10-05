@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    model_inference_service, Authority, Bytes, CapabilityGenerationId, ComponentExport,
+    model_inference_service, Authority, Bytes, ModelFeatureGenerationId, ComponentExport,
     ComponentId, ComponentInterface, ComponentManifest, LocalPersistence, ModelId,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
@@ -12,7 +12,7 @@ use phenix_harness::{
     model_surface_fixture::model_surface_response, PhenixRuntime, PhenixRuntimeBuilder,
 };
 use phenix_sdk::{
-    model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelCapabilities,
+    model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelFeatures,
     ModelCommand, ModelLimits, ModelResponse, ModelTarget, RoutingProfile,
 };
 use std::{
@@ -199,10 +199,10 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
     ] {
         match invoke_model(
             harness,
-            &ModelCommand::PublishCapabilities {
-                capabilities: EffectiveModelCapabilities {
+            &ModelCommand::PublishModelFeatures {
+                features: EffectiveModelFeatures {
                     target,
-                    generation: CapabilityGenerationId::parse(generation)?,
+                    generation: ModelFeatureGenerationId::parse(generation)?,
                     context: ContextControl::ReplaceableTurns,
                     capacity: CapacityKnowledge::Known {
                         limits: ModelLimits {
@@ -215,8 +215,8 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
                 },
             },
         )? {
-            ModelResponse::Capabilities { .. } => {}
-            other => return Err(format!("fixture capability publication failed: {other:?}").into()),
+            ModelResponse::Features { .. } => {}
+            other => return Err(format!("fixture feature publication failed: {other:?}").into()),
         }
     }
     Ok(())
