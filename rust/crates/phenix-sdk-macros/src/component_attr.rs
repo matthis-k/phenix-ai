@@ -1164,13 +1164,13 @@ fn validate_value_signature(signature: &Signature, value: &ValueContribution) ->
         ));
     }
 
-    if let Some(context) = inputs.next() {
-        if !is_read_context_parameter(context) {
-            return Err(syn::Error::new_spanned(
-                context,
-                "public component values accept only an optional &ReadContext after &self",
-            ));
-        }
+    if let Some(context) = inputs.next()
+        && !is_read_context_parameter(context)
+    {
+        return Err(syn::Error::new_spanned(
+            context,
+            "public component values accept only an optional &ReadContext after &self",
+        ));
     }
     if inputs.next().is_some() {
         return Err(syn::Error::new_spanned(
