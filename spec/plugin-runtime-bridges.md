@@ -18,9 +18,9 @@ Execution runtime changes how executable behavior is hosted. It does not create 
 
 Core has one executable `PluginInstance` contract and one `PluginHost` boundary.
 
-The built-in bootstrap runtime is `embedded`. Runtime identity is open: non-embedded execution is provided through the kernel Runtime Provider Interface rather than a closed Core enum of supported languages or engines.
+The built-in bootstrap runtime is `embedded`. Runtime identity is open: non-embedded execution is provided through the kernel Plugin Runtime Adapter Interface rather than a closed Core enum of supported languages or engines.
 
-A Runtime Provider translates a guest artifact into the canonical `PluginInstance` contract. The guest receives its own attenuated Plugin Host. Runtime Provider authority and guest Plugin authority are separate.
+A Plugin Runtime Adapter translates a guest artifact into the canonical `PluginInstance` contract. The guest receives its own attenuated Plugin Host. Plugin Runtime Adapter authority and guest Plugin authority are separate.
 
 No concrete non-embedded bridge package is required by the current baseline.
 
@@ -40,9 +40,9 @@ Candidate metadata includes:
 
 Runtime-specific executable code does not choose its own effective authority or component contract after activation begins.
 
-## Runtime Provider resolution
+## Plugin Runtime Adapter resolution
 
-Every non-embedded runtime resolves through a Runtime Provider already available to the candidate graph.
+Every non-embedded runtime resolves through a Plugin Runtime Adapter already available to the candidate graph.
 
 Runtime-provider dependencies are acyclic and must terminate at `embedded`. Missing providers and dependency cycles fail candidate preparation before graph commit.
 
@@ -83,7 +83,7 @@ Build plans are typed candidate-preparation input. Steps use an executable and a
 
 Core receives an explicit build executor and content-addressed storage capability from trusted management context. Core does not gain ambient shell access to perform builds.
 
-Build authority is attenuated independently from both guest Plugin authority and Runtime Provider authority.
+Build authority is attenuated independently from both guest Plugin authority and Plugin Runtime Adapter authority.
 
 A successful build produces one declared output artifact plus bounded provenance. A later runtime or activation failure preserves that build evidence while leaving the active generation unchanged.
 
@@ -95,7 +95,7 @@ Load, replacement, unload, and desired-set reconciliation use the same transacti
 resolve desired state
   -> authorize management request
   -> obtain exact artifact when needed
-  -> resolve Runtime Providers
+  -> resolve Plugin Runtime Adapters
   -> resolve component graph
   -> validate authority and resources
   -> prepare candidate instances
@@ -118,11 +118,11 @@ Core owns live-call tracking, task cancellation, and late-result rejection. See 
 
 ## Persistence ownership
 
-Persistent state belongs to Plugin and resource identity rather than artifact revision or Runtime Provider identity.
+Persistent state belongs to Plugin and resource identity rather than artifact revision or Plugin Runtime Adapter identity.
 
 Changing executable artifact or execution runtime does not implicitly create a new persistence namespace.
 
-Runtime Providers translate guest access to kernel-owned persistence capabilities; they do not own product state semantics.
+Plugin Runtime Adapters translate guest access to kernel-owned persistence capabilities; they do not own product state semantics.
 
 ## Error boundary
 
@@ -133,7 +133,7 @@ The current contract distinguishes failures including:
 - authorization denial;
 - build or declared-output failure;
 - unavailable artifact storage;
-- unavailable Runtime Provider;
+- unavailable Plugin Runtime Adapter;
 - runtime dependency cycle;
 - graph-resolution failure;
 - candidate preparation or start failure;
@@ -146,9 +146,9 @@ Post-commit retirement failure is operational failure and does not roll the grap
 
 - One canonical Plugin API serves every execution runtime.
 - `embedded` is the only Core bootstrap runtime.
-- Runtime identity is open and resolved through Runtime Providers.
-- Runtime Providers do not gain composition authority.
-- Guest and Runtime Provider authority remain distinct.
+- Runtime identity is open and resolved through Plugin Runtime Adapters.
+- Plugin Runtime Adapters do not gain composition authority.
+- Guest and Plugin Runtime Adapter authority remain distinct.
 - Desired-state management is kernel-owned.
 - Builds are explicit candidate preparation, not ambient shell execution.
 - Exact artifact revisions are generation-pinned.
@@ -161,4 +161,4 @@ Post-commit retirement failure is operational failure and does not roll the grap
 
 The implemented baseline commits replacement and then stops retired instances. `spec/selectable-generations.md` proposes a development extension where compatible old and candidate generations may remain resident for explicit root execution before promotion.
 
-This does not add a reload lifecycle. Build, resolution, Plugin preparation, authority, persistence ownership, and Runtime Provider semantics remain the same. The extension changes generation residency and root selection, not the Plugin API.
+This does not add a reload lifecycle. Build, resolution, Plugin preparation, authority, persistence ownership, and Plugin Runtime Adapter semantics remain the same. The extension changes generation residency and root selection, not the Plugin API.
