@@ -354,15 +354,29 @@
           };
 
           product = {
-            phenix-runtime = mkNixCheckSuite {
-              checks = [
-                "phenix-product-runtime-smoke"
-                "phenix-plugin-packaging-products"
-                "phenix-plugin-packaging-environment"
-                "phenix-plugin-packaging-settings"
-                "phenix-plugin-packaging-isolation"
-              ];
+            phenix-runtime = {
               name = "Phenix supported runtime journey";
+              needs = [ ];
+              cache = false;
+              runtimeInputs = pkgs: [
+                pkgs.git
+                pkgs.nix
+              ];
+              exec = ''
+                ${repositoryRoot}
+                system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+                dependency_root="''${RUNNER_TEMP:-$TMPDIR}/phenix-product-rust-dependencies"
+
+                nix build --out-link "$dependency_root" \
+                  ".#packages.$system.phenix-product-rust-dependencies"
+
+                nix build --no-link --print-build-logs \
+                  ".#checks.$system.phenix-product-runtime-smoke" \
+                  ".#checks.$system.phenix-plugin-packaging-products" \
+                  ".#checks.$system.phenix-plugin-packaging-environment" \
+                  ".#checks.$system.phenix-plugin-packaging-settings" \
+                  ".#checks.$system.phenix-plugin-packaging-isolation"
+              '';
             };
 
             phenix-standalone-runtime = mkNixCheckSuite {
@@ -383,6 +397,13 @@
         ci.github = {
           enable = true;
           outputName = "phenix-maintenance";
+          nixCache = {
+            enable = true;
+            jobs = [ "product-phenix-runtime" ];
+            primaryKey = "phenix-product-nix-\${{ runner.os }}-\${{ hashFiles('modules/rust-artifacts.nix', 'flake.lock', 'rust/Cargo.lock', 'rust/**/Cargo.toml') }}";
+            restorePrefixesFirstMatch = [ "phenix-product-nix-\${{ runner.os }}-" ];
+            gcMaxStoreSizeLinux = "4G";
+          };
         };
         gitHooks = {
           enable = true;
