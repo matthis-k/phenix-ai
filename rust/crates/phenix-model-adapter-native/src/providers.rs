@@ -295,10 +295,10 @@ fn go_adapter(model: &ModelId) -> AdapterKind {
 
 fn auth_from_environment(names: &[&'static str]) -> AuthData {
     for name in names {
-        if let Ok(secret) = std::env::var(name) {
-            if !secret.trim().is_empty() {
-                return AuthData::from_single(secret);
-            }
+        if let Ok(secret) = std::env::var(name)
+            && !secret.trim().is_empty()
+        {
+            return AuthData::from_single(secret);
         }
     }
     AuthData::from_env(names[0])
