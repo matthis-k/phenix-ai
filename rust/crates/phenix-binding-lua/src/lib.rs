@@ -15,27 +15,27 @@ use agent_client_protocol::schema::v1::{
     TextContent,
 };
 use futures::{
+    StreamExt,
     channel::{mpsc, oneshot},
     future::{AbortHandle, AbortRegistration, Abortable},
-    StreamExt,
 };
 use mlua::{
     Error as LuaError, Lua, LuaSerdeExt, MetaMethod, MultiValue, RegistryKey, Result as LuaResult,
     Table, UserData, UserDataMethods, Value,
 };
 use phenix_application_interface::{
+    CreateSession as AppCreateSession, GetSdk, InvokeCallableReference,
+    ListSelections as AppListSelections, Operation, ResumeSession as AppResumeSession,
+    SelectSelection as AppSelectSelection,
     types::{
         CallableInvocation, CallableInvocationResult, Empty, SdkValue, SelectionInfo,
         SelectionPresentation, SelectionSelectInput, Selections, SessionInfo, SessionInput,
         SessionSnapshot,
     },
-    CreateSession as AppCreateSession, GetSdk, InvokeCallableReference,
-    ListSelections as AppListSelections, Operation, ResumeSession as AppResumeSession,
-    SelectSelection as AppSelectSelection,
 };
 use phenix_client_acp::{
-    application_descriptor, AcpClient, ApplicationEvent, ClientError, ExtensionCallbacks,
-    ExtensionUpdates, SessionUpdates, StdioConfig, INTERFACE_ID,
+    AcpClient, ApplicationEvent, ClientError, ExtensionCallbacks, ExtensionUpdates, INTERFACE_ID,
+    SessionUpdates, StdioConfig, application_descriptor,
 };
 use phenix_core::{
     CallableRef, ClientConnectionId, ContractId, Key, ObjectRef, PhenixSchema, PhenixValue,
@@ -48,8 +48,9 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::{
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc as std_mpsc, Arc, Mutex,
+        mpsc as std_mpsc,
     },
     thread,
 };
@@ -1182,7 +1183,7 @@ fn application_selections_from_config_options(
         _ => {
             return Err(BindingError::conversion(
                 "unsupported ACP model/routing option grouping",
-            ))
+            ));
         }
     };
     let available = choices
@@ -2447,14 +2448,16 @@ fn callable_input(
 fn observable_listen_input(lua: &Lua, arguments: Vec<Value>) -> LuaResult<Value> {
     let (options, listener) = match arguments.as_slice() {
         [Value::Table(options), Value::Function(listener)] => (options.clone(), listener.clone()),
-        [Value::Table(_resource), Value::Table(options), Value::Function(listener)] => {
-            (options.clone(), listener.clone())
-        }
+        [
+            Value::Table(_resource),
+            Value::Table(options),
+            Value::Function(listener),
+        ] => (options.clone(), listener.clone()),
         [Value::Table(options)] => return Ok(Value::Table(options.clone())),
         _ => {
             return Err(lua_error(BindingError::conversion(
                 "observable listen expects options and a Lua listener function",
-            )))
+            )));
         }
     };
     let input = lua.create_table()?;
@@ -3056,9 +3059,11 @@ mod tests {
             reference.generation(),
             &ReferenceGenerationId::parse("generation-1").unwrap()
         );
-        assert!(local_callables
-            .borrow()
-            .entries
-            .contains_key(reference.id()));
+        assert!(
+            local_callables
+                .borrow()
+                .entries
+                .contains_key(reference.id())
+        );
     }
 }

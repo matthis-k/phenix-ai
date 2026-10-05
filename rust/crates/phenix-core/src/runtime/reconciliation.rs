@@ -1,6 +1,6 @@
 use super::*;
 use crate::ResolvedGeneration;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 #[derive(Clone, Copy)]
 pub(super) struct StopView<'a> {
@@ -495,7 +495,7 @@ pub(super) fn cleanup_staged(staged: &[PluginId], view: StopView<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{plugin_runtime_adapter_service, PluginRuntimeId, ServiceContribution};
+    use crate::{PluginRuntimeId, ServiceContribution, plugin_runtime_adapter_service};
 
     fn plugin(value: &str) -> PluginId {
         PluginId::parse(value).unwrap()

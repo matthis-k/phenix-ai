@@ -499,9 +499,11 @@ mod tests {
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0].plugin, first);
         assert_eq!(chain[1].plugin, second);
-        assert!(inspection
-            .interposition_chain(&ServiceId::parse("fixture.missing@1").unwrap())
-            .is_empty());
+        assert!(
+            inspection
+                .interposition_chain(&ServiceId::parse("fixture.missing@1").unwrap())
+                .is_empty()
+        );
     }
 
     #[test]

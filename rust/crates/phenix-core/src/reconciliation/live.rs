@@ -52,10 +52,16 @@ impl Display for LiveReconciliationError {
                 "kernel plugin set differs from resolved generation: kernel={kernel_plugins:?}, resolved={resolved_plugins:?}"
             ),
             Self::KernelPluginManifestMismatch { plugin, .. } => {
-                write!(f, "kernel Plugin manifest differs from resolved generation for {plugin}")
+                write!(
+                    f,
+                    "kernel Plugin manifest differs from resolved generation for {plugin}"
+                )
             }
             Self::KernelLayerPolicyMismatch { service, .. } => {
-                write!(f, "kernel layer policy differs from resolved generation for {service}")
+                write!(
+                    f,
+                    "kernel layer policy differs from resolved generation for {service}"
+                )
             }
             Self::ResidentGenerationsPresent(generations) => write!(
                 f,
@@ -487,9 +493,11 @@ mod tests {
             "sha256:trial"
         );
         assert!(reconciler.resident(&initial_generation).is_some());
-        assert!(kernel
-            .resident_generation_ids()
-            .contains(&initial_generation));
+        assert!(
+            kernel
+                .resident_generation_ids()
+                .contains(&initial_generation)
+        );
 
         let rolled_back = reconciler
             .promote_resident_on_kernel(&mut kernel, &initial_generation, &constraints)

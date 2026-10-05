@@ -229,7 +229,10 @@ impl Display for KernelError {
             ),
             Self::ComponentGraph(error) => write!(f, "component graph resolution failed: {error}"),
             Self::PluginRuntimeAdapterUnavailable(runtime) => {
-                write!(f, "plugin runtime adapter is unavailable for runtime {runtime}")
+                write!(
+                    f,
+                    "plugin runtime adapter is unavailable for runtime {runtime}"
+                )
             }
             Self::DuplicatePluginRuntimeAdapter {
                 runtime,
@@ -284,11 +287,7 @@ impl Display for KernelError {
                 f.write_str("listener topology requires an active resolved generation")
             }
             Self::UnknownGeneration(generation) => {
-                write!(
-                    f,
-                    "generation is not resident: {}",
-                    generation.as_str()
-                )
+                write!(f, "generation is not resident: {}", generation.as_str())
             }
             Self::DefaultGenerationCannotRetire(generation) => {
                 write!(
@@ -1259,11 +1258,13 @@ mod tests {
                 }],
             )
             .unwrap();
-        assert!(optional
-            .resolve_chain(&service("demo.service@1"), &Authority::default(), None)
-            .unwrap()
-            .layers
-            .is_empty());
+        assert!(
+            optional
+                .resolve_chain(&service("demo.service@1"), &Authority::default(), None)
+                .unwrap()
+                .layers
+                .is_empty()
+        );
 
         let required = KernelConfig::new([terminal])
             .unwrap()

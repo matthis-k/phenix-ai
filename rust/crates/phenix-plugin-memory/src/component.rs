@@ -124,15 +124,19 @@ mod tests {
             ContextCompactionInterface::interface_id(),
             ContextExpansionInterface::interface_id(),
         ] {
-            assert!(manifest
+            assert!(
+                manifest
+                    .exports
+                    .iter()
+                    .any(|export| export.interface == interface)
+            );
+        }
+        assert!(
+            manifest
                 .exports
                 .iter()
-                .any(|export| export.interface == interface));
-        }
-        assert!(manifest
-            .exports
-            .iter()
-            .all(|export| export.required_authority == persistence_authority()));
+                .all(|export| export.required_authority == persistence_authority())
+        );
     }
 
     #[test]

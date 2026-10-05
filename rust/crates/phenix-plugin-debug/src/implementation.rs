@@ -1,6 +1,6 @@
 use crate::{
-    debug_component_id, ContextProbeCommand, FrontendProbeCommand, JobProbeCommand,
-    ModelProbeCommand, PlanningProbeCommand, SessionProbeCommand,
+    ContextProbeCommand, FrontendProbeCommand, JobProbeCommand, ModelProbeCommand,
+    PlanningProbeCommand, SessionProbeCommand, debug_component_id,
 };
 use phenix_core::{
     Authority, ComponentInterface, ComponentInvocationError, EventEnvelope, GenerationId, LogSink,

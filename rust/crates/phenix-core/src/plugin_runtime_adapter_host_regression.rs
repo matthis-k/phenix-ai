@@ -1,8 +1,8 @@
 use crate::{
-    plugin_runtime_adapter_service, ArtifactRevision, Authority, Kernel, KernelConfig,
-    PermissionId, PluginArtifact, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId,
-    ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution, ServiceRole,
+    ArtifactRevision, Authority, Kernel, KernelConfig, PermissionId, PluginArtifact,
+    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, PluginRuntimeAdapter,
+    PluginRuntimeCandidate, PluginRuntimeId, ResolvedGeneration, ResolvedGenerationActivation,
+    ServiceContribution, ServiceRole, plugin_runtime_adapter_service,
 };
 use std::{
     collections::BTreeMap,

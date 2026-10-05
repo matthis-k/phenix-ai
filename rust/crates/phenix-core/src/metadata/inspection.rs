@@ -250,9 +250,11 @@ mod tests {
             metadata.packages()[0].reload_policy,
             ReloadPolicy::DrainAndRestart
         );
-        assert!(metadata.packages()[0]
-            .component_hosts
-            .contains(&ComponentHostKind::EmbeddedRust));
+        assert!(
+            metadata.packages()[0]
+                .component_hosts
+                .contains(&ComponentHostKind::EmbeddedRust)
+        );
         assert_eq!(metadata.components().len(), 1);
         assert_eq!(metadata.components()[0].manifest.id, component);
         assert_eq!(metadata.components()[0].version, 7);

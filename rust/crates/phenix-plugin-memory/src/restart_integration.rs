@@ -1,8 +1,8 @@
 use crate::{memory_factory, memory_manifest};
 use phenix_core::{Kernel, KernelConfig, LocalPersistence, PhenixValue, SessionId};
 use phenix_sdk::{
-    memory_service, MemoryCommand, MemoryKind, MemoryRecord, MemoryResponse, MemoryScope,
-    MemorySourceReference,
+    MemoryCommand, MemoryKind, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    memory_service,
 };
 use std::{
     fs,

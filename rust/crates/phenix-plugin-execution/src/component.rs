@@ -1,5 +1,5 @@
 use crate::configuration::ExecutionConfigurationInterface;
-use crate::{execution_manifest, ExecutionReviewInterface};
+use crate::{ExecutionReviewInterface, execution_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, PermissionId, PluginId,

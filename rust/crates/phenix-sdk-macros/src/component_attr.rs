@@ -2,9 +2,9 @@ use crate::interface_attr::validate_interface_id;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, Attribute, Expr, Fields, FnArg,
-    GenericArgument, Ident, ImplItem, ItemImpl, ItemStruct, LitStr, Meta, Path, PathArguments,
-    ReturnType, Signature, Token, Type,
+    Attribute, Expr, Fields, FnArg, GenericArgument, Ident, ImplItem, ItemImpl, ItemStruct, LitStr,
+    Meta, Path, PathArguments, ReturnType, Signature, Token, Type, parse::Parser, parse_quote,
+    punctuated::Punctuated,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
@@ -1282,9 +1282,11 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("malformed structural listener wrapper should fail"),
         };
-        assert!(error
-            .to_string()
-            .contains("require exactly one payload type"));
+        assert!(
+            error
+                .to_string()
+                .contains("require exactly one payload type")
+        );
     }
 
     #[test]
@@ -1497,9 +1499,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("event id contains unsupported characters"));
+        assert!(
+            error
+                .to_string()
+                .contains("event id contains unsupported characters")
+        );
     }
 
     #[test]
@@ -1622,9 +1626,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("layers require a borrowed self receiver"));
+        assert!(
+            error
+                .to_string()
+                .contains("layers require a borrowed self receiver")
+        );
     }
 
     #[test]
@@ -1691,8 +1697,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("cannot consume or mutably borrow self"));
+        assert!(
+            error
+                .to_string()
+                .contains("cannot consume or mutably borrow self")
+        );
     }
 }

@@ -1,15 +1,20 @@
 use crate::{
-    default_application_root_authority, default_suite_authority,
+    PhenixRuntime, default_application_root_authority, default_suite_authority,
     runtime_config::publish_routing_profile_runtime_state, runtime_orchestration_authority,
-    workspace_discovery, PhenixRuntime,
+    workspace_discovery,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
-    execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
     ApplicationEvent, ApplicationInvocation, ChannelTransport, ClientCallableCallbacks,
     ClientReferenceIdentity, SdkApplicationService, WeakChannelTransport,
+    execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
 };
 use phenix_application_interface::{
+    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
+    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCallableReference, ListCallables,
+    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
+    ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
+    SelectSelection, SetInteractionHandlers,
     types::{
         Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
         AuthenticationMethods, AuthenticationResult, CallableInvocation, CallableInvocationResult,
@@ -23,11 +28,6 @@ use phenix_application_interface::{
         SessionProjectionState, SessionRenameInput, SessionResumeInput, SessionSnapshot,
         SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
-    AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
-    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCallableReference, ListCallables,
-    ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
-    ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
-    SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
     ArtifactRevision, Authority, Bytes, CallableId, ClientConnectionId, ComponentEntryTrigger,
@@ -46,34 +46,33 @@ use phenix_core::{
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    agent_loop_control_service, agent_loop_progress_authority, agent_loop_progress_service,
-    agent_loop_service, agent_tool_execution_service, execution_review_service, sdk_contribution,
-    session_service, workspace_service, AgentLoopCommand, AgentLoopControlInterface,
-    AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopProgress,
-    AgentLoopProgressInterface, AgentLoopProgressRecord, AgentLoopProgressResponse,
-    AgentLoopResponse, AgentToolExecutionInterface, AgentToolExecutionRequest,
-    AgentToolExecutionResponse, ExecutionReviewCommand, ExecutionReviewResponse,
-    OptionStartupPrecedence, SessionCommand, SessionInterface, SessionJournalDraft,
-    SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse, SessionTransition,
-    SDK_PLUGIN,
+    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
+    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
+    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
+    ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN, SessionCommand, SessionInterface,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, agent_loop_control_service, agent_loop_progress_authority,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+    execution_review_service, sdk_contribution, session_service, workspace_service,
 };
 use phenix_provider_sdk::{
-    auth, provider_auth_service, provider_models_service, Auth, AuthKind, ProviderAuthCommand,
-    ProviderAuthResponse, ProviderAuthenticationResult, ProviderModelsCommand,
-    ProviderModelsResponse,
+    Auth, AuthKind, ProviderAuthCommand, ProviderAuthResponse, ProviderAuthenticationResult,
+    ProviderModelsCommand, ProviderModelsResponse, auth, provider_auth_service,
+    provider_models_service,
 };
 use phenix_sdk::{
-    context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, CodeQuery, CodeQueryResult, ContextCommand, ContextDescriptor,
-    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
-    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
-    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
-    ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
-    LanguageResponse, MemoryCommand, MemoryInterface, MemoryRecallQuery, MemoryRecord,
-    MemoryResponse, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
-    RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
-    WorkspaceEntryKind, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    CodeQuery, CodeQueryResult, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
+    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
+    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse, MemoryCommand,
+    MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse, ModelCommand, ModelResponse,
+    ModelTarget, OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope,
+    OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
+    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
+    WorkspaceInterface, WorkspaceResponse, context_service, execution_resource_service,
+    execution_service, model_routing_service, options_service,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -82,8 +81,8 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Weak,
+        atomic::{AtomicBool, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -888,7 +887,7 @@ impl ApplicationWorker {
                     message: format!(
                         "model routing returned an unexpected profile-list response: {response:?}"
                     ),
-                })
+                });
             }
         };
 
@@ -905,7 +904,7 @@ impl ApplicationWorker {
                         message: format!(
                             "model routing returned an unexpected profile response: {response:?}"
                         ),
-                    })
+                    });
                 }
             };
             let authenticated =
@@ -1358,7 +1357,7 @@ impl ApplicationWorker {
                     return Err(ApplicationError::InvalidResponse {
                         message: "repository context discovery returned an unexpected response"
                             .into(),
-                    })
+                    });
                 }
             }
         };
@@ -2431,7 +2430,7 @@ impl ApplicationWorker {
                     message: format!(
                         "provider {provider} returned an unexpected interactive-auth response: {response:?}"
                     ),
-                })
+                });
             }
         };
         let descriptor = available
@@ -3480,7 +3479,7 @@ pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> P
         version: 1,
         execution: PluginExecution::Embedded,
         dependencies: vec![
-            PluginId::parse("phenix.sessions").expect("static session plugin id is valid")
+            PluginId::parse("phenix.sessions").expect("static session plugin id is valid"),
         ],
         services: vec![
             ServiceContribution {
@@ -5028,7 +5027,7 @@ fn normalize_model_tool_variant(
             return Err(format!(
                 "variant tag must be a string, got {}",
                 value.kind()
-            ))
+            ));
         }
     };
     let tag = Key::parse(tag).map_err(str::to_owned)?;
@@ -5273,7 +5272,7 @@ fn execute_runtime_plugin_tool_call(
             _ => {
                 return Err(ApplicationError::InvalidInput {
                     message: "phenix.plugin operation must be a non-empty string".to_owned(),
-                })
+                });
             }
         };
         let arguments = fields
@@ -5742,14 +5741,14 @@ impl PluginArtifactStore for WorkspacePluginArtifactStore<'_, '_, '_> {
                     message: format!(
                         "content-addressed plugin artifact path conflicted: {conflicts:?}"
                     ),
-                })
+                });
             }
             other => {
                 return Err(PluginArtifactStoreError {
                     message: format!(
                         "plugin artifact store returned unexpected write response: {other:?}"
                     ),
-                })
+                });
             }
         }
         let stored = self.read(&path)?;
@@ -5867,7 +5866,8 @@ fn execute_runtime_plugin_control(
                         artifact: PluginArtifactInput::Ready(artifact),
                         ..
                     } => Some(artifact.revision.as_ref().to_owned()),
-                    PluginExecution::Embedded | PluginExecution::ResourceOnly
+                    PluginExecution::Embedded
+                    | PluginExecution::ResourceOnly
                     | PluginExecution::Runtime {
                         artifact: PluginArtifactInput::Build(_),
                         ..
@@ -5907,10 +5907,7 @@ fn execute_runtime_plugin_control(
                         "generation".to_owned(),
                         PhenixValue::String(result.generation.as_str().to_owned()),
                     ),
-                    (
-                        "plugin".to_owned(),
-                        PhenixValue::String(plugin.to_string()),
-                    ),
+                    ("plugin".to_owned(), PhenixValue::String(plugin.to_string())),
                     (
                         "artifact_revision".to_owned(),
                         PhenixValue::Option(
@@ -6103,7 +6100,7 @@ fn execute_runtime_session_tool_call(
             _ => {
                 return Err(ApplicationError::InvalidInput {
                     message: "phenix.session operation must be a non-empty string".to_owned(),
-                })
+                });
             }
         };
         let arguments = fields
@@ -6188,8 +6185,9 @@ fn execute_application_session_control(
                 target_session = Some(session_id.clone());
                 if session_id == run.session_id {
                     return Err(ApplicationError::Conflict {
-                        message: "phenix.session cannot synchronously prompt its own active session"
-                            .to_owned(),
+                        message:
+                            "phenix.session cannot synchronously prompt its own active session"
+                                .to_owned(),
                     });
                 }
                 let content = session_control_content(arguments)?;
@@ -6527,12 +6525,12 @@ fn execute_runtime_inspect_tool_call(
             Some(_) => {
                 return Err(ApplicationError::InvalidInput {
                     message: "phenix.inspect query must be a non-empty string".to_owned(),
-                })
+                });
             }
             None => {
                 return Err(ApplicationError::InvalidInput {
                     message: "phenix.inspect input is missing query".to_owned(),
-                })
+                });
             }
         };
         inspect_runtime(context, run, query)
@@ -6950,9 +6948,9 @@ fn configured_capabilities() -> Vec<ContractId> {
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        types::{Content, Empty},
         ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
         ListSessions, Prompt, RenameSession, ResumeSession,
+        types::{Content, Empty},
     };
     use phenix_core::{
         Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
@@ -6960,7 +6958,7 @@ mod tests {
         PluginArtifactInput, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
-        model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
+        ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
     };
     use phenix_sdk::{
         CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, ModelLimits,
@@ -6969,8 +6967,8 @@ mod tests {
         fs,
         path::PathBuf,
         sync::{
-            atomic::{AtomicU32, Ordering as AtomicOrdering},
             Condvar, Mutex as StdMutex,
+            atomic::{AtomicU32, Ordering as AtomicOrdering},
         },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -7417,10 +7415,12 @@ mod tests {
                                             ),
                                             (
                                                 "content".into(),
-                                                PhenixValue::List(vec![Content::Text {
-                                                    text: "complete the child session".into(),
-                                                }
-                                                .to_value()]),
+                                                PhenixValue::List(vec![
+                                                    Content::Text {
+                                                        text: "complete the child session".into(),
+                                                    }
+                                                    .to_value(),
+                                                ]),
                                             ),
                                         ])),
                                     ),
@@ -7531,7 +7531,7 @@ mod tests {
                 operation => {
                     return Err(format!(
                         "unsupported memory-debug fixture operation: {operation}"
-                    ))
+                    ));
                 }
             };
             serde_json::to_vec(&response.to_value()).map_err(|error| error.to_string())
@@ -7871,10 +7871,12 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![Content::Text {
-                                        text: "store Helios".into(),
-                                    }
-                                    .to_value()]),
+                                    PhenixValue::List(vec![
+                                        Content::Text {
+                                            text: "store Helios".into(),
+                                        }
+                                        .to_value(),
+                                    ]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -7932,10 +7934,12 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![Content::Text {
-                                        text: "recall Helios".into(),
-                                    }
-                                    .to_value()]),
+                                    PhenixValue::List(vec![
+                                        Content::Text {
+                                            text: "recall Helios".into(),
+                                        }
+                                        .to_value(),
+                                    ]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -8514,20 +8518,28 @@ mod tests {
             application_model_tool_surface(&service, &session_id, &g2, &Authority::default())
                 .unwrap();
 
-        assert!(!g1_surface
-            .tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "fixture.g2-only"));
-        assert!(g2_surface
-            .tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "fixture.g2-only"));
-        assert!(!g1_surface
-            .runtime_entry_triggers
-            .contains_key(&CallableId::parse("fixture.g2-only").unwrap()));
-        assert!(g2_surface
-            .runtime_entry_triggers
-            .contains_key(&CallableId::parse("fixture.g2-only").unwrap()));
+        assert!(
+            !g1_surface
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "fixture.g2-only")
+        );
+        assert!(
+            g2_surface
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "fixture.g2-only")
+        );
+        assert!(
+            !g1_surface
+                .runtime_entry_triggers
+                .contains_key(&CallableId::parse("fixture.g2-only").unwrap())
+        );
+        assert!(
+            g2_surface
+                .runtime_entry_triggers
+                .contains_key(&CallableId::parse("fixture.g2-only").unwrap())
+        );
     }
 
     #[test]
@@ -10615,12 +10627,16 @@ mod tests {
         }
 
         let host_tools = host_model_tools(&default_application_root_authority());
-        assert!(!host_tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "phenix.session"));
-        assert!(!host_tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "phenix.plugin"));
+        assert!(
+            !host_tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.session")
+        );
+        assert!(
+            !host_tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.plugin")
+        );
 
         enable_runtime_orchestration(&worker);
         let enabled = worker
@@ -10633,12 +10649,16 @@ mod tests {
             );
         }
         let host_tools = host_model_tools(&enabled);
-        assert!(host_tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "phenix.session"));
-        assert!(host_tools
-            .iter()
-            .any(|tool| tool.id.as_str() == "phenix.plugin"));
+        assert!(
+            host_tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.session")
+        );
+        assert!(
+            host_tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.plugin")
+        );
     }
 
     #[test]
@@ -10813,11 +10833,13 @@ mod tests {
         }
 
         let mut worker = persistent_application_worker(&path);
-        assert!(!worker
-            .projection()
-            .state()
-            .sessions
-            .contains_key(session_id.as_str()));
+        assert!(
+            !worker
+                .projection()
+                .state()
+                .sessions
+                .contains_key(session_id.as_str())
+        );
         ensure_session_projection(&mut worker, &session_id).unwrap();
         let input = model_input_from_session(
             worker.projection().state(),

@@ -12,8 +12,9 @@ use phenix_sdk::{
 };
 use std::{
     sync::{
+        Arc,
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc,
+        mpsc,
     },
     time::Duration,
 };
@@ -548,9 +549,11 @@ fn attribute_only_plugin_activates_generated_runtime_without_parallel_wiring() {
     assert!(attenuated_report.delivered.is_empty());
     assert_eq!(attenuated_report.failures.len(), 1);
     assert_eq!(attenuated_report.warnings.len(), 1);
-    assert!(attenuated_report.failures[0]
-        .1
-        .contains("kernel.persistence.write"));
+    assert!(
+        attenuated_report.failures[0]
+            .1
+            .contains("kernel.persistence.write")
+    );
 
     let mismatched = Request {
         prompt: "wrong-shape".into(),

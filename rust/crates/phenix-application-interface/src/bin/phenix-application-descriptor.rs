@@ -1,4 +1,4 @@
-use phenix_application_interface::{application_descriptor, generate, ApplicationDescriptor};
+use phenix_application_interface::{ApplicationDescriptor, application_descriptor, generate};
 use std::{
     env,
     error::Error,
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             return Err(
                 "usage: phenix-application-descriptor [--check snapshot | --rust descriptor]"
                     .into(),
-            )
+            );
         }
     }
     Ok(())

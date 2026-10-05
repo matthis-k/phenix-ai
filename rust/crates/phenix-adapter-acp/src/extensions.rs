@@ -3,7 +3,7 @@ use phenix_application_interface::{
     ListSelections, ListSessions, Operation, Prompt, ResumeSession, SelectSelection,
 };
 use phenix_core::{ContractId, PhenixSchema};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExtensionMethod {

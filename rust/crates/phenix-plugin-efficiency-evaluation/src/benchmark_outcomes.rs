@@ -5,9 +5,9 @@ use phenix_core::{
     ServiceId, TransactionOp, ValueCodec,
 };
 use phenix_sdk::{
-    efficiency_outcome_evidence_service, EfficiencyOutcomeEvidence,
-    EfficiencyOutcomeEvidenceCommand, EfficiencyOutcomeEvidenceInterface,
-    EfficiencyOutcomeEvidenceRequest, EfficiencyOutcomeEvidenceResponse, EvaluationOutcome,
+    EfficiencyOutcomeEvidence, EfficiencyOutcomeEvidenceCommand,
+    EfficiencyOutcomeEvidenceInterface, EfficiencyOutcomeEvidenceRequest,
+    EfficiencyOutcomeEvidenceResponse, EvaluationOutcome, efficiency_outcome_evidence_service,
 };
 use std::collections::BTreeMap;
 

@@ -1,15 +1,14 @@
 use crate::{
-    plugin_runtime_adapter_service, ArtifactRevision, Authority, BuildArgument,
-    BuildArtifactOutput, BuildEnvironment, BuildEnvironmentName, BuildExecutable,
-    BuildSourceIdentity, BuildSourceRevision, BuildWorkingDirectory, GraphReconciler, Kernel,
-    KernelError, PermissionId, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
-    PluginArtifactStoreError, PluginBuildEvidence, PluginBuildExecution, PluginBuildExecutor,
-    PluginBuildFailure, PluginBuildOutput, PluginBuildPlan, PluginBuildSource, PluginBuildStep,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
-    PluginManagementContext, PluginManagementError, PluginManagementPolicy,
-    PluginManagementRequest, PluginManifest, PluginRuntimeAdapter, PluginRuntimeCandidate,
-    PluginRuntimeId, ResolvedGeneration, ResolvedGenerationActivation, ServiceContribution,
-    ServiceRole,
+    ArtifactRevision, Authority, BuildArgument, BuildArtifactOutput, BuildEnvironment,
+    BuildEnvironmentName, BuildExecutable, BuildSourceIdentity, BuildSourceRevision,
+    BuildWorkingDirectory, GraphReconciler, Kernel, KernelError, PermissionId, PluginArtifact,
+    PluginArtifactInput, PluginArtifactStore, PluginArtifactStoreError, PluginBuildEvidence,
+    PluginBuildExecution, PluginBuildExecutor, PluginBuildFailure, PluginBuildOutput,
+    PluginBuildPlan, PluginBuildSource, PluginBuildStep, PluginExecution, PluginHost, PluginId,
+    PluginInstance, PluginLoadRequest, PluginManagementContext, PluginManagementError,
+    PluginManagementPolicy, PluginManagementRequest, PluginManifest, PluginRuntimeAdapter,
+    PluginRuntimeCandidate, PluginRuntimeId, ResolvedGeneration, ResolvedGenerationActivation,
+    ServiceContribution, ServiceRole, plugin_runtime_adapter_service,
 };
 use std::{
     collections::BTreeMap,
@@ -366,9 +365,11 @@ fn structured_build_is_authority_bounded_and_runtime_unavailable_preserves_evide
         *effective_authority.lock().unwrap(),
         Some(Authority::new([shared]))
     );
-    assert!(!report
-        .effective_authority
-        .permits(&capability("plugin.runtime")));
+    assert!(
+        !report
+            .effective_authority
+            .permits(&capability("plugin.runtime"))
+    );
     assert_eq!(
         *events.lock().unwrap(),
         ["cas_preflight", "build", "cas_store"]

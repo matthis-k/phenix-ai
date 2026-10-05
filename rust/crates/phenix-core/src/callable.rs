@@ -338,11 +338,13 @@ mod tests {
         }
         .validate(&schema())
         .unwrap();
-        assert!(CallableInvocationResult {
-            output: PhenixValue::U64(1),
-        }
-        .validate(&schema())
-        .is_err());
+        assert!(
+            CallableInvocationResult {
+                output: PhenixValue::U64(1),
+            }
+            .validate(&schema())
+            .is_err()
+        );
     }
 
     #[test]

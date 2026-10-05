@@ -6,10 +6,10 @@ use phenix_core::{
     ServiceContribution, ServiceId, ServiceRole, SessionId,
 };
 use phenix_sdk::{
-    helper_invocation_service, memory_service, HelperInvocationCommand, HelperInvocationInterface,
-    HelperInvocationResponse, MemoryCommand, MemoryConsolidationRequest,
-    MemoryExtractionObservation, MemoryExtractionRequest, MemoryKind, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse, MemoryCommand,
+    MemoryConsolidationRequest, MemoryExtractionObservation, MemoryExtractionRequest, MemoryKind,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    helper_invocation_service, memory_service,
 };
 use std::{
     fs,
@@ -94,12 +94,12 @@ impl PluginInstance for HelperProvider {
             ("extract-profile", "memory.extract") => "extracted durable fact",
             ("consolidate-profile", "memory.consolidate") => "consolidated durable fact",
             ("failure-profile", "memory.consolidate") => {
-                return Err("fixture maintenance failure".into())
+                return Err("fixture maintenance failure".into());
             }
             (profile, callable) => {
                 return Err(format!(
                     "unexpected memory helper route: {profile}/{callable}"
-                ))
+                ));
             }
         };
         serde_json::to_vec(&PhenixValue::from(&HelperInvocationResponse {
@@ -281,20 +281,22 @@ fn failed_consolidation_does_not_mutate_existing_memory() {
     ] {
         invoke(&mut kernel, MemoryCommand::Record { record }).unwrap();
     }
-    assert!(invoke(
-        &mut kernel,
-        MemoryCommand::Consolidate {
-            request: MemoryConsolidationRequest {
-                execution_id: EXECUTION.into(),
-                parent_attempt_id: PARENT_ATTEMPT.into(),
-                profile_id: profile("failure-profile"),
-                ids: vec!["a".into(), "b".into()],
-                consolidated_id: "ab".into(),
-                created_at: 20,
+    assert!(
+        invoke(
+            &mut kernel,
+            MemoryCommand::Consolidate {
+                request: MemoryConsolidationRequest {
+                    execution_id: EXECUTION.into(),
+                    parent_attempt_id: PARENT_ATTEMPT.into(),
+                    profile_id: profile("failure-profile"),
+                    ids: vec!["a".into(), "b".into()],
+                    consolidated_id: "ab".into(),
+                    created_at: 20,
+                },
             },
-        },
-    )
-    .is_err());
+        )
+        .is_err()
+    );
     assert_eq!(
         invoke(
             &mut kernel,

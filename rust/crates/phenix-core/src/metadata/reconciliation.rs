@@ -633,10 +633,12 @@ mod tests {
 
         assert!(preview.graph.diff.is_empty());
         assert_eq!(preview.metadata.packages.len(), 1);
-        assert!(preview
-            .graph
-            .transition_plan
-            .contains(&ReconciliationAction::RestartComponent(component)));
+        assert!(
+            preview
+                .graph
+                .transition_plan
+                .contains(&ReconciliationAction::RestartComponent(component))
+        );
     }
 
     #[test]
@@ -664,10 +666,12 @@ mod tests {
                 kind: MetadataChangeKind::Upgraded,
             }]
         );
-        assert!(preview
-            .graph
-            .transition_plan
-            .contains(&ReconciliationAction::RestartComponent(component)));
+        assert!(
+            preview
+                .graph
+                .transition_plan
+                .contains(&ReconciliationAction::RestartComponent(component))
+        );
     }
 
     #[test]
@@ -752,10 +756,12 @@ mod tests {
 
         assert!(preview.graph.diff.is_empty());
         assert_eq!(preview.metadata.components.len(), 1);
-        assert!(preview
-            .graph
-            .transition_plan
-            .contains(&ReconciliationAction::RestartComponent(component)));
+        assert!(
+            preview
+                .graph
+                .transition_plan
+                .contains(&ReconciliationAction::RestartComponent(component))
+        );
     }
 
     #[test]
@@ -777,15 +783,19 @@ mod tests {
             .preview_candidate_with_metadata(&active_metadata, &candidate, &candidate_metadata)
             .unwrap();
 
-        assert!(preview
-            .metadata
-            .components
-            .iter()
-            .any(|change| change.component == component));
-        assert!(!preview
-            .graph
-            .transition_plan
-            .contains(&ReconciliationAction::RestartComponent(component)));
+        assert!(
+            preview
+                .metadata
+                .components
+                .iter()
+                .any(|change| change.component == component)
+        );
+        assert!(
+            !preview
+                .graph
+                .transition_plan
+                .contains(&ReconciliationAction::RestartComponent(component))
+        );
     }
 
     #[test]

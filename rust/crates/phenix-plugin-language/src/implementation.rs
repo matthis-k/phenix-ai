@@ -14,9 +14,9 @@ use phenix_sdk::{
     CodePositionEncoding, CodeQuery, CodeQueryAnchor, CodeQueryDirection, CodeQueryEntity,
     CodeQueryProjection, CodeQueryRelation, CodeQueryResult, CodeQuerySelection, CodeRelationKind,
     CodeSourcePosition, CodeSourceRange, DiagnosticsResult, DocumentProvenance,
-    FileRevisionFallback, LanguageCommand, LanguageDocumentIdentity, LanguageObservation,
-    LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WorkspaceCommand, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceWrite, LANGUAGE_SERVICE, WORKSPACE_SERVICE,
+    FileRevisionFallback, LANGUAGE_SERVICE, LanguageCommand, LanguageDocumentIdentity,
+    LanguageObservation, LanguageProviderEpoch, LanguageResponse, ProviderEpoch, WORKSPACE_SERVICE,
+    WorkspaceCommand, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceWrite,
 };
 use phenix_sdk::{CodeEntityFacetRevisions, LanguageOperationKind, LogicalCodeEntity};
 use serde::{Deserialize, Serialize};
@@ -3116,20 +3116,20 @@ fn edit_entity_source(
         WorkspaceResponse::VersionConflict { conflicts } => {
             return Err(format!(
                 "semantic edit source became stale before commit: {conflicts:?}"
-            ))
+            ));
         }
         WorkspaceResponse::UnsupportedAtomicScope {
             requested,
             available,
         } => {
             return Err(format!(
-            "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
-        ))
+                "semantic edit requires {requested:?} workspace writes; backend provides {available:?}"
+            ));
         }
         other => {
             return Err(format!(
                 "workspace returned an unexpected semantic edit response: {other:?}"
-            ))
+            ));
         }
     };
 
@@ -4642,10 +4642,12 @@ mod tests {
         assert_eq!(result.relations.len(), 1);
         assert_eq!(result.relations[0].source, a.entity);
         assert_eq!(result.relations[0].target.entity, b.entity);
-        assert!(result
-            .entities
-            .iter()
-            .all(|entity| entity.name.is_none() && entity.document.is_none()));
+        assert!(
+            result
+                .entities
+                .iter()
+                .all(|entity| entity.name.is_none() && entity.document.is_none())
+        );
 
         let LanguageResponse::EntityFacet {
             reference: Some(relation_facet),
@@ -4841,13 +4843,15 @@ mod tests {
             fallback.document.provenance,
             DocumentProvenance::WorkspaceBacked
         );
-        assert!(fallback
-            .document
-            .file_version
-            .as_deref()
-            .is_some_and(|revision| {
-                revision.starts_with("sha256:") && revision.len() > "sha256:".len()
-            }));
+        assert!(
+            fallback
+                .document
+                .file_version
+                .as_deref()
+                .is_some_and(|revision| {
+                    revision.starts_with("sha256:") && revision.len() > "sha256:".len()
+                })
+        );
         assert_eq!(fallback.content, "fn fallback() {}\n");
 
         let _ = fs::remove_file(path);
@@ -5359,15 +5363,21 @@ mod tests {
         assert_eq!(revisions[0].provider_id, "rust-analyzer");
         assert_eq!(revisions[0].provider_epoch, epoch(9));
         assert_eq!(revisions[0].document, fallback.document);
-        assert!(revisions
-            .iter()
-            .all(|revision| revision.body_identity.is_none()));
-        assert!(revisions
-            .iter()
-            .all(|revision| revision.facets.body.is_none()));
-        assert!(revisions
-            .iter()
-            .any(|revision| revision.symbol.as_deref() == Some("outer::inner")));
+        assert!(
+            revisions
+                .iter()
+                .all(|revision| revision.body_identity.is_none())
+        );
+        assert!(
+            revisions
+                .iter()
+                .all(|revision| revision.facets.body.is_none())
+        );
+        assert!(
+            revisions
+                .iter()
+                .any(|revision| revision.symbol.as_deref() == Some("outer::inner"))
+        );
 
         let outer = revisions
             .iter()
@@ -5583,10 +5593,12 @@ mod tests {
             panic!("expected document semantic query");
         };
         assert_eq!(document_query.entities.len(), 2);
-        assert!(document_query
-            .entities
-            .iter()
-            .all(|entity| entity.document.as_ref() == Some(&fallback.document)));
+        assert!(
+            document_query
+                .entities
+                .iter()
+                .all(|entity| entity.document.as_ref() == Some(&fallback.document))
+        );
 
         let LanguageResponse::Query {
             result: position_query,
@@ -5625,10 +5637,12 @@ mod tests {
         );
         assert_eq!(position_query.entities[1].symbol.as_deref(), Some("outer"));
         assert_eq!(position_query.roots.len(), 2);
-        assert!(position_query
-            .entities
-            .iter()
-            .all(|entity| entity.source.is_some()));
+        assert!(
+            position_query
+                .entities
+                .iter()
+                .all(|entity| entity.source.is_some())
+        );
         let inner_source = position_query.entities[0]
             .source
             .as_ref()

@@ -9,9 +9,9 @@ use phenix_plugin_models::{
     model_routing_component_manifest, model_routing_factory, model_routing_manifest,
 };
 use phenix_sdk::{
-    helper_invocation_service, memory_rank_service, memory_service, HelperInvocationInterface,
-    MemoryCommand, MemoryKind, MemoryRankInterface, MemoryRankRequest, MemoryRankResponse,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    HelperInvocationInterface, MemoryCommand, MemoryKind, MemoryRankInterface, MemoryRankRequest,
+    MemoryRankResponse, MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope,
+    MemorySourceReference, helper_invocation_service, memory_rank_service, memory_service,
 };
 use std::{
     fs,

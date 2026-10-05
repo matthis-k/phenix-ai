@@ -6,9 +6,9 @@ use phenix_core::{
     ServiceRole, SessionId, SharedPluginInvocation, ValueCodec,
 };
 use phenix_sdk::{
-    agent_diagnostic_event_type, AgentDiagnosticEvent, DefaultInvocationCommand,
+    AGENT_DIAGNOSTIC_EVENT_VERSION, AgentDiagnosticEvent, DefaultInvocationCommand,
     DefaultInvocationInterface, InvocationRequest, StepRunnerResponse, ToolObservation,
-    AGENT_DIAGNOSTIC_EVENT_VERSION,
+    agent_diagnostic_event_type,
 };
 use serde::{Deserialize, Serialize};
 use std::{

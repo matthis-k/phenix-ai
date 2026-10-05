@@ -3,16 +3,15 @@
 mod agent_loop;
 
 pub use agent_loop::{
-    agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
-    agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,
-    agent_loop_progress_authority, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, AgentLoopCommand, AgentLoopControlInterface,
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
     AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE,
-    AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_component_id,
+    agent_loop_component_manifest, agent_loop_control_service, agent_loop_factory,
+    agent_loop_factory_with_policy, agent_loop_manifest, agent_loop_progress_authority,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
 };
 
 #[cfg(test)]
@@ -22,23 +21,24 @@ use phenix_sdk::StaticPluginResources;
 
 #[cfg(test)]
 pub use phenix_plugin_basic_context::{
+    BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN, BasicContextInterface,
     basic_context_component_id, basic_context_component_manifest, basic_context_factory,
-    basic_context_manifest, BasicContextInterface, BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN,
+    basic_context_manifest,
 };
 #[cfg(test)]
 pub use phenix_plugin_basic_model::{
-    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
-    BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN,
+    BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN, basic_model_component_manifest, basic_model_factory,
+    basic_model_manifest,
 };
 #[cfg(test)]
 pub use phenix_plugin_basic_skills::{
-    basic_skills_component_id, basic_skills_component_manifest, basic_skills_factory,
-    basic_skills_manifest, BasicSkillsInterface, BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN,
+    BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN, BasicSkillsInterface, basic_skills_component_id,
+    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
 };
 #[cfg(test)]
 pub use phenix_plugin_basic_tools::{
-    basic_tools_component_id, basic_tools_component_manifest, basic_tools_factory,
-    basic_tools_manifest, BasicToolsInterface, BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN,
+    BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN, BasicToolsInterface, basic_tools_component_id,
+    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest,
 };
 
 #[cfg(test)]
@@ -64,15 +64,16 @@ mod component_regression;
 mod tests {
     use super::*;
     use phenix_core::{
-        context_service, skill_service, tool_service, Authority, CallableId, ComponentInterface,
-        ComponentManifest, ContextCommand, ContextResourceId, ContextResourceKind, ContextResponse,
-        ContextScope, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
-        PhenixSchema, PhenixValue, ResolvedGeneration, ResolvedGenerationActivation, SkillCommand,
-        SkillDefinition, SkillId, SkillResponse, ToolCommand, ToolDefinition, ToolResponse,
+        Authority, CallableId, ComponentInterface, ComponentManifest, ContextCommand,
+        ContextResourceId, ContextResourceKind, ContextResponse, ContextScope, InvocationOutcome,
+        Kernel, KernelConfig, LocalPersistence, ModelId, PhenixSchema, PhenixValue,
+        ResolvedGeneration, ResolvedGenerationActivation, SkillCommand, SkillDefinition, SkillId,
+        SkillResponse, ToolCommand, ToolDefinition, ToolResponse, context_service, skill_service,
+        tool_service,
     };
     use phenix_sdk::{
-        model_inference_service, ModelInferenceInterface, ModelInferenceRequest,
-        ModelInferenceResponse,
+        ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+        model_inference_service,
     };
     use std::{
         collections::BTreeMap,

@@ -1,5 +1,5 @@
 use phenix_application_interface::types::ApplicationError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Present one typed application failure as ACP without collapsing its Phenix class.
 #[must_use]

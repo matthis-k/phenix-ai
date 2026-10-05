@@ -202,7 +202,7 @@ pub fn read_workspace_descriptors(root: &Path) -> io::Result<WorkspaceDiscoveryR
                 invalid_descriptors,
                 scanned_entries,
                 truncated,
-            })
+            });
         }
         Err(error) => return Err(error),
     };

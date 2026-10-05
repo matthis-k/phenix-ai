@@ -5,16 +5,16 @@ use phenix_core::{
     RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
 };
 use phenix_sdk::{
+    ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
+    ContextRecoveryRequest, ContextRecoveryResponse, DelegationResourcePolicy,
+    HelperInvocationRequest, InvocationClockCommand, InvocationClockInterface,
+    InvocationClockResponse, InvocationDefaultsCommand, InvocationDefaultsInterface,
+    InvocationDefaultsResponse, InvocationIntent, InvocationParams, InvocationRequest,
+    OptionCommand, OptionContext, OptionKey, OptionResponse, OptionSubjectId, OptionValue,
+    OptionValueSource, OptionsInterface, RecoveryClassifierPolicy, RecoveryColdGate,
+    ResolvedOption, RouteSelectionPolicy, RoutingEstimateMode, UsagePolicy,
     context_recovery_service, invocation_clock_service, invocation_defaults_service,
-    recovery_cold_gate, validate_recovery_decision, ContextNeed, ContextRecoveryCommand,
-    ContextRecoveryDecision, ContextRecoveryInterface, ContextRecoveryRequest,
-    ContextRecoveryResponse, DelegationResourcePolicy, HelperInvocationRequest,
-    InvocationClockCommand, InvocationClockInterface, InvocationClockResponse,
-    InvocationDefaultsCommand, InvocationDefaultsInterface, InvocationDefaultsResponse,
-    InvocationIntent, InvocationParams, InvocationRequest, OptionCommand, OptionContext, OptionKey,
-    OptionResponse, OptionSubjectId, OptionValue, OptionValueSource, OptionsInterface,
-    RecoveryClassifierPolicy, RecoveryColdGate, ResolvedOption, RouteSelectionPolicy,
-    RoutingEstimateMode, UsagePolicy,
+    recovery_cold_gate, validate_recovery_decision,
 };
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -420,18 +420,24 @@ mod tests {
         assert_eq!(manifest.services.len(), 3);
 
         let component = invocation_defaults_component_manifest(authority);
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == InvocationDefaultsInterface::interface_id()));
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == InvocationClockInterface::interface_id()));
-        assert!(component
-            .exports
-            .iter()
-            .any(|export| export.interface == ContextRecoveryInterface::interface_id()));
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == InvocationDefaultsInterface::interface_id())
+        );
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == InvocationClockInterface::interface_id())
+        );
+        assert!(
+            component
+                .exports
+                .iter()
+                .any(|export| export.interface == ContextRecoveryInterface::interface_id())
+        );
     }
 
     #[test]

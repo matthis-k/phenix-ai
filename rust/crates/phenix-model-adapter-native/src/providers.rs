@@ -141,7 +141,7 @@ pub(crate) fn genai_model(
         other => {
             return Err(ModelAdapterError::Unsupported(format!(
                 "unsupported Phenix provider {other:?}"
-            )))
+            )));
         }
     };
     Ok(format!("{namespace}::{}", model.as_str()))
@@ -208,21 +208,27 @@ pub(crate) fn environment_authenticated(provider: &str) -> bool {
 pub(crate) fn environment_description(provider: &str) -> Option<&'static str> {
     match provider {
         OPENAI_API_PROVIDER => Some("Enter an OpenAI API key; OPENAI_API_KEY is also supported"),
-        ANTHROPIC_PROVIDER => Some("Enter an Anthropic API key; ANTHROPIC_API_KEY is also supported"),
+        ANTHROPIC_PROVIDER => {
+            Some("Enter an Anthropic API key; ANTHROPIC_API_KEY is also supported")
+        }
         GEMINI_PROVIDER => Some(
             "Enter a Google Gemini API key; GEMINI_API_KEY or GOOGLE_API_KEY is also supported",
         ),
         GITHUB_COPILOT_PROVIDER => Some(
             "Enter a GitHub token; COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN is also supported",
         ),
-        OPENCODE_ZEN_PROVIDER => Some("Enter an OpenCode Zen API key; OPENCODE_API_KEY is also supported"),
+        OPENCODE_ZEN_PROVIDER => {
+            Some("Enter an OpenCode Zen API key; OPENCODE_API_KEY is also supported")
+        }
         OPENCODE_GO_PROVIDER => Some(
             "Enter an OpenCode Go API key; OPENCODE_API_KEY or OPENCODE_GO_API_KEY is also supported",
         ),
         OPEN_ROUTER_PROVIDER => Some(
             "Enter an OpenRouter API key; OPEN_ROUTER_API_KEY or OPENROUTER_API_KEY is also supported",
         ),
-        OLLAMA_CLOUD_PROVIDER => Some("Enter an Ollama Cloud API key; OLLAMA_API_KEY is also supported"),
+        OLLAMA_CLOUD_PROVIDER => {
+            Some("Enter an Ollama Cloud API key; OLLAMA_API_KEY is also supported")
+        }
         DEEPSEEK_PROVIDER => Some("Enter a DeepSeek API key; DEEPSEEK_API_KEY is also supported"),
         GROQ_PROVIDER => Some("Enter a Groq API key; GROQ_API_KEY is also supported"),
         XAI_PROVIDER => Some("Enter an xAI API key; XAI_API_KEY is also supported"),

@@ -1,5 +1,5 @@
 use crate::{PluginId, ResourceNamespace};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,

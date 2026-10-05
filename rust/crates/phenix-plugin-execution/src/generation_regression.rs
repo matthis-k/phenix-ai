@@ -5,8 +5,8 @@ use phenix_core::{
     Project, ResolvedGeneration, ResolvedGenerationActivation,
 };
 use phenix_sdk::{
-    execution_service, ExecutionAuthority, ExecutionCommand, ExecutionRecord, ExecutionResponse,
-    WorkerTaskRecord,
+    ExecutionAuthority, ExecutionCommand, ExecutionRecord, ExecutionResponse, WorkerTaskRecord,
+    execution_service,
 };
 use std::{
     fs,

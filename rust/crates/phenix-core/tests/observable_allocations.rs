@@ -6,8 +6,8 @@ use phenix_core::{
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 

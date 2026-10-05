@@ -5,11 +5,13 @@
 //! Protocol translation stays in `phenix-adapter-acp`. This crate owns only
 //! process transport and the channel boundary used by the configured runtime.
 
-use agent_client_protocol::{schema::v1::*, Agent, Error, ErrorCode, Stdio};
+use agent_client_protocol::{Agent, Error, ErrorCode, Stdio, schema::v1::*};
 use phenix_adapter_acp::ApplicationAdapter;
 use phenix_application_interface::{
+    AddClientTool, ApplicationTransport, GetSdk, InvokeCallable, InvokeCallableReference,
+    ListCallables, Operation, RemoveClientTool,
     types::{
-        normalize_elicitation_response, ApplicationError, CallableInfo as ApplicationCallableInfo,
+        ApplicationError, CallableInfo as ApplicationCallableInfo,
         CallableInvocation as ApplicationCallableInvocation,
         CallableInvocationResult as ApplicationCallableInvocationResult,
         CallableInvokeInput as ApplicationCallableInvokeInput,
@@ -19,9 +21,8 @@ use phenix_application_interface::{
         ClientToolDefinition as ApplicationClientToolDefinition,
         ClientToolRemoveInput as ApplicationClientToolRemoveInput, ElicitationRequest,
         ElicitationResponse, Empty, SdkValue as ApplicationSdkValue, SessionInput,
+        normalize_elicitation_response,
     },
-    AddClientTool, ApplicationTransport, GetSdk, InvokeCallable, InvokeCallableReference,
-    ListCallables, Operation, RemoveClientTool,
 };
 use phenix_core::{
     CallableError, CallableInvocation as CoreCallableInvocation, CallableRef, ClientConnectionId,

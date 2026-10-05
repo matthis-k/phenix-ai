@@ -75,7 +75,9 @@ fn third_party_plugin_defines_a_typed_runtime_interface_without_core_registratio
         &ComponentId::parse("acme.review-provider").unwrap()
     );
     assert!(handle.effective_authority().permits(&use_review));
-    assert!(!handle
-        .effective_authority()
-        .permits(&capability("acme.unrelated")));
+    assert!(
+        !handle
+            .effective_authority()
+            .permits(&capability("acme.unrelated"))
+    );
 }

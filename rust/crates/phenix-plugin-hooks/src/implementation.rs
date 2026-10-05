@@ -1,4 +1,4 @@
-use crate::{hook_component_id, ExecutionCommand, ExecutionResponse};
+use crate::{ExecutionCommand, ExecutionResponse, hook_component_id};
 use phenix_core::{
     Authority, ComponentInterface, DurableSchema, PermissionId, PluginContext, PluginExecution,
     PluginHost, PluginId, PluginInstance, PluginManifest, ResourceNamespace, SdkClient,

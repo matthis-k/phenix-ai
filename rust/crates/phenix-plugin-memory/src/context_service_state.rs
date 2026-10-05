@@ -1,6 +1,6 @@
 use crate::association_store::AssociationStore;
 use phenix_sdk::{
-    resolve_recall, MemoryAssociationState, MemoryContextCommand, MemoryContextResponse,
+    MemoryAssociationState, MemoryContextCommand, MemoryContextResponse, resolve_recall,
 };
 
 pub(crate) const MEMORY_CONTEXT_STATE_KEY: &str = "context/service-state";

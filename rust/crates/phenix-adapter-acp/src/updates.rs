@@ -1,12 +1,11 @@
 use crate::{extension_name, wire};
 use phenix_application_interface::{
-    application_descriptor,
+    ApplicationDescriptor, application_descriptor,
     types::{
         ApplicationError, Content as ApplicationContent, ExecutionChange,
         ExecutionUpdate as ApplicationExecutionUpdate, MessageRole as ApplicationMessageRole,
         SessionChange, SessionUpdate as ApplicationSessionUpdate,
     },
-    ApplicationDescriptor,
 };
 use phenix_core::{PhenixValue, SessionId, ValueCodec};
 use serde_json::{Map, Value};
@@ -241,11 +240,11 @@ mod tests {
     use super::*;
     use crate::extension_catalog;
     use phenix_application_interface::{
+        Capabilities,
         types::{
             Content, ExecutionChange, ExecutionUpdate, Message, MessageRole, SessionChange,
             SessionUpdate,
         },
-        Capabilities,
     };
     use phenix_core::{CallableId, ContractId, SessionId};
 

@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::ext::IdentExt;
 use syn::{
-    parse_macro_input, parse_quote, Data, DeriveInput, Fields, Generics, Ident, LitStr, Type,
+    Data, DeriveInput, Fields, Generics, Ident, LitStr, Type, parse_macro_input, parse_quote,
 };
 
 mod component_attr;
@@ -84,7 +84,7 @@ fn derive_value(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             return Err(syn::Error::new_spanned(
                 data.union_token,
                 "PhenixValue cannot be derived for unions",
-            ))
+            ));
         }
     };
 

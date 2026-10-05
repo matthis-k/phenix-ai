@@ -534,10 +534,11 @@ mod tests {
             plan.tools.expandable,
             BTreeSet::from([CallableId::parse("tool.large").unwrap()])
         );
-        assert!(plan
-            .routing
-            .required_features
-            .contains(DEFERRED_TOOL_SCHEMAS_FEATURE));
+        assert!(
+            plan.routing
+                .required_features
+                .contains(DEFERRED_TOOL_SCHEMAS_FEATURE)
+        );
     }
 
     #[test]

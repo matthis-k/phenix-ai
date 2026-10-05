@@ -1,24 +1,23 @@
-pub use phenix_core::{
-    model_inference_service, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
-    MODEL_INFERENCE_SERVICE,
-};
 use phenix_core::{
     ArtifactRevision, Authority, ComponentInterface, DurableSchema, InvocationOutcome, KernelError,
     PermissionId, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResourceNamespace, RoutingProfileId,
     ServiceContribution, ServiceId, TransactionOp,
 };
+pub use phenix_core::{
+    MODEL_INFERENCE_SERVICE, ModelInferenceFailure, ModelInferenceRequest, ModelInferenceResponse,
+    model_inference_service,
+};
 pub use phenix_sdk::{
+    EffectiveModelFeatures, FeatureSupport, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
+    MODEL_ROUTING_SERVICE, ModelCommand, ModelDiagnosticEvent, ModelDispatchCommand,
+    ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
+    ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
     model_diagnostic_event_type, model_dispatch_service, model_routing_service,
-    EffectiveModelFeatures, FeatureSupport, ModelCommand, ModelDiagnosticEvent,
-    ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
-    ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
-    RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
-    MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
-use crate::routing_service::{RoutingServiceState, ROUTING_RUNTIME_KEY};
+use crate::routing_service::{ROUTING_RUNTIME_KEY, RoutingServiceState};
 
 mod catalog;
 mod packaged;

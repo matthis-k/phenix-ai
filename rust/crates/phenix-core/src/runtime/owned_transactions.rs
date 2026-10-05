@@ -1,4 +1,4 @@
-use super::{PluginHost, PERSISTENCE_WRITE};
+use super::{PERSISTENCE_WRITE, PluginHost};
 use crate::{
     CallCancellationToken, KernelError, NamespaceTransaction, PermissionId, ResourceNamespace,
     TransactionOp,

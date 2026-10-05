@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, punctuated::Punctuated, Attribute, Expr, ExprLit, FnArg, ImplItem, ItemImpl,
-    Lit, Meta, ReturnType, Token, Type,
+    Attribute, Expr, ExprLit, FnArg, ImplItem, ItemImpl, Lit, Meta, ReturnType, Token, Type,
+    parse::Parser, punctuated::Punctuated,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
@@ -290,9 +290,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("non-generic inherent resource impl"));
+        assert!(
+            error
+                .to_string()
+                .contains("non-generic inherent resource impl")
+        );
     }
 
     #[test]
@@ -310,9 +312,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("exactly one previous-schema value"));
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one previous-schema value")
+        );
     }
 
     #[test]
@@ -366,9 +370,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("source version must be positive"));
+        assert!(
+            error
+                .to_string()
+                .contains("source version must be positive")
+        );
     }
 
     #[test]

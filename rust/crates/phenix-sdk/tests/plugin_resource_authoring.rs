@@ -26,14 +26,18 @@ fn resource_only_plugin_derives_durable_registration_metadata() {
     let resource = &resources[0];
     assert_eq!(resource.id.as_str(), "fixture.resource-only.state");
     assert_eq!(resource.schema.version, 3);
-    assert!(resource
-        .schema
-        .required_features
-        .contains(&phenix_sdk::PersistenceBackendFeature::Transactions));
-    assert!(resource
-        .schema
-        .required_features
-        .contains(&phenix_sdk::PersistenceBackendFeature::Migrations));
+    assert!(
+        resource
+            .schema
+            .required_features
+            .contains(&phenix_sdk::PersistenceBackendFeature::Transactions)
+    );
+    assert!(
+        resource
+            .schema
+            .required_features
+            .contains(&phenix_sdk::PersistenceBackendFeature::Migrations)
+    );
     assert_eq!(resource.migrations.len(), 1);
     assert_eq!(resource.migrations[0].from_version, 2);
     assert_eq!(resource.migrations[0].to_version, 3);

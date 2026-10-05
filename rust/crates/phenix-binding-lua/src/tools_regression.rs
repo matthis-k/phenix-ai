@@ -115,19 +115,23 @@ fn registration_lifts_exact_schema_and_stop_is_idempotent() {
             .admission_id,
         "admission-1"
     );
-    assert!(client
-        .local_callables
-        .borrow()
-        .entries
-        .contains_key(reference.id()));
+    assert!(
+        client
+            .local_callables
+            .borrow()
+            .entries
+            .contains_key(reference.id())
+    );
     reply.send(Ok(Response::Acknowledged)).unwrap();
     lua.globals().set("removal", removal).unwrap();
     lua.load("return removal:poll()").eval::<Value>().unwrap();
-    assert!(!client
-        .local_callables
-        .borrow()
-        .entries
-        .contains_key(reference.id()));
+    assert!(
+        !client
+            .local_callables
+            .borrow()
+            .entries
+            .contains_key(reference.id())
+    );
     assert!(commands.try_recv().is_err());
 }
 

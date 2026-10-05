@@ -5,19 +5,18 @@ use phenix_core::{
     RoutingProfileId, ServiceContribution, ServiceId, SessionId, ValueError,
 };
 use phenix_harness::{
-    default_suite_authority,
-    model_surface_fixture::{model_surface_response, ModelSurfaceReport},
-    PhenixRuntime, PhenixRuntimeBuilder,
+    PhenixRuntime, PhenixRuntimeBuilder, default_suite_authority,
+    model_surface_fixture::{ModelSurfaceReport, model_surface_response},
 };
 use phenix_plugin_catalog::{
-    artifact_component_manifest, model_inference_service, planning_component_manifest,
     ArtifactCommand, ArtifactResponse, CliProbeRequest, ContextCommand, ContextResponse,
     DebugCommand, DebugResponse, ExecutionAuthority, ExecutionCommand, ExecutionResponse,
     FrontendCommand, FrontendResponse, HookCommand, HookResponse, JobCommand, JobResponse,
     LanguageCommand, LanguageResponse, ModelCommand, ModelInferenceRequest, ModelInferenceResponse,
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
     RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,
-    SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
+    SessionTreeResponse, WorkspaceCommand, WorkspaceResponse, artifact_component_manifest,
+    model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, ContextInjectionLifetime, ContextInjectionRequester,
@@ -26,8 +25,8 @@ use phenix_sdk::{
     InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
     RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
 };
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{json, Value};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn invoke(harness: &mut PhenixRuntime, service: &str, input: Value) -> Value {
@@ -428,11 +427,13 @@ fn supported_harness_routes_first_party_domains_through_kernel_services() {
         json!({"operation": "snapshot"}),
     );
     assert_eq!(debug["response"], "snapshot");
-    assert!(debug["snapshot"]["services"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|entry| entry["state"] == "available"));
+    assert!(
+        debug["snapshot"]["services"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|entry| entry["state"] == "available")
+    );
 
     let error = serde_json::from_value::<CliProbeRequest>(json!({
         "name": "not-a-supported-cli"
@@ -805,9 +806,11 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         .iter()
         .find(|section| section.source == "phenix")
         .expect("introspection model must receive the Phenix identity instruction");
-    assert!(phenix_identity
-        .content
-        .contains("workspace-backed shell tool"));
+    assert!(
+        phenix_identity
+            .content
+            .contains("workspace-backed shell tool")
+    );
     assert!(phenix_identity.content.contains("durable session history"));
     assert!(phenix_identity.content.contains("persistent memory"));
     assert!(phenix_identity.content.contains("Active skills"));

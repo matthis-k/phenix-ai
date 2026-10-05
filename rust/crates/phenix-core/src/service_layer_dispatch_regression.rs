@@ -4,8 +4,8 @@ use crate::{
     RuntimeTraceEvent, ServiceContribution, ServiceId, ServiceRole,
 };
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 fn plugin(value: &str) -> PluginId {
@@ -325,9 +325,11 @@ fn continuation_is_one_shot() {
     let output = kernel
         .invoke(&service(), b"x", &Authority::default(), None)
         .unwrap();
-    assert!(String::from_utf8(output)
-        .unwrap()
-        .contains("already consumed"));
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("already consumed")
+    );
 }
 
 #[test]
@@ -340,9 +342,11 @@ fn same_service_recursive_invocation_is_rejected() {
     let output = kernel
         .invoke(&service(), b"x", &Authority::default(), None)
         .unwrap();
-    assert!(String::from_utf8(output)
-        .unwrap()
-        .contains("same-service re-entry"));
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("same-service re-entry")
+    );
 }
 
 #[test]
@@ -566,9 +570,11 @@ fn provenance_records_terminal_failure_without_provider_fallback() {
         })
         .unwrap();
     kernel.activate_all().unwrap();
-    assert!(kernel
-        .invoke(&service(), b"x", &Authority::default(), None)
-        .is_err());
+    assert!(
+        kernel
+            .invoke(&service(), b"x", &Authority::default(), None)
+            .is_err()
+    );
 
     let record = kernel
         .service_invocation_provenance()

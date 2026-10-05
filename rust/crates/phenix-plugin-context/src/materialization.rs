@@ -1,5 +1,5 @@
 use crate::{
-    projection_state::ContextProjectionState, PromptAssembly, PromptSection, PromptSectionKind,
+    PromptAssembly, PromptSection, PromptSectionKind, projection_state::ContextProjectionState,
 };
 use phenix_core::{ArtifactRevision, Bytes};
 use phenix_sdk::{
@@ -369,13 +369,10 @@ mod tests {
             cache_epoch: 2,
         };
 
-        assert!(materialize_invocation(
-            &assembly,
-            &state,
-            Bytes::from(b"request".to_vec()),
-            &stale,
-        )
-        .unwrap_err()
-        .contains("stale context projection"));
+        assert!(
+            materialize_invocation(&assembly, &state, Bytes::from(b"request".to_vec()), &stale,)
+                .unwrap_err()
+                .contains("stale context projection")
+        );
     }
 }

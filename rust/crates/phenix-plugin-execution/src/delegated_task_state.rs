@@ -211,7 +211,7 @@ impl DelegatedTaskStore {
             _ => {
                 return Err(DelegatedTaskStoreError::InvalidState {
                     task_id: task_id.to_owned(),
-                })
+                });
             }
         }
         result

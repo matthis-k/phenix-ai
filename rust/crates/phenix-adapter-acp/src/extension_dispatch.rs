@@ -1,13 +1,13 @@
-use crate::{extension_name, wire, ApplicationAdapter};
+use crate::{ApplicationAdapter, extension_name, wire};
 use phenix_application_interface::types::ApplicationError;
 use phenix_application_interface::{
-    application_descriptor, ActivateSkill, AddClientTool, ApplicationTransport, Authenticate,
-    Cancel, CloseSession, CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics,
-    GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
-    InvokeCallableReference, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
-    ListSkills, Operation, Prompt, QueryLogs, ReadLogReference, RemoveClientTool, RenameSession,
-    ResumeSession, SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable,
-    UnsubscribeObservable,
+    ActivateSkill, AddClientTool, ApplicationTransport, Authenticate, Cancel, CloseSession,
+    CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics, GetExecutionTree,
+    GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable, InvokeCallableReference,
+    ListCallables, ListDefaultSelections, ListObservables, ListSessions, ListSkills, Operation,
+    Prompt, QueryLogs, ReadLogReference, RemoveClientTool, RenameSession, ResumeSession,
+    SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable, UnsubscribeObservable,
+    application_descriptor,
 };
 use phenix_core::{ContractId, PhenixValue, ValueCodec};
 use std::sync::Arc;

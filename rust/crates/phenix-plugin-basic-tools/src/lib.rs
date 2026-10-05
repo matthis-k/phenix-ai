@@ -1,8 +1,8 @@
 use phenix_core::{
     ArtifactRevision, Authority, CallableId, ComponentId, ComponentInterface, ComponentManifest,
     InterfaceId, PermissionId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,
-    ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition, ToolResponse,
-    TransactionOp, TOOL_SERVICE,
+    TOOL_SERVICE, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand, ToolDefinition,
+    ToolResponse, TransactionOp,
 };
 use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 

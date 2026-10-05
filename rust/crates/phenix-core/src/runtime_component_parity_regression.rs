@@ -1,10 +1,10 @@
 use crate::{
-    plugin_runtime_adapter_service, Authority, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, InterfaceId, InterfaceSchema, InvocationOutcome, Kernel,
-    PhenixValue, PluginArtifact, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId,
-    ResolvedGeneration, ResolvedGenerationActivation, ResolvedImportHandle, ServiceContribution,
-    ServiceId, ServiceRole,
+    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, InterfaceId, InterfaceSchema, InvocationOutcome, Kernel, PhenixValue,
+    PluginArtifact, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
+    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginRuntimeId, ResolvedGeneration,
+    ResolvedGenerationActivation, ResolvedImportHandle, ServiceContribution, ServiceId,
+    ServiceRole, plugin_runtime_adapter_service,
 };
 use std::collections::BTreeMap;
 

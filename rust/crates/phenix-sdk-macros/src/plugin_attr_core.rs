@@ -1,14 +1,13 @@
 use crate::component_attr::{
-    export_descriptor, export_error_type, export_signature_types, is_call_context_parameter,
-    parse_export, value_response_type, ExportContribution,
+    ExportContribution, export_descriptor, export_error_type, export_signature_types,
+    is_call_context_parameter, parse_export, value_response_type,
 };
 use crate::interface_attr::validate_interface_id;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, Attribute, Expr, ExprLit, Fields, FnArg,
-    Ident, ImplItem, Item, ItemImpl, ItemMod, ItemStruct, Lit, LitStr, Meta, ReturnType, Token,
-    Type,
+    Attribute, Expr, ExprLit, Fields, FnArg, Ident, ImplItem, Item, ItemImpl, ItemMod, ItemStruct,
+    Lit, LitStr, Meta, ReturnType, Token, Type, parse::Parser, parse_quote, punctuated::Punctuated,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
@@ -1674,14 +1673,18 @@ mod tests {
 
     #[test]
     fn plugin_version_rejects_zero_and_duplicates() {
-        assert!(plugin_version(quote!(version = 0))
-            .unwrap_err()
-            .to_string()
-            .contains("positive integer"));
-        assert!(plugin_version(quote!(version = 1, version = 2))
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate plugin version"));
+        assert!(
+            plugin_version(quote!(version = 0))
+                .unwrap_err()
+                .to_string()
+                .contains("positive integer")
+        );
+        assert!(
+            plugin_version(quote!(version = 1, version = 2))
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate plugin version")
+        );
     }
 
     #[test]
@@ -1720,9 +1723,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("require exactly one payload type"));
+        assert!(
+            error
+                .to_string()
+                .contains("require exactly one payload type")
+        );
     }
 
     #[test]
@@ -1774,9 +1779,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("accept only an optional &ReadContext"));
+        assert!(
+            error
+                .to_string()
+                .contains("accept only an optional &ReadContext")
+        );
     }
 
     #[test]
@@ -1841,8 +1848,10 @@ mod tests {
             "pub type Plugin = super :: super :: super :: __PhenixDependency_Plugin_sessions"
         ));
         assert!(output.contains("pub mod models"));
-        assert!(output
-            .contains("type __PhenixDependency_Plugin_models = phenix_plugin_models :: Plugin"));
+        assert!(
+            output
+                .contains("type __PhenixDependency_Plugin_models = phenix_plugin_models :: Plugin")
+        );
         assert!(output.contains(
             "pub type Plugin = super :: super :: super :: __PhenixDependency_Plugin_models"
         ));
@@ -1933,9 +1942,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("duplicate component id `phenix.components.api`"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate component id `phenix.components.api`")
+        );
     }
 
     #[test]
@@ -1953,9 +1964,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("duplicate resource id `phenix.resources.state`"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate resource id `phenix.resources.state`")
+        );
     }
 
     #[test]
@@ -2006,9 +2019,11 @@ mod tests {
             Ok(_) => panic!("unknown backend feature must be rejected"),
             Err(error) => error,
         };
-        assert!(error
-            .to_string()
-            .contains("unsupported resource backend feature"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported resource backend feature")
+        );
     }
 
     #[test]
@@ -2049,9 +2064,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("resource-only plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("resource-only plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2072,9 +2089,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("resource-only plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("resource-only plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2108,9 +2127,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("stateless embedded-handler form"));
+        assert!(
+            error
+                .to_string()
+                .contains("stateless embedded-handler form")
+        );
     }
 
     #[test]
@@ -2132,9 +2153,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2156,9 +2179,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot declare embedded component fields"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot declare embedded component fields")
+        );
     }
 
     #[test]
@@ -2193,8 +2218,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("runtime-hosted plugins cannot use the stateless embedded-handler form"));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime-hosted plugins cannot use the stateless embedded-handler form")
+        );
     }
 }

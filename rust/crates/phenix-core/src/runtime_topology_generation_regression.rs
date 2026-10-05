@@ -6,8 +6,8 @@ use crate::{
     ResolvedListener, ServiceContribution, ServiceId, ServiceRole, SubscriptionId,
 };
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 
 fn plugin(id: &str, service: Option<ServiceId>) -> PluginManifest {
@@ -250,9 +250,11 @@ fn complete_listener_topology_is_replaced_with_each_live_generation() {
     assert_eq!(a_deliveries.load(Ordering::Relaxed), 4);
     assert_eq!(b_deliveries.load(Ordering::Relaxed), 1);
     assert_eq!(b_stops.load(Ordering::Relaxed), 1);
-    assert!(kernel
-        .invoke(&service, &[], &Authority::default(), None)
-        .is_err());
+    assert!(
+        kernel
+            .invoke(&service, &[], &Authority::default(), None)
+            .is_err()
+    );
 
     let c = plugin("fixture.c", None);
     let c_component = listener_component(&c.id, "fixture.c", None);

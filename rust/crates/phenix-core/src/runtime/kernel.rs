@@ -1,11 +1,11 @@
 use super::{
     dispatch::{
-        invoke_component_service_with, invoke_service_with, ComponentDispatchTarget,
-        ComponentInvocationPlan,
+        ComponentDispatchTarget, ComponentInvocationPlan, invoke_component_service_with,
+        invoke_service_with,
     },
     *,
 };
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 impl Kernel {
     pub fn new(config: KernelConfig) -> Self {

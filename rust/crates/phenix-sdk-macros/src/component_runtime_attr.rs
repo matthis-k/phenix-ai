@@ -2,8 +2,8 @@ use crate::{component_attr, interface_attr::validate_interface_id};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, parse_quote, punctuated::Punctuated, Attribute, FnArg, GenericArgument,
-    ImplItem, ItemImpl, LitStr, Meta, PathArguments, ReturnType, Token, Type,
+    Attribute, FnArg, GenericArgument, ImplItem, ItemImpl, LitStr, Meta, PathArguments, ReturnType,
+    Token, Type, parse::Parser, parse_quote, punctuated::Punctuated,
 };
 
 pub(crate) fn expand(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
@@ -573,8 +573,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("exported component methods must use &self"));
+        assert!(
+            error
+                .to_string()
+                .contains("exported component methods must use &self")
+        );
     }
 }

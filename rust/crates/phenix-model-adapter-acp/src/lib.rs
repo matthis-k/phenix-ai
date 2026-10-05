@@ -2,6 +2,7 @@
 
 mod mcp_bridge;
 
+use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AuthMethod, AuthenticateRequest, CancelNotification, ConnectMcpRequest, ContentBlock,
     ContentChunk, DisconnectMcpRequest, ErrorCode, InitializeRequest, MessageMcpNotification,
@@ -9,7 +10,6 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionRequest, RequestPermissionResponse, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, TextContent,
 };
-use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use mcp_bridge::{BridgeToolRequest, ToolBridge};
 use phenix_domain::{
@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 
@@ -1246,8 +1246,10 @@ mod tests {
     fn acp_backend_advertises_persistent_sessions_and_native_tool_bridge() {
         let features = AcpModelAdapter::new(config()).features();
         assert!(features.persistent_sessions);
-        assert!(features
-            .tool_presentations
-            .contains(&ToolPresentation::AcpExtension));
+        assert!(
+            features
+                .tool_presentations
+                .contains(&ToolPresentation::AcpExtension)
+        );
     }
 }

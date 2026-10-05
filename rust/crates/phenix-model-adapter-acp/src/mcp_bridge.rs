@@ -12,9 +12,9 @@ use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResult, ContentBlock, DiscoverResult,
     Implementation, ListToolsResult, ProtocolVersion, RequestMetaObject, ServerCapabilities, Tool,
 };
-use serde_json::{json, value::RawValue, Map, Value};
+use serde_json::{Map, Value, json, value::RawValue};
 use std::collections::BTreeMap;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 const SERVER_ID: &str = "phenix-tools";
 const SERVER_NAME: &str = "Phenix tools";
@@ -506,11 +506,13 @@ mod tests {
     fn discovery_advertises_current_and_legacy_mcp_versions() {
         let discovered = discover_result().unwrap();
         assert_eq!(discovered["resultType"], "complete");
-        assert!(discovered["supportedVersions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|version| version == "2026-07-28"));
+        assert!(
+            discovered["supportedVersions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|version| version == "2026-07-28")
+        );
         assert_eq!(discovered["capabilities"]["tools"], json!({}));
         assert_eq!(discovered["cacheScope"], "private");
         assert_eq!(discovered["ttlMs"], 0);

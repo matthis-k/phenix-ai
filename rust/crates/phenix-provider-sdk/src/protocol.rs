@@ -1,5 +1,5 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use phenix_core::{
     CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelId,
     ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
@@ -1964,9 +1964,10 @@ mod tests {
         ] {
             let id = CallableId::parse(id).unwrap();
             let wire = openai_tool_name(&id);
-            assert!(wire
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+            assert!(
+                wire.bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            );
             assert_eq!(parse_openai_callable_id(&wire).unwrap(), id);
         }
         assert_ne!(

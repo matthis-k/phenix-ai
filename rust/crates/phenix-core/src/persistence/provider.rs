@@ -1,8 +1,8 @@
 use crate::{
-    resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBackend,
-    PersistenceBackendFeature, PersistenceBootstrapError, PersistenceError,
-    PersistenceProviderDescriptor, PersistenceProviderTransition, PluginId,
-    ResolvedPersistenceBootstrap, StoreBinding,
+    DurableSchemaRegistration, PersistenceBackend, PersistenceBackendFeature,
+    PersistenceBootstrapError, PersistenceError, PersistenceProviderDescriptor,
+    PersistenceProviderTransition, PluginId, ResolvedPersistenceBootstrap, StoreBinding,
+    resolve_persistence_bootstrap,
 };
 use std::{
     collections::BTreeSet,

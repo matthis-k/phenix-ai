@@ -645,9 +645,11 @@ mod tests {
         });
         let reconstructed = queue.pull_request(9).unwrap();
         assert_eq!(reconstructed.findings.len(), 1);
-        assert!(reconstructed
-            .reconciled_contract
-            .contains("ReviewThread #42: preserve exact authority"));
+        assert!(
+            reconstructed
+                .reconciled_contract
+                .contains("ReviewThread #42: preserve exact authority")
+        );
         assert!(!reconstructed.contract_complete);
         assert_eq!(queue.select_work().unwrap().pr_number, 9);
     }

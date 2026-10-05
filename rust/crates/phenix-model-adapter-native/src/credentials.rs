@@ -1,6 +1,6 @@
 use crate::providers;
-use genai::resolver::AuthData;
 use genai::ModelIden;
+use genai::resolver::AuthData;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};

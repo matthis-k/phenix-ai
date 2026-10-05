@@ -1,9 +1,9 @@
 use crate::{
     error::{MemoryError, MemoryResult},
-    implementation::{memory_namespace, MemoryContext},
+    implementation::{MemoryContext, memory_namespace},
 };
 use phenix_core::TransactionOp;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
 
 pub(crate) fn insert_record<T: Serialize>(

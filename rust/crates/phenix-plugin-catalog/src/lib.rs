@@ -3,206 +3,206 @@
 use phenix_core::{DurableSchemaRegistration, PluginId, PluginManifest};
 use phenix_sdk::StaticPluginResources;
 
-pub use phenix_adapter_acp::{adapter_acp_factory, adapter_acp_manifest, ACP_ADAPTER_PLUGIN};
+pub use phenix_adapter_acp::{ACP_ADAPTER_PLUGIN, adapter_acp_factory, adapter_acp_manifest};
 pub use phenix_agent_configurations::{
-    advanced_agent_configuration_manifest, basic_agent_configuration_manifest,
-    basic_product_configuration_manifest, full_product_configuration_manifest,
     ADVANCED_AGENT_CONFIGURATION, BASIC_AGENT_CONFIGURATION, BASIC_PRODUCT_CONFIGURATION,
-    FULL_PRODUCT_CONFIGURATION,
+    FULL_PRODUCT_CONFIGURATION, advanced_agent_configuration_manifest,
+    basic_agent_configuration_manifest, basic_product_configuration_manifest,
+    full_product_configuration_manifest,
 };
 pub use phenix_core::{ContextResourceId, ContextRevisionId, SessionId};
 pub use phenix_plugin_api::{
-    sdk_component_id, sdk_component_manifest, sdk_config_service, sdk_contribution, sdk_factory,
-    sdk_manifest, sdk_session_service, sdk_skills_service, sdk_tools_service, SdkConfigCommand,
-    SdkConfigInterface, SdkConfigResponse, SdkSessionCommand, SdkSessionInterface,
-    SdkSessionResponse, SdkSkill, SdkSkillCommand, SdkSkillResponse, SdkSkillSummary,
-    SdkSkillsInterface, SdkTool, SdkToolCommand, SdkToolResponse, SdkToolsInterface, SDK_COMPONENT,
-    SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE, SDK_TOOLS_SERVICE,
+    SDK_COMPONENT, SDK_CONFIG_SERVICE, SDK_PLUGIN, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE,
+    SDK_TOOLS_SERVICE, SdkConfigCommand, SdkConfigInterface, SdkConfigResponse, SdkSessionCommand,
+    SdkSessionInterface, SdkSessionResponse, SdkSkill, SdkSkillCommand, SdkSkillResponse,
+    SdkSkillSummary, SdkSkillsInterface, SdkTool, SdkToolCommand, SdkToolResponse,
+    SdkToolsInterface, sdk_component_id, sdk_component_manifest, sdk_config_service,
+    sdk_contribution, sdk_factory, sdk_manifest, sdk_session_service, sdk_skills_service,
+    sdk_tools_service,
 };
 pub use phenix_plugin_artifacts::{
-    artifact_component_id, artifact_component_manifest, artifact_factory, artifact_manifest,
-    artifact_service, ArtifactCommand, ArtifactInterface, ArtifactProvenance, ArtifactRecord,
+    ARTIFACT_SERVICE, ArtifactCommand, ArtifactInterface, ArtifactProvenance, ArtifactRecord,
     ArtifactResponse, NormalizedReadRequest, ReadProviderIdentity, ReadResultRecord,
-    RevalidationRecord, RevalidationVerdict, ARTIFACT_SERVICE,
+    RevalidationRecord, RevalidationVerdict, artifact_component_id, artifact_component_manifest,
+    artifact_factory, artifact_manifest, artifact_service,
 };
 pub use phenix_plugin_basic_agent::{
-    agent_loop_component_id, agent_loop_component_manifest, agent_loop_control_service,
-    agent_loop_factory, agent_loop_factory_with_policy, agent_loop_manifest,
-    agent_loop_progress_authority, agent_loop_progress_service, agent_loop_service,
-    agent_tool_execution_service, AgentLoopCommand, AgentLoopControlInterface,
+    AGENT_LOOP_CONTROL_SERVICE, AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
+    AGENT_TOOL_EXECUTION_SERVICE, AgentLoopCommand, AgentLoopControlInterface,
     AgentLoopControlRequest, AgentLoopControlResponse, AgentLoopFailure, AgentLoopInterface,
     AgentLoopPolicy, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
     AgentLoopProgressResponse, AgentLoopResponse, AgentLoopUsage, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, AGENT_LOOP_CONTROL_SERVICE,
-    AGENT_LOOP_PLUGIN, AGENT_LOOP_PROGRESS_SERVICE, AGENT_LOOP_SERVICE,
-    AGENT_TOOL_EXECUTION_SERVICE,
+    AgentToolExecutionRequest, AgentToolExecutionResponse, agent_loop_component_id,
+    agent_loop_component_manifest, agent_loop_control_service, agent_loop_factory,
+    agent_loop_factory_with_policy, agent_loop_manifest, agent_loop_progress_authority,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
 };
 pub use phenix_plugin_basic_context::{
+    BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN, BasicContextInterface,
     basic_context_component_manifest, basic_context_factory, basic_context_manifest,
-    BasicContextInterface, BASIC_CONTEXT_COMPONENT, BASIC_CONTEXT_PLUGIN,
 };
 pub use phenix_plugin_basic_model::{
-    basic_model_component_manifest, basic_model_factory, basic_model_manifest,
-    BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN,
+    BASIC_MODEL_COMPONENT, BASIC_MODEL_PLUGIN, basic_model_component_manifest, basic_model_factory,
+    basic_model_manifest,
 };
 pub use phenix_plugin_basic_skills::{
+    BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN, BasicSkillsInterface,
     basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
-    BasicSkillsInterface, BASIC_SKILLS_COMPONENT, BASIC_SKILLS_PLUGIN,
 };
 pub use phenix_plugin_basic_tools::{
-    basic_tools_component_manifest, basic_tools_factory, basic_tools_manifest, BasicToolsInterface,
-    BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN,
+    BASIC_TOOLS_COMPONENT, BASIC_TOOLS_PLUGIN, BasicToolsInterface, basic_tools_component_manifest,
+    basic_tools_factory, basic_tools_manifest,
 };
 pub use phenix_plugin_command_toolbelt::{
-    cli_auth_state_service, cli_component_id, cli_component_manifest, cli_discover_service,
-    cli_factory, cli_manifest, cli_version_service, CliAuthState, CliAuthStateInterface,
-    CliAvailability, CliDescriptor, CliDiscoverInterface, CliName, CliProbeRequest,
-    CliVersionInterface, CLI_AUTH_STATE_SERVICE, CLI_DISCOVER_SERVICE, CLI_VERSION_SERVICE,
+    CLI_AUTH_STATE_SERVICE, CLI_DISCOVER_SERVICE, CLI_VERSION_SERVICE, CliAuthState,
+    CliAuthStateInterface, CliAvailability, CliDescriptor, CliDiscoverInterface, CliName,
+    CliProbeRequest, CliVersionInterface, cli_auth_state_service, cli_component_id,
+    cli_component_manifest, cli_discover_service, cli_factory, cli_manifest, cli_version_service,
 };
 pub use phenix_plugin_context::{
-    context_component_id, context_component_manifest, context_factory, context_manifest,
     ContextCodeQueryRequest, ContextInjection, ContextInjectionLifetime, ContextInjectionRequester,
     ContextResourceKind, ContextScope, ExactContextReference, ExecutionContextProjection,
-    ProjectedContextEntry,
+    ProjectedContextEntry, context_component_id, context_component_manifest, context_factory,
+    context_manifest,
 };
 pub use phenix_plugin_debug::{
-    debug_component_id, debug_component_manifest, debug_factory, debug_manifest,
-    debug_runtime_trace_sink, debug_service, DebugCommand, DebugInterface, DebugResponse,
-    DiagnosticEntry, DiagnosticSnapshot, DEBUG_SERVICE,
+    DEBUG_SERVICE, DebugCommand, DebugInterface, DebugResponse, DiagnosticEntry,
+    DiagnosticSnapshot, debug_component_id, debug_component_manifest, debug_factory,
+    debug_manifest, debug_runtime_trace_sink, debug_service,
 };
 pub use phenix_plugin_efficiency_evaluation::{
-    benchmark_outcome_component_id, benchmark_outcome_component_manifest,
-    benchmark_outcome_factory, benchmark_outcome_manifest, benchmark_outcome_service,
-    efficiency_evaluation_component_id, efficiency_evaluation_component_manifest,
-    efficiency_evaluation_factory, efficiency_evaluation_manifest, efficiency_evaluation_service,
-    efficiency_outcome_evidence_service, BenchmarkOutcomeCommand, BenchmarkOutcomeInterface,
-    BenchmarkOutcomeRecord, BenchmarkOutcomeResponse, EfficiencyCollectionRequest,
-    EfficiencyEvaluationCommand, EfficiencyEvaluationInterface, EfficiencyEvaluationResponse,
-    EfficiencyOutcomeEvidence, EfficiencyOutcomeEvidenceCommand,
+    BENCHMARK_OUTCOME_COMPONENT, BENCHMARK_OUTCOME_PLUGIN, BENCHMARK_OUTCOME_SERVICE,
+    BenchmarkOutcomeCommand, BenchmarkOutcomeInterface, BenchmarkOutcomeRecord,
+    BenchmarkOutcomeResponse, EFFICIENCY_EVALUATION_COMPONENT, EFFICIENCY_EVALUATION_PLUGIN,
+    EFFICIENCY_EVALUATION_SERVICE, EFFICIENCY_OUTCOME_EVIDENCE_SERVICE,
+    EfficiencyCollectionRequest, EfficiencyEvaluationCommand, EfficiencyEvaluationInterface,
+    EfficiencyEvaluationResponse, EfficiencyOutcomeEvidence, EfficiencyOutcomeEvidenceCommand,
     EfficiencyOutcomeEvidenceInterface, EfficiencyOutcomeEvidenceRequest,
-    EfficiencyOutcomeEvidenceResponse, EfficiencyTaskRecord, BENCHMARK_OUTCOME_COMPONENT,
-    BENCHMARK_OUTCOME_PLUGIN, BENCHMARK_OUTCOME_SERVICE, EFFICIENCY_EVALUATION_COMPONENT,
-    EFFICIENCY_EVALUATION_PLUGIN, EFFICIENCY_EVALUATION_SERVICE,
-    EFFICIENCY_OUTCOME_EVIDENCE_SERVICE,
+    EfficiencyOutcomeEvidenceResponse, EfficiencyTaskRecord, benchmark_outcome_component_id,
+    benchmark_outcome_component_manifest, benchmark_outcome_factory, benchmark_outcome_manifest,
+    benchmark_outcome_service, efficiency_evaluation_component_id,
+    efficiency_evaluation_component_manifest, efficiency_evaluation_factory,
+    efficiency_evaluation_manifest, efficiency_evaluation_service,
+    efficiency_outcome_evidence_service,
 };
 pub use phenix_plugin_environment_local::{
-    local_environment_component_id, local_environment_component_manifest,
+    LOCAL_ENVIRONMENT_PLUGIN, local_environment_component_id, local_environment_component_manifest,
     local_environment_factory, local_environment_factory_for, local_environment_manifest,
-    LOCAL_ENVIRONMENT_PLUGIN,
 };
 pub use phenix_plugin_execution::{
-    execution_component_id, execution_component_manifest, execution_configuration_service,
-    execution_factory, execution_manifest, execution_resource_service, execution_review_service,
-    step_attempt_service, AgentDefinition, CallablePolicy, ExecutionConfigurationCommand,
-    ExecutionConfigurationResponse, ExecutionResourceCommand, ExecutionResourceInterface,
-    ExecutionResourceResponse, ExecutionReviewCommand, ExecutionReviewInterface,
-    ExecutionReviewResponse, OrchestrationDefinition, OrchestrationNode, PreparedReviewFile,
+    AgentDefinition, CallablePolicy, EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE,
+    EXECUTION_REVIEW_SERVICE, ExecutionConfigurationCommand, ExecutionConfigurationResponse,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    ExecutionReviewCommand, ExecutionReviewInterface, ExecutionReviewResponse,
+    OrchestrationDefinition, OrchestrationNode, PreparedReviewFile, STEP_ATTEMPT_SERVICE,
     StepAttemptCommand, StepAttemptInterface, StepAttemptPhase, StepAttemptRecord,
-    StepAttemptResponse, EXECUTION_CONFIGURATION_SERVICE, EXECUTION_RESOURCE_SERVICE,
-    EXECUTION_REVIEW_SERVICE, STEP_ATTEMPT_SERVICE,
+    StepAttemptResponse, execution_component_id, execution_component_manifest,
+    execution_configuration_service, execution_factory, execution_manifest,
+    execution_resource_service, execution_review_service, step_attempt_service,
 };
 pub use phenix_plugin_frontend::{
-    frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
-    frontend_service, FrontendCommand, FrontendInterface, FrontendProviderDescriptor,
+    FRONTEND_SERVICE, FrontendCommand, FrontendInterface, FrontendProviderDescriptor,
     FrontendResponse, FrontendServiceRequest, FrontendServiceResult, LiveFrontendProvider,
-    FRONTEND_SERVICE,
+    frontend_component_id, frontend_component_manifest, frontend_factory, frontend_manifest,
+    frontend_service,
 };
 pub use phenix_plugin_hooks::{
-    hook_component_id, hook_component_manifest, hook_factory, hook_manifest, hook_service,
-    HookAction, HookCommand, HookConfiguration, HookDefinition, HookDispatch, HookFailurePolicy,
-    HookInterface, HookResponse, HookWarning, LifecycleEvent, HOOK_SERVICE,
+    HOOK_SERVICE, HookAction, HookCommand, HookConfiguration, HookDefinition, HookDispatch,
+    HookFailurePolicy, HookInterface, HookResponse, HookWarning, LifecycleEvent, hook_component_id,
+    hook_component_manifest, hook_factory, hook_manifest, hook_service,
 };
 pub use phenix_plugin_jobs::{
     job_component_id, job_component_manifest, job_factory, job_manifest, job_service,
 };
 pub use phenix_plugin_language::{
-    language_component_id, language_component_manifest, language_factory, language_manifest,
-    language_service, CodeChangedNeighborhood, CodeEntityEditEvidence, CodeEntityEditResult,
+    CodeChangedNeighborhood, CodeEntityEditEvidence, CodeEntityEditResult,
     CodeEntityEditValidation, CodeEntityInsertPosition, CodeEntityRelationKind,
     CodeEntityRelationTarget, CodeEntityRelations, CodeQuery, CodeQueryAnchor, CodeQueryBudget,
     CodeQueryCoverage, CodeQueryDirection, CodeQueryEntity, CodeQueryProjection, CodeQueryRelation,
     CodeQueryResult, CodeQuerySelection, CodeQueryTraversal, CodeRelationKind, DocumentProvenance,
-    LanguageCommand, LanguageDocumentIdentity, LanguageInterface, LanguageObservation,
-    LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch, LanguageResponse,
-    LANGUAGE_SERVICE,
+    LANGUAGE_SERVICE, LanguageCommand, LanguageDocumentIdentity, LanguageInterface,
+    LanguageObservation, LanguageOperationKind, LanguageOperationResult, LanguageProviderEpoch,
+    LanguageResponse, language_component_id, language_component_manifest, language_factory,
+    language_manifest, language_service,
 };
 pub use phenix_plugin_memory::{
-    memory_component_id, memory_component_manifest, memory_factory, memory_manifest,
-    memory_service, MemoryCommand, MemoryInterface, MemoryKind, MemoryNode, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference, MEMORY_SERVICE,
+    MEMORY_SERVICE, MemoryCommand, MemoryInterface, MemoryKind, MemoryNode, MemoryRecallQuery,
+    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference, memory_component_id,
+    memory_component_manifest, memory_factory, memory_manifest, memory_service,
 };
 pub use phenix_plugin_models::{
-    model_dispatch_service, model_inference_service, model_routing_component_id,
-    model_routing_component_manifest, model_routing_factory, model_routing_manifest,
-    model_routing_service, ModelCommand, ModelDispatchCommand, ModelDispatchInterface,
-    ModelDispatchResponse, ModelInferenceRequest, ModelInferenceResponse, ModelResponse,
-    ModelRoutingInterface, ModelTarget, RoutingProfile, RoutingProfileDescriptor,
-    MODEL_DISPATCH_SERVICE, MODEL_INFERENCE_SERVICE, MODEL_ROUTING_SERVICE,
+    MODEL_DISPATCH_SERVICE, MODEL_INFERENCE_SERVICE, MODEL_ROUTING_SERVICE, ModelCommand,
+    ModelDispatchCommand, ModelDispatchInterface, ModelDispatchResponse, ModelInferenceRequest,
+    ModelInferenceResponse, ModelResponse, ModelRoutingInterface, ModelTarget, RoutingProfile,
+    RoutingProfileDescriptor, model_dispatch_service, model_inference_service,
+    model_routing_component_id, model_routing_component_manifest, model_routing_factory,
+    model_routing_manifest, model_routing_service,
 };
 pub use phenix_plugin_openai_codex::{
-    openai_codex_component_manifest, openai_codex_factory, openai_codex_manifest,
-    OPENAI_CODEX_PROVIDER,
+    OPENAI_CODEX_PROVIDER, openai_codex_component_manifest, openai_codex_factory,
+    openai_codex_manifest,
 };
 pub use phenix_plugin_options::{
-    default_option_definitions, options_component_id, options_component_manifest, options_factory,
-    options_manifest, options_service, OptionAssignment, OptionCommand, OptionContext,
-    OptionDefinition, OptionKey, OptionResponse, OptionScope, OptionScopeKind,
+    OPTIONS_COMPONENT, OPTIONS_PLUGIN, OPTIONS_SERVICE, OptionAssignment, OptionCommand,
+    OptionContext, OptionDefinition, OptionKey, OptionResponse, OptionScope, OptionScopeKind,
     OptionStartupPrecedence, OptionSubjectId, OptionValue, OptionValueLayer, OptionValueSource,
-    OptionsInterface, ResolvedOption, OPTIONS_COMPONENT, OPTIONS_PLUGIN, OPTIONS_SERVICE,
+    OptionsInterface, ResolvedOption, default_option_definitions, options_component_id,
+    options_component_manifest, options_factory, options_manifest, options_service,
 };
 pub use phenix_plugin_planning::{
     planning_component_id, planning_component_manifest, planning_factory, planning_manifest,
     planning_service,
 };
 pub use phenix_plugin_providers::{
-    common_provider_definitions, providers_manifest, ProviderPreset, COMMON_PROVIDERS,
-    PROVIDERS_PLUGIN,
+    COMMON_PROVIDERS, PROVIDERS_PLUGIN, ProviderPreset, common_provider_definitions,
+    providers_manifest,
 };
 pub use phenix_plugin_repository_workers::{
-    repository_work_queue_service, repository_worker_component_id,
-    repository_worker_component_manifest, repository_worker_factory, repository_worker_manifest,
-    ReconstructedPullRequest, RepositoryCheckState, RepositoryChecklistEvidence,
-    RepositoryDiscussionEvidence, RepositoryDiscussionKind, RepositoryFinding,
-    RepositoryIssueCluster, RepositoryIssueEvidence, RepositoryPullRequestEvidence,
-    RepositoryPullRequestState, RepositorySelectionReason, RepositoryValidation,
-    RepositoryWorkPriority, RepositoryWorkSelection, RepositoryWorkSnapshot,
-    RepositoryWorkerInterface, RepositoryWorkerQueue, REPOSITORY_WORK_QUEUE_SERVICE,
+    REPOSITORY_WORK_QUEUE_SERVICE, ReconstructedPullRequest, RepositoryCheckState,
+    RepositoryChecklistEvidence, RepositoryDiscussionEvidence, RepositoryDiscussionKind,
+    RepositoryFinding, RepositoryIssueCluster, RepositoryIssueEvidence,
+    RepositoryPullRequestEvidence, RepositoryPullRequestState, RepositorySelectionReason,
+    RepositoryValidation, RepositoryWorkPriority, RepositoryWorkSelection, RepositoryWorkSnapshot,
+    RepositoryWorkerInterface, RepositoryWorkerQueue, repository_work_queue_service,
+    repository_worker_component_id, repository_worker_component_manifest,
+    repository_worker_factory, repository_worker_manifest,
 };
 pub use phenix_plugin_session_tree::{
-    session_tree_component_id, session_tree_component_manifest, session_tree_factory,
-    session_tree_manifest, session_tree_service, SessionLineage, SessionTreeCommand,
-    SessionTreeInterface, SessionTreeResponse, SESSION_TREE_SERVICE,
+    SESSION_TREE_SERVICE, SessionLineage, SessionTreeCommand, SessionTreeInterface,
+    SessionTreeResponse, session_tree_component_id, session_tree_component_manifest,
+    session_tree_factory, session_tree_manifest, session_tree_service,
 };
 pub use phenix_plugin_sessions::{
-    session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
-    SessionInput, SessionInputKind, SessionInterface, SessionJournalDraft, SessionJournalEntry,
-    SessionLifecycle, SessionRecord, SessionResponse, SessionTransition, SESSION_SERVICE,
+    SESSION_SERVICE, SessionCommand, SessionInput, SessionInputKind, SessionInterface,
+    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTransition, session_component_manifest, session_factory, session_manifest,
+    session_service,
 };
 pub use phenix_plugin_step_runner::{
+    HELPER_INVOCATION_COMPONENT, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
     helper_invocation_component_id, helper_invocation_component_manifest, step_runner_component_id,
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
-    HELPER_INVOCATION_COMPONENT, STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN,
 };
 pub use phenix_plugin_workspace::{
-    workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
-    workspace_manifest, workspace_service, WorkspaceCapabilities, WorkspaceCommand,
-    WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch,
-    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
-    WORKSPACE_SERVICE,
+    WORKSPACE_SERVICE, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
+    WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
+    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
+    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, workspace_component_id,
+    workspace_component_manifest, workspace_factory, workspace_factory_for, workspace_manifest,
+    workspace_service,
 };
 pub use phenix_sdk::{
-    context_service, execution_inspection_service, execution_service, step_runner_service,
-    CallableRecord, ContextCommand, ContextDescriptor, ContextInterface, ContextResourceRevision,
-    ContextResponse, DecisionRecord, ExecutionAuthority, ExecutionCommand,
-    ExecutionInspectionCommand, ExecutionInspectionInterface, ExecutionInspectionResponse,
-    ExecutionInterface, ExecutionRecord, ExecutionResponse, ExecutionState, HistoryEntry,
-    HistoryKind, JobCommand, JobInterface, JobResponse, ModelInferenceInterface, ObjectiveRecord,
+    CONTEXT_SERVICE, CallableRecord, ContextCommand, ContextDescriptor, ContextInterface,
+    ContextResourceRevision, ContextResponse, DecisionRecord, EXECUTION_INSPECTION_SERVICE,
+    EXECUTION_SERVICE, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionInterface, ExecutionRecord,
+    ExecutionResponse, ExecutionState, HistoryEntry, HistoryKind, JOB_SERVICE, JobCommand,
+    JobInterface, JobResponse, ModelInferenceInterface, ObjectiveRecord, PLANNING_SERVICE,
     PlanRecord, PlanStep, PlannedStepRequest, PlanningCommand, PlanningInterface, PlanningResponse,
     RepositoryContextSource, RuntimeResourceKind, RuntimeResourceRecord, RuntimeResourceState,
-    StepRunnerCommand, StepRunnerInterface, StepRunnerResponse, StepSettlementBasis,
-    WorkerTaskRecord, WorkerTaskState, CONTEXT_SERVICE, EXECUTION_INSPECTION_SERVICE,
-    EXECUTION_SERVICE, JOB_SERVICE, PLANNING_SERVICE, STEP_RUNNER_SERVICE,
+    STEP_RUNNER_SERVICE, StepRunnerCommand, StepRunnerInterface, StepRunnerResponse,
+    StepSettlementBasis, WorkerTaskRecord, WorkerTaskState, context_service,
+    execution_inspection_service, execution_service, step_runner_service,
 };
 
 /// Project generated durable resource metadata for a first-party plugin into the

@@ -1,4 +1,4 @@
-use crate::{descriptor::id, types::ApplicationError, ApplicationDescriptor};
+use crate::{ApplicationDescriptor, descriptor::id, types::ApplicationError};
 use phenix_core::{
     ContractId, InvocationOutcome, InvocationResult, PhenixContract, PhenixValue, ValueCodec,
 };

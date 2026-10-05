@@ -1,12 +1,12 @@
 use super::usage::{CapacityKnowledge, ContextDemand, EffectiveModelFeatures, ModelTurnUsage};
-pub use phenix_core::{
-    model_inference_service, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
-    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
-    MODEL_INFERENCE_SERVICE,
-};
 use phenix_core::{
     CallableId, ComponentInterface, EventTypeId, InterfaceId, ModelFeatureGenerationId, ModelId,
     PhenixValue, PluginId, PreparedMutationHandle, RoutingProfileId, ServiceId,
+};
+pub use phenix_core::{
+    MODEL_INFERENCE_SERVICE, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy,
+    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse,
+    model_inference_service,
 };
 use serde::{Deserialize, Serialize};
 use std::{

@@ -1,5 +1,5 @@
 use crate::{PhenixRuntime, PhenixRuntimeBuildError, PhenixRuntimeBuilder};
-use phenix_core::{prepare_persistence_candidate, Kernel, PersistenceProvider, StoreBinding};
+use phenix_core::{Kernel, PersistenceProvider, StoreBinding, prepare_persistence_candidate};
 use std::collections::BTreeSet;
 
 impl PhenixRuntimeBuilder {

@@ -1,6 +1,6 @@
 use crate::{
-    session_tree_component_manifest, session_tree_factory, session_tree_manifest,
-    session_tree_service, SessionTreeCommand, SessionTreeResponse,
+    SessionTreeCommand, SessionTreeResponse, session_tree_component_manifest, session_tree_factory,
+    session_tree_manifest, session_tree_service,
 };
 use phenix_core::{
     Authority, DurableSchema, Kernel, KernelConfig, LocalPersistence, NamespaceTransaction,
@@ -9,8 +9,8 @@ use phenix_core::{
     SessionId, TransactionOp,
 };
 use phenix_plugin_sessions::{
-    session_component_manifest, session_factory, session_manifest, session_service, SessionCommand,
-    SessionResponse,
+    SessionCommand, SessionResponse, session_component_manifest, session_factory, session_manifest,
+    session_service,
 };
 use std::{
     collections::BTreeSet,

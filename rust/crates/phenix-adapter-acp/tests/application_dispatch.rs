@@ -1,21 +1,20 @@
-use phenix_adapter_acp::{wire, ApplicationAdapter};
+use phenix_adapter_acp::{ApplicationAdapter, wire};
 use phenix_application_interface::{
-    application_descriptor,
+    ApplicationTransport, Cancel, CloseSession, CreateSession, ListSelections, ListSessions,
+    Operation, Prompt, ResumeSession, SelectSelection, application_descriptor,
     types::{
         Acknowledged, ApplicationError, Content, PageInput, PromptInput, PromptResult,
         SelectionInfo, SelectionPresentation, SelectionSelectInput, Selections, SessionInfo,
         SessionList, SessionResumeInput, SessionSnapshot, StopReason,
     },
-    ApplicationTransport, Cancel, CloseSession, CreateSession, ListSelections, ListSessions,
-    Operation, Prompt, ResumeSession, SelectSelection,
 };
 use phenix_core::{ContractId, PhenixValue, RoutingProfileId, SessionId, ValueCodec};
 use std::sync::{Arc, Mutex};
+use wire::schema::ProtocolVersion;
 use wire::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, ResourceLink,
     SetSessionConfigOptionRequest, TextContent,
 };
-use wire::schema::ProtocolVersion;
 
 #[derive(Clone)]
 struct FakeTransport {
@@ -164,9 +163,11 @@ fn initialize_advertises_only_implemented_standard_and_descriptor_extensions() {
     for mapped in ["_phenix/selection-list@1", "_phenix/selection-select@1"] {
         assert!(methods.iter().all(|method| method["method"] != mapped));
     }
-    assert!(methods
-        .iter()
-        .any(|method| method["method"] == "_phenix/authentication-list@1"));
+    assert!(
+        methods
+            .iter()
+            .any(|method| method["method"] == "_phenix/authentication-list@1")
+    );
 
     for lane in ["methods", "events", "callbacks"] {
         for extension in extensions[lane]
@@ -255,12 +256,16 @@ async fn model_and_router_choices_share_one_standard_acp_config_option() {
     assert_eq!(selection["category"], "model");
     assert_eq!(selection["currentValue"], "balanced");
     let choices = selection["options"].as_array().expect("selection choices");
-    assert!(choices
-        .iter()
-        .any(|choice| choice["name"] == "[router] Balanced"));
-    assert!(choices
-        .iter()
-        .any(|choice| choice["name"] == "[model] Model A"));
+    assert!(
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "[router] Balanced")
+    );
+    assert!(
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "[model] Model A")
+    );
 
     let updated = adapter
         .set_session_config_option(SetSessionConfigOptionRequest::new(

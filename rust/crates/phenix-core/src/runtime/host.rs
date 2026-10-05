@@ -1,7 +1,7 @@
 use super::{
     dispatch::{
-        invoke_component_service_with, invoke_resolved_chain_with, invoke_service_with,
-        ComponentDispatchTarget, ComponentInvocationPlan,
+        ComponentDispatchTarget, ComponentInvocationPlan, invoke_component_service_with,
+        invoke_resolved_chain_with, invoke_service_with,
     },
     *,
 };

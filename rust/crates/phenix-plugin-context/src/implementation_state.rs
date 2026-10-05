@@ -1,8 +1,7 @@
 use crate::{
-    assemble_prompt, context_component_id,
+    PromptSection, PromptSectionKind, assemble_prompt, context_component_id,
     projection_state::ContextProjectionState,
-    state_service::{ContextStateService, CONTEXT_PROJECTION_STATE_KEY},
-    PromptSection, PromptSectionKind,
+    state_service::{CONTEXT_PROJECTION_STATE_KEY, ContextStateService},
 };
 use phenix_core::{
     Authority, Bytes, ComponentInterface, ContextResourceId, ContextRevisionId, DurableSchema,
@@ -11,10 +10,8 @@ use phenix_core::{
     ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
-    context_service, derive_continuation_delta, project_continuation_import,
-    select_continuation_export, AdmittedContextItem, CachePlacement, ContextAdmissionRequest,
-    ContextCandidate, ContextCodeQueryRequest, ContextCommand, ContextDescriptor, ContextInjection,
+    AdmittedContextItem, CachePlacement, ContextAdmissionRequest, ContextCandidate,
+    ContextCodeQueryRequest, ContextCommand, ContextDescriptor, ContextInjection,
     ContextInjectionLifetime, ContextInjectionRequester, ContextInterface,
     ContextInvocationMaterialization, ContextInvocationPreparation, ContextProjectionForm,
     ContextResourceKind, ContextResourceRevision, ContextResponse, ContextRetention, ContextScope,
@@ -24,6 +21,9 @@ use phenix_sdk::{
     ExecutionResourceInterface, ExecutionResourceResponse, ExecutionResponse, ExecutionState,
     LanguageCommand, LanguageInterface, LanguageResponse, ProjectedContextEntry,
     ProjectionCheckpoint, ProjectionRevision, RepositoryContextSource, WorkerTaskState,
+    assemble_continuation_candidates, build_continuation_packet, choose_cache_aware_compaction,
+    context_service, derive_continuation_delta, project_continuation_import,
+    select_continuation_export,
 };
 use sha2::{Digest, Sha256};
 

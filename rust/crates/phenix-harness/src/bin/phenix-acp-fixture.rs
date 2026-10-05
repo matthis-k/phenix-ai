@@ -1,19 +1,19 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    model_inference_service, Authority, Bytes, ComponentExport, ComponentId, ComponentInterface,
-    ComponentManifest, LocalPersistence, ModelFeatureGenerationId, ModelId,
-    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
-    PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
+    Authority, Bytes, ComponentExport, ComponentId, ComponentInterface, ComponentManifest,
+    LocalPersistence, ModelFeatureGenerationId, ModelId, ModelInferenceInterface,
+    ModelInferenceRequest, ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution,
+    PluginHost, PluginId, PluginInstance, PluginManifest, Project, RoutingProfileId,
+    ServiceContribution, ServiceId, ServiceRole, model_inference_service,
 };
 use phenix_harness::{
-    application::serve_configured_application, default_suite_authority,
-    model_surface_fixture::model_surface_response, PhenixRuntime, PhenixRuntimeBuilder,
+    PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
+    default_suite_authority, model_surface_fixture::model_surface_response,
 };
 use phenix_sdk::{
-    model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelFeatures, ModelCommand,
-    ModelLimits, ModelResponse, ModelTarget, RoutingProfile,
+    CapacityKnowledge, ContextControl, EffectiveModelFeatures, ModelCommand, ModelLimits,
+    ModelResponse, ModelTarget, RoutingProfile, model_routing_service,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -180,13 +180,13 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
                 profile: Some(existing),
             } if existing == profile => {}
             ModelResponse::Profile { profile: Some(_) } => {
-                return Err("fixture routing profile identity changed".into())
+                return Err("fixture routing profile identity changed".into());
             }
             ModelResponse::Profile { profile: None } => {
                 match invoke_model(harness, &ModelCommand::RegisterProfile { profile })? {
                     ModelResponse::Profile { profile: Some(_) } => {}
                     other => {
-                        return Err(format!("fixture profile registration failed: {other:?}").into())
+                        return Err(format!("fixture profile registration failed: {other:?}").into());
                     }
                 }
             }

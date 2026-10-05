@@ -1,8 +1,8 @@
-use phenix_adapter_acp::{wire, ApplicationAdapter};
-use phenix_application_interface::{types::ApplicationError, ApplicationTransport};
+use phenix_adapter_acp::{ApplicationAdapter, wire};
+use phenix_application_interface::{ApplicationTransport, types::ApplicationError};
 use phenix_core::{ContractId, PhenixValue};
 use std::future::ready;
-use wire::schema::{v1::InitializeRequest, ProtocolVersion};
+use wire::schema::{ProtocolVersion, v1::InitializeRequest};
 
 struct NoopTransport;
 
@@ -43,9 +43,11 @@ fn initialize_hides_unavailable_optional_capabilities_and_extensions() {
         .as_array()
         .expect("advertised capabilities");
     assert_eq!(advertised.len(), 3);
-    assert!(advertised
-        .iter()
-        .any(|capability| capability == "phenix.application.capability.prompt@1"));
+    assert!(
+        advertised
+            .iter()
+            .any(|capability| capability == "phenix.application.capability.prompt@1")
+    );
 
     assert_eq!(value["agentCapabilities"]["loadSession"], false);
     let session = &value["agentCapabilities"]["sessionCapabilities"];

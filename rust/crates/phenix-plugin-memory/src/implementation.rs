@@ -16,19 +16,19 @@ use phenix_core::{
     ResourceNamespace, RoutingProfileId, SdkClient, ServiceContribution, ServiceId,
 };
 use phenix_sdk::{
-    context_compaction_service, context_expansion_service, memory_consolidate_callable,
-    memory_extract_callable, memory_resolve_callable, memory_service, memory_summarize_callable,
-    memory_validate_callable, ContextCheckpoint, ContextCompactionCommand,
-    ContextCompactionInterface, ContextCompactionRequest, ContextCompactionResponse,
-    HelperInvocationCommand, HelperInvocationInterface, HelperInvocationKind,
-    HelperInvocationRequest, HelperInvocationResponse, LanguageCommand, LanguageInterface,
+    ContextCheckpoint, ContextCompactionCommand, ContextCompactionInterface,
+    ContextCompactionRequest, ContextCompactionResponse, HelperInvocationCommand,
+    HelperInvocationInterface, HelperInvocationKind, HelperInvocationRequest,
+    HelperInvocationResponse, LANGUAGE_SERVICE, LanguageCommand, LanguageInterface,
     LanguageResponse, MemoryCanonicalReference, MemoryCommand, MemoryConsolidationRequest,
     MemoryDependencyRevision, MemoryEmbeddingInterface, MemoryEmbeddingRequest,
     MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
     MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
     MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
     MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope,
-    MemorySourceReference, LANGUAGE_SERVICE,
+    MemorySourceReference, context_compaction_service, context_expansion_service,
+    memory_consolidate_callable, memory_extract_callable, memory_resolve_callable, memory_service,
+    memory_summarize_callable, memory_validate_callable,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";

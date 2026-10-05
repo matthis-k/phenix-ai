@@ -154,9 +154,11 @@ mod tests {
             .push(code_dependency(CodeEntityFacet::Body, "body-revision-1"));
 
         let state = initial_state(&record, None);
-        assert!(state
-            .dependencies
-            .contains(&record.supporting_dependencies[0]));
+        assert!(
+            state
+                .dependencies
+                .contains(&record.supporting_dependencies[0])
+        );
         assert!(state.dependencies.iter().any(|dependency| {
             dependency.service.as_str() == "fixture.history@1"
                 && dependency.resource == "turn/1"

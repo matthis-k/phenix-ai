@@ -194,12 +194,16 @@ mod tests {
                 PromptSectionKind::External,
             ]
         );
-        assert!(assembly.sections[..3]
-            .iter()
-            .all(|section| section.role == PromptSectionRole::Instruction));
-        assert!(assembly.sections[3..]
-            .iter()
-            .all(|section| section.role == PromptSectionRole::Context));
+        assert!(
+            assembly.sections[..3]
+                .iter()
+                .all(|section| section.role == PromptSectionRole::Instruction)
+        );
+        assert!(
+            assembly.sections[3..]
+                .iter()
+                .all(|section| section.role == PromptSectionRole::Context)
+        );
     }
 
     #[test]

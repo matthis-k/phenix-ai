@@ -4,8 +4,8 @@ use phenix_core::{
     ResourceNamespace, ServiceId, TransactionOp,
 };
 use phenix_sdk::{
-    execution_resource_service, ExecutionResourceCommand, ExecutionResourceInterface,
-    ExecutionResourceResponse,
+    ExecutionResourceCommand, ExecutionResourceInterface, ExecutionResourceResponse,
+    execution_resource_service,
 };
 
 const EXECUTION_RESOURCE_NAMESPACE: &str = "phenix.execution.resources.state";
@@ -258,7 +258,7 @@ fn apply_mutation(
         | ExecutionResourceCommand::RunnableDelegated
         | ExecutionResourceCommand::GetDelegated { .. }
         | ExecutionResourceCommand::GetDelegatedReservation { .. } => {
-            return Err("read-only execution resource command reached mutation path".into())
+            return Err("read-only execution resource command reached mutation path".into());
         }
     };
     Ok(response)

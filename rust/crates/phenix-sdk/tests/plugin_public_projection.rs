@@ -424,7 +424,9 @@ fn final_recursive_collision_uses_component_graph_validation() {
     )
     .unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("exports interface fixture.recursive-collision/public/same@1 more than once"));
+    assert!(
+        error
+            .to_string()
+            .contains("exports interface fixture.recursive-collision/public/same@1 more than once")
+    );
 }

@@ -2,9 +2,9 @@ use crate::{Authority, EventBus, GenerationId, KernelEvent, PluginId};
 use std::{
     collections::BTreeMap,
     sync::{
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
-        Arc, Mutex, Weak,
     },
     thread::{self, JoinHandle},
 };

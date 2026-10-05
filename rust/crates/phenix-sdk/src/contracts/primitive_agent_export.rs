@@ -625,7 +625,7 @@ fn validate_token_budget(
         None => {
             return Some(ContinuationExportResult::UnsupportedTokenBound {
                 tokenizer_identity: request.budget.tokenizer_identity.clone(),
-            })
+            });
         }
     };
     if measured_tokens > max_tokens {

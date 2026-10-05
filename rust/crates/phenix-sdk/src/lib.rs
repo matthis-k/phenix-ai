@@ -340,7 +340,7 @@ pub use phenix_provider_sdk::{
     ProviderAuthInterface, ProviderAuthResponse, ProviderError, RateLimits,
 };
 pub use phenix_sdk_macros::{
-    component, expose, interface, plugin, resource, PhenixContract, PhenixValue,
+    PhenixContract, PhenixValue, component, expose, interface, plugin, resource,
 };
 pub use providers::{Provider, ProviderSdkError, ProviderSdkExt, Providers};
 pub use public_projection::*;

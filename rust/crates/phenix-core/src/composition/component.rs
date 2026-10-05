@@ -934,12 +934,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(handle.effective_authority().permits(&read));
-        assert!(!handle
-            .effective_authority()
-            .permits(&capability("fs.write")));
-        assert!(!handle
-            .effective_authority()
-            .permits(&capability("network.read")));
+        assert!(
+            !handle
+                .effective_authority()
+                .permits(&capability("fs.write"))
+        );
+        assert!(
+            !handle
+                .effective_authority()
+                .permits(&capability("network.read"))
+        );
     }
 
     #[test]
@@ -950,10 +954,12 @@ mod tests {
             &Authority::default(),
         )
         .unwrap();
-        assert!(optional
-            .import_handle(&component("consumer"), &interface("phenix.demo@1"))
-            .unwrap()
-            .is_none());
+        assert!(
+            optional
+                .import_handle(&component("consumer"), &interface("phenix.demo@1"))
+                .unwrap()
+                .is_none()
+        );
         assert!(matches!(
             optional.import_handle(&component("consumer"), &interface("other@1")),
             Err(ComponentGraphError::ImportNotDeclared { .. })

@@ -5,7 +5,7 @@
 //! This crate reads only the fixed application descriptor. It never imports
 //! runtime plugins, ACP adapters, or language-host integrations.
 
-use phenix_application_interface::{generate, ApplicationDescriptor};
+use phenix_application_interface::{ApplicationDescriptor, generate};
 use phenix_core::Type;
 use std::collections::BTreeSet;
 

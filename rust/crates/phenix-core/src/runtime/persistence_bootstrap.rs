@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    persistence::provider::prepare_durable_schema_set, DurableSchemaRegistration,
-    PersistenceCandidateError, PersistenceError,
+    DurableSchemaRegistration, PersistenceCandidateError, PersistenceError,
+    persistence::provider::prepare_durable_schema_set,
 };
 
 impl Kernel {

@@ -1,4 +1,4 @@
-use crate::{hook_manifest, HOOK_SERVICE};
+use crate::{HOOK_SERVICE, hook_manifest};
 use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentManifest, InterfaceId, PluginId,

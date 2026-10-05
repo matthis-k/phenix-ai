@@ -8,13 +8,13 @@ use phenix_core::{
     SubscriptionId, SubscriptionSpec,
 };
 use phenix_sdk::{
-    memory_service, MemoryCommand, MemoryExpansion, MemoryKind, MemoryNode, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference,
+    MemoryCommand, MemoryExpansion, MemoryKind, MemoryNode, MemoryRecallQuery, MemoryRecord,
+    MemoryResponse, MemoryScope, MemorySourceReference, memory_service,
 };
 use std::{
     fs,
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 

@@ -64,14 +64,14 @@ mod service_layer_dispatch_regression;
 mod third_party_component_regression;
 
 pub use agent::{
-    context_service, model_inference_service, skill_service, tool_service, ContextCommand,
-    ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextResponse, ContextScope,
+    CONTEXT_SERVICE, ContextCommand, ContextDescriptor, ContextResourceKind,
+    ContextResourceRevision, ContextResponse, ContextScope, MODEL_INFERENCE_SERVICE,
     ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelInferenceFailure,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall,
-    ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SkillCommand,
-    SkillDefinition, SkillResponse, ToolCatalogCursor, ToolCatalogDescriptor, ToolCommand,
-    ToolDefinition, ToolResponse, UsageQuantity, CONTEXT_SERVICE, MODEL_INFERENCE_SERVICE,
-    SKILL_SERVICE, TOOL_SERVICE,
+    ModelToolDescriptor, ModelToolResult, ModelToolTurn, ModelTurnUsage, SKILL_SERVICE,
+    SkillCommand, SkillDefinition, SkillResponse, TOOL_SERVICE, ToolCatalogCursor,
+    ToolCatalogDescriptor, ToolCommand, ToolDefinition, ToolResponse, UsageQuantity,
+    context_service, model_inference_service, skill_service, tool_service,
 };
 pub use artifact::{ArtifactRevision, ArtifactRevisionParseError};
 pub use authority::Authority;
@@ -98,11 +98,11 @@ pub use composition::provider_resolution::{
     ProviderSelectionReason,
 };
 pub use composition::registry::{
-    plugin_runtime_adapter_id_from_service, plugin_runtime_adapter_service, KernelConfig,
-    KernelError, KernelPolicyIdentity, LayerPolicy, PluginRuntimeBinding, ProviderBinding,
+    EMBEDDED_RUNTIME, KernelConfig, KernelError, KernelPolicyIdentity, LayerPolicy,
+    PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX, PluginRuntimeBinding, ProviderBinding,
     ResolvedComponentDispatchPlan, ResolvedDispatchTopology, ResolvedLayerPlan,
-    ResolvedServiceChain, ResolvedServicePlan, ResolvedTerminalPlan, EMBEDDED_RUNTIME,
-    PLUGIN_RUNTIME_ADAPTER_SERVICE_PREFIX,
+    ResolvedServiceChain, ResolvedServicePlan, ResolvedTerminalPlan,
+    plugin_runtime_adapter_id_from_service, plugin_runtime_adapter_service,
 };
 pub use composition::resolver::{
     GenerationResolutionError, GenerationTopology, ResolvedGeneration,
@@ -124,8 +124,8 @@ pub use invocation::{
     CallError, InvocationFailure, InvocationFailureClass, InvocationOutcome, InvocationResult,
 };
 pub use logging::{
-    LogDetailMode, LogSink, StructuredLogPage, StructuredLogReader, StructuredLogger,
-    PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV, PHENIX_LOG_STORE_ENV,
+    LogDetailMode, LogSink, PHENIX_LOG_DEPTH_ENV, PHENIX_LOG_ENV, PHENIX_LOG_STORE_ENV,
+    StructuredLogPage, StructuredLogReader, StructuredLogger,
 };
 pub use metadata::composition::{
     CompatibilityMetadata, ComponentHostKind, ComponentRuntimeMetadata, ComponentStateClass,
@@ -141,24 +141,24 @@ pub use metadata::reconciliation::{
     ResourceMetadataChange,
 };
 pub use observable::{
-    CommitId, InitialObservation, ObservableError, ObservableMetadata, ObservableRef,
-    ObservableRegistration, ObservableSnapshot, ObservableStore, ObservableTransaction,
-    ObservationDelivery, ObservationGeneration, ObservationHandler, ObservationId, ObservationMode,
-    ObservationScope, ObservationSpec, ObservationSubscription, SnapshotPolicy, ValueAddress,
-    ValueChange, ValueId, ValuePath, ValuePathSegment, ValueVersion, OBSERVABLE_CONTRACT,
+    CommitId, InitialObservation, OBSERVABLE_CONTRACT, ObservableError, ObservableMetadata,
+    ObservableRef, ObservableRegistration, ObservableSnapshot, ObservableStore,
+    ObservableTransaction, ObservationDelivery, ObservationGeneration, ObservationHandler,
+    ObservationId, ObservationMode, ObservationScope, ObservationSpec, ObservationSubscription,
+    SnapshotPolicy, ValueAddress, ValueChange, ValueId, ValuePath, ValuePathSegment, ValueVersion,
 };
 pub use persistence::backend::{
     DurableSchema, LocalPersistence, NamespaceTransaction, PersistenceBackend,
     PersistenceBackendFeature, PersistenceError, SchemaMigration, TransactionOp,
 };
 pub use persistence::bootstrap::{
-    resolve_persistence_bootstrap, DurableSchemaRegistration, PersistenceBootstrapDependency,
-    PersistenceBootstrapError, PersistenceProviderDescriptor, PersistenceProviderTransition,
-    ResolvedPersistenceBootstrap, StoreBinding, StoreBindingId, StoreBindingIdParseError,
+    DurableSchemaRegistration, PersistenceBootstrapDependency, PersistenceBootstrapError,
+    PersistenceProviderDescriptor, PersistenceProviderTransition, ResolvedPersistenceBootstrap,
+    StoreBinding, StoreBindingId, StoreBindingIdParseError, resolve_persistence_bootstrap,
 };
 pub use persistence::provider::{
-    prepare_persistence_candidate, PersistenceCandidateError, PersistenceProvider,
-    PersistenceProviderError, PreparedPersistence,
+    PersistenceCandidateError, PersistenceProvider, PersistenceProviderError, PreparedPersistence,
+    prepare_persistence_candidate,
 };
 pub use phenix_contract::{
     Bytes, CallableId, CallableRef, ClientConnectionId, ComponentId, ComponentInterface,
@@ -196,15 +196,15 @@ pub use reconciliation::graph::{
 pub use reconciliation::inspection::CandidateResolutionInspection;
 pub use reconciliation::live::LiveReconciliationError;
 pub use runtime::{
-    ComponentProviderProvenance, Kernel, LayerResult, PluginHost, PluginInstance, PluginListener,
-    PluginRuntimeAdapter, PluginRuntimeCandidate, PluginState, ProvenanceBuffer,
-    ProviderEndpointProvenance, RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer,
-    RuntimeTraceEvent, RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
+    ComponentProviderProvenance, DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
+    Kernel, LayerResult, PluginHost, PluginInstance, PluginListener, PluginRuntimeAdapter,
+    PluginRuntimeCandidate, PluginState, ProvenanceBuffer, ProviderEndpointProvenance,
+    RootExecutionConstraints, RootExecutionHandle, RuntimeTraceBuffer, RuntimeTraceEvent,
+    RuntimeTraceParticipant, RuntimeTraceSink, ServiceInvocationProvenance,
     ServiceParticipantOutcome, ServiceParticipantProvenance, SharedPluginInvocation,
-    DEFAULT_PROVENANCE_CAPACITY, DEFAULT_RUNTIME_TRACE_CAPACITY,
 };
 pub use sdk::{
-    observable_delivery_schema, ResolvedSdkContributions, SdkContribution, SdkObservableResource,
-    SdkResolutionError, SdkValue,
+    ResolvedSdkContributions, SdkContribution, SdkObservableResource, SdkResolutionError, SdkValue,
+    observable_delivery_schema,
 };
 pub use tasks::{CallCancellationToken, CancellationToken, TaskHandle, TaskRuntime, TaskScope};

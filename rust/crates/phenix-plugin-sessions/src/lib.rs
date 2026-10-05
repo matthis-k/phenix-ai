@@ -4,9 +4,9 @@ mod implementation;
 
 pub use implementation::*;
 pub use phenix_sdk::{
-    session_service, SessionCommand, SessionId, SessionInput, SessionInputKind, SessionInterface,
+    SESSION_SERVICE, SessionCommand, SessionId, SessionInput, SessionInputKind, SessionInterface,
     SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, SESSION_SERVICE,
+    SessionTransition, session_service,
 };
 
 #[cfg(test)]

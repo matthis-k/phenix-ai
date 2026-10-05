@@ -1,7 +1,7 @@
 use phenix_acp_stdio::{
+    ChannelTransport, ClientCallableCallbacks, ClientReferenceIdentity, SdkApplicationService,
     execute_admitted_client_tool_call, model_tool_surface, serve_sdk_application,
-    serve_stdio_with_events_and_callbacks, ChannelTransport, ClientCallableCallbacks,
-    ClientReferenceIdentity, SdkApplicationService,
+    serve_stdio_with_events_and_callbacks,
 };
 use phenix_application_interface::types::ExecutionChange;
 use phenix_core::{

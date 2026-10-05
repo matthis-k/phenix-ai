@@ -277,20 +277,44 @@ impl Display for GenerationResolutionError {
                 f,
                 "resource {resource} requires denied capability {capability}"
             ),
-            Self::MissingEntryTriggerTarget { component, interface } => {
-                write!(f, "entry trigger targets missing export {component}:{interface}")
+            Self::MissingEntryTriggerTarget {
+                component,
+                interface,
+            } => {
+                write!(
+                    f,
+                    "entry trigger targets missing export {component}:{interface}"
+                )
             }
-            Self::EntryTriggerAuthorityDenied { component, interface } => {
-                write!(f, "entry trigger authority exceeds runtime/component authority for {component}:{interface}")
+            Self::EntryTriggerAuthorityDenied {
+                component,
+                interface,
+            } => {
+                write!(
+                    f,
+                    "entry trigger authority exceeds runtime/component authority for {component}:{interface}"
+                )
             }
             Self::DuplicateToolCallTrigger(callable) => {
                 write!(f, "duplicate tool-call trigger id: {callable}")
             }
-            Self::MissingProcessArgumentTarget { component, interface } => {
-                write!(f, "process argument targets missing export {component}:{interface}")
+            Self::MissingProcessArgumentTarget {
+                component,
+                interface,
+            } => {
+                write!(
+                    f,
+                    "process argument targets missing export {component}:{interface}"
+                )
             }
-            Self::ProcessArgumentAuthorityDenied { component, interface } => {
-                write!(f, "process argument authority exceeds runtime/component authority for {component}:{interface}")
+            Self::ProcessArgumentAuthorityDenied {
+                component,
+                interface,
+            } => {
+                write!(
+                    f,
+                    "process argument authority exceeds runtime/component authority for {component}:{interface}"
+                )
             }
             Self::InvalidProcessArgument(argument) => {
                 write!(f, "invalid process argument trigger: {argument}")

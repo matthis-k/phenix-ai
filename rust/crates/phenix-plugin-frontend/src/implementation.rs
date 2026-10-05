@@ -1,7 +1,7 @@
 use crate::{
-    frontend_component_id, ExecutionCommand, ExecutionInterface, ExecutionResponse, ExecutionState,
-    FrontendCommand, FrontendProviderDescriptor, FrontendResponse, FrontendServiceRequest,
-    FrontendServiceResult, LiveFrontendProvider,
+    ExecutionCommand, ExecutionInterface, ExecutionResponse, ExecutionState, FrontendCommand,
+    FrontendProviderDescriptor, FrontendResponse, FrontendServiceRequest, FrontendServiceResult,
+    LiveFrontendProvider, frontend_component_id,
 };
 use phenix_core::{
     Authority, ComponentInterface, PhenixValue, PluginContext, PluginExecution, PluginHost,
@@ -361,7 +361,7 @@ mod tests {
     use phenix_plugin_execution::{
         execution_component_manifest, execution_factory, execution_manifest,
     };
-    use phenix_sdk::{execution_service, ExecutionAuthority};
+    use phenix_sdk::{ExecutionAuthority, execution_service};
 
     fn kernel() -> Kernel {
         let execution_manifest = execution_manifest(Authority::default());
@@ -473,16 +473,18 @@ mod tests {
             }
             other => panic!("unexpected response: {other:?}"),
         };
-        assert!(invoke(
-            &mut kernel,
-            FrontendCommand::CompleteCall {
-                connection_id: "frontend-b".into(),
-                correlation_id,
-                result: serde_json::json!({}).into(),
-            }
-        )
-        .unwrap_err()
-        .contains("wrong connection"));
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-b".into(),
+                    correlation_id,
+                    result: serde_json::json!({}).into(),
+                }
+            )
+            .unwrap_err()
+            .contains("wrong connection")
+        );
         assert!(matches!(
             invoke(
                 &mut kernel,
@@ -533,16 +535,18 @@ mod tests {
                 providers: Vec::new()
             }
         );
-        assert!(invoke(
-            &mut kernel,
-            FrontendCommand::BeginExecutionCall {
-                execution_id: "root".into(),
-                provider: "web".into(),
-                method: "search".into(),
-                params: serde_json::json!({}).into(),
-            }
-        )
-        .unwrap_err()
-        .contains("no live frontend root route"));
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::BeginExecutionCall {
+                    execution_id: "root".into(),
+                    provider: "web".into(),
+                    method: "search".into(),
+                    params: serde_json::json!({}).into(),
+                }
+            )
+            .unwrap_err()
+            .contains("no live frontend root route")
+        );
     }
 }

@@ -1,8 +1,8 @@
 use phenix_core::{
-    Authority, ComponentId, ComponentInterface, ComponentManifest, ContextCommand,
+    Authority, CONTEXT_SERVICE, ComponentId, ComponentInterface, ComponentManifest, ContextCommand,
     ContextDescriptor, ContextResourceId, ContextResourceRevision, ContextResponse,
     ContextRevisionId, InterfaceId, PermissionId, PluginContext, PluginInstance, PluginManifest,
-    ResourceNamespace, TransactionOp, CONTEXT_SERVICE,
+    ResourceNamespace, TransactionOp,
 };
 use phenix_sdk::StaticPluginDefinition;
 use sha2::{Digest, Sha256};

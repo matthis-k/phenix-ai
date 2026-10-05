@@ -1,16 +1,16 @@
 use crate::{
-    encode_model_inference_outcome, normalize_http_error, provider_auth_service,
-    provider_http_client_builder, provider_models_service, ApiTokenScheme, ApiTokenSource, Auth,
-    AuthKind, CredentialStore, HttpMethod, ProviderAuthCommand, ProviderAuthResponse,
-    ProviderError, ProviderModel, ProviderModelOrigin, ProviderModelsCommand,
-    ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec, RateLimits, Token,
+    ApiTokenScheme, ApiTokenSource, Auth, AuthKind, CredentialStore, HttpMethod,
+    ProviderAuthCommand, ProviderAuthResponse, ProviderError, ProviderModel, ProviderModelOrigin,
+    ProviderModelsCommand, ProviderModelsResponse, ProviderRequest, ProviderResponse, ProviderSpec,
+    RateLimits, Token, encode_model_inference_outcome, normalize_http_error, provider_auth_service,
+    provider_http_client_builder, provider_models_service,
 };
 use phenix_core::{
-    model_inference_service, ArtifactRevision, ComponentInterface, ModelId,
-    ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
-    PluginContext, PluginHost, PluginInstance, ServiceId,
+    ArtifactRevision, ComponentInterface, ModelId, ModelInferenceInterface, ModelInferenceRequest,
+    ModelInferenceResponse, PhenixValue, PluginContext, PluginHost, PluginInstance, ServiceId,
+    model_inference_service,
 };
-use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
 use std::{
     collections::BTreeMap,
     sync::{Arc, OnceLock},

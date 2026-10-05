@@ -973,15 +973,17 @@ mod tests {
             result.diff.bindings[0].next_provider,
             Some(component("provider-b"))
         );
-        assert!(result
-            .transition_plan
-            .contains(&ReconciliationAction::RebindImport {
-                importer: component("consumer"),
-                interface: interface(),
-                previous_provider: Some(component("provider-a")),
-                next_provider: Some(component("provider-b")),
-                authority_changed: false,
-            }));
+        assert!(
+            result
+                .transition_plan
+                .contains(&ReconciliationAction::RebindImport {
+                    importer: component("consumer"),
+                    interface: interface(),
+                    previous_provider: Some(component("provider-a")),
+                    next_provider: Some(component("provider-b")),
+                    authority_changed: false,
+                })
+        );
     }
 
     #[test]

@@ -393,16 +393,18 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(store
-            .add(
-                "provider.test",
-                Auth::ApiToken {
-                    source: ApiTokenSource::Literal {
-                        token: Token::parse("other-token").unwrap()
+        assert!(
+            store
+                .add(
+                    "provider.test",
+                    Auth::ApiToken {
+                        source: ApiTokenSource::Literal {
+                            token: Token::parse("other-token").unwrap()
+                        }
                     }
-                }
-            )
-            .is_err());
+                )
+                .is_err()
+        );
         assert_eq!(
             store.list("provider.test").unwrap(),
             vec![
@@ -416,11 +418,13 @@ mod tests {
                 },
             ]
         );
-        assert!(format!(
-            "{:?}",
-            store.resolve("provider.test", AuthKind::OAuth).unwrap()
-        )
-        .contains("<redacted>"));
+        assert!(
+            format!(
+                "{:?}",
+                store.resolve("provider.test", AuthKind::OAuth).unwrap()
+            )
+            .contains("<redacted>")
+        );
         assert_eq!(
             store.remove("provider.test", AuthKind::ApiToken).unwrap(),
             Some(AuthDescriptor {
