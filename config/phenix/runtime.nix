@@ -332,7 +332,7 @@ in
   agents = builtins.attrValues agents;
   inherit orchestrations;
   routing_profiles = [
-    (routingProfile "default" openaiApiTargets)
+    (routingProfile "default" chatgptPlusTargets)
     (routingProfile "router.mixed" mixedTargets)
     (routingProfile "router.openai-api" openaiApiTargets)
     (routingProfile "router.opencode-go" opencodeGoTargets)
