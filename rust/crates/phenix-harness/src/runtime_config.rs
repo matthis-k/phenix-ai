@@ -15,8 +15,6 @@ use phenix_sdk::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-#[cfg(test)]
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -269,26 +267,6 @@ fn apply_configuration(
     }
     Ok(())
 }
-#[cfg(test)]
-fn direct_routing_profile(target: ModelTarget) -> Result<RoutingProfile, Box<dyn Error>> {
-    let encoded = serde_json::to_vec(&target)?;
-    let digest = Sha256::digest(encoded);
-    let suffix = digest[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let id = RoutingProfileId::parse(format!(
-        "model.{}.{}.{}",
-        target.provider_plugin, target.model, suffix
-    ))?;
-    Ok(RoutingProfile {
-        id,
-        default_target: target,
-        fallback_targets: Vec::new(),
-        callable_targets: BTreeMap::new(),
-    })
-}
-
 fn cache_features_for_target(target: &ModelTarget) -> CacheFeatures {
     let provider = target.provider_plugin.as_str();
     let model = target.model.as_str();
@@ -779,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn later_foreign_generated_profiles_and_callables_remain_visible() {
+    fn later_foreign_profiles_and_callables_remain_visible() {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         let empty = || RuntimeConfiguration {
@@ -796,16 +774,13 @@ mod tests {
                 agent: agent.clone(),
             },
         );
-        let foreign = direct_routing_profile(
-            sample
-                .routing_profiles
-                .into_iter()
-                .next()
-                .unwrap()
-                .into_routing_profile()
-                .default_target,
-        )
-        .unwrap();
+        let mut foreign = sample
+            .routing_profiles
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_routing_profile();
+        foreign.id = RoutingProfileId::parse("user.foreign").unwrap();
         invoke_projected::<_, ModelResponse>(
             &mut harness,
             &model_routing_service(),
