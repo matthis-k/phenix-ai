@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 pub const MEMORY_CONTEXT_SERVICE: &str = "memory.context@1";
+pub const MEMORY_CONTEXT_MAX_PROMPT_BYTES: usize = 4096;
 
 #[derive(
     Clone,
