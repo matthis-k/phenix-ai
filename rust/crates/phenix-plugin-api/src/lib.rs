@@ -380,7 +380,7 @@ fn tool_command(
         SdkToolCommand::Register {
             id,
             service,
-            required_capabilities,
+            required_permissions,
         } => {
             let response = context
                 .sdk
@@ -389,7 +389,7 @@ fn tool_command(
                     &ExecutionCommand::RegisterCallable {
                         id,
                         service,
-                        required_authority: ExecutionAuthority::new(required_capabilities),
+                        required_authority: ExecutionAuthority::new(required_permissions),
                     },
                 )
                 .map_err(|error| error.to_string())?;
@@ -400,7 +400,7 @@ fn tool_command(
                 tool: SdkTool {
                     id: callable.id,
                     service: callable.service,
-                    required_capabilities: callable.required_authority.capabilities,
+                    required_permissions: callable.required_authority.permissions,
                 },
             })
         }
