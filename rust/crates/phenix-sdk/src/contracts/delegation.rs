@@ -228,7 +228,7 @@ impl DelegatedWorkerResult {
 mod tests {
     use super::*;
     use crate::contracts::{ModelTarget, RoutingEstimate};
-    use phenix_core::{CapabilityGenerationId, ModelId, PluginId};
+    use phenix_core::{ModelFeatureGenerationId, ModelId, PluginId};
     use std::collections::BTreeMap;
 
     fn resources() -> DelegatedWorkResources {
@@ -239,7 +239,7 @@ mod tests {
                     model: ModelId::parse("model.fixture").unwrap(),
                     options: BTreeMap::new(),
                 },
-                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "policy-1".to_owned(),
                 candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
@@ -263,14 +263,14 @@ mod tests {
             mandatory_input_tokens: 64 * 1024,
             reducible_input_tokens: 0,
             output_reserve_tokens: 128,
-            required_capabilities: Default::default(),
+            required_features: Default::default(),
         };
         StepPlan {
             policy_revision: "policy-1".into(),
             historical_estimator_snapshot: None,
             routing: crate::contracts::RoutingRequirements {
                 context: context.clone(),
-                required_capabilities: Default::default(),
+                required_features: Default::default(),
                 require_known_capacity: false,
             },
             context,
