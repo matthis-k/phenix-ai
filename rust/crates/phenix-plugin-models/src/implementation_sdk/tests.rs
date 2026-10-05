@@ -1,12 +1,12 @@
 use super::*;
 use phenix_core::{
-    ModelFeatureGenerationId, InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelId,
+    InvocationOutcome, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId,
     PhenixValue, Project,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelFeatures,
-    ModelDispatchCommand, ModelDispatchResponse, ModelLimits, RouteDecision, RouteSelectionPolicy,
-    RoutingEstimateMode, RoutingRequirements,
+    CapacityKnowledge, ContextControl, ContextDemand, EffectiveModelFeatures, ModelDispatchCommand,
+    ModelDispatchResponse, ModelLimits, RouteDecision, RouteSelectionPolicy, RoutingEstimateMode,
+    RoutingRequirements,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -430,11 +430,7 @@ mod smart_selection {
             features(profile.default_target.clone(), "generation-1", 1_500),
             features(profile.fallback_targets[0].clone(), "generation-1", 8_000),
         ] {
-            invoke_routing(
-                &mut kernel,
-                ModelCommand::PublishModelFeatures { features },
-            )
-            .unwrap();
+            invoke_routing(&mut kernel, ModelCommand::PublishModelFeatures { features }).unwrap();
         }
         let response = invoke_routing(
             &mut kernel,

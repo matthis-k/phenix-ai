@@ -11,8 +11,7 @@ use phenix_plugin_catalog::{
     COMMON_PROVIDERS,
 };
 use phenix_sdk::{
-    CacheFeatures, FeatureSupport, CapacityKnowledge, ContextControl,
-    EffectiveModelFeatures,
+    CacheFeatures, CapacityKnowledge, ContextControl, EffectiveModelFeatures, FeatureSupport,
 };
 use serde::Deserialize;
 use serde_json::Value;

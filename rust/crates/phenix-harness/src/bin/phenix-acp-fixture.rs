@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use phenix_core::{
-    model_inference_service, Authority, Bytes, ModelFeatureGenerationId, ComponentExport,
-    ComponentId, ComponentInterface, ComponentManifest, LocalPersistence, ModelId,
+    model_inference_service, Authority, Bytes, ComponentExport, ComponentId, ComponentInterface,
+    ComponentManifest, LocalPersistence, ModelFeatureGenerationId, ModelId,
     ModelInferenceInterface, ModelInferenceRequest, ModelInferenceResponse, PhenixValue,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     RoutingProfileId, ServiceContribution, ServiceId, ServiceRole,
@@ -12,8 +12,8 @@ use phenix_harness::{
     model_surface_fixture::model_surface_response, PhenixRuntime, PhenixRuntimeBuilder,
 };
 use phenix_sdk::{
-    model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelFeatures,
-    ModelCommand, ModelLimits, ModelResponse, ModelTarget, RoutingProfile,
+    model_routing_service, CapacityKnowledge, ContextControl, EffectiveModelFeatures, ModelCommand,
+    ModelLimits, ModelResponse, ModelTarget, RoutingProfile,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},

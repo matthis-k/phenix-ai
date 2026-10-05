@@ -1,5 +1,5 @@
 use phenix_core::{
-    Authority, ModelFeatureGenerationId, DurableSchema, Kernel, KernelConfig, LocalPersistence,
+    Authority, DurableSchema, Kernel, KernelConfig, LocalPersistence, ModelFeatureGenerationId,
     ModelId, NamespaceTransaction, PersistenceBackend, PersistenceBackendFeature, PersistenceError,
     PhenixValue, PluginId, Project, ResourceNamespace, SchemaMigration, ServiceId, ValueError,
 };

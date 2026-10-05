@@ -383,7 +383,10 @@ mod tests {
             admission_id: "admission-1".to_owned(),
             callable_id: input.tool.id.clone(),
         };
-        let extra = [InvokeCallableReference::CAPABILITY, AddClientTool::CAPABILITY];
+        let extra = [
+            InvokeCallableReference::CAPABILITY,
+            AddClientTool::CAPABILITY,
+        ];
         let (add, calls) = adapter(output.to_value(), &extra);
         add.extension_request(request("_phenix/client-tool-add@1", input.to_value()))
             .await

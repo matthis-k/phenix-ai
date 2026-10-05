@@ -9,11 +9,12 @@ use phenix_core::{
     ServiceContribution, ServiceId, TransactionOp,
 };
 pub use phenix_sdk::{
-    model_diagnostic_event_type, model_dispatch_service, model_routing_service, FeatureSupport,
-    EffectiveModelFeatures, ModelCommand, ModelDiagnosticEvent, ModelDispatchCommand,
-    ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse, ModelResponse,
-    ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile, RoutingProfileDescriptor,
-    MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE, MODEL_ROUTING_SERVICE,
+    model_diagnostic_event_type, model_dispatch_service, model_routing_service,
+    EffectiveModelFeatures, FeatureSupport, ModelCommand, ModelDiagnosticEvent,
+    ModelDispatchCommand, ModelDispatchFailure, ModelDispatchInterface, ModelDispatchResponse,
+    ModelResponse, ModelRoutingInterface, ModelTarget, PreparedDispatch, RoutingProfile,
+    RoutingProfileDescriptor, MODEL_DIAGNOSTIC_EVENT_VERSION, MODEL_DISPATCH_SERVICE,
+    MODEL_ROUTING_SERVICE,
 };
 use std::collections::BTreeSet;
 
@@ -226,8 +227,7 @@ fn handle_dispatch(
         } => {
             let requested_cache = cache.clone();
             let mut cache = cache;
-            cache.local_feature_generation =
-                Some(decision.feature_generation.as_str().to_owned());
+            cache.local_feature_generation = Some(decision.feature_generation.as_str().to_owned());
             cache.local_authority_identity = Some(authority_identity(context.call.authority));
             emit_diagnostic(
                 context,
