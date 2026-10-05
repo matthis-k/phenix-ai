@@ -793,14 +793,14 @@ mod tests {
             mandatory_input_tokens: 10,
             reducible_input_tokens: 0,
             output_reserve_tokens: 5,
-            required_capabilities: std::collections::BTreeSet::new(),
+            required_features: std::collections::BTreeSet::new(),
         };
         super::super::StepPlan {
             policy_revision: "policy-1".into(),
             historical_estimator_snapshot: None,
             routing: super::super::RoutingRequirements {
                 context: context.clone(),
-                required_capabilities: std::collections::BTreeSet::new(),
+                required_features: std::collections::BTreeSet::new(),
                 require_known_capacity: false,
             },
             context,
@@ -838,7 +838,7 @@ mod tests {
                 model: phenix_core::ModelId::parse("model.fixture").unwrap(),
                 options: std::collections::BTreeMap::new(),
             },
-            capability_generation: phenix_core::CapabilityGenerationId::parse("generation-1")
+            feature_generation: phenix_core::ModelFeatureGenerationId::parse("generation-1")
                 .unwrap(),
             policy_revision: "route-policy-1".into(),
             candidate_ordinal: 0,
