@@ -8,16 +8,18 @@ _: {
         version = "0";
         src = pkgs.lib.cleanSource ../rust;
         cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-acp-stdio"
-          "--example"
-          "observable_callback_fixture"
-        ];
         doCheck = false;
+
+        # This host is a test fixture, not a shipped artifact. Build it without
+        # release optimization while keeping the public Lua package unchanged.
+        buildPhase = ''
+          runHook preBuild
+          cargo build --locked --package phenix-acp-stdio --example observable_callback_fixture
+          runHook postBuild
+        '';
         installPhase = ''
           runHook preInstall
-          executable="$(find target -path '*/release/examples/observable_callback_fixture' -type f -print -quit)"
+          executable="$(find target -path '*/debug/examples/observable_callback_fixture' -type f -print -quit)"
           test -n "$executable"
           mkdir -p "$out/bin"
           cp "$executable" "$out/bin/observable_callback_fixture"

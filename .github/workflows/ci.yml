@@ -107,7 +107,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -129,6 +131,15 @@ jobs:
           set -euo pipefail
           git diff --exit-code
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Save shared cache
+        if: ${{ success() && steps.phenix-cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/phenix-cargo-home
+            ${{ runner.temp }}/phenix-cargo-target
+          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
 
 
   build-stitch-mcp:
@@ -178,7 +189,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -280,12 +293,51 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: "phenix-product-nix-${{ runner.os }}-${{ hashFiles('modules/rust-artifacts.nix', 'flake.lock', 'rust/Cargo.lock', 'rust/**/Cargo.toml') }}"
+          restore-prefixes-first-match: |
+            phenix-product-nix-${{ runner.os }}-
+          gc-max-store-size-linux: "4G"
+
       - name: "Phenix supported runtime journey"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
         run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-runtime\",\"source\":{\"job\":\"product-phenix-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-5bfe8a5b5d52 -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  product-phenix-standalone-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Product / Phenix standalone runtime package"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: "Phenix standalone runtime package"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/product-phenix-standalone-runtime\",\"source\":{\"job\":\"product-phenix-standalone-runtime\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-ef9643e1818b -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}
@@ -311,7 +363,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -382,7 +436,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -422,7 +478,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -462,7 +520,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -502,7 +562,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -526,9 +588,9 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 
-  test-unit:
+  test-unit-agent-product:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: "CI / Test / Rust unit tests"
+    name: "CI / Test / Rust unit tests / agent and product"
     runs-on: "ubuntu-latest"
     timeout-minutes: 120
     steps:
@@ -542,7 +604,9 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ runner.temp }}/phenix-cargo-home
@@ -551,12 +615,180 @@ jobs:
           restore-keys: |
             phenix-rust-${{ runner.os }}-
 
-      - name: "Rust unit tests"
+      - name: "Rust unit tests / agent and product"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
           CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
           CARGO_TERM_QUIET: "true"
-        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit\",\"source\":{\"job\":\"test-unit\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-b3d8df2854c7 -- invoke"
+        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit-agent-product\",\"source\":{\"job\":\"test-unit-agent-product\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-30f4eca214df -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  test-unit-core:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Test / Rust unit tests / core"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/phenix-cargo-home
+            ${{ runner.temp }}/phenix-cargo-target
+          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          restore-keys: |
+            phenix-rust-${{ runner.os }}-
+
+      - name: "Rust unit tests / core"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit-core\",\"source\":{\"job\":\"test-unit-core\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-97c1d5897f95 -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  test-unit-plugin-foundation:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Test / Rust unit tests / plugin foundation"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/phenix-cargo-home
+            ${{ runner.temp }}/phenix-cargo-target
+          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          restore-keys: |
+            phenix-rust-${{ runner.os }}-
+
+      - name: "Rust unit tests / plugin foundation"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit-plugin-foundation\",\"source\":{\"job\":\"test-unit-plugin-foundation\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-fabe9efb0af9 -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  test-unit-plugin-state:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Test / Rust unit tests / plugin state"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/phenix-cargo-home
+            ${{ runner.temp }}/phenix-cargo-target
+          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          restore-keys: |
+            phenix-rust-${{ runner.os }}-
+
+      - name: "Rust unit tests / plugin state"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit-plugin-state\",\"source\":{\"job\":\"test-unit-plugin-state\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-7c99db830e8d -- invoke"
+
+      - name: Repository remains clean
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+
+  test-unit-protocol-sdk:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "CI / Test / Rust unit tests / protocol and SDK"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: Restore shared cache
+        id: phenix-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/phenix-cargo-home
+            ${{ runner.temp }}/phenix-cargo-target
+          key: "phenix-rust-${{ runner.os }}-${{ github.sha }}"
+          restore-keys: |
+            phenix-rust-${{ runner.os }}-
+
+      - name: "Rust unit tests / protocol and SDK"
+        env:
+          CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
+          CARGO_TARGET_DIR: "${{ runner.temp }}/phenix-cargo-target"
+          CARGO_TERM_QUIET: "true"
+        run: "printf '%s\\n' '{\"command\":\"jobs/test-unit-protocol-sdk\",\"source\":{\"job\":\"test-unit-protocol-sdk\",\"type\":\"github-actions\"}}' | nix run --quiet .#phenix-maintenance-command-e3f5f69c3f2f -- invoke"
 
       - name: Repository remains clean
         if: ${{ !cancelled() }}
@@ -578,13 +810,18 @@ jobs:
       - integration-plugin-packaging
       - product-phenix-lua-binding
       - product-phenix-runtime
+      - product-phenix-standalone-runtime
       - runtime-process-roundtrip
       - runtime-stitch
       - test-adapter-domain
       - test-docs
       - test-harness
       - test-sdk
-      - test-unit
+      - test-unit-agent-product
+      - test-unit-core
+      - test-unit-plugin-foundation
+      - test-unit-plugin-state
+      - test-unit-protocol-sdk
     runs-on: ubuntu-latest
     steps:
       - name: Verify all maintenance jobs passed
@@ -598,10 +835,15 @@ jobs:
           [[ '${{ needs.integration-plugin-packaging.result }}' == success ]]
           [[ '${{ needs.product-phenix-lua-binding.result }}' == success ]]
           [[ '${{ needs.product-phenix-runtime.result }}' == success ]]
+          [[ '${{ needs.product-phenix-standalone-runtime.result }}' == success ]]
           [[ '${{ needs.runtime-process-roundtrip.result }}' == success ]]
           [[ '${{ needs.runtime-stitch.result }}' == success ]]
           [[ '${{ needs.test-adapter-domain.result }}' == success ]]
           [[ '${{ needs.test-docs.result }}' == success ]]
           [[ '${{ needs.test-harness.result }}' == success ]]
           [[ '${{ needs.test-sdk.result }}' == success ]]
-          [[ '${{ needs.test-unit.result }}' == success ]]
+          [[ '${{ needs.test-unit-agent-product.result }}' == success ]]
+          [[ '${{ needs.test-unit-core.result }}' == success ]]
+          [[ '${{ needs.test-unit-plugin-foundation.result }}' == success ]]
+          [[ '${{ needs.test-unit-plugin-state.result }}' == success ]]
+          [[ '${{ needs.test-unit-protocol-sdk.result }}' == success ]]

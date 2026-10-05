@@ -3,31 +3,13 @@
     { pkgs, system, ... }:
     let
       rustSource = pkgs.lib.cleanSource ../rust;
+      productRustArtifacts = self.packages.${system}.phenix-product-rust-artifacts;
 
-      phenixHarnessRuntime = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-harness-runtime";
-        version = "0";
-        src = rustSource;
-
-        cargoLock.lockFile = ../rust/Cargo.lock;
-        cargoBuildFlags = [
-          "--package"
-          "phenix-harness"
-          "--bin"
-          "phenix-harness"
-        ];
-        doCheck = false;
-
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out/bin"
-          harness_binary="$(find target -path '*/release/phenix-harness' -type f -print -quit)"
-          test -n "$harness_binary"
-          cp "$harness_binary" "$out/bin/phenix-harness"
-          ln -s phenix-harness "$out/bin/phenix"
-          runHook postInstall
-        '';
-      };
+      phenixHarnessRuntime = pkgs.runCommand "phenix-harness-runtime" { } ''
+        mkdir -p "$out/bin"
+        cp "${productRustArtifacts}/bin/phenix-harness" "$out/bin/phenix-harness"
+        ln -s phenix-harness "$out/bin/phenix"
+      '';
 
       phenixAcpFixture = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-acp-fixture";
@@ -65,6 +47,7 @@
       '';
 
       supportedPhenix = self.packages.${system}.phenix;
+      standaloneRuntime = self.packages.${system}.phenix-runtime;
       phenixProductRuntimeSmoke =
         pkgs.runCommand "phenix-product-runtime-smoke"
           {
@@ -104,6 +87,23 @@
             touch "$out"
           '';
 
+      phenixStandaloneRuntimeSmoke =
+        pkgs.runCommand "phenix-product-standalone-runtime-smoke"
+          {
+            nativeBuildInputs = [
+              standaloneRuntime
+              pkgs.jq
+            ];
+          }
+          ''
+            phenix-runtime --list-services > "$TMPDIR/runtime-services.json"
+            jq -e '
+              (.plugins | type == "array")
+              and (.services | type == "array")
+            ' "$TMPDIR/runtime-services.json" >/dev/null
+            touch "$out"
+          '';
+
       phenixProductLuaSmoke = pkgs.runCommand "phenix-product-lua-smoke" { } ''
         test -f ${self.checks.${system}.phenix-binding-lua-observable-callback}
         touch "$out"
@@ -118,6 +118,7 @@
 
       checks = {
         phenix-product-runtime-smoke = phenixProductRuntimeSmoke;
+        phenix-product-standalone-runtime-smoke = phenixStandaloneRuntimeSmoke;
         phenix-product-lua-smoke = phenixProductLuaSmoke;
       };
     };

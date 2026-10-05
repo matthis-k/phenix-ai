@@ -2,7 +2,7 @@
   description = "Phenix AI core, runtime, plugins, clients, and supported harness";
 
   inputs = {
-    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/fa8008e193d3b6d6d52703979bdf63c9eaa1a4da";
+    phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/05111b90595c33cf9fb105cb44d8afb6b4fb3e71";
     phenix-pins = {
       url = "github:matthis-k/phenix-pins";
       inputs.phenix-flake-ci.follows = "phenix-flake-ci";
@@ -32,6 +32,7 @@
       ];
 
       imports = [
+        ./modules/rust-artifacts.nix
         ./modules/harness-product.nix
         ./modules/plugin-packaging.nix
         ./modules/package-sets.nix
