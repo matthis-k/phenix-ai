@@ -1,18 +1,18 @@
 use crate::{
     default_application_root_authority, default_suite_authority,
     runtime_config::publish_routing_profile_runtime_state, runtime_orchestration_authority,
-    workspace_discovery, PhenixHarness,
+    workspace_discovery, PhenixRuntime,
 };
 use parking_lot::Mutex;
 use phenix_acp_stdio::{
     execute_admitted_client_tool_call, model_tool_surface, serve_stdio_with_events_and_callbacks,
-    ApplicationEvent, ApplicationInvocation, ChannelTransport, ClientCapabilityCallbacks,
-    ClientCapabilityIdentity, SdkApplicationService, WeakChannelTransport,
+    ApplicationEvent, ApplicationInvocation, ChannelTransport, ClientCallableCallbacks,
+    ClientReferenceIdentity, SdkApplicationService, WeakChannelTransport,
 };
 use phenix_application_interface::{
     types::{
         Acknowledged, ApplicationError, AuthenticateInput, AuthenticationMethod,
-        AuthenticationMethods, AuthenticationResult, CapabilityInvokeInput, CapabilityInvokeResult,
+        AuthenticationMethods, AuthenticationResult, CallableInvocation, CallableInvocationResult,
         Content, ElicitationHandlerRef, Empty, ExecutionChange, ExecutionState,
         InteractionHandlers, LogPage, LogQueryInput, LogRecord, LogReferenceContent,
         LogReferenceInput, Message, MessageRole, PageInput, PermissionHandlerRef,
@@ -24,16 +24,16 @@ use phenix_application_interface::{
         SessionUpdate, SetInteractionHandlersInput, StopReason,
     },
     AddClientTool, Authenticate, Cancel, CloseSession, CreateSession, DecideReview,
-    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCapability, ListCallables,
+    DiscoverAuthentication, GetSdk, InvokeCallable, InvokeCallableReference, ListCallables,
     ListDefaultSelections, ListSelections, ListSessions, Operation, Prompt, QueryLogs,
     ReadLogReference, RemoveClientTool, RenameSession, ResumeSession, SelectDefaultSelection,
     SelectSelection, SetInteractionHandlers,
 };
 use phenix_core::{
-    ArtifactRevision, Authority, Bytes, CallableId, CapabilityGenerationId, CapabilityId,
+    ArtifactRevision, Authority, Bytes, CallableId, ReferenceGenerationId, PermissionId,
     ClientConnectionId, ComponentEntryTrigger, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, ContentReference, ContractId, EntryTriggerKind,
-    GraphGenerationId, GraphReconciler, HasPhenixSchema, InterfaceId, InterfaceSchema, Key,
+    GenerationId, GraphReconciler, HasPhenixSchema, InterfaceId, InterfaceSchema, Key,
     LocalPersistence, LogSink, ModelToolCall, ModelToolDescriptor, ModelToolResult,
     ObservableError, ObservableRegistration, ObservableStore, PhenixContract, PhenixSchema,
     PhenixValue, PluginArtifact, PluginArtifactInput, PluginArtifactStore,
@@ -42,8 +42,8 @@ use phenix_core::{
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginLoadRequest,
     PluginManagementContext, PluginManagementPolicy, PluginManagementRequest, PluginManifest,
     Project, ReconciliationPreview, RootExecutionConstraints, RootExecutionHandle,
-    RoutingProfileId, RuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
-    SharedCapabilityRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
+    RoutingProfileId, PluginRuntimeId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    SharedCallableRegistry, SharedPluginInvocation, SnapshotPolicy, StructuredLogReader,
     ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
@@ -91,7 +91,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub const APPLICATION_INVOCATION_CAPACITY: usize = 64;
-pub const CLIENT_CAPABILITY_CAPACITY: usize = 64;
+pub const CLIENT_CALLABLE_CAPACITY: usize = 64;
 pub const APPLICATION_EVENT_CAPACITY: usize = 256;
 const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
@@ -114,14 +114,14 @@ const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-recall@1";
-const RUNTIME_INSPECTION_READ_CAPABILITY: &str = "kernel.persistence.read";
-const APPLICATION_SESSION_CONTROL_CAPABILITY: &str = "application.session.control";
-const RUNTIME_GENERATION_SELECT_CAPABILITY: &str = "runtime.generation.select";
-const RUNTIME_PLUGIN_INSPECT_CAPABILITY: &str = "runtime.plugin.inspect";
-const RUNTIME_PLUGIN_BUILD_CAPABILITY: &str = "runtime.plugin.build";
-const RUNTIME_PLUGIN_TRIAL_CAPABILITY: &str = "runtime.plugin.trial";
-const RUNTIME_PLUGIN_PROMOTE_CAPABILITY: &str = "runtime.plugin.promote";
-const RUNTIME_PLUGIN_RETIRE_CAPABILITY: &str = "runtime.plugin.retire";
+const RUNTIME_INSPECTION_READ_PERMISSION: &str = "kernel.persistence.read";
+const APPLICATION_SESSION_CONTROL_PERMISSION: &str = "application.session.control";
+const RUNTIME_GENERATION_SELECT_PERMISSION: &str = "runtime.generation.select";
+const RUNTIME_PLUGIN_INSPECT_PERMISSION: &str = "runtime.plugin.inspect";
+const RUNTIME_PLUGIN_BUILD_PERMISSION: &str = "runtime.plugin.build";
+const RUNTIME_PLUGIN_TRIAL_PERMISSION: &str = "runtime.plugin.trial";
+const RUNTIME_PLUGIN_PROMOTE_PERMISSION: &str = "runtime.plugin.promote";
+const RUNTIME_PLUGIN_RETIRE_PERMISSION: &str = "runtime.plugin.retire";
 const RUNTIME_ORCHESTRATION_OPTION: &str = "agent.runtime_orchestration";
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
@@ -290,7 +290,7 @@ impl ComponentInterface for ApplicationMemoryRecallToolInterface {
 }
 
 fn workspace_capability(value: &str) -> Authority {
-    Authority::new([CapabilityId::parse(value).expect("static workspace capability is valid")])
+    Authority::new([PermissionId::parse(value).expect("static workspace permission is valid")])
 }
 
 fn application_workspace_authority() -> Authority {
@@ -302,7 +302,7 @@ fn application_workspace_authority() -> Authority {
             "workspace.git",
         ]
         .into_iter()
-        .map(|value| CapabilityId::parse(value).expect("static workspace capability is valid")),
+        .map(|value| PermissionId::parse(value).expect("static workspace permission is valid")),
     )
 }
 
@@ -630,7 +630,7 @@ impl SessionProjectionStore {
 }
 
 pub struct ApplicationWorker {
-    harness: Arc<Mutex<PhenixHarness>>,
+    harness: Arc<Mutex<PhenixRuntime>>,
     authority: Authority,
     projection: SessionProjectionStore,
     interaction_handlers: InteractionHandlers,
@@ -639,7 +639,7 @@ pub struct ApplicationWorker {
 }
 
 impl ApplicationWorker {
-    pub fn new(harness: PhenixHarness) -> Result<Self, ObservableError> {
+    pub fn new(harness: PhenixRuntime) -> Result<Self, ObservableError> {
         Ok(Self {
             harness: Arc::new(Mutex::new(harness)),
             authority: default_suite_authority(),
@@ -1128,7 +1128,7 @@ impl ApplicationWorker {
             && self
                 .harness
                 .lock()
-                .resolved_harness()
+                .resolved_generation()
                 .plugins()
                 .iter()
                 .any(|plugin| plugin.id.as_str() == "phenix.product.full")
@@ -1143,9 +1143,9 @@ impl ApplicationWorker {
         let orchestration = runtime_orchestration_authority();
         Ok(Authority::new(
             application
-                .capabilities()
+                .permissions()
                 .cloned()
-                .chain(orchestration.capabilities().cloned()),
+                .chain(orchestration.permissions().cloned()),
         ))
     }
 
@@ -1649,7 +1649,7 @@ impl ApplicationWorker {
             prefix: "execution-".to_owned(),
             requested_authority: ExecutionAuthority::new(
                 default_application_root_authority()
-                    .capabilities()
+                    .permissions()
                     .map(|capability| capability.as_str().to_owned()),
             ),
         })?;
@@ -2149,7 +2149,7 @@ impl ApplicationWorker {
                 prefix: "execution-".to_owned(),
                 requested_authority: ExecutionAuthority::new(
                     root.authority()
-                        .capabilities()
+                        .permissions()
                         .map(|capability| capability.as_str().to_owned()),
                 ),
             },
@@ -3240,7 +3240,7 @@ fn application_projection_error(error: SessionProjectionStoreError) -> Applicati
 #[derive(Debug, thiserror::Error)]
 pub enum ConfiguredApplicationError {
     #[error(transparent)]
-    Harness(#[from] crate::HarnessBuildError),
+    Harness(#[from] crate::PhenixRuntimeBuildError),
     #[error(transparent)]
     Kernel(#[from] phenix_core::KernelError),
     #[error(transparent)]
@@ -3265,7 +3265,7 @@ pub async fn serve_default_application() -> Result<(), ConfiguredApplicationErro
             message: error.to_string(),
         }
     })?;
-    let mut harness = PhenixHarness::default_suite_with_persistence(persistence)?;
+    let mut harness = PhenixRuntime::default_suite_with_persistence(persistence)?;
     harness.activate()?;
     apply_application_configuration(&mut harness)?;
     serve_configured_application(harness).await
@@ -3292,7 +3292,7 @@ fn configured_state_path() -> Result<PathBuf, ConfiguredApplicationError> {
 }
 
 fn apply_application_configuration(
-    harness: &mut PhenixHarness,
+    harness: &mut PhenixRuntime,
 ) -> Result<(), ConfiguredApplicationError> {
     if let Some(path) = env::var_os("PHENIX_DEFAULT_CONFIG_DIR") {
         crate::runtime_config::apply_default_config_directory(harness, Path::new(&path)).map_err(
@@ -3334,19 +3334,19 @@ fn apply_application_configuration(
 }
 
 pub async fn serve_configured_application(
-    harness: PhenixHarness,
+    harness: PhenixRuntime,
 ) -> Result<(), ConfiguredApplicationError> {
     let sdk = harness
-        .resolved_harness()
+        .resolved_generation()
         .resolve_sdk_contributions([sdk_contribution()])?;
     let (event_sender, event_receiver) =
         mpsc::channel::<ApplicationEvent>(APPLICATION_EVENT_CAPACITY);
     let worker = ApplicationWorker::new(harness)?.with_event_sender(event_sender);
-    let runtime = RuntimeId::parse("phenix.application-runtime")
+    let runtime = PluginRuntimeId::parse("phenix.application-runtime")
         .expect("static application runtime id is valid");
     let generation = {
         let harness = worker.harness.lock();
-        CapabilityGenerationId::from(harness.generation())
+        ReferenceGenerationId::from(harness.generation())
     };
     // The process owner supplies one connection identity pair. Standalone stdio
     // callers retain the conventional first-connection identity.
@@ -3361,24 +3361,24 @@ pub async fn serve_configured_application(
             message: "PHENIX_ACP_CLIENT_ID and PHENIX_ACP_CLIENT_GENERATION must both be valid strings or both be absent".to_owned(),
         }),
     };
-    let client = ClientCapabilityIdentity::new(
+    let client = ClientReferenceIdentity::new(
         ClientConnectionId::parse(client_id).map_err(|error| {
             ConfiguredApplicationError::Configuration {
                 message: error.to_string(),
             }
         })?,
-        CapabilityGenerationId::parse(client_generation).map_err(|error| {
+        ReferenceGenerationId::parse(client_generation).map_err(|error| {
             ConfiguredApplicationError::Configuration {
                 message: error.to_string(),
             }
         })?,
     );
     let (client_callbacks, callback_receiver) =
-        ClientCapabilityCallbacks::bounded(CLIENT_CAPABILITY_CAPACITY);
+        ClientCallableCallbacks::bounded(CLIENT_CALLABLE_CAPACITY);
     let service = SdkApplicationService::new(
         &sdk,
         worker.projection().store(),
-        SharedCapabilityRegistry::default(),
+        SharedCallableRegistry::default(),
         runtime,
         generation,
         client_callbacks,
@@ -3427,10 +3427,10 @@ enum ExecutionWorkerEvent {
 struct ApplicationAgentToolRun {
     service: SdkApplicationService,
     control_transport: WeakChannelTransport,
-    harness: Weak<Mutex<PhenixHarness>>,
+    harness: Weak<Mutex<PhenixRuntime>>,
     session_id: SessionId,
     execution_id: String,
-    root_generation: GraphGenerationId,
+    root_generation: GenerationId,
     root_constraints: RootExecutionConstraints,
     permission_handler: Option<PermissionHandlerRef>,
     tools: Vec<ModelToolDescriptor>,
@@ -3533,8 +3533,8 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: ExecutionInspectionInterface::interface_id(),
                 schema: ExecutionInspectionInterface::schema(),
                 required: false,
-                authority: Authority::new([CapabilityId::parse("kernel.persistence.read")
-                    .expect("static persistence read capability is valid")]),
+                authority: Authority::new([PermissionId::parse("kernel.persistence.read")
+                    .expect("static persistence read permission is valid")]),
             },
             ComponentImport {
                 interface: SessionInterface::interface_id(),
@@ -4797,7 +4797,7 @@ struct AgentExecutionContext {
 fn run_agent_execution(
     adapter: ApplicationAgentToolRegistry,
     root: RootExecutionHandle,
-    harness: Weak<Mutex<PhenixHarness>>,
+    harness: Weak<Mutex<PhenixRuntime>>,
     service: SdkApplicationService,
     control_transport: WeakChannelTransport,
     context: AgentExecutionContext,
@@ -5077,7 +5077,7 @@ struct ApplicationModelToolSurface {
 fn application_model_tool_surface(
     service: &SdkApplicationService,
     session_id: &SessionId,
-    resolved: &phenix_core::ResolvedHarness,
+    resolved: &phenix_core::ResolvedGeneration,
     authority: &Authority,
 ) -> Result<ApplicationModelToolSurface, ApplicationError> {
     let mut runtime_entry_triggers = BTreeMap::new();
@@ -5151,8 +5151,8 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         output_schema: PhenixSchema::Any,
     }];
 
-    let session_control = CapabilityId::parse(APPLICATION_SESSION_CONTROL_CAPABILITY)
-        .expect("static application session control capability is valid");
+    let session_control = PermissionId::parse(APPLICATION_SESSION_CONTROL_PERMISSION)
+        .expect("static application session control permission is valid");
     if authority.permits(&session_control) {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
@@ -5173,16 +5173,16 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
     }
 
     let plugin_visible = [
-        RUNTIME_PLUGIN_INSPECT_CAPABILITY,
-        RUNTIME_PLUGIN_BUILD_CAPABILITY,
-        RUNTIME_PLUGIN_TRIAL_CAPABILITY,
-        RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
-        RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+        RUNTIME_PLUGIN_INSPECT_PERMISSION,
+        RUNTIME_PLUGIN_BUILD_PERMISSION,
+        RUNTIME_PLUGIN_TRIAL_PERMISSION,
+        RUNTIME_PLUGIN_PROMOTE_PERMISSION,
+        RUNTIME_PLUGIN_RETIRE_PERMISSION,
     ]
     .into_iter()
     .any(|capability| {
         authority.permits(
-            &CapabilityId::parse(capability).expect("static runtime plugin capability is valid"),
+            &PermissionId::parse(capability).expect("static runtime plugin permission is valid"),
         )
     });
     if plugin_visible {
@@ -5302,7 +5302,7 @@ fn require_runtime_plugin_capability(
     capability: &str,
 ) -> Result<(), ApplicationError> {
     let capability_id =
-        CapabilityId::parse(capability).map_err(|error| ApplicationError::Failed {
+        PermissionId::parse(capability).map_err(|error| ApplicationError::Failed {
             message: error.to_string(),
         })?;
     if authority.permits(&capability_id) {
@@ -5318,14 +5318,14 @@ fn runtime_plugin_build_authority() -> Authority {
     Authority::new(
         ["workspace.read", "workspace.shell"]
             .into_iter()
-            .map(|value| CapabilityId::parse(value).expect("static build capability is valid")),
+            .map(|value| PermissionId::parse(value).expect("static build permission is valid")),
     )
 }
 
-fn runtime_plugin_policy(required_capability: &str) -> PluginManagementPolicy {
+fn runtime_plugin_policy(required_permission: &str) -> PluginManagementPolicy {
     PluginManagementPolicy::new(
-        Authority::new([CapabilityId::parse(required_capability)
-            .expect("static plugin management capability is valid")]),
+        Authority::new([PermissionId::parse(required_permission)
+            .expect("static plugin management permission is valid")]),
         runtime_plugin_build_authority(),
     )
 }
@@ -5521,7 +5521,7 @@ impl PluginBuildExecutor for WorkspacePluginBuildExecutor<'_, '_, '_> {
     ) -> Result<PluginBuildExecution, PluginBuildFailure> {
         for capability in ["workspace.shell", "workspace.read"] {
             let capability_id =
-                CapabilityId::parse(capability).expect("static workspace capability is valid");
+                PermissionId::parse(capability).expect("static workspace permission is valid");
             if !effective_authority.permits(&capability_id) {
                 return Err(PluginBuildFailure {
                     message: format!("plugin build authority denied: {capability}"),
@@ -5633,7 +5633,7 @@ struct WorkspacePluginArtifactStore<'context, 'host, 'runtime> {
 impl WorkspacePluginArtifactStore<'_, '_, '_> {
     fn require(&self, capability: &str) -> Result<(), PluginArtifactStoreError> {
         let capability_id =
-            CapabilityId::parse(capability).expect("static workspace capability is valid");
+            PermissionId::parse(capability).expect("static workspace permission is valid");
         if self.authority.permits(&capability_id) {
             Ok(())
         } else {
@@ -5768,8 +5768,8 @@ struct RuntimeOrchestrationTrace<'a> {
     operation: &'a str,
     target_session: Option<&'a SessionId>,
     child_execution: Option<&'a str>,
-    selected_generation: &'a GraphGenerationId,
-    target_generation: Option<&'a GraphGenerationId>,
+    selected_generation: &'a GenerationId,
+    target_generation: Option<&'a GenerationId>,
 }
 
 fn record_runtime_orchestration(
@@ -5824,7 +5824,7 @@ fn execute_runtime_plugin_control(
             "inspect" => {
                 require_runtime_plugin_capability(
                     context.call.authority,
-                    RUNTIME_PLUGIN_INSPECT_CAPABILITY,
+                    RUNTIME_PLUGIN_INSPECT_PERMISSION,
                 )?;
                 let harness = harness.lock();
                 runtime_plugin_inspection_value(&harness)
@@ -5832,10 +5832,10 @@ fn execute_runtime_plugin_control(
             "build" => {
                 require_runtime_plugin_capability(
                     context.call.authority,
-                    RUNTIME_PLUGIN_BUILD_CAPABILITY,
+                    RUNTIME_PLUGIN_BUILD_PERMISSION,
                 )?;
                 let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
-                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
+                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
                 let mut store = WorkspacePluginArtifactStore {
                     context,
                     authority: context.call.authority,
@@ -5858,7 +5858,7 @@ fn execute_runtime_plugin_control(
             "trial" => {
                 require_runtime_plugin_capability(
                     context.call.authority,
-                    RUNTIME_PLUGIN_TRIAL_CAPABILITY,
+                    RUNTIME_PLUGIN_TRIAL_PERMISSION,
                 )?;
                 let request: PluginLoadRequest =
                     runtime_plugin_typed_argument(arguments, "request")?;
@@ -5874,7 +5874,7 @@ fn execute_runtime_plugin_control(
                         ..
                     } => None,
                 };
-                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_CAPABILITY);
+                let policy = runtime_plugin_policy(RUNTIME_PLUGIN_TRIAL_PERMISSION);
                 let mut store = WorkspacePluginArtifactStore {
                     context,
                     authority: context.call.authority,
@@ -5937,7 +5937,7 @@ fn execute_runtime_plugin_control(
             "promote" | "rollback" => {
                 require_runtime_plugin_capability(
                     context.call.authority,
-                    RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
+                    RUNTIME_PLUGIN_PROMOTE_PERMISSION,
                 )?;
                 let generation = runtime_plugin_generation_argument(arguments)?;
                 target_generation = Some(generation.clone());
@@ -5962,7 +5962,7 @@ fn execute_runtime_plugin_control(
             "retire" => {
                 require_runtime_plugin_capability(
                     context.call.authority,
-                    RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+                    RUNTIME_PLUGIN_RETIRE_PERMISSION,
                 )?;
                 let generation = runtime_plugin_generation_argument(arguments)?;
                 target_generation = Some(generation.clone());
@@ -6004,13 +6004,13 @@ fn execute_runtime_plugin_control(
 
 fn runtime_plugin_generation_argument(
     arguments: &PhenixValue,
-) -> Result<GraphGenerationId, ApplicationError> {
+) -> Result<GenerationId, ApplicationError> {
     let value = session_control_required_string(arguments, "generation")?;
-    Ok(GraphGenerationId::from(value))
+    Ok(GenerationId::from(value))
 }
 
 fn runtime_plugin_inspection_value(
-    harness: &PhenixHarness,
+    harness: &PhenixRuntime,
 ) -> Result<PhenixValue, ApplicationError> {
     let active = harness.generation().clone();
     let generations = harness
@@ -6128,13 +6128,13 @@ fn execute_runtime_session_tool_call(
 }
 
 fn require_application_session_control(authority: &Authority) -> Result<(), ApplicationError> {
-    let capability = CapabilityId::parse(APPLICATION_SESSION_CONTROL_CAPABILITY)
-        .expect("static application session control capability is valid");
+    let capability = PermissionId::parse(APPLICATION_SESSION_CONTROL_PERMISSION)
+        .expect("static application session control permission is valid");
     if authority.permits(&capability) {
         Ok(())
     } else {
         Err(ApplicationError::PermissionDenied {
-            message: format!("phenix.session requires {APPLICATION_SESSION_CONTROL_CAPABILITY}"),
+            message: format!("phenix.session requires {APPLICATION_SESSION_CONTROL_PERMISSION}"),
         })
     }
 }
@@ -6197,7 +6197,7 @@ fn execute_application_session_control(
                 let generation = match session_control_optional_string(arguments, "generation")? {
                     Some(generation) => {
                         require_runtime_generation_select(context.call.authority)?;
-                        GraphGenerationId::from(generation)
+                        GenerationId::from(generation)
                     }
                     None => run.root_generation.clone(),
                 };
@@ -6246,14 +6246,14 @@ fn execute_application_session_control(
 }
 
 fn require_runtime_generation_select(authority: &Authority) -> Result<(), ApplicationError> {
-    let capability = CapabilityId::parse(RUNTIME_GENERATION_SELECT_CAPABILITY)
-        .expect("static runtime generation selection capability is valid");
+    let capability = PermissionId::parse(RUNTIME_GENERATION_SELECT_PERMISSION)
+        .expect("static runtime generation selection permission is valid");
     if authority.permits(&capability) {
         Ok(())
     } else {
         Err(ApplicationError::PermissionDenied {
             message: format!(
-                "explicit phenix.session generation selection requires {RUNTIME_GENERATION_SELECT_CAPABILITY}"
+                "explicit phenix.session generation selection requires {RUNTIME_GENERATION_SELECT_PERMISSION}"
             ),
         })
     }
@@ -6263,7 +6263,7 @@ fn prompt_child_session(
     run: &ApplicationAgentToolRun,
     session_id: SessionId,
     content: Vec<Content>,
-    generation: GraphGenerationId,
+    generation: GenerationId,
 ) -> Result<PhenixValue, ApplicationError> {
     if run.cancellation.load(Ordering::Acquire) {
         return Err(ApplicationError::Cancelled);
@@ -6395,7 +6395,7 @@ fn invoke_application_control_in_generation<C, R>(
     run: &ApplicationAgentToolRun,
     operation: &str,
     command: C,
-    generation: GraphGenerationId,
+    generation: GenerationId,
     constraints: phenix_core::RootExecutionConstraints,
 ) -> Result<R, ApplicationError>
 where
@@ -6552,13 +6552,13 @@ fn execute_runtime_inspect_tool_call(
 }
 
 fn require_runtime_inspection_read(authority: &Authority) -> Result<(), ApplicationError> {
-    let capability = CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
-        .expect("static runtime inspection read capability is valid");
+    let capability = PermissionId::parse(RUNTIME_INSPECTION_READ_PERMISSION)
+        .expect("static runtime inspection read permission is valid");
     if authority.permits(&capability) {
         Ok(())
     } else {
         Err(ApplicationError::PermissionDenied {
-            message: format!("phenix.inspect query requires {RUNTIME_INSPECTION_READ_CAPABILITY}"),
+            message: format!("phenix.inspect query requires {RUNTIME_INSPECTION_READ_PERMISSION}"),
         })
     }
 }
@@ -6800,7 +6800,7 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
                             PhenixValue::List(
                                 binding
                                     .effective_authority()
-                                    .capabilities()
+                                    .permissions()
                                     .map(|capability| PhenixValue::String(capability.to_string()))
                                     .collect(),
                             ),
@@ -6853,7 +6853,7 @@ fn inspect_component_graph(context: &ApplicationAgentToolContext<'_, '_>) -> Phe
                     PhenixValue::List(
                         trigger
                             .required_authority
-                            .capabilities()
+                            .permissions()
                             .map(|capability| PhenixValue::String(capability.to_string()))
                             .collect(),
                     ),
@@ -6887,17 +6887,17 @@ fn invoke_permission_handler(
         message: "client tool requires permission but no permission handler is registered"
             .to_owned(),
     })?;
-    let operation = ContractId::parse(InvokeCapability::ID)
+    let operation = ContractId::parse(InvokeCallableReference::ID)
         .expect("static application capability invocation id is valid");
     let output = service.invoke(
         &operation,
-        CapabilityInvokeInput {
+        CallableInvocation {
             callable: handler.to_value(),
             input: request.to_value(),
         }
         .to_value(),
     )?;
-    let result = CapabilityInvokeResult::from_value(&output).map_err(|error| {
+    let result = CallableInvocationResult::from_value(&output).map_err(|error| {
         ApplicationError::InvalidResponse {
             message: error.to_string(),
         }
@@ -6917,7 +6917,7 @@ fn is_sdk_operation(operation: &ContractId) -> bool {
             | RemoveClientTool::ID
             | ListCallables::ID
             | InvokeCallable::ID
-            | InvokeCapability::ID
+            | InvokeCallableReference::ID
     )
 }
 
@@ -6964,7 +6964,7 @@ mod tests {
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
     };
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelCapabilities, ExecutionRecord, ModelLimits,
+        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, ModelFeatureGenerationId, ModelLimits,
     };
     use std::{
         fs,
@@ -6995,7 +6995,7 @@ mod tests {
     }
 
     fn application_worker() -> ApplicationWorker {
-        let mut harness = PhenixHarness::default_suite().unwrap();
+        let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
     }
@@ -7013,7 +7013,7 @@ mod tests {
 
     #[test]
     fn full_product_enables_runtime_orchestration_until_explicitly_disabled() {
-        let builder = crate::HarnessBuilder::with_selected_suite(&BTreeSet::from([
+        let builder = crate::PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
             "phenix.product.full".to_owned(),
         ]))
         .unwrap();
@@ -7023,7 +7023,7 @@ mod tests {
         let session_id = SessionId::parse("session-full-product-orchestration").unwrap();
 
         let authority = worker.application_root_authority(&session_id).unwrap();
-        for capability in runtime_orchestration_authority().capabilities() {
+        for capability in runtime_orchestration_authority().permissions() {
             assert!(
                 authority.permits(capability),
                 "full product missed {capability}"
@@ -7040,7 +7040,7 @@ mod tests {
         assert!(matches!(response, OptionResponse::Updated { .. }));
 
         let authority = worker.application_root_authority(&session_id).unwrap();
-        for capability in runtime_orchestration_authority().capabilities() {
+        for capability in runtime_orchestration_authority().permissions() {
             assert!(
                 !authority.permits(capability),
                 "explicit orchestration disable still granted {capability}"
@@ -7066,17 +7066,17 @@ mod tests {
             Vec::<phenix_core::SdkContribution>::new(),
         )
         .unwrap();
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture-qualified-root-runtime").unwrap(),
-            CapabilityGenerationId::parse("fixture-qualified-root-generation").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture-qualified-root-runtime").unwrap(),
+            ReferenceGenerationId::parse("fixture-qualified-root-generation").unwrap(),
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-qualified-root-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-qualified-root-client-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-qualified-root-client-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -7094,7 +7094,7 @@ mod tests {
             after_sequence: None,
         }
         .to_value();
-        let missing_generation = GraphGenerationId::from("fixture-missing-generation".to_owned());
+        let missing_generation = GenerationId::from("fixture-missing-generation".to_owned());
         let (control_transport, mut control_receiver) = ChannelTransport::new(1);
         let weak_control_transport = control_transport.downgrade();
         let caller_transport = control_transport.clone();
@@ -7541,8 +7541,8 @@ mod tests {
 
     fn memory_debug_authority() -> Authority {
         Authority::new([
-            CapabilityId::parse("kernel.persistence.read").unwrap(),
-            CapabilityId::parse("kernel.persistence.write").unwrap(),
+            PermissionId::parse("kernel.persistence.read").unwrap(),
+            PermissionId::parse("kernel.persistence.write").unwrap(),
         ])
     }
 
@@ -8395,10 +8395,10 @@ mod tests {
             })
             .unwrap();
         worker
-            .invoke_model_command(ModelCommand::PublishCapabilities {
-                capabilities: EffectiveModelCapabilities {
+            .invoke_model_command(ModelCommand::PublishModelFeatures {
+                features: EffectiveModelFeatures {
                     target,
-                    generation: CapabilityGenerationId::parse(format!(
+                    generation: ModelFeatureGenerationId::parse(format!(
                         "fixture-generation-{model}"
                     ))
                     .unwrap(),
@@ -8425,7 +8425,7 @@ mod tests {
 
     #[test]
     fn model_tool_surface_tracks_the_selected_graph_generation() {
-        fn resolved(callable: Option<&str>) -> phenix_core::ResolvedHarness {
+        fn resolved(callable: Option<&str>) -> phenix_core::ResolvedGeneration {
             let plugin = PluginId::parse("fixture.generation-tools").unwrap();
             let component = ComponentId::parse("fixture.generation-tools.component").unwrap();
             let interface = InterfaceId::parse("fixture.generation-tools.echo@1").unwrap();
@@ -8470,7 +8470,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
 
-            phenix_core::ResolvedHarness::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
+            phenix_core::ResolvedGeneration::resolve_with_durable_schemas_layer_policies_and_entry_triggers(
                 [manifest],
                 [component_manifest],
                 [],
@@ -8492,18 +8492,18 @@ mod tests {
             Vec::<phenix_core::SdkContribution>::new(),
         )
         .unwrap();
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             &ObservableStore::default(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture-generation-tools-runtime").unwrap(),
-            CapabilityGenerationId::parse("fixture-generation-tools-capability-generation")
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture-generation-tools-runtime").unwrap(),
+            ReferenceGenerationId::parse("fixture-generation-tools-capability-generation")
                 .unwrap(),
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-generation-tools-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-generation-tools-client-generation")
+                ReferenceGenerationId::parse("fixture-generation-tools-client-generation")
                     .unwrap(),
             ),
         )
@@ -8559,11 +8559,11 @@ mod tests {
 
     #[test]
     fn plugin_build_policy_requires_explicit_runtime_and_workspace_authority() {
-        let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_CAPABILITY);
-        let build = CapabilityId::parse(RUNTIME_PLUGIN_BUILD_CAPABILITY).unwrap();
-        let read = CapabilityId::parse("workspace.read").unwrap();
-        let shell = CapabilityId::parse("workspace.shell").unwrap();
-        let write = CapabilityId::parse("workspace.write").unwrap();
+        let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
+        let build = PermissionId::parse(RUNTIME_PLUGIN_BUILD_PERMISSION).unwrap();
+        let read = PermissionId::parse("workspace.read").unwrap();
+        let shell = PermissionId::parse("workspace.shell").unwrap();
+        let write = PermissionId::parse("workspace.write").unwrap();
 
         assert!(policy.required_authority().permits(&build));
         assert!(policy.build_authority().permits(&read));
@@ -8579,14 +8579,14 @@ mod tests {
             Err(ApplicationError::PermissionDenied { .. })
         ));
 
-        let allowed = Authority::new([CapabilityId::parse(RUNTIME_INSPECTION_READ_CAPABILITY)
-            .expect("static runtime inspection capability is valid")]);
+        let allowed = Authority::new([PermissionId::parse(RUNTIME_INSPECTION_READ_PERMISSION)
+            .expect("static runtime inspection permission is valid")]);
         assert_eq!(require_runtime_inspection_read(&allowed), Ok(()));
     }
 
     fn persistent_application_worker(path: &PathBuf) -> ApplicationWorker {
         let persistence = LocalPersistence::open(path).unwrap();
-        let mut harness = PhenixHarness::default_suite_with_persistence(persistence).unwrap();
+        let mut harness = PhenixRuntime::default_suite_with_persistence(persistence).unwrap();
         harness.activate().unwrap();
         ApplicationWorker::new(harness).unwrap()
     }
@@ -8615,10 +8615,10 @@ mod tests {
     fn client_callable(contract: &str, reference: &str) -> phenix_core::CallableRef {
         phenix_core::CallableRef::new(
             ContractId::parse(contract).unwrap(),
-            phenix_core::CapabilityOwnerId::Client(
+            phenix_core::ReferenceOwnerId::Client(
                 phenix_core::ClientConnectionId::parse("client-1").unwrap(),
             ),
-            phenix_core::CapabilityGenerationId::parse("generation-1").unwrap(),
+            phenix_core::ReferenceGenerationId::parse("generation-1").unwrap(),
             phenix_core::ReferenceId::parse(reference).unwrap(),
         )
     }
@@ -8695,7 +8695,7 @@ mod tests {
     async fn failed_prompt_does_not_poison_the_session_or_next_execution() {
         let calls = Arc::new(AtomicU32::new(0));
         let model_calls = Arc::clone(&calls);
-        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(fail_once_model_manifest(), move || {
                 Box::new(FailOnceModel {
@@ -8716,25 +8716,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.failed-prompt-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.failed-prompt-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-failed-prompt-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-failed-prompt-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-failed-prompt-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -8828,7 +8828,7 @@ mod tests {
     async fn model_session_control_prompts_an_independent_session_and_continues() {
         let child_target = Arc::new(StdMutex::new(None));
         let model_target = Arc::clone(&child_target);
-        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(session_control_model_manifest(), move || {
                 Box::new(SessionControlModel {
@@ -8850,25 +8850,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.session-control-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.session-control-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-session-control-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-session-control-client-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-session-control-client-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -8984,7 +8984,7 @@ mod tests {
         let trial_request = PhenixValue::from(serde_json::to_value(&trial_request).unwrap());
 
         let state = Arc::new(StdMutex::new(RuntimeOrchestrationModelState::default()));
-        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         let namespace_for_factory = namespace.clone();
         builder
             .add_embedded(first_manifest.clone(), move || {
@@ -9027,25 +9027,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.runtime-orchestration-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.runtime-orchestration-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-runtime-orchestration-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-runtime-orchestration-client-generation")
+                ReferenceGenerationId::parse("fixture-runtime-orchestration-client-generation")
                     .unwrap(),
             ),
         )
@@ -9127,25 +9127,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let capability_generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.orchestration-cancel-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.orchestration-cancel-runtime").unwrap(),
             capability_generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-orchestration-cancel-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-orchestration-cancel-client-generation")
+                ReferenceGenerationId::parse("fixture-orchestration-cancel-client-generation")
                     .unwrap(),
             ),
         )
@@ -9275,7 +9275,7 @@ mod tests {
     async fn cancel_remains_live_while_agent_execution_is_running() {
         let gate = Arc::new(CancellationGate::new());
         let model_gate = Arc::clone(&gate);
-        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(cancellation_gate_model_manifest(), move || {
                 Box::new(CancellationGateModel {
@@ -9296,25 +9296,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.cancellation-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.cancellation-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-cancellation-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-cancellation-client-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-cancellation-client-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -9423,7 +9423,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn post_tool_progress_does_not_block_the_follow_up_model_turn() {
-        let mut builder = crate::HarnessBuilder::with_default_suite().unwrap();
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(continuation_model_manifest(), || {
                 Box::new(ToolContinuationModel)
@@ -9442,25 +9442,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _callback_receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.continuation-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.continuation-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-continuation-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-continuation-client-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-continuation-client-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -9593,25 +9593,25 @@ mod tests {
         let sdk = {
             let harness = worker.harness.lock();
             harness
-                .resolved_harness()
+                .resolved_generation()
                 .resolve_sdk_contributions([sdk_contribution()])
                 .unwrap()
         };
         let generation = {
             let harness = worker.harness.lock();
-            CapabilityGenerationId::from(harness.generation())
+            ReferenceGenerationId::from(harness.generation())
         };
-        let (callbacks, _receiver) = ClientCapabilityCallbacks::bounded(1);
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
-            SharedCapabilityRegistry::default(),
-            RuntimeId::parse("fixture.application-runtime").unwrap(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.application-runtime").unwrap(),
             generation,
             callbacks,
-            ClientCapabilityIdentity::new(
+            ClientReferenceIdentity::new(
                 ClientConnectionId::parse("fixture-client").unwrap(),
-                CapabilityGenerationId::parse("fixture-client-generation").unwrap(),
+                ReferenceGenerationId::parse("fixture-client-generation").unwrap(),
             ),
         )
         .unwrap();
@@ -9621,7 +9621,7 @@ mod tests {
             application_model_tool_surface(
                 &service,
                 &session_id,
-                harness.resolved_harness(),
+                harness.resolved_generation(),
                 &authority,
             )
             .unwrap()
@@ -10587,10 +10587,10 @@ mod tests {
         };
 
         let expected = default_application_root_authority()
-            .capabilities()
+            .permissions()
             .map(|capability| capability.as_str().to_owned())
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(execution.authority.capabilities, expected);
+        assert_eq!(execution.authority.permissions, expected);
         for capability in [
             "workspace.read",
             "workspace.write",
@@ -10598,21 +10598,21 @@ mod tests {
             "workspace.git",
         ] {
             assert!(
-                execution.authority.capabilities.contains(capability),
+                execution.authority.permissions.contains(capability),
                 "default application execution is missing {capability}"
             );
         }
         for capability in [
-            APPLICATION_SESSION_CONTROL_CAPABILITY,
-            RUNTIME_GENERATION_SELECT_CAPABILITY,
-            RUNTIME_PLUGIN_INSPECT_CAPABILITY,
-            RUNTIME_PLUGIN_BUILD_CAPABILITY,
-            RUNTIME_PLUGIN_TRIAL_CAPABILITY,
-            RUNTIME_PLUGIN_PROMOTE_CAPABILITY,
-            RUNTIME_PLUGIN_RETIRE_CAPABILITY,
+            APPLICATION_SESSION_CONTROL_PERMISSION,
+            RUNTIME_GENERATION_SELECT_PERMISSION,
+            RUNTIME_PLUGIN_INSPECT_PERMISSION,
+            RUNTIME_PLUGIN_BUILD_PERMISSION,
+            RUNTIME_PLUGIN_TRIAL_PERMISSION,
+            RUNTIME_PLUGIN_PROMOTE_PERMISSION,
+            RUNTIME_PLUGIN_RETIRE_PERMISSION,
         ] {
             assert!(
-                !execution.authority.capabilities.contains(capability),
+                !execution.authority.permissions.contains(capability),
                 "default application execution unexpectedly grants {capability}"
             );
         }
@@ -10629,7 +10629,7 @@ mod tests {
         let enabled = worker
             .application_root_authority(&SessionId::parse("session-orchestration").unwrap())
             .unwrap();
-        for capability in runtime_orchestration_authority().capabilities() {
+        for capability in runtime_orchestration_authority().permissions() {
             assert!(
                 enabled.permits(capability),
                 "enabled application root is missing {capability}"
