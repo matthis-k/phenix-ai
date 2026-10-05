@@ -4347,7 +4347,7 @@ fn start_prompt(
             })
             .and_then(|generation| {
                 harness
-                    .resolved_harness_in_generation(generation)
+                    .resolved_generation_by_id(generation)
                     .map_err(|error| ApplicationError::Failed {
                         message: error.to_string(),
                     })
@@ -6017,7 +6017,7 @@ fn runtime_plugin_inspection_value(
         .into_iter()
         .map(|generation| {
             let resolved = harness
-                .resolved_harness_in_generation(&generation)
+                .resolved_generation_by_id(&generation)
                 .map_err(|error| ApplicationError::Failed {
                     message: error.to_string(),
                 })?;
