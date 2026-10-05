@@ -333,8 +333,8 @@
           };
 
           integration = {
-            backend-acp = {
-              name = "ACP backend integration";
+            model-adapter-acp = {
+              name = "ACP model adapter integration";
               needs = [ ];
               runtimeInputs = pkgs: [
                 pkgs.cargo
