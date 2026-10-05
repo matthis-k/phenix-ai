@@ -100,11 +100,11 @@ pub(super) fn publish(
                 ));
             }
         }
-        for (id, profile) in &desired {
-            if current.get(id).is_some_and(|existing| existing != profile)
-                && !ownership.owned.contains_key(id)
-            {
-                return Err(format!("routing profile identity is immutable: {id}"));
+        for id in desired.keys() {
+            if current.contains_key(id) && !ownership.owned.contains_key(id) {
+                return Err(format!(
+                    "routing profile is already owned outside provider catalog: {id}"
+                ));
             }
         }
 
