@@ -144,9 +144,9 @@ pub fn default_suite_authority() -> Authority {
     let orchestration = runtime_orchestration_authority();
     Authority::new(
         application
-            .capabilities()
+            .permissions()
             .cloned()
-            .chain(orchestration.capabilities().cloned()),
+            .chain(orchestration.permissions().cloned()),
     )
 }
 

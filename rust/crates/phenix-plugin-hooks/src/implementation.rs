@@ -194,9 +194,9 @@ pub fn hook_manifest(maximum_authority: Authority) -> PluginManifest {
         resource_namespaces: vec![hook_namespace()],
         maximum_authority: Authority::new(
             maximum_authority
-                .capabilities()
+                .permissions()
                 .cloned()
-                .chain(persistence.capabilities().cloned()),
+                .chain(persistence.permissions().cloned()),
         ),
     }
 }

@@ -4081,9 +4081,9 @@ mod tests {
         let authority = Authority::new(
             language
                 .maximum_authority
-                .capabilities()
-                .chain(environment.maximum_authority.capabilities())
-                .chain(workspace.maximum_authority.capabilities())
+                .permissions()
+                .chain(environment.maximum_authority.permissions())
+                .chain(workspace.maximum_authority.permissions())
                 .cloned(),
         );
         let resolved = ResolvedGeneration::resolve(
