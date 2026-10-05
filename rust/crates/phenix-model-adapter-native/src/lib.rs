@@ -480,12 +480,12 @@ impl NativeModelSession {
         let mut tool_rounds = 0usize;
 
         loop {
-            if let Some(limit) = self.max_tool_rounds {
-                if tool_rounds >= limit.get() {
-                    return Err(ModelAdapterError::Protocol(format!(
-                        "provider exceeded {limit} consecutive tool rounds"
-                    )));
-                }
+            if let Some(limit) = self.max_tool_rounds
+                && tool_rounds >= limit.get()
+            {
+                return Err(ModelAdapterError::Protocol(format!(
+                    "provider exceeded {limit} consecutive tool rounds"
+                )));
             }
             tool_rounds += 1;
             if self.cancelled.load(Ordering::Acquire) {
