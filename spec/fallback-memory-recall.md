@@ -158,14 +158,13 @@ Classifier output rules:
 - malformed, empty, oversized, or duplicate output fails the recovery attempt and falls back to ordinary discovery;
 - classification failure never triggers broad memory search.
 
-Default limits: one classifier attempt, 512 output tokens, 10 seconds for that call,
-and 30 seconds for the whole recovery attempt. Lower caller deadlines win. These
-limits belong to the pinned product policy and may be configured. Cancellation
-ends preparation and leaves the current runtime active. No helper may recursively
-invoke recovery, compaction, or delegation. A bounded structural classifier view
-uses at most 4096 UTF-8 bytes of prompt evidence and 32 anchors; an oversized input
-skips model recovery rather than silently losing explicit constraints. The original
-root prompt stays intact.
+Classifier attempt, output, timeout, prompt-evidence, and anchor limits are
+product policy and are opt-in. Lower caller deadlines still win when a deadline is
+configured. Cancellation ends preparation and leaves the current runtime active.
+No helper may recursively invoke recovery, compaction, or delegation. When a
+classifier prompt-evidence limit is configured, an oversized input skips model
+recovery rather than silently truncating explicit constraints. `memory.context`
+does not impose a separate prompt-size limit. The original root prompt stays intact.
 
 The routed model response is parsed directly into `ContextRecoveryDecision`. Free-form explanatory text is invalid.
 
