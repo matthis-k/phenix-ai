@@ -14,7 +14,7 @@ depends_on:
 
 ## Purpose
 
-Keep the Phenix runtime and kernel stable while allowing multiple resolved generation generations to remain available for explicit root execution.
+Keep the Phenix runtime and kernel stable while allowing multiple resolved generations to remain available for explicit root execution.
 
 This supports plugin development without turning reload into a second runtime model. An agent may build a candidate generation, exercise it, compare it with the current generation, and promote it without gaining new authority or silently changing its Environment.
 
@@ -356,7 +356,7 @@ This keeps host constraints outside agent-controlled Harness composition while l
 - Pinned bindings are validated before resident candidate lifecycle runs and again before promotion.
 - Retirement cannot run Plugin `stop` with more authority than the caller requesting retirement.
 - Generation selection cannot change a pinned Environment or other host binding.
-- generations never mix providers dynamically across generation boundaries.
+- Generations never mix providers dynamically across generation boundaries.
 - Plugin instances, listeners, tasks, and runtime handles are generation-local.
 - Durable persistence remains kernel-owned and is not forked implicitly.
 - Incompatible durable migrations prevent concurrent residency.

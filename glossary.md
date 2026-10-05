@@ -40,6 +40,8 @@ This file is the source of truth for architecture vocabulary. Code, documentatio
 
 **Model adapter** translates Phenix model requests into an external model protocol or provider client. A **model provider** is the provider identity, such as a vendor or route, exposed through that adapter.
 
+**Frontend adapter** translates an external frontend protocol into Phenix application operations. It does not own the application semantics it exposes.
+
 **Frontend service provider** is a provider of a frontend-owned service. It is unrelated to model-provider identity unless the specific service contract says otherwise.
 
 **Persistence backend** is a storage implementation behind `PersistenceBackend`. Its supported semantics are described by `PersistenceBackendFeature`; it is not an execution or model backend.
