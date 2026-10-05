@@ -50,7 +50,7 @@ The stable runtime owns:
 persistence backend
 task/event infrastructure
 trace/provenance sinks
-artifact/runtime-provider infrastructure
+artifact/plugin-runtime-adapter infrastructure
 resident generation registry
 default-generation pointer
 root execution constraints
