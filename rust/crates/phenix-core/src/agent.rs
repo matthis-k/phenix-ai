@@ -103,8 +103,8 @@ pub struct ModelCacheControl {
     pub explicit_prefix_bytes: Option<u64>,
     /// Local diagnostic identity of the materialized prefix. Providers never interpret this field.
     pub local_prefix_identity: Option<String>,
-    /// Capability generation used when selecting the effective cache controls.
-    pub local_capability_generation: Option<String>,
+    /// Model feature generation used when selecting the effective cache controls.
+    pub local_feature_generation: Option<String>,
     /// Deterministic identity of the caller authority used for this dispatch.
     pub local_authority_identity: Option<String>,
 }
