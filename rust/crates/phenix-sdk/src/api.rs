@@ -47,7 +47,7 @@ impl ComponentInterface for SdkSessionInterface {
 pub struct SdkTool {
     pub id: String,
     pub service: String,
-    pub required_capabilities: BTreeSet<String>,
+    pub required_permissions: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, phenix_sdk_macros::PhenixValue)]
@@ -57,7 +57,7 @@ pub enum SdkToolCommand {
         id: String,
         service: String,
         #[serde(default)]
-        required_capabilities: BTreeSet<String>,
+        required_permissions: BTreeSet<String>,
     },
     Invoke {
         execution_id: String,
