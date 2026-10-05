@@ -293,6 +293,14 @@ jobs:
             accept-flake-config = true
             max-jobs = auto
 
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: "phenix-product-nix-${{ runner.os }}-${{ hashFiles('modules/rust-artifacts.nix', 'flake.lock', 'rust/Cargo.lock', 'rust/**/Cargo.toml') }}"
+          restore-prefixes-first-match: |
+            phenix-product-nix-${{ runner.os }}-
+          gc-max-store-size-linux: "4G"
+
       - name: "Phenix supported runtime journey"
         env:
           CARGO_HOME: "${{ runner.temp }}/phenix-cargo-home"
