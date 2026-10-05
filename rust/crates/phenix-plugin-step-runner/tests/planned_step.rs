@@ -22,7 +22,7 @@ use phenix_sdk::{
     BudgetReservationPurpose, BudgetReservationRequest, CapacityKnowledge, ContextCandidate,
     ContextControl, ContextDemand, ContextRetention, ContextSource, DelegatedWorkResources,
     DelegatedWorkerCommand, DelegatedWorkerResponse, DelegationResourcePolicy,
-    DelegationTaskBinding, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
+    DelegationTaskBinding, EffectiveModelFeatures, ExecutionAuthority, ExecutionCommand,
     ExecutionResourceCommand, ExecutionResourceResponse, ExecutionResponse, ModelCommand,
     ModelLimits, ModelResponse, ModelTarget, PlannedStepRequest, RouteSelectionPolicy,
     RoutingEstimateMode, RoutingProfile, StepAttemptCommand, StepAttemptPhase, StepAttemptRecord,
@@ -210,8 +210,8 @@ fn target(model: &str) -> ModelTarget {
     }
 }
 
-fn capabilities(target: ModelTarget, window: u64) -> EffectiveModelCapabilities {
-    EffectiveModelCapabilities {
+fn features(target: ModelTarget, window: u64) -> EffectiveModelFeatures {
+    EffectiveModelFeatures {
         target,
         generation: ReferenceGenerationId::parse("generation-1").unwrap(),
         context: ContextControl::ReplaceableTurns,
@@ -285,14 +285,14 @@ fn setup_routing(kernel: &mut Kernel, publish: bool) {
     )
     .unwrap();
     if publish {
-        for capabilities in [
-            capabilities(profile.default_target, 500),
-            capabilities(profile.fallback_targets[0].clone(), 8_000),
+        for features in [
+            features(profile.default_target, 500),
+            features(profile.fallback_targets[0].clone(), 8_000),
         ] {
             let _: ModelResponse = invoke(
                 kernel,
                 model_routing_service(),
-                &ModelCommand::PublishCapabilities { capabilities },
+                &ModelCommand::PublishModelFeatures { features },
             )
             .unwrap();
         }
@@ -323,8 +323,8 @@ fn setup_routing_with_fallbacks(kernel: &mut Kernel, fallback_count: usize) {
         let _: ModelResponse = invoke(
             kernel,
             model_routing_service(),
-            &ModelCommand::PublishCapabilities {
-                capabilities: capabilities(target, 8_000),
+            &ModelCommand::PublishModelFeatures {
+                features: features(target, 8_000),
             },
         )
         .unwrap();
@@ -370,9 +370,9 @@ fn request(max_input: u64) -> PlannedStepRequest {
                 mandatory_input_tokens: 600,
                 reducible_input_tokens: 200,
                 output_reserve_tokens: 128,
-                required_capabilities: BTreeSet::new(),
+                required_features: BTreeSet::new(),
             },
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             required_tools: BTreeSet::new(),
             optional_tools: BTreeSet::new(),
             required_skills: BTreeSet::new(),
@@ -489,7 +489,7 @@ mod pre_dispatch_cleanup {
             },
         )
         .unwrap_err();
-        assert!(error.contains("MissingEffectiveCapabilities"));
+        assert!(error.contains("MissingEffectiveModelFeatures"));
         let attempt = lookup_attempt(&mut kernel, "attempt-1").expect("attempt was recorded");
         assert_eq!(attempt.phase, StepAttemptPhase::Settled);
         assert_eq!(attempt.outcome, Some(AttemptOutcome::Failed));
