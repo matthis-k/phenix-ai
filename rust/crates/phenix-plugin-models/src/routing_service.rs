@@ -73,7 +73,7 @@ impl RoutingServiceState {
                 self.runtime
                     .publish_model_features(features)
                     .map(|()| ModelResponse::Features { features: response })
-                    .map_err(|error| format!("routing capability publication failed: {error:?}"))
+                    .map_err(|error| format!("routing feature publication failed: {error:?}"))
             }
             ModelCommand::ListCandidates {
                 profile_id,
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_publication_round_trips_through_snapshot() {
+    fn feature_publication_round_trips_through_snapshot() {
         let target = ModelTarget {
             provider_plugin: PluginId::parse("provider.fixture").unwrap(),
             model: ModelId::parse("model.fixture").unwrap(),
