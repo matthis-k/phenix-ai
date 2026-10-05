@@ -79,6 +79,7 @@ _: {
       '';
 
       productRustDependencies = pkgs.rustPlatform.buildRustPackage {
+        auditable = false;
         pname = "phenix-product-rust-dependencies";
         version = "0";
         src = dependencySkeleton;
@@ -105,6 +106,7 @@ _: {
       };
 
       productRustArtifacts = pkgs.rustPlatform.buildRustPackage {
+        auditable = false;
         pname = "phenix-product-rust-artifacts";
         version = "0";
         src = rustSource;
