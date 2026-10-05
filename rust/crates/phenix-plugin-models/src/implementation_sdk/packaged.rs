@@ -75,11 +75,11 @@ pub(super) fn prepare(
             ));
         }
     }
-    for (id, profile) in &desired {
-        if let Some(existing) = current.get(id) {
-            if !ownership.owned.contains_key(id) && existing != profile {
-                return Err(format!("routing profile identity is immutable: {id}"));
-            }
+    for id in desired.keys() {
+        if current.contains_key(id) && !ownership.owned.contains_key(id) {
+            return Err(format!(
+                "routing profile is already owned outside packaged configuration: {id}"
+            ));
         }
     }
     ownership.active = desired.keys().cloned().collect();
