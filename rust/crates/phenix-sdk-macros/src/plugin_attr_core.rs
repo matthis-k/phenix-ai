@@ -848,13 +848,13 @@ fn validate_stateless_value_signature(
     }
 
     let mut inputs = signature.inputs.iter();
-    if let Some(context) = inputs.next() {
-        if !is_stateless_read_context_parameter(context) {
-            return Err(syn::Error::new_spanned(
-                context,
-                "public stateless values accept only an optional &ReadContext",
-            ));
-        }
+    if let Some(context) = inputs.next()
+        && !is_stateless_read_context_parameter(context)
+    {
+        return Err(syn::Error::new_spanned(
+            context,
+            "public stateless values accept only an optional &ReadContext",
+        ));
     }
     if inputs.next().is_some() {
         return Err(syn::Error::new_spanned(
@@ -1423,19 +1423,19 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
             "plugin field attribute must begin with a field role",
         ));
     };
-    if let Meta::List(event) = &first {
-        if event.path.is_ident("event") {
-            if let Some(argument) = arguments.next() {
-                return Err(syn::Error::new_spanned(
-                    argument,
-                    "event fields do not accept additional metadata",
-                ));
-            }
-            let event = syn::parse2::<LitStr>(event.tokens.clone())?;
-            validate_static_id(&event.value(), "event")
-                .map_err(|error| syn::Error::new_spanned(&event, error))?;
-            return Ok(FieldRole::Event { event });
+    if let Meta::List(event) = &first
+        && event.path.is_ident("event")
+    {
+        if let Some(argument) = arguments.next() {
+            return Err(syn::Error::new_spanned(
+                argument,
+                "event fields do not accept additional metadata",
+            ));
         }
+        let event = syn::parse2::<LitStr>(event.tokens.clone())?;
+        validate_static_id(&event.value(), "event")
+            .map_err(|error| syn::Error::new_spanned(&event, error))?;
+        return Ok(FieldRole::Event { event });
     }
     let Meta::Path(role) = first else {
         return Err(syn::Error::new_spanned(
@@ -1507,37 +1507,36 @@ fn field_role(attribute: &Attribute) -> syn::Result<FieldRole> {
     let mut id = None;
     let mut features = Vec::new();
     for argument in arguments {
-        if kind == "resource" {
-            if let Meta::List(feature_list) = &argument {
-                if feature_list.path.is_ident("features") {
-                    if !features.is_empty() {
-                        return Err(syn::Error::new_spanned(
-                            argument,
-                            "duplicate resource features",
-                        ));
-                    }
-                    let values = Punctuated::<Ident, Token![,]>::parse_terminated
-                        .parse2(feature_list.tokens.clone())?;
-                    for feature in values {
-                        if !matches!(
-                            feature.to_string().as_str(),
-                            "Transactions"
-                                | "UniqueKeys"
-                                | "ForeignKeys"
-                                | "OrderedAppend"
-                                | "IndexedRange"
-                                | "Migrations"
-                        ) {
-                            return Err(syn::Error::new_spanned(
-                                feature,
-                                "unsupported resource backend feature",
-                            ));
-                        }
-                        features.push(feature);
-                    }
-                    continue;
-                }
+        if kind == "resource"
+            && let Meta::List(feature_list) = &argument
+            && feature_list.path.is_ident("features")
+        {
+            if !features.is_empty() {
+                return Err(syn::Error::new_spanned(
+                    argument,
+                    "duplicate resource features",
+                ));
             }
+            let values = Punctuated::<Ident, Token![,]>::parse_terminated
+                .parse2(feature_list.tokens.clone())?;
+            for feature in values {
+                if !matches!(
+                    feature.to_string().as_str(),
+                    "Transactions"
+                        | "UniqueKeys"
+                        | "ForeignKeys"
+                        | "OrderedAppend"
+                        | "IndexedRange"
+                        | "Migrations"
+                ) {
+                    return Err(syn::Error::new_spanned(
+                        feature,
+                        "unsupported resource backend feature",
+                    ));
+                }
+                features.push(feature);
+            }
+            continue;
         }
 
         let Meta::NameValue(argument) = argument else {
