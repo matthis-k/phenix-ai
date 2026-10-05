@@ -46,7 +46,7 @@ struct ResourceOnly;
 
 fn external_execution() -> phenix_sdk::PluginExecution {
     phenix_sdk::PluginExecution::Runtime {
-        runtime: phenix_sdk::PluginRuntimeId::parse("fixture.runtime-provider").unwrap(),
+        runtime: phenix_sdk::PluginRuntimeId::parse("fixture.runtime").unwrap(),
         artifact: phenix_sdk::PluginArtifact {
             locator: "fixture.wasm".into(),
             revision: phenix_sdk::ArtifactRevision::from_content(b"fixture"),
@@ -107,7 +107,7 @@ fn plugin_execution_preserves_resource_only_and_runtime_metadata() {
     let phenix_sdk::PluginExecution::Runtime { runtime, artifact } = external.execution else {
         panic!("external plugin should preserve runtime execution metadata");
     };
-    assert_eq!(runtime.as_str(), "fixture.runtime-provider");
+    assert_eq!(runtime.as_str(), "fixture.runtime");
     assert_eq!(artifact.locator, "fixture.wasm");
     assert_eq!(
         artifact.revision,
