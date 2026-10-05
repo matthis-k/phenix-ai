@@ -29,7 +29,7 @@ A Plugin may contribute generic kernel-owned metadata for:
 - configuration metadata;
 - lifecycle callbacks;
 - public callables and values;
-- Runtime Provider requirements.
+- Plugin Runtime Adapter requirements.
 
 Every contribution has stable Plugin ownership. Graph Generation provenance is assigned by resolution and activation rather than by the authoring surface.
 
@@ -69,7 +69,7 @@ Configuration contributions describe typed Plugin-owned configuration semantics.
 
 A dynamically managed Plugin candidate supplies the same semantic contribution model as a static Plugin. Execution runtime and artifact revision are packaging and execution metadata, not alternate component semantics.
 
-Runtime Providers translate an artifact into the canonical executable Plugin interface after the candidate's inspectable contributions have been validated.
+Plugin Runtime Adapters translate an artifact into the canonical executable Plugin interface after the candidate's inspectable contributions have been validated.
 
 ## Resolution boundary
 
@@ -82,7 +82,7 @@ The resolver owns:
 - structural compatibility;
 - Layer ordering;
 - authority attenuation;
-- runtime-provider dependency resolution;
+- plugin-runtime-adapter dependency resolution;
 - resource and persistence planning;
 - generation identity.
 
