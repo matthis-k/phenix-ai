@@ -1,6 +1,6 @@
 use crate::{execution_factory, execution_manifest, execution_resource_service};
 use phenix_core::{
-    ArtifactRevision, Authority, CapabilityGenerationId, Kernel, KernelConfig, LocalPersistence,
+    ArtifactRevision, Authority, ModelFeatureGenerationId, Kernel, KernelConfig, LocalPersistence,
     ModelId, PhenixValue, PluginId, Project,
 };
 use phenix_sdk::{
@@ -94,7 +94,7 @@ fn binding(child_authority: ExecutionAuthority) -> DelegationTaskBinding {
                     model: ModelId::parse("model.fixture").unwrap(),
                     options: BTreeMap::new(),
                 },
-                capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                 policy_revision: "route-1".into(),
                 candidate_ordinal: 0,
                 estimate: None::<RoutingEstimate>,
@@ -153,7 +153,7 @@ fn step_plan(max_children: u32) -> StepPlan {
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: ContextDemand::default(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: false,
         },
         context: ContextDemand::default(),
@@ -267,7 +267,7 @@ mod exploration_admission {
                         model: ModelId::parse("model.fixture").unwrap(),
                         options: BTreeMap::new(),
                     },
-                    capability_generation: CapabilityGenerationId::parse("generation-1").unwrap(),
+                    feature_generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
                     policy_revision: "route-1".into(),
                     candidate_ordinal: 0,
                     estimate: None::<RoutingEstimate>,
