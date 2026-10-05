@@ -278,16 +278,16 @@ pub fn select_route(
     }
 
     let eligible_count = u32::try_from(eligible.len()).unwrap_or(u32::MAX);
-    if let Some(limit) = policy.max_candidate_attempts {
-        if eligible_count > limit {
-            eligible.sort_by_key(|candidate| candidate.ordinal);
-            eligible.truncate(limit as usize);
-            if eligible.is_empty() {
-                return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
-                    eligible: eligible_count,
-                    allowed: limit,
-                });
-            }
+    if let Some(limit) = policy.max_candidate_attempts
+        && eligible_count > limit
+    {
+        eligible.sort_by_key(|candidate| candidate.ordinal);
+        eligible.truncate(limit as usize);
+        if eligible.is_empty() {
+            return Err(RouteSelectionError::CandidateAttemptLimitExceeded {
+                eligible: eligible_count,
+                allowed: limit,
+            });
         }
     }
 
