@@ -537,7 +537,7 @@ mod tests {
             resource_namespaces: Vec::new(),
             maximum_authority: Authority::default(),
         };
-        let component_id = component("runtime-provider");
+        let component_id = component("runtime-guest");
         let resolved = ResolvedGeneration::resolve(
             [bridge, provider.clone()],
             [ComponentManifest {
