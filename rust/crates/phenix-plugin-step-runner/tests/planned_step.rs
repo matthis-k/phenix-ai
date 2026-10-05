@@ -2,7 +2,7 @@ use phenix_core::{
     ArtifactRevision, Authority, ComponentInterface, InvocationOutcome, Kernel, KernelConfig,
     LocalPersistence, ModelId, ModelInferenceFailure, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
-    PluginInstance, PluginManifest, Project, ReferenceGenerationId, ResolvedGeneration,
+    PluginInstance, PluginManifest, Project, ModelFeatureGenerationId, ResolvedGeneration,
     ResolvedGenerationActivation, ServiceContribution, ServiceId, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
@@ -213,7 +213,7 @@ fn target(model: &str) -> ModelTarget {
 fn features(target: ModelTarget, window: u64) -> EffectiveModelFeatures {
     EffectiveModelFeatures {
         target,
-        generation: ReferenceGenerationId::parse("generation-1").unwrap(),
+        generation: ModelFeatureGenerationId::parse("generation-1").unwrap(),
         context: ContextControl::ReplaceableTurns,
         capacity: CapacityKnowledge::Known {
             limits: ModelLimits {
