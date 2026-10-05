@@ -142,4 +142,4 @@ Cross-Plugin Interface identity never derives from a provider implementation's l
 - `plugin-host.md` owns executable Plugin access to kernel capabilities.
 - `plugin-events.md` and `plugin-service-layering.md` own Event and Layer semantics.
 - `plugin-persistence.md` owns durable schema and Store behavior.
-- `plugin-runtime-bridges.md` owns runtime-provider and live Plugin-management semantics.
+- `plugin-runtime-bridges.md` owns plugin-runtime-adapter and live Plugin-management semantics.
