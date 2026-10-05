@@ -96,14 +96,14 @@ fn plan() -> StepPlan {
         mandatory_input_tokens: 0,
         reducible_input_tokens: 4096,
         output_reserve_tokens: 128,
-        required_capabilities: BTreeSet::new(),
+        required_features: BTreeSet::new(),
     };
     StepPlan {
         policy_revision: "policy-1".into(),
         historical_estimator_snapshot: None,
         routing: RoutingRequirements {
             context: context.clone(),
-            required_capabilities: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             require_known_capacity: false,
         },
         context,
