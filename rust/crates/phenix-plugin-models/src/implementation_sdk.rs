@@ -80,6 +80,30 @@ fn permission(value: &str) -> PermissionId {
     PermissionId::parse(value).expect("static permission is valid")
 }
 
+fn normalize_legacy_profile(mut profile: RoutingProfile) -> RoutingProfile {
+    for target in std::iter::once(&mut profile.default_target)
+        .chain(profile.fallback_targets.iter_mut())
+        .chain(profile.callable_targets.values_mut())
+    {
+        if matches!(
+            target.options.get("backend"),
+            Some(PhenixValue::String(value)) if value == "phenix"
+        ) {
+            target.options.remove("backend");
+        }
+        if matches!(target.options.get("inference"), Some(PhenixValue::Unit)) {
+            target.options.remove("inference");
+        }
+    }
+    profile
+}
+
+fn decode_stored_profile(bytes: &[u8]) -> Result<RoutingProfile, String> {
+    serde_json::from_slice(bytes)
+        .map(normalize_legacy_profile)
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Default)]
 struct ModelRoutingPlugin {
     routing: RoutingServiceState,
@@ -634,8 +658,7 @@ fn replace_profile(
             expected.id
         ));
     };
-    let current: RoutingProfile =
-        serde_json::from_slice(&current_raw).map_err(|error| error.to_string())?;
+    let current = decode_stored_profile(&current_raw)?;
     if current != *expected {
         return Err(format!(
             "routing profile replacement conflict: {}",
@@ -666,7 +689,7 @@ fn read_profile(
     id: &RoutingProfileId,
 ) -> Result<Option<RoutingProfile>, String> {
     read_raw(context, &profile_key(id))?
-        .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
+        .map(|value| decode_stored_profile(&value))
         .transpose()
 }
 
