@@ -6956,9 +6956,8 @@ mod tests {
     };
     use phenix_core::{
         Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
-        ModelFeatureGenerationId, ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput,
-        ResourceNamespace,
-        SessionId, TransactionOp, ValueAddress,
+        ModelFeatureGenerationId, ModelId, ModelInferenceFailure, ModelToolTurn,
+        PluginArtifactInput, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
         model_inference_service, ModelInferenceRequest, ModelInferenceResponse,
