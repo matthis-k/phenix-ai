@@ -79,7 +79,6 @@ _: {
       '';
 
       productRustDependencies = pkgs.rustPlatform.buildRustPackage {
-        auditable = false;
         pname = "phenix-product-rust-dependencies";
         version = "0";
         src = dependencySkeleton;
@@ -101,12 +100,18 @@ _: {
           runHook preInstall
           mkdir -p "$out"
           cp -a target "$out/target"
+          # Cargo lock sentinels are process synchronization state, not reusable
+          # artifacts. Nix store optimisation may hardlink identical empty lock
+          # files; preserving those links into the next build can make Cargo
+          # acquire two logical locks on one inode and block on itself.
+          find "$out/target" -type f \
+            \( -name '.cargo-lock' -o -name '.cargo-build-lock' -o -name '.cargo-artifact-lock' \) \
+            -delete
           runHook postInstall
         '';
       };
 
       productRustArtifacts = pkgs.rustPlatform.buildRustPackage {
-        auditable = false;
         pname = "phenix-product-rust-artifacts";
         version = "0";
         src = rustSource;
@@ -120,6 +125,11 @@ _: {
 
           cp -a ${productRustDependencies}/target ./target
           chmod -R u+w target
+          # Defend against older cached dependency outputs that still contain
+          # Cargo's lock sentinels.
+          find target -type f \
+            \( -name '.cargo-lock' -o -name '.cargo-build-lock' -o -name '.cargo-artifact-lock' \) \
+            -delete
 
           # The dependency skeleton compiled empty local crates to materialize the
           # external graph. Make every real workspace source newer so Cargo rebuilds
