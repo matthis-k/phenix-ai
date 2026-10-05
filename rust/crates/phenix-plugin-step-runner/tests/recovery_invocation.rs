@@ -22,7 +22,7 @@ use phenix_sdk::{
     memory_context_service, memory_service, CandidateCompleteness, CapacityKnowledge,
     ContextAnchor, ContextControl, ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision,
     ContextRecoveryInterface, ContextRecoveryResponse, DefaultInvocationCommand,
-    DelegationResourcePolicy, EffectiveModelCapabilities, ExecutionAuthority, ExecutionCommand,
+    DelegationResourcePolicy, EffectiveModelFeatures, ExecutionAuthority, ExecutionCommand,
     ExecutionResourceCommand, ExecutionResourceResponse, InvocationClockCommand,
     InvocationClockInterface, InvocationClockResponse, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationIntent, InvocationParams,
@@ -420,8 +420,8 @@ fn params() -> InvocationParams {
         },
         intent: InvocationIntent {
             output_reserve_tokens: 256,
-            required_context_capabilities: BTreeSet::new(),
-            required_capabilities: BTreeSet::new(),
+            required_context_features: BTreeSet::new(),
+            required_features: BTreeSet::new(),
             required_tools: BTreeSet::new(),
             optional_tools: BTreeSet::new(),
             required_skills: BTreeSet::new(),
@@ -476,8 +476,8 @@ fn setup(kernel: &mut Kernel) {
     let _: ModelResponse = invoke(
         kernel,
         phenix_sdk::model_routing_service(),
-        &ModelCommand::PublishCapabilities {
-            capabilities: EffectiveModelCapabilities {
+        &ModelCommand::PublishModelFeatures {
+            features: EffectiveModelFeatures {
                 target: target(),
                 generation: ReferenceGenerationId::parse("generation-1").unwrap(),
                 context: ContextControl::ReplaceableTurns,
