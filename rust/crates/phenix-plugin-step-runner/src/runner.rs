@@ -2166,28 +2166,27 @@ fn parent_reservation(
     if matches!(
         attribution.kind,
         UsageAttemptKind::Delegated | UsageAttemptKind::Retry
-    ) {
-        if let Some(task_id) = attribution.task_id.as_ref() {
-            let response: ExecutionResourceResponse = context
-                .sdk
-                .resources
-                .invoke_projected(&ExecutionResourceCommand::GetDelegatedReservation {
-                    task_id: task_id.clone(),
-                })
-                .map_err(|error| error.to_string())?;
-            let ExecutionResourceResponse::DelegatedReservation {
-                reservation: Some(reservation),
-            } = response
-            else {
-                return Err(format!(
-                    "delegated task has no budget reservation: {task_id}"
-                ));
-            };
-            if reservation.root_execution_id != attribution.root_execution_id {
-                return Err("delegated reservation belongs to a different root execution".into());
-            }
-            return Ok(Some(reservation.reservation_id));
+    ) && let Some(task_id) = attribution.task_id.as_ref()
+    {
+        let response: ExecutionResourceResponse = context
+            .sdk
+            .resources
+            .invoke_projected(&ExecutionResourceCommand::GetDelegatedReservation {
+                task_id: task_id.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        let ExecutionResourceResponse::DelegatedReservation {
+            reservation: Some(reservation),
+        } = response
+        else {
+            return Err(format!(
+                "delegated task has no budget reservation: {task_id}"
+            ));
+        };
+        if reservation.root_execution_id != attribution.root_execution_id {
+            return Err("delegated reservation belongs to a different root execution".into());
         }
+        return Ok(Some(reservation.reservation_id));
     }
 
     Ok(None)
