@@ -4,7 +4,7 @@ use phenix_application_interface::{
     application_descriptor, ActivateSkill, AddClientTool, ApplicationTransport, Authenticate,
     Cancel, CloseSession, CreateSession, DecideReview, DiscoverAuthentication, GetDiagnostics,
     GetExecutionTree, GetLineage, GetObservable, GetProvenance, GetSdk, InvokeCallable,
-    InvokeCapability, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
+    InvokeCallableReference, ListCallables, ListDefaultSelections, ListObservables, ListSessions,
     ListSkills, Operation, Prompt, QueryLogs, ReadLogReference, RemoveClientTool, RenameSession,
     ResumeSession, SelectDefaultSelection, SetInteractionHandlers, SubscribeObservable,
     UnsubscribeObservable,
@@ -48,7 +48,7 @@ impl<T: ApplicationTransport> ApplicationAdapter<T> {
             AddClientTool,
             RemoveClientTool,
             GetSdk,
-            InvokeCapability,
+            InvokeCallableReference,
             GetExecutionTree,
             GetProvenance,
             GetDiagnostics,
@@ -383,7 +383,7 @@ mod tests {
             admission_id: "admission-1".to_owned(),
             callable_id: input.tool.id.clone(),
         };
-        let extra = [InvokeCapability::CAPABILITY, AddClientTool::CAPABILITY];
+        let extra = [InvokeCallableReference::CAPABILITY, AddClientTool::CAPABILITY];
         let (add, calls) = adapter(output.to_value(), &extra);
         add.extension_request(request("_phenix/client-tool-add@1", input.to_value()))
             .await
