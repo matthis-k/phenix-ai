@@ -54,4 +54,5 @@ This file is the source of truth for architecture vocabulary. Code, documentatio
 - Prefer `Callable` for invocable references and `Permission` or `Authority` for access control.
 - Prefer `ModelAdapter` for model protocol translation. Keep `ModelProvider` for provider identity and provider-specific routing or authentication.
 - Keep historical product names such as Harness out of generic kernel types and diagnostics unless they refer to the product assembly itself.
+- Keep historical serialized compatibility keys unchanged in migrations and migration fixtures. Rename current APIs and symbols, not persisted legacy wire formats.
 - Generic public names such as `Manager`, `Provider`, `Adapter`, `Frontend`, `Backend`, `Runtime`, `State`, `Handler`, `Observer`, `Registry`, `Capability`, or `Binding` need a domain qualifier unless their module or type scope makes the role unambiguous.
