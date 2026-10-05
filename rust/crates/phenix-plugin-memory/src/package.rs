@@ -10,8 +10,7 @@ use phenix_sdk::{
     CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
     MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, MEMORY_CONTEXT_MAX_PROMPT_BYTES,
-    memory_context_service, memory_service,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, memory_context_service, memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -299,11 +298,6 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
     if !(1..=20).contains(&request.limit) {
         return Err("memory.context recall limit must be between 1 and 20".into());
     }
-    if request.prompt.len() > MEMORY_CONTEXT_MAX_PROMPT_BYTES {
-        return Err(format!(
-            "memory.context prompt exceeds {MEMORY_CONTEXT_MAX_PROMPT_BYTES} bytes"
-        ));
-    }
     if request.known.len() > 32 {
         return Err("memory.context known anchors exceed 32".into());
     }
@@ -318,6 +312,28 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod recall_validation_tests {
+    use super::*;
+
+    #[test]
+    fn long_prompts_are_not_rejected_without_an_explicit_policy_limit() {
+        let request = MemoryContextRecallRequest {
+            request_id: "request-1".into(),
+            scopes: vec![phenix_sdk::MemoryScope::Global],
+            prompt: "x".repeat(8 * 1024),
+            known: Vec::new(),
+            needs: vec![ContextNeed::Task {
+                query: "task".into(),
+            }],
+            at: 1,
+            limit: 8,
+        };
+
+        validate_recall_request(&request).unwrap();
+    }
 }
 
 fn need_query(need: &ContextNeed) -> &str {
