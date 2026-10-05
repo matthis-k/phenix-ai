@@ -407,7 +407,7 @@ fn cache_compatibility_identity(
         model: request.model.as_str(),
         protocol: spec.protocol.name(),
         endpoint: spec.endpoint.as_str(),
-        capability_generation: request.cache.local_capability_generation.as_deref(),
+        feature_generation: request.cache.local_feature_generation.as_deref(),
         authority_identity: request.cache.local_authority_identity.as_deref(),
         options: &request.options,
     })
@@ -420,7 +420,7 @@ struct CacheCompatibilityIdentityParts<'a> {
     model: &'a str,
     protocol: &'a str,
     endpoint: &'a str,
-    capability_generation: Option<&'a str>,
+    feature_generation: Option<&'a str>,
     authority_identity: Option<&'a str>,
     options: &'a BTreeMap<String, PhenixValue>,
 }
@@ -437,7 +437,7 @@ fn cache_compatibility_identity_from_parts(
         parts.model,
         parts.protocol,
         parts.endpoint,
-        parts.capability_generation.unwrap_or_default(),
+        parts.feature_generation.unwrap_or_default(),
         parts.authority_identity.unwrap_or_default(),
     ];
     let mut material = Vec::new();
@@ -577,7 +577,7 @@ mod cache_identity_tests {
     fn identity(
         provider: &str,
         model: &str,
-        capability_generation: &str,
+        feature_generation: &str,
         authority_identity: &str,
         options: BTreeMap<String, PhenixValue>,
     ) -> String {
@@ -587,7 +587,7 @@ mod cache_identity_tests {
             model,
             protocol: "openai_responses",
             endpoint: "https://api.example.com/v1/",
-            capability_generation: Some(capability_generation),
+            feature_generation: Some(feature_generation),
             authority_identity: Some(authority_identity),
             options: &options,
         })
