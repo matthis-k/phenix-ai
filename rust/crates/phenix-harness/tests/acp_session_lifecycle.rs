@@ -36,8 +36,12 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
 
     let result = client
         .connect_with(|connection| async move {
+            let working_directory = std::env::current_dir()
+                .map_err(|error| ClientError::Other(error.to_string()))?
+                .to_string_lossy()
+                .into_owned();
             let controller = connection
-                .new_session(NewSessionRequest::new("/workspace"))
+                .new_session(NewSessionRequest::new(working_directory))
                 .await?;
 
             connection
