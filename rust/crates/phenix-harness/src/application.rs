@@ -9083,8 +9083,7 @@ mod tests {
                     && !message.contains("missing workspace.read")
         ));
 
-        plan["requested_authority"] =
-            serde_json::json!(["workspace.read", "workspace.shell"]);
+        plan["requested_authority"] = serde_json::json!(["workspace.read", "workspace.shell"]);
         let complete: PluginBuildPlan = serde_json::from_value(plan).unwrap();
         assert_eq!(
             require_runtime_plugin_build_plan_authority(&complete),
