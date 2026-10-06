@@ -22,3 +22,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+agent-client-protocol.workspace = true
+phenix-client-acp = { path = "../phenix-client-acp" }

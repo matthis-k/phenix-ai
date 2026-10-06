@@ -11226,4 +11226,467 @@ what question?"
         assert_eq!(repaired.through_sequence, 2);
         assert_eq!(repaired.session.title.as_deref(), Some("repaired"));
     }
+
+    fn controller_lifecycle_model_manifest() -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.controller-lifecycle-model").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: model_inference_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
+    struct ControllerLifecycleModel;
+
+    impl PluginInstance for ControllerLifecycleModel {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            if service != &model_inference_service() {
+                return Err(format!(
+                    "unsupported controller-lifecycle fixture service: {service}"
+                ));
+            }
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let request = ModelInferenceRequest::try_from(Project(&value))
+                .map_err(|error| error.to_string())?;
+            let input = String::from_utf8_lossy(request.input.as_ref());
+
+            let response = if input.trim_end().ends_with("LIFECYCLE_CHILD") {
+                orchestration_response("child lifecycle complete", Vec::new())
+            } else if input.trim_end().ends_with("LIFECYCLE_FAILED_CHILD") {
+                match request.continuation.len() {
+                    0 => orchestration_response(
+                        "create failing child",
+                        vec![orchestration_operation_call(
+                            "lifecycle-create-failing-child",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([
+                                (
+                                    "working_directory".into(),
+                                    PhenixValue::String("/workspace".into()),
+                                ),
+                                (
+                                    "title".into(),
+                                    PhenixValue::String("failing lifecycle child".into()),
+                                ),
+                            ]),
+                        )],
+                    ),
+                    1 => {
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        orchestration_response(
+                            "send malformed child prompt",
+                            vec![orchestration_operation_call(
+                                "lifecycle-prompt-failing-child",
+                                "phenix.session",
+                                "prompt",
+                                BTreeMap::from([
+                                    (
+                                        "session_id".into(),
+                                        PhenixValue::String(child.session_id.to_string()),
+                                    ),
+                                    (
+                                        "content".into(),
+                                        PhenixValue::Map(BTreeMap::from([
+                                            ("kind".into(), PhenixValue::String("text".into())),
+                                            (
+                                                "text".into(),
+                                                PhenixValue::String("invalid shape".into()),
+                                            ),
+                                        ])),
+                                    ),
+                                ]),
+                            )],
+                        )
+                    }
+                    2 => {
+                        let failed = request
+                            .continuation
+                            .get(1)
+                            .and_then(|turn| turn.tool_results.first())
+                            .ok_or_else(|| "missing failing child tool result".to_owned())?;
+                        if !failed.is_error {
+                            return Err("malformed child prompt unexpectedly succeeded".to_owned());
+                        }
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        orchestration_response(
+                            "close failed child",
+                            vec![orchestration_operation_call(
+                                "lifecycle-close-failing-child",
+                                "phenix.session",
+                                "close",
+                                BTreeMap::from([(
+                                    "session_id".into(),
+                                    PhenixValue::String(child.session_id.to_string()),
+                                )]),
+                            )],
+                        )
+                    }
+                    3 => {
+                        let _ = orchestration_result(&request, 2)?;
+                        orchestration_response(
+                            "controller failed child cleanup complete",
+                            Vec::new(),
+                        )
+                    }
+                    turns => {
+                        return Err(format!(
+                            "failed-child lifecycle fixture received {turns} continuation turns"
+                        ));
+                    }
+                }
+            } else if input.trim_end().ends_with("LIFECYCLE_SELF_CLOSE") {
+                match request.continuation.as_slice() {
+                    [] => {
+                        let session_id = request.session_id.as_ref().ok_or_else(|| {
+                            "controller lifecycle request has no session id".to_owned()
+                        })?;
+                        orchestration_response(
+                            "attempt self close",
+                            vec![orchestration_operation_call(
+                                "lifecycle-self-close",
+                                "phenix.session",
+                                "close",
+                                BTreeMap::from([(
+                                    "session_id".into(),
+                                    PhenixValue::String(session_id.to_string()),
+                                )]),
+                            )],
+                        )
+                    }
+                    [turn] => {
+                        if turn.tool_results.len() != 1 || !turn.tool_results[0].is_error {
+                            return Err(
+                                "controller self-close was not rejected by phenix.session".into()
+                            );
+                        }
+                        orchestration_response("controller self close rejected", Vec::new())
+                    }
+                    turns => {
+                        return Err(format!(
+                            "controller self-close fixture received {} continuation turns",
+                            turns.len()
+                        ));
+                    }
+                }
+            } else if input.trim_end().ends_with("LIFECYCLE_SECOND") {
+                orchestration_response("controller second turn complete", Vec::new())
+            } else if input.contains("LIFECYCLE_FIRST") {
+                match request.continuation.len() {
+                    0 => orchestration_response(
+                        "create child",
+                        vec![orchestration_operation_call(
+                            "lifecycle-create-child",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([
+                                (
+                                    "working_directory".into(),
+                                    PhenixValue::String("/workspace".into()),
+                                ),
+                                (
+                                    "title".into(),
+                                    PhenixValue::String("lifecycle child".into()),
+                                ),
+                            ]),
+                        )],
+                    ),
+                    1 => {
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        orchestration_response(
+                            "prompt child",
+                            vec![orchestration_operation_call(
+                                "lifecycle-prompt-child",
+                                "phenix.session",
+                                "prompt",
+                                BTreeMap::from([
+                                    (
+                                        "session_id".into(),
+                                        PhenixValue::String(child.session_id.to_string()),
+                                    ),
+                                    (
+                                        "content".into(),
+                                        PhenixValue::List(vec![
+                                            Content::Text {
+                                                text: "LIFECYCLE_CHILD".into(),
+                                            }
+                                            .to_value(),
+                                        ]),
+                                    ),
+                                ]),
+                            )],
+                        )
+                    }
+                    2 => {
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        let _ = orchestration_result(&request, 1)?;
+                        orchestration_response(
+                            "close child",
+                            vec![orchestration_operation_call(
+                                "lifecycle-close-child",
+                                "phenix.session",
+                                "close",
+                                BTreeMap::from([(
+                                    "session_id".into(),
+                                    PhenixValue::String(child.session_id.to_string()),
+                                )]),
+                            )],
+                        )
+                    }
+                    3 => {
+                        let _ = orchestration_result(&request, 2)?;
+                        orchestration_response("controller child close complete", Vec::new())
+                    }
+                    turns => {
+                        return Err(format!(
+                            "controller lifecycle fixture received {turns} continuation turns"
+                        ));
+                    }
+                }
+            } else {
+                return Err(format!(
+                    "unexpected controller lifecycle input: {}",
+                    input.trim()
+                ));
+            };
+
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn model_child_close_preserves_controller_for_next_execution() {
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(controller_lifecycle_model_manifest(), || {
+                Box::new(ControllerLifecycleModel)
+            })
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        enable_runtime_orchestration(&worker);
+        configure_fixture_routing(
+            &mut worker,
+            "fixture.controller-lifecycle-model",
+            "fixture-controller-lifecycle",
+            "controller-lifecycle-regression",
+        );
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_generation()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            ReferenceGenerationId::from(harness.generation())
+        };
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture-controller-lifecycle-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-controller-lifecycle-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-controller-lifecycle-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            4,
+        ));
+
+        let controller = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("controller".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let first = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_FIRST".into(),
+                }],
+            },
+        )
+        .await
+        .expect("controller must finish after closing its child");
+        assert_eq!(first.stop_reason, StopReason::EndTurn);
+
+        let second = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("child cleanup must not close or poison the controller session");
+        assert_eq!(second.stop_reason, StopReason::EndTurn);
+        assert_ne!(first.execution_id, second.execution_id);
+
+        let self_close = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SELF_CLOSE".into(),
+                }],
+            },
+        )
+        .await
+        .expect("model-side self-close rejection must not abort the controller execution");
+        assert_eq!(self_close.stop_reason, StopReason::EndTurn);
+
+        let after_self_close = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("rejected self-close must leave the controller open");
+        assert_eq!(after_self_close.stop_reason, StopReason::EndTurn);
+        assert_ne!(self_close.execution_id, after_self_close.execution_id);
+
+        let failed_child_cleanup = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_FAILED_CHILD".into(),
+                }],
+            },
+        )
+        .await
+        .expect("failed child prompt cleanup must not abort the controller");
+        assert_eq!(failed_child_cleanup.stop_reason, StopReason::EndTurn);
+
+        let after_failed_child = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("closing a failed child must leave the controller usable");
+        assert_eq!(after_failed_child.stop_reason, StopReason::EndTurn);
+        assert_ne!(
+            failed_child_cleanup.execution_id,
+            after_failed_child.execution_id
+        );
+
+        let snapshot = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: controller.session_id.clone(),
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller child close complete"
+            )
+        }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller second turn complete"
+            )
+        }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller self close rejected"
+            )
+        }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller failed child cleanup complete"
+            )
+        }));
+
+        let sessions =
+            invoke_transport_operation::<ListSessions>(&transport, PageInput { cursor: None })
+                .await
+                .unwrap();
+        assert_eq!(
+            sessions
+                .sessions
+                .iter()
+                .filter(|session| session.working_directory == "/workspace")
+                .count(),
+            3,
+            "controller plus both closed children must remain independently addressable"
+        );
+        assert!(
+            sessions
+                .sessions
+                .iter()
+                .any(|session| session.session_id == controller.session_id)
+        );
+
+        drop(transport);
+        worker_task.await.unwrap();
+    }
 }
