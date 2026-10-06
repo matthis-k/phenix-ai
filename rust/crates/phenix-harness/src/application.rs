@@ -6904,13 +6904,14 @@ mod tests {
             session_id: Some(session_id.clone()),
             call,
         };
+        let authority = worker.application_root_authority(session_id).unwrap();
         let output = worker
             .harness
             .lock()
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                &worker.authority,
+                &authority,
                 None,
             )
             .unwrap();
@@ -6920,6 +6921,13 @@ mod tests {
             panic!("application agent tool must complete");
         };
         result
+    }
+
+    fn public_text_content(text: &str) -> PhenixValue {
+        PhenixValue::Map(BTreeMap::from([
+            ("kind".into(), PhenixValue::String("text".into())),
+            ("text".into(), PhenixValue::String(text.into())),
+        ]))
     }
 
     fn application_worker() -> ApplicationWorker {
@@ -7391,19 +7399,8 @@ mod tests {
                                             ),
                                             (
                                                 "content".into(),
-                                                PhenixValue::List(vec![PhenixValue::Map(
-                                                    BTreeMap::from([
-                                                        (
-                                                            "kind".into(),
-                                                            PhenixValue::String("text".into()),
-                                                        ),
-                                                        (
-                                                            "text".into(),
-                                                            PhenixValue::String(
-                                                                "complete the child session".into(),
-                                                            ),
-                                                        ),
-                                                    ]),
+                                                PhenixValue::List(vec![public_text_content(
+                                                    "complete the child session",
                                                 )]),
                                             ),
                                         ])),
@@ -7855,12 +7852,7 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "store Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![public_text_content("store Helios")]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -7918,12 +7910,7 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "recall Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![public_text_content("recall Helios")]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -9617,6 +9604,170 @@ mod tests {
     }
 
     #[test]
+    fn runtime_plugin_build_materializes_artifact_without_changing_generation() {
+        let mut worker = application_worker();
+        enable_runtime_orchestration(&worker);
+        let session_id = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("plugin-build".into()),
+            },
+        )
+        .unwrap()
+        .session_id;
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_generation()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            ReferenceGenerationId::from(harness.generation())
+        };
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.plugin-build-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-plugin-build-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-plugin-build-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let authority = worker.application_root_authority(&session_id).unwrap();
+        let surface = {
+            let harness = worker.harness.lock();
+            application_model_tool_surface(
+                &service,
+                &session_id,
+                harness.resolved_generation(),
+                &authority,
+            )
+            .unwrap()
+        };
+        assert!(
+            surface
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.plugin")
+        );
+
+        let execution_id = "execution-plugin-build".to_owned();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (progress_sender, _progress_receiver) =
+            mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        let (adapter, root_generation, root_constraints) = {
+            let harness = worker.harness.lock();
+            let root = harness.root_execution_handle(&authority);
+            (
+                harness.application_agent_tools().clone(),
+                root.generation()
+                    .cloned()
+                    .expect("plugin build root has a generation"),
+                root.constraints().clone(),
+            )
+        };
+        let before_generation = root_generation.clone();
+        let (control_transport, _control_receiver) = ChannelTransport::new(1);
+        adapter
+            .register(
+                execution_id.clone(),
+                ApplicationAgentToolRun {
+                    service,
+                    control_transport: control_transport.downgrade(),
+                    harness: Arc::downgrade(&worker.harness),
+                    session_id: session_id.clone(),
+                    execution_id: execution_id.clone(),
+                    root_generation,
+                    root_constraints,
+                    permission_handler: None,
+                    tools: surface.tools,
+                    runtime_entry_triggers: surface.runtime_entry_triggers,
+                    cancellation,
+                    progress_sender,
+                },
+            )
+            .unwrap();
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let artifact_output = format!("target/phenix-plugin-build-{nonce}.bin");
+        let artifact_content = format!("phenix-plugin-build-{nonce}");
+        let command = format!("printf %s {artifact_content} > {artifact_output}");
+        let plan = PluginBuildPlan::new(
+            phenix_core::PluginBuildSource {
+                identity: "fixture.plugin-build".parse().unwrap(),
+                revision: format!("fixture-{nonce}").parse().unwrap(),
+            },
+            vec![phenix_core::PluginBuildStep {
+                executable: "sh".parse().unwrap(),
+                argv: vec!["-c".parse().unwrap(), command.parse().unwrap()],
+                working_directory: phenix_core::BuildWorkingDirectory::root(),
+                environment: phenix_core::BuildEnvironment::default(),
+            }],
+            artifact_output.parse().unwrap(),
+            BTreeMap::new(),
+            runtime_plugin_build_authority(),
+        )
+        .unwrap();
+
+        let result = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "plugin-build".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Map(BTreeMap::from([
+                    ("operation".into(), PhenixValue::String("build".into())),
+                    (
+                        "arguments".into(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "plan".into(),
+                            PhenixValue::from(serde_json::to_value(&plan).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        );
+        assert!(!result.is_error, "plugin build failed: {:?}", result.output);
+
+        let PhenixValue::Map(fields) = result.output else {
+            panic!("plugin build result must be a map");
+        };
+        let Some(PhenixValue::String(locator)) = fields.get("artifact_locator") else {
+            panic!("plugin build result has no artifact locator");
+        };
+        let Some(PhenixValue::String(revision)) = fields.get("artifact_revision") else {
+            panic!("plugin build result has no artifact revision");
+        };
+        assert_eq!(
+            revision,
+            ArtifactRevision::from_content(artifact_content.as_bytes()).as_ref()
+        );
+        assert_eq!(fs::read(locator).unwrap(), artifact_content.as_bytes());
+
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &before_generation);
+            assert_eq!(harness.selectable_generations().len(), 1);
+        }
+
+        fs::remove_file(&artifact_output).unwrap();
+        fs::remove_file(locator).unwrap();
+    }
+
+    #[test]
     fn default_runtime_exposes_and_executes_builtin_agent_tools() {
         let mut worker = application_worker();
         let session_id = invoke_operation::<CreateSession>(
@@ -9730,7 +9881,7 @@ mod tests {
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
         let (adapter, root_generation, root_constraints) = {
             let harness = worker.harness.lock();
-            let root = harness.root_execution_handle(&worker.authority);
+            let root = harness.root_execution_handle(&authority);
             (
                 harness.application_agent_tools().clone(),
                 root.generation()
