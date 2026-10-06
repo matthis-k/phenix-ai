@@ -170,9 +170,7 @@ pub enum HelperInvocationCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InvocationDefaultsCommand {
-    ConfigureRequiredSkills {
-        required_skills: BTreeSet<SkillId>,
-    },
+    ConfigureRequiredSkills { required_skills: BTreeSet<SkillId> },
     Resolve { request: InvocationRequest },
     ResolveHelper { request: HelperInvocationRequest },
 }
@@ -180,9 +178,7 @@ pub enum InvocationDefaultsCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InvocationDefaultsResponse {
-    RequiredSkillsConfigured {
-        required_skills: BTreeSet<SkillId>,
-    },
+    RequiredSkillsConfigured { required_skills: BTreeSet<SkillId> },
     Params { params: InvocationParams },
 }
 

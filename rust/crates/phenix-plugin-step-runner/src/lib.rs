@@ -555,7 +555,9 @@ impl PluginInstance for InvocationPackage {
                 })
                 .map_err(|error| format!("helper invocation parameters unavailable: {error}"))?;
             let InvocationDefaultsResponse::Params { params } = resolved else {
-                return Err("invocation defaults service returned a non-params helper response".into());
+                return Err(
+                    "invocation defaults service returned a non-params helper response".into(),
+                );
             };
             let kind = request.kind.usage_kind();
             let encoded = self.invoke_with_kind(

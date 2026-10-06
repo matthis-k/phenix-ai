@@ -164,7 +164,11 @@ fn register_packaged_skills(
         return Ok(BTreeSet::new());
     }
     if !directory.is_dir() {
-        return Err(format!("packaged skill path is not a directory: {}", directory.display()).into());
+        return Err(format!(
+            "packaged skill path is not a directory: {}",
+            directory.display()
+        )
+        .into());
     }
 
     let mut skill_files = fs::read_dir(directory)?
@@ -180,7 +184,12 @@ fn register_packaged_skills(
             .parent()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("packaged skill path has no UTF-8 skill name: {}", path.display()))?;
+            .ok_or_else(|| {
+                format!(
+                    "packaged skill path has no UTF-8 skill name: {}",
+                    path.display()
+                )
+            })?;
         let skill = SkillId::parse(skill_name.to_owned())?;
         let resource_id = ContextResourceId::parse(format!("skill:{}", skill.as_str()))?;
         let response: ContextResponse = invoke_projected(
@@ -196,7 +205,9 @@ fn register_packaged_skills(
             &default_suite_authority(),
         )?;
         if !matches!(response, ContextResponse::Registered { .. }) {
-            return Err(format!("context service rejected packaged skill {}", skill.as_str()).into());
+            return Err(
+                format!("context service rejected packaged skill {}", skill.as_str()).into(),
+            );
         }
         registered.insert(skill);
     }
@@ -224,7 +235,11 @@ fn validate_required_skills(
         if !descriptors.iter().any(|descriptor| {
             descriptor.resource_id == resource_id && descriptor.kind == ContextResourceKind::Skill
         }) {
-            return Err(format!("required packaged skill is not registered: {}", skill.as_str()).into());
+            return Err(format!(
+                "required packaged skill is not registered: {}",
+                skill.as_str()
+            )
+            .into());
         }
     }
     Ok(())
@@ -515,12 +530,15 @@ mod tests {
         ));
         let skill_directory = directory.join("skills/write");
         fs::create_dir_all(&skill_directory).unwrap();
-        fs::write(skill_directory.join("SKILL.md"), "fixture write instructions").unwrap();
+        fs::write(
+            skill_directory.join("SKILL.md"),
+            "fixture write instructions",
+        )
+        .unwrap();
 
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
-        let registered =
-            register_packaged_skills(&mut harness, &directory.join("skills")).unwrap();
+        let registered = register_packaged_skills(&mut harness, &directory.join("skills")).unwrap();
         let write = SkillId::parse("write").unwrap();
         assert_eq!(registered, BTreeSet::from([write.clone()]));
 
