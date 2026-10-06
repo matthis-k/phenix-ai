@@ -320,6 +320,23 @@ fn application_workspace_git_authority() -> Authority {
     workspace_capability("workspace.git")
 }
 
+fn application_code_query_authority() -> Authority {
+    Authority::new([PermissionId::parse("kernel.persistence.read")
+        .expect("static persistence read permission is valid")])
+}
+
+fn application_memory_authority() -> Authority {
+    Authority::new(
+        [
+            "kernel.persistence.schema",
+            "kernel.persistence.read",
+            "kernel.persistence.write",
+        ]
+        .into_iter()
+        .map(|value| PermissionId::parse(value).expect("static persistence permission is valid")),
+    )
+}
+
 fn application_agent_tool_trigger(
     interface: InterfaceId,
     callable_id: &str,
@@ -386,7 +403,7 @@ pub(crate) fn application_code_tool_triggers() -> Vec<ComponentEntryTrigger> {
         ApplicationCodeQueryToolInterface::interface_id(),
         "code.query",
         "Run a bounded provider-neutral semantic code query over the canonical language index.",
-        Authority::default(),
+        application_code_query_authority(),
     )]
 }
 
@@ -397,13 +414,13 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
             ApplicationMemoryRecordToolInterface::interface_id(),
             "memory.record",
             "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
-            Authority::default(),
+            application_memory_authority(),
         ),
         application_agent_tool_trigger(
             ApplicationMemoryRecallToolInterface::interface_id(),
             "memory.recall",
             "Recall typed durable memories using bounded scope, kind, text, time, and result limits.",
-            Authority::default(),
+            application_memory_authority(),
         ),
     ]
 }
@@ -3391,13 +3408,13 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: LanguageInterface::interface_id(),
                 schema: LanguageInterface::schema(),
                 required: false,
-                authority: Authority::default(),
+                authority: application_code_query_authority(),
             },
             ComponentImport {
                 interface: MemoryInterface::interface_id(),
                 schema: MemoryInterface::schema(),
                 required: false,
-                authority: Authority::default(),
+                authority: application_memory_authority(),
             },
         ],
         exports: vec![
@@ -5002,7 +5019,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
                 .expect("static session control callable id is valid"),
-            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content contains canonical text/image/resource parts; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
+            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content parts use kind=text, kind=image, or kind=resource with their corresponding fields; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static session operation field is valid"),
@@ -6279,14 +6296,50 @@ fn session_control_content(arguments: &PhenixValue) -> Result<Vec<Content>, Appl
                 .to_owned(),
         });
     };
-    parts
-        .iter()
-        .map(|part| {
-            Content::from_value(part).map_err(|error| ApplicationError::InvalidInput {
-                message: format!("invalid phenix.session content part: {error}"),
+    parts.iter().map(session_control_content_part).collect()
+}
+
+fn session_control_content_part(part: &PhenixValue) -> Result<Content, ApplicationError> {
+    if let Ok(content) = Content::from_value(part) {
+        return Ok(content);
+    }
+
+    let kind = session_control_required_string(part, "kind")?;
+    match kind.as_str() {
+        "text" => Ok(Content::Text {
+            text: session_control_required_string(part, "text")?,
+        }),
+        "resource" => Ok(Content::Resource {
+            uri: session_control_required_string(part, "uri")?,
+            mime_type: session_control_optional_string(part, "mime_type")?,
+            text: session_control_optional_string(part, "text")?,
+        }),
+        "image" => {
+            let data = match session_control_field(part, "data") {
+                Some(PhenixValue::Bytes(data)) => Bytes::new(data.clone()),
+                Some(PhenixValue::String(data)) => Bytes::new(data.as_bytes().to_vec()),
+                Some(_) => {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "phenix.session image data must be bytes or a string".to_owned(),
+                    });
+                }
+                None => {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "phenix.session image data is required".to_owned(),
+                    });
+                }
+            };
+            Ok(Content::Image {
+                mime_type: session_control_required_string(part, "mime_type")?,
+                data,
             })
-        })
-        .collect()
+        }
+        other => Err(ApplicationError::InvalidInput {
+            message: format!(
+                "unsupported phenix.session content kind {other}; expected text, image, or resource"
+            ),
+        }),
+    }
 }
 
 fn session_control_required_string(
@@ -6808,7 +6861,9 @@ mod tests {
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
     };
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, ModelLimits,
+        CapacityKnowledge, CodeQueryAnchor, CodeQueryBudget, CodeQueryProjection,
+        CodeQuerySelection, ContextControl, EffectiveModelFeatures, ExecutionRecord, MemoryKind,
+        MemoryScope, MemorySourceReference, ModelLimits,
     };
     use std::{
         fs,
@@ -6838,6 +6893,35 @@ mod tests {
         })
     }
 
+    fn invoke_agent_tool(
+        worker: &ApplicationWorker,
+        execution_id: &str,
+        session_id: &SessionId,
+        call: ModelToolCall,
+    ) -> ModelToolResult {
+        let request = AgentToolExecutionRequest {
+            execution_id: execution_id.to_owned(),
+            session_id: Some(session_id.clone()),
+            call,
+        };
+        let output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                &worker.authority,
+                None,
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+        let AgentToolExecutionResponse::Completed { result, .. } = response else {
+            panic!("application agent tool must complete");
+        };
+        result
+    }
+
     fn application_worker() -> ApplicationWorker {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
@@ -6853,6 +6937,51 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(response, OptionResponse::Updated { .. }));
+    }
+
+    #[test]
+    fn application_agent_tool_imports_bind_required_providers_and_authority() {
+        let harness = crate::PhenixRuntimeBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        let graph = harness.component_graph();
+        let read = PermissionId::parse("kernel.persistence.read").unwrap();
+        let write = PermissionId::parse("kernel.persistence.write").unwrap();
+        let schema = PermissionId::parse("kernel.persistence.schema").unwrap();
+        let shell = PermissionId::parse("workspace.shell").unwrap();
+
+        let language = graph
+            .import_handle(
+                &application_agent_tool_component_id(),
+                &LanguageInterface::interface_id(),
+            )
+            .unwrap()
+            .expect("application code query binds the language provider");
+        assert_eq!(
+            language.owning_plugin(),
+            &PluginId::parse("phenix.language").unwrap()
+        );
+        assert!(language.effective_authority().permits(&read));
+        assert!(!language.effective_authority().permits(&write));
+        assert!(!language.effective_authority().permits(&schema));
+        assert!(!language.effective_authority().permits(&shell));
+
+        let memory = graph
+            .import_handle(
+                &application_agent_tool_component_id(),
+                &MemoryInterface::interface_id(),
+            )
+            .unwrap()
+            .expect("application memory tools bind the memory provider");
+        assert_eq!(
+            memory.owning_plugin(),
+            &PluginId::parse("phenix.memory").unwrap()
+        );
+        for capability in [&schema, &read, &write] {
+            assert!(memory.effective_authority().permits(capability));
+        }
+        assert!(!memory.effective_authority().permits(&shell));
     }
 
     #[test]
@@ -7262,12 +7391,20 @@ mod tests {
                                             ),
                                             (
                                                 "content".into(),
-                                                PhenixValue::List(vec![
-                                                    Content::Text {
-                                                        text: "complete the child session".into(),
-                                                    }
-                                                    .to_value(),
-                                                ]),
+                                                PhenixValue::List(vec![PhenixValue::Map(
+                                                    BTreeMap::from([
+                                                        (
+                                                            "kind".into(),
+                                                            PhenixValue::String("text".into()),
+                                                        ),
+                                                        (
+                                                            "text".into(),
+                                                            PhenixValue::String(
+                                                                "complete the child session".into(),
+                                                            ),
+                                                        ),
+                                                    ]),
+                                                )]),
                                             ),
                                         ])),
                                     ),
@@ -8414,6 +8551,51 @@ mod tests {
     }
 
     #[test]
+    fn session_control_prompt_decodes_public_content_maps() {
+        let arguments = PhenixValue::Map(BTreeMap::from([(
+            "content".into(),
+            PhenixValue::List(vec![
+                PhenixValue::Map(BTreeMap::from([
+                    ("kind".into(), PhenixValue::String("text".into())),
+                    ("text".into(), PhenixValue::String("hello".into())),
+                ])),
+                PhenixValue::Map(BTreeMap::from([
+                    ("kind".into(), PhenixValue::String("image".into())),
+                    ("mime_type".into(), PhenixValue::String("image/png".into())),
+                    ("data".into(), PhenixValue::Bytes(vec![1, 2, 3])),
+                ])),
+                PhenixValue::Map(BTreeMap::from([
+                    ("kind".into(), PhenixValue::String("resource".into())),
+                    (
+                        "uri".into(),
+                        PhenixValue::String("file:///workspace/context.txt".into()),
+                    ),
+                    ("mime_type".into(), PhenixValue::String("text/plain".into())),
+                    ("text".into(), PhenixValue::String("context".into())),
+                ])),
+            ]),
+        )]));
+
+        assert_eq!(
+            session_control_content(&arguments).unwrap(),
+            vec![
+                Content::Text {
+                    text: "hello".into(),
+                },
+                Content::Image {
+                    mime_type: "image/png".into(),
+                    data: Bytes::new(vec![1, 2, 3]),
+                },
+                Content::Resource {
+                    uri: "file:///workspace/context.txt".into(),
+                    mime_type: Some("text/plain".into()),
+                    text: Some("context".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn plugin_build_policy_requires_explicit_runtime_and_workspace_authority() {
         let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
         let build = PermissionId::parse(RUNTIME_PLUGIN_BUILD_PERMISSION).unwrap();
@@ -9435,7 +9617,7 @@ mod tests {
     }
 
     #[test]
-    fn default_runtime_exposes_backend_neutral_bash_tool() {
+    fn default_runtime_exposes_and_executes_builtin_agent_tools() {
         let mut worker = application_worker();
         let session_id = invoke_operation::<CreateSession>(
             &mut worker,
@@ -9675,6 +9857,100 @@ mod tests {
         assert_eq!(result.call_id, "call-1");
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
+
+        let queried = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "code-query".into(),
+                callable_id: CallableId::parse("code.query").unwrap(),
+                input: CodeQuery {
+                    anchor: CodeQueryAnchor::Repository {
+                        repository_id: "fixture-empty-repository".into(),
+                    },
+                    selection: CodeQuerySelection::Entities,
+                    traversal: None,
+                    projection: CodeQueryProjection::Identity,
+                    budget: CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                }
+                .to_value(),
+            },
+        );
+        assert!(!queried.is_error, "code.query failed: {:?}", queried.output);
+        let queried = CodeQueryResult::from_value(&queried.output).unwrap();
+        assert_eq!(queried.repository_id, "fixture-empty-repository");
+        assert!(queried.entities.is_empty());
+
+        let memory_record = MemoryRecord {
+            id: "application-agent-memory".into(),
+            kind: MemoryKind::Fact,
+            scope: MemoryScope::Session {
+                session_id: session_id.clone(),
+            },
+            content: "Helios is durable".into(),
+            source_refs: vec![MemorySourceReference {
+                service: session_service(),
+                resource: format!("session/{}", session_id.as_str()),
+                start: Some(0),
+                end: Some(0),
+            }],
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 1,
+        };
+        let recorded = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "memory-record".into(),
+                callable_id: CallableId::parse("memory.record").unwrap(),
+                input: memory_record.to_value(),
+            },
+        );
+        assert!(
+            !recorded.is_error,
+            "memory.record failed: {:?}",
+            recorded.output
+        );
+        assert_eq!(
+            MemoryRecord::from_value(&recorded.output).unwrap(),
+            memory_record
+        );
+
+        let recalled = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "memory-recall".into(),
+                callable_id: CallableId::parse("memory.recall").unwrap(),
+                input: MemoryRecallQuery {
+                    scopes: vec![MemoryScope::Session {
+                        session_id: session_id.clone(),
+                    }],
+                    kinds: vec![MemoryKind::Fact],
+                    query: "Helios".into(),
+                    at: 2,
+                    limit: 4,
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !recalled.is_error,
+            "memory.recall failed: {:?}",
+            recalled.output
+        );
+        let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
+        assert_eq!(recalled.records, vec![memory_record]);
 
         for (call_id, query) in [
             ("inspect-graph", "graph"),
