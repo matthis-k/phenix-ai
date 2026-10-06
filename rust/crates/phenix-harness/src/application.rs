@@ -9805,7 +9805,10 @@ mod tests {
                 ])),
             },
         );
-        assert!(failed.is_error, "failed plugin build unexpectedly succeeded");
+        assert!(
+            failed.is_error,
+            "failed plugin build unexpectedly succeeded"
+        );
         let failure = ApplicationError::from_value(&failed.output).unwrap();
         assert!(
             matches!(
