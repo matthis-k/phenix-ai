@@ -11469,9 +11469,9 @@ mod tests {
             .find(|tool| tool.id.as_str() == "phenix.plugin")
             .expect("enabled orchestration exposes phenix.plugin");
         assert!(
-            plugin_tool
-                .description
-                .contains("requested_authority must include [\"workspace.read\",\"workspace.shell\"]")
+            plugin_tool.description.contains(
+                "requested_authority must include [\"workspace.read\",\"workspace.shell\"]"
+            )
         );
     }
 
