@@ -10995,6 +10995,41 @@ what question?"
 
             let response = if input.trim_end().ends_with("LIFECYCLE_CHILD") {
                 orchestration_response("child lifecycle complete", Vec::new())
+            } else if input.trim_end().ends_with("LIFECYCLE_SELF_CLOSE") {
+                match request.continuation.as_slice() {
+                    [] => {
+                        let session_id = request
+                            .session_id
+                            .as_ref()
+                            .ok_or_else(|| "controller lifecycle request has no session id".to_owned())?;
+                        orchestration_response(
+                            "attempt self close",
+                            vec![orchestration_operation_call(
+                                "lifecycle-self-close",
+                                "phenix.session",
+                                "close",
+                                BTreeMap::from([(
+                                    "session_id".into(),
+                                    PhenixValue::String(session_id.to_string()),
+                                )]),
+                            )],
+                        )
+                    }
+                    [turn] => {
+                        if turn.tool_results.len() != 1 || !turn.tool_results[0].is_error {
+                            return Err(
+                                "controller self-close was not rejected by phenix.session".into()
+                            );
+                        }
+                        orchestration_response("controller self close rejected", Vec::new())
+                    }
+                    turns => {
+                        return Err(format!(
+                            "controller self-close fixture received {} continuation turns",
+                            turns.len()
+                        ));
+                    }
+                }
             } else if input.trim_end().ends_with("LIFECYCLE_SECOND") {
                 orchestration_response("controller second turn complete", Vec::new())
             } else if input.contains("LIFECYCLE_FIRST") {
@@ -11175,6 +11210,33 @@ what question?"
         assert_eq!(second.stop_reason, StopReason::EndTurn);
         assert_ne!(first.execution_id, second.execution_id);
 
+        let self_close = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SELF_CLOSE".into(),
+                }],
+            },
+        )
+        .await
+        .expect("model-side self-close rejection must not abort the controller execution");
+        assert_eq!(self_close.stop_reason, StopReason::EndTurn);
+
+        let after_self_close = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("rejected self-close must leave the controller open");
+        assert_eq!(after_self_close.stop_reason, StopReason::EndTurn);
+        assert_ne!(self_close.execution_id, after_self_close.execution_id);
+
         let snapshot = invoke_transport_operation::<ResumeSession>(
             &transport,
             SessionResumeInput {
@@ -11196,6 +11258,13 @@ what question?"
                 &entry.update,
                 SessionChange::TextDelta { text, .. }
                     if text == "controller second turn complete"
+            )
+        }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller self close rejected"
             )
         }));
 
