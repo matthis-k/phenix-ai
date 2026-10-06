@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::{
     Authority, ComponentEntryTrigger, ComponentId, ComponentManifest, ComponentProcessArgument,
     ConfigContribution, DurableSchemaRegistration, GenerationId, GenerationResolutionError,
