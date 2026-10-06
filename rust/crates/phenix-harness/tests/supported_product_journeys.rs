@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, ComponentManifest, ContextResourceId, ContextResourceKind, ContextScope, Key,
     ModelFeatureGenerationId, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, ServiceContribution, ServiceId, SessionId, ValueError,
+    RoutingProfileId, ServiceContribution, ServiceId, SessionId, SkillId, ValueError,
 };
 use phenix_harness::{
     PhenixRuntime, PhenixRuntimeBuilder, default_suite_authority,
@@ -557,7 +557,9 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
-                    required_skills: BTreeSet::new(),
+                    required_skills: BTreeSet::from([
+                        SkillId::parse("introspection-check").unwrap(),
+                    ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
@@ -712,19 +714,6 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
     let ContextResponse::Registered { resource } = registered else {
         panic!("skill registration must return an exact revision");
     };
-    let _: ContextResponse = invoke_structural(
-        &mut harness,
-        "phenix.context@1",
-        &ContextCommand::Load {
-            execution_id: "introspection-root".into(),
-            resource_id,
-            revision: resource.descriptor.revision,
-            requester: ContextInjectionRequester::User,
-            lifetime: ContextInjectionLifetime::Execution,
-            reason: "verify the model-visible skill surface".into(),
-        },
-    );
-
     let visible_tool = ModelToolDescriptor {
         id: phenix_core::CallableId::parse("bash").unwrap(),
         description: "Run a shell command in the configured Phenix workspace".into(),
