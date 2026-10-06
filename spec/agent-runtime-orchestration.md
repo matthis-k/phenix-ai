@@ -279,6 +279,8 @@ This is management metadata. Detailed graph and execution inspection remains in 
 
 Build materializes a Plugin artifact using the existing typed build plan.
 
+For the workspace-backed model tool, the plan must explicitly request the workspace authority consumed by the build executor (`workspace.read` and `workspace.shell`). That request is still attenuated by the caller and host policy; declaring it never grants authority.
+
 Build does not change the active or resident runtime.
 
 The result identifies:
