@@ -47,10 +47,7 @@ fn extracted_defaults_work_without_options_plugin() {
         .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let InvocationDefaultsResponse::Params { params } =
-        InvocationDefaultsResponse::try_from(Project(&output)).unwrap()
-    else {
-        panic!("expected invocation params");
-    };
+        InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
 
     assert_eq!(params.profile_id.as_str(), "default");
 }
@@ -112,10 +109,7 @@ fn extracted_defaults_keep_session_route_precedence() {
         .unwrap();
     let output: PhenixValue = serde_json::from_slice(&output).unwrap();
     let InvocationDefaultsResponse::Params { params } =
-        InvocationDefaultsResponse::try_from(Project(&output)).unwrap()
-    else {
-        panic!("expected invocation params");
-    };
+        InvocationDefaultsResponse::try_from(Project(&output)).unwrap();
 
     assert_eq!(params.profile_id.as_str(), "router.session");
 }
