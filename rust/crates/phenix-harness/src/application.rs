@@ -8561,10 +8561,7 @@ mod tests {
                 ])),
                 PhenixValue::Map(BTreeMap::from([
                     ("kind".into(), PhenixValue::String("image".into())),
-                    (
-                        "mime_type".into(),
-                        PhenixValue::String("image/png".into()),
-                    ),
+                    ("mime_type".into(), PhenixValue::String("image/png".into())),
                     ("data".into(), PhenixValue::Bytes(vec![1, 2, 3])),
                 ])),
                 PhenixValue::Map(BTreeMap::from([
@@ -8573,10 +8570,7 @@ mod tests {
                         "uri".into(),
                         PhenixValue::String("file:///workspace/context.txt".into()),
                     ),
-                    (
-                        "mime_type".into(),
-                        PhenixValue::String("text/plain".into()),
-                    ),
+                    ("mime_type".into(), PhenixValue::String("text/plain".into())),
                     ("text".into(), PhenixValue::String("context".into())),
                 ])),
             ]),
@@ -9921,7 +9915,11 @@ mod tests {
                 input: memory_record.to_value(),
             },
         );
-        assert!(!recorded.is_error, "memory.record failed: {:?}", recorded.output);
+        assert!(
+            !recorded.is_error,
+            "memory.record failed: {:?}",
+            recorded.output
+        );
         assert_eq!(
             MemoryRecord::from_value(&recorded.output).unwrap(),
             memory_record
@@ -9946,7 +9944,11 @@ mod tests {
                 .to_value(),
             },
         );
-        assert!(!recalled.is_error, "memory.recall failed: {:?}", recalled.output);
+        assert!(
+            !recalled.is_error,
+            "memory.recall failed: {:?}",
+            recalled.output
+        );
         let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
         assert_eq!(recalled.records, vec![memory_record]);
 
