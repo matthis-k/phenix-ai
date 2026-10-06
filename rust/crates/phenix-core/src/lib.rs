@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Generic Phenix kernel mechanisms.
 //!
 //! This crate owns fundamental Phenix primitives and simple host mechanisms. Rich
