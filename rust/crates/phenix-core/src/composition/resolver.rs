@@ -127,16 +127,14 @@ impl GenerationTopology {
     }
 
     fn incorporate_semantic_metadata<T: Serialize>(&mut self, metadata: &T) {
-        match &mut self.identity {
-            GenerationTopologyIdentity::Bootstrap => {
-                panic!("bootstrap runtime generation cannot absorb resolved semantic metadata")
-            }
-            GenerationTopologyIdentity::Resolved(id) => {
-                let bytes = serde_json::to_vec(&(id.as_str(), metadata))
-                    .expect("resolved composition metadata is serializable");
-                *id = GenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
-            }
+        let id = match &mut self.identity {
+            GenerationTopologyIdentity::Bootstrap => None,
+            GenerationTopologyIdentity::Resolved(id) => Some(id),
         }
+        .expect("bootstrap runtime generation cannot absorb resolved semantic metadata");
+        let bytes = serde_json::to_vec(&(id.as_str(), metadata))
+            .expect("resolved composition metadata is serializable");
+        *id = GenerationId::from(format!("sha256:{:x}", Sha256::digest(bytes)));
     }
 }
 
