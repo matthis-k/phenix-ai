@@ -1,6 +1,6 @@
 # Rust plugin authoring
 
-status: partially implemented
+status: partial
 coverage:
   - rust/crates/phenix-sdk/tests/plugin_attribute_only_gate.rs
   - rust/crates/phenix-sdk/tests/plugin_component_authoring.rs
