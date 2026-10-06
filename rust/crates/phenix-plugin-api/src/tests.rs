@@ -5,7 +5,6 @@ use phenix_core::{
 use phenix_plugin_basic_skills::{
     basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
 };
-use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
 };
