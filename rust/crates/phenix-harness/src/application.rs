@@ -11199,12 +11199,10 @@ what question?"
             )
         }));
 
-        let sessions = invoke_transport_operation::<ListSessions>(
-            &transport,
-            PageInput { cursor: None },
-        )
-        .await
-        .unwrap();
+        let sessions =
+            invoke_transport_operation::<ListSessions>(&transport, PageInput { cursor: None })
+                .await
+                .unwrap();
         assert_eq!(
             sessions
                 .sessions
@@ -11224,5 +11222,4 @@ what question?"
         drop(transport);
         worker_task.await.unwrap();
     }
-
 }

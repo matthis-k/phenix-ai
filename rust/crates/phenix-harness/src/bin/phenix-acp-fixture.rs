@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use phenix_application_interface::types::{Content, SessionInfo};
 use phenix_core::{
     Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentInterface,
     ComponentManifest, Key, LocalPersistence, ModelFeatureGenerationId, ModelId,
@@ -8,7 +9,6 @@ use phenix_core::{
     PluginInstance, PluginManifest, Project, RoutingProfileId, ServiceContribution, ServiceId,
     ServiceRole, ValueCodec, model_inference_service,
 };
-use phenix_application_interface::types::{Content, SessionInfo};
 use phenix_harness::{
     PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
     default_suite_authority, model_surface_fixture::model_surface_response,
@@ -378,12 +378,7 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
         value: OptionValue::Bool(true),
     };
     let input = serde_json::to_vec(&PhenixValue::from(&option))?;
-    let output = harness.invoke(
-        &options_service(),
-        &input,
-        &default_suite_authority(),
-        None,
-    )?;
+    let output = harness.invoke(&options_service(), &input, &default_suite_authority(), None)?;
     let output: PhenixValue = serde_json::from_slice(&output)?;
     match OptionResponse::try_from(Project(&output))? {
         OptionResponse::Updated { .. } => {}

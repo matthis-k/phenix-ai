@@ -11,10 +11,7 @@ const FIRST: &str = "PHENIX_FIXTURE_CHILD_CLOSE_FIRST";
 const SECOND: &str = "PHENIX_FIXTURE_CHILD_CLOSE_SECOND";
 
 fn prompt(session_id: &str, text: &str) -> PromptRequest {
-    PromptRequest::new(
-        session_id,
-        vec![ContentBlock::Text(TextContent::new(text))],
-    )
+    PromptRequest::new(session_id, vec![ContentBlock::Text(TextContent::new(text))])
 }
 
 #[tokio::test]

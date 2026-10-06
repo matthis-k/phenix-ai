@@ -16,8 +16,7 @@ use phenix_plugin_catalog::{
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
     RoutingProfile, SessionCommand, SessionLifecycle, SessionRecord, SessionResponse,
     SessionTreeCommand, SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
-    artifact_component_manifest,
-    model_inference_service, planning_component_manifest,
+    artifact_component_manifest, model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelFeatures,
@@ -856,7 +855,6 @@ fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
     );
 }
 
-
 #[test]
 fn closing_linked_child_session_preserves_parent_lifecycle() {
     let mut harness = PhenixRuntime::default_suite().unwrap();
@@ -926,9 +924,7 @@ fn closing_linked_child_session_preserves_parent_lifecycle() {
     let parent_lookup: SessionTreeResponse = invoke_structural(
         &mut harness,
         "phenix.session-tree@1",
-        &SessionTreeCommand::Parent {
-            session_id: child,
-        },
+        &SessionTreeCommand::Parent { session_id: child },
     );
     assert_eq!(
         parent_lookup,
