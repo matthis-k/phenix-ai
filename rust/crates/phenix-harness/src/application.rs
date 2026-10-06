@@ -1329,9 +1329,9 @@ impl ApplicationWorker {
 
         descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
         for descriptor in descriptors {
-            let mandatory_project_instruction =
-                descriptor.kind == ContextResourceKind::ProjectInstruction
-                    && descriptor.scope == ContextScope::Workspace;
+            let mandatory_project_instruction = descriptor.kind
+                == ContextResourceKind::ProjectInstruction
+                && descriptor.scope == ContextScope::Workspace;
             if !mandatory_project_instruction {
                 continue;
             }
