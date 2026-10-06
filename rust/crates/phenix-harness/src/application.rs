@@ -6853,9 +6853,10 @@ mod tests {
         types::{Content, Empty},
     };
     use phenix_core::{
-        BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
-        ModelFeatureGenerationId, ModelId, ModelInferenceFailure, ModelToolTurn,
-        PluginArtifactInput, PluginBuildSource, PluginBuildStep, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
+        BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
+        InvocationOutcome, LocalPersistence, ModelFeatureGenerationId, ModelId,
+        ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
+        PluginBuildStep, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -8815,7 +8816,6 @@ mod tests {
         let _ = fs::remove_file(&artifact_output);
         let _ = fs::remove_file(&locator);
     }
-
 
     #[test]
     fn plugin_build_policy_requires_explicit_runtime_and_workspace_authority() {
