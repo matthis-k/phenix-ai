@@ -5005,7 +5005,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
     let mut tools = vec![ModelToolDescriptor {
         id: CallableId::parse("phenix.inspect")
             .expect("static inspection callable id is valid"),
-        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution [execution-id], dag [execution-id], trace, values, value <value-id>. Omitting an execution id targets the current execution.".to_owned(),
+        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution, execution <execution-id>, dag, dag <execution-id>, trace, values, value <value-id>. A bare application execution id such as execution-42 is accepted as execution lookup shorthand.".to_owned(),
         input_schema: PhenixSchema::Table(BTreeMap::from([(
             Key::parse("query").expect("static inspection field is valid"),
             PhenixSchema::String,
@@ -6525,6 +6525,10 @@ fn inspect_runtime(
                 }
                 require_runtime_inspection_read(context.call.authority)?;
                 return run.service.inspect_value(id);
+            }
+            if query.starts_with("execution-") {
+                require_runtime_inspection_read(context.call.authority)?;
+                return inspect_execution(context, query);
             }
             Err(ApplicationError::InvalidInput {
                 message: format!("unknown phenix.inspect query: {query}"),
@@ -10104,7 +10108,7 @@ mod tests {
         );
         assert_eq!(report.request, "show available capabilities");
 
-        let execution_id = "execution-1".to_owned();
+        let execution_id = worker.allocate_root_execution().unwrap();
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, mut progress_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
@@ -10472,43 +10476,71 @@ mod tests {
         let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
         assert_eq!(recalled.records, vec![memory_record]);
 
-        for (call_id, query) in [
-            ("inspect-graph", "graph"),
-            ("inspect-trace", "trace"),
-            ("inspect-values", "values"),
-        ] {
-            let request = AgentToolExecutionRequest {
-                execution_id: execution_id.clone(),
-                session_id: Some(session_id.clone()),
-                call: ModelToolCall {
+        let inspect_queries = [
+            ("inspect-help", "help".to_owned()),
+            ("inspect-graph", "graph".to_owned()),
+            ("inspect-execution-current", "execution".to_owned()),
+            (
+                "inspect-execution-explicit",
+                format!("execution {execution_id}"),
+            ),
+            ("inspect-execution-shorthand", execution_id.clone()),
+            ("inspect-dag-current", "dag".to_owned()),
+            ("inspect-dag-explicit", format!("dag {execution_id}")),
+            ("inspect-trace", "trace".to_owned()),
+            ("inspect-values", "values".to_owned()),
+            ("inspect-value", format!("value {SESSION_PROJECTION_VALUE}")),
+        ];
+        for (call_id, query) in inspect_queries {
+            let inspected = invoke_agent_tool(
+                &worker,
+                &execution_id,
+                &session_id,
+                ModelToolCall {
                     call_id: call_id.into(),
                     callable_id: CallableId::parse("phenix.inspect").unwrap(),
-                    input: PhenixValue::Table(BTreeMap::from([(
-                        Key::parse("query").unwrap(),
-                        PhenixValue::String(query.into()),
+                    input: PhenixValue::Map(BTreeMap::from([(
+                        "query".to_owned(),
+                        PhenixValue::String(query.clone()),
                     )])),
                 },
-            };
-            let output = worker
-                .harness
-                .lock()
-                .invoke(
-                    &agent_tool_execution_service(),
-                    &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                    &worker.authority,
-                    None,
-                )
-                .unwrap();
-            let value: PhenixValue = serde_json::from_slice(&output).unwrap();
-            let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
-            let AgentToolExecutionResponse::Completed {
-                result: inspected, ..
-            } = response
-            else {
-                panic!("runtime inspection must complete through the application adapter");
-            };
-            assert!(!inspected.is_error, "{query} inspection failed");
-            match (query, inspected.output) {
+            );
+            assert!(
+                !inspected.is_error,
+                "{query} inspection failed: {:?}",
+                inspected.output
+            );
+
+            if query == "execution"
+                || query == execution_id
+                || query == format!("execution {execution_id}")
+            {
+                let execution = ExecutionRecord::from_value(&inspected.output).unwrap();
+                assert_eq!(execution.id, execution_id);
+                continue;
+            }
+
+            if query == "dag" || query == format!("dag {execution_id}") {
+                let PhenixValue::Map(dag) = inspected.output else {
+                    panic!("{query} inspection returned a non-map DAG");
+                };
+                assert_eq!(
+                    dag.get("root_execution"),
+                    Some(&PhenixValue::String(execution_id.clone()))
+                );
+                assert!(
+                    matches!(dag.get("executions"), Some(PhenixValue::List(values)) if !values.is_empty())
+                );
+                continue;
+            }
+
+            match (query.as_str(), inspected.output) {
+                ("help", PhenixValue::List(queries)) => {
+                    assert!(
+                        queries.contains(&PhenixValue::String("execution <execution-id>".into()))
+                    );
+                    assert!(queries.contains(&PhenixValue::String("dag <execution-id>".into())));
+                }
                 ("graph", PhenixValue::Map(graph)) => {
                     assert!(matches!(
                         graph.get("generation"),
@@ -10548,9 +10580,53 @@ mod tests {
                         )
                     }));
                 }
+                (query, PhenixValue::Map(value)) if query.starts_with("value ") => {
+                    assert_eq!(
+                        value.get("id"),
+                        Some(&PhenixValue::String(SESSION_PROJECTION_VALUE.into()))
+                    );
+                }
                 (query, value) => panic!("unexpected {query} inspection value: {value:?}"),
             }
         }
+
+        let rejected_inspect = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "inspect-invalid".into(),
+                callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                input: PhenixValue::Map(BTreeMap::from([(
+                    "query".to_owned(),
+                    PhenixValue::String("definitely-not-an-inspect-query".into()),
+                )])),
+            },
+        );
+        assert!(rejected_inspect.is_error);
+        assert!(matches!(
+            ApplicationError::from_value(&rejected_inspect.output).unwrap(),
+            ApplicationError::InvalidInput { message }
+                if message.contains("unknown phenix.inspect query")
+        ));
+        let recovered_inspect = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "inspect-after-error".into(),
+                callable_id: CallableId::parse("phenix.inspect").unwrap(),
+                input: PhenixValue::Map(BTreeMap::from([(
+                    "query".to_owned(),
+                    PhenixValue::String("graph".into()),
+                )])),
+            },
+        );
+        assert!(
+            !recovered_inspect.is_error,
+            "inspection did not recover after a rejected query: {:?}",
+            recovered_inspect.output
+        );
 
         let rejected = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
