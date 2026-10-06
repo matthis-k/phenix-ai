@@ -7856,14 +7856,8 @@ mod tests {
                                 (
                                     "content".into(),
                                     PhenixValue::List(vec![PhenixValue::Map(BTreeMap::from([
-                                        (
-                                            "kind".into(),
-                                            PhenixValue::String("text".into()),
-                                        ),
-                                        (
-                                            "text".into(),
-                                            PhenixValue::String("store Helios".into()),
-                                        ),
+                                        ("kind".into(), PhenixValue::String("text".into())),
+                                        ("text".into(), PhenixValue::String("store Helios".into())),
                                     ]))]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
@@ -7923,10 +7917,7 @@ mod tests {
                                 (
                                     "content".into(),
                                     PhenixValue::List(vec![PhenixValue::Map(BTreeMap::from([
-                                        (
-                                            "kind".into(),
-                                            PhenixValue::String("text".into()),
-                                        ),
+                                        ("kind".into(), PhenixValue::String("text".into())),
                                         (
                                             "text".into(),
                                             PhenixValue::String("recall Helios".into()),
