@@ -1,6 +1,6 @@
 use phenix_core::{
-    Authority, ComponentManifest, ContextResourceId, ContextResourceKind, ContextScope, Key,
-    ModelFeatureGenerationId, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue,
+    Authority, ComponentManifest, Key, ModelFeatureGenerationId, ModelId, ModelToolDescriptor,
+    PhenixSchema, PhenixValue,
     PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
     RoutingProfileId, ServiceContribution, ServiceId, SessionId, ValueError,
 };
@@ -20,8 +20,8 @@ use phenix_plugin_catalog::{
     model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, ContextInjectionLifetime, ContextInjectionRequester,
-    DelegationResourcePolicy, EffectiveModelFeatures, ExecutionResourceCommand,
+    CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelFeatures,
+    ExecutionResourceCommand,
     ExecutionResourceResponse, InvocationCommand, InvocationIntent, InvocationParams,
     InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
     RoutingEstimateMode, SkillCommand, SkillDefinition, SkillId, StepRunnerResponse, UsagePolicy,
