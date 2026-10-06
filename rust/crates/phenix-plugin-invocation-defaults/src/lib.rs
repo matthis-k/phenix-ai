@@ -2,7 +2,7 @@ use phenix_core::{
     Authority, CallableId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentInvocationError, ComponentManifest, InterfaceSchema, ModelToolDescriptor,
     PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest,
-    RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole,
+    RoutingProfileId, SdkClient, ServiceContribution, ServiceId, ServiceRole, SkillId,
 };
 use phenix_sdk::{
     ContextNeed, ContextRecoveryCommand, ContextRecoveryDecision, ContextRecoveryInterface,
@@ -102,7 +102,9 @@ pub fn invocation_defaults_component_manifest(maximum_authority: Authority) -> C
 
 #[must_use]
 pub fn invocation_defaults_factory() -> Box<dyn PluginInstance> {
-    Box::new(InvocationDefaultsPlugin)
+    Box::new(InvocationDefaultsPlugin {
+        required_skills: BTreeSet::new(),
+    })
 }
 
 struct InvocationDefaultsSdk<'host, 'runtime> {
@@ -125,7 +127,9 @@ fn context<'host, 'runtime>(
     )
 }
 
-struct InvocationDefaultsPlugin;
+struct InvocationDefaultsPlugin {
+    required_skills: BTreeSet<SkillId>,
+}
 
 impl PluginInstance for InvocationDefaultsPlugin {
     fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
@@ -147,18 +151,31 @@ impl PluginInstance for InvocationDefaultsPlugin {
                     input,
                 )
                 .map_err(|error| error.to_string())?;
-            let params = match command {
+            match command {
+                InvocationDefaultsCommand::ConfigureRequiredSkills { required_skills } => {
+                    self.required_skills = required_skills;
+                    return context
+                        .kernel
+                        .encode_value(&InvocationDefaultsResponse::RequiredSkillsConfigured {
+                            required_skills: self.required_skills.clone(),
+                        })
+                        .map_err(|error| error.to_string());
+                }
                 InvocationDefaultsCommand::Resolve { request } => {
-                    resolve_defaults(&context, &request)?
+                    let params = resolve_defaults(&context, &request, &self.required_skills)?;
+                    return context
+                        .kernel
+                        .encode_value(&InvocationDefaultsResponse::Params { params })
+                        .map_err(|error| error.to_string());
                 }
                 InvocationDefaultsCommand::ResolveHelper { request } => {
-                    resolve_helper_defaults(&request)
+                    let params = resolve_helper_defaults(&request, &self.required_skills);
+                    return context
+                        .kernel
+                        .encode_value(&InvocationDefaultsResponse::Params { params })
+                        .map_err(|error| error.to_string());
                 }
-            };
-            return context
-                .kernel
-                .encode_value(&InvocationDefaultsResponse::Params { params })
-                .map_err(|error| error.to_string());
+            }
         }
         if service == &invocation_clock_service() {
             let command = context
@@ -252,6 +269,7 @@ fn bounded_utf8(value: &str, max_bytes: usize) -> String {
 fn resolve_defaults(
     context: &InvocationDefaultsContext<'_, '_>,
     request: &InvocationRequest,
+    required_skills: &BTreeSet<SkillId>,
 ) -> Result<InvocationParams, String> {
     let profile_id = match resolve_routing_option(context, request)? {
         Some(option) => {
@@ -271,6 +289,7 @@ fn resolve_defaults(
         &request.tools,
         DEFAULT_POLICY_REVISION,
         DEFAULT_ROUTE_POLICY_REVISION,
+        required_skills,
     ))
 }
 
@@ -331,13 +350,17 @@ fn invocation_option_context(request: &InvocationRequest) -> Result<OptionContex
     })
 }
 
-fn resolve_helper_defaults(request: &HelperInvocationRequest) -> InvocationParams {
+fn resolve_helper_defaults(
+    request: &HelperInvocationRequest,
+    required_skills: &BTreeSet<SkillId>,
+) -> InvocationParams {
     invocation_params(
         request.profile_id.clone(),
         Some(&request.callable_id),
         &request.tools,
         HELPER_POLICY_REVISION,
         HELPER_ROUTE_POLICY_REVISION,
+        required_skills,
     )
 }
 
@@ -347,6 +370,7 @@ fn invocation_params(
     tools: &[ModelToolDescriptor],
     policy_revision: &str,
     route_policy_revision: &str,
+    required_skills: &BTreeSet<SkillId>,
 ) -> InvocationParams {
     let optional_tools = tools
         .iter()
@@ -372,7 +396,7 @@ fn invocation_params(
             required_features: BTreeSet::new(),
             required_tools: BTreeSet::new(),
             optional_tools,
-            required_skills: BTreeSet::new(),
+            required_skills: required_skills.clone(),
             optional_skills: BTreeSet::new(),
             requested_reasoning: None,
             deadline_at_ms: None,
@@ -399,6 +423,7 @@ mod tests {
             &[],
             DEFAULT_POLICY_REVISION,
             DEFAULT_ROUTE_POLICY_REVISION,
+            &BTreeSet::new(),
         );
 
         assert_eq!(params.policy.max_fresh_input_tokens, None);
@@ -515,7 +540,7 @@ mod tests {
             input: Bytes::from(b"input".to_vec()),
             tools: Vec::new(),
         };
-        let params = resolve_helper_defaults(&request);
+        let params = resolve_helper_defaults(&request, &BTreeSet::new());
         assert_eq!(params.profile_id, request.profile_id);
         assert_eq!(params.policy.revision, HELPER_POLICY_REVISION);
         assert_eq!(params.policy.max_retries, None);
