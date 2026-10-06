@@ -978,6 +978,7 @@ mod tests {
         for required in [
             BASIC_AGENT_CONFIGURATION,
             "phenix.agent-loop",
+            "phenix.basic-skills",
             "phenix.context",
             "phenix.execution",
             "phenix.harness.invocation-defaults",
