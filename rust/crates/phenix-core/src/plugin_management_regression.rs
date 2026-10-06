@@ -797,6 +797,90 @@ fn failed_start_keeps_the_previous_generation_active() {
 }
 
 #[test]
+fn failed_trial_start_leaves_no_resident_candidate() {
+    let runtime = runtime("vendor.runtime");
+    let bridge = bridge_manifest("fixture.trial-failure.bridge", &runtime);
+    let active_guest = guest_manifest(
+        "fixture.trial-failure.guest",
+        runtime.clone(),
+        "sha256:guest-v1",
+    );
+    let candidate_guest = guest_manifest("fixture.trial-failure.guest", runtime, "sha256:guest-v2");
+    let initial = ResolvedGeneration::resolve(
+        [bridge.clone(), active_guest],
+        [],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
+    let candidate = ResolvedGeneration::resolve(
+        [bridge.clone(), candidate_guest.clone()],
+        [],
+        [],
+        &Authority::default(),
+    )
+    .unwrap();
+    let active_generation = initial.generation().clone();
+    let candidate_generation = candidate.generation().clone();
+    assert_ne!(
+        candidate_generation, active_generation,
+        "fixture must resolve a distinct candidate generation"
+    );
+
+    let fail = Arc::new(AtomicBool::new(false));
+    let mut kernel = Kernel::new(initial.kernel_config().clone());
+    kernel.activate_resolved_generation(&initial).unwrap();
+    let fail_for_factory = Arc::clone(&fail);
+    kernel
+        .register_embedded_factory(bridge.id.clone(), move || {
+            Box::new(StartFailBridge {
+                fail: Arc::clone(&fail_for_factory),
+            })
+        })
+        .unwrap();
+    kernel.activate_all().unwrap();
+    let constraints = kernel
+        .capture_root_execution_constraints(&Authority::default(), [])
+        .unwrap();
+    fail.store(true, Ordering::Release);
+    let mut reconciler = GraphReconciler::new(initial);
+
+    let error = trial(
+        &mut reconciler,
+        &mut kernel,
+        PluginManagementRequest::load(PluginLoadRequest {
+            manifest: ready(candidate_guest),
+            components: Vec::new(),
+            entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
+            expected_active_revision: None,
+        }),
+        &Authority::default(),
+        &constraints,
+    )
+    .unwrap_err();
+
+    let PluginManagementError::Reconciliation { error, build: None } = error else {
+        panic!("trial candidate start should fail during reconciliation");
+    };
+    assert!(matches!(
+        *error,
+        crate::LiveReconciliationError::Runtime(KernelError::PluginStart { .. })
+    ));
+    assert_eq!(kernel.graph_generation(), Some(&active_generation));
+    assert_eq!(reconciler.active().generation(), &active_generation);
+    assert!(
+        reconciler.resident(&candidate_generation).is_none(),
+        "failed trial remained resident in the reconciler"
+    );
+    assert_eq!(
+        kernel.resident_generation_ids(),
+        vec![active_generation],
+        "failed trial changed the kernel resident generation set"
+    );
+}
+
+#[test]
 fn unload_is_rejected_when_required_imports_become_unsatisfied() {
     let echo_interface = interface("fixture.echo@1");
     let consumer_owner = embedded_manifest("fixture.consumer", None);
