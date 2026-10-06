@@ -672,6 +672,8 @@
           pkgs.actionlint
           pkgs.bubblewrap
           pkgs.cargo
+          pkgs.cargo-audit
+          pkgs.cargo-deny
           pkgs.clippy
           pkgs.git
           pkgs.jq
