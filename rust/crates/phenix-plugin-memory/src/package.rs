@@ -495,4 +495,3 @@ mod recall_validation_tests {
         validate_recall_request(&request).unwrap();
     }
 }
-
