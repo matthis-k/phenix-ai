@@ -5019,7 +5019,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
                 .expect("static session control callable id is valid"),
-            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content parts use kind=text, kind=image, or kind=resource with their corresponding fields; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
+            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory?,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content parts use kind=text, kind=image, or kind=resource with their corresponding fields; close {session_id}. Agent-created children inherit the controller working directory and pinned Environment; an explicit working_directory must match it. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static session operation field is valid"),
@@ -5999,6 +5999,22 @@ fn require_application_session_control(authority: &Authority) -> Result<(), Appl
     }
 }
 
+fn child_session_working_directory(
+    controller: &SessionInfo,
+    requested: Option<String>,
+) -> Result<String, ApplicationError> {
+    match requested {
+        None => Ok(controller.working_directory.clone()),
+        Some(requested) if requested == controller.working_directory => Ok(requested),
+        Some(requested) => Err(ApplicationError::Conflict {
+            message: format!(
+                "phenix.session create cannot change the pinned Environment working directory from {} to {requested}; use the controller working directory or create a separately authorized root",
+                controller.working_directory
+            ),
+        }),
+    }
+}
+
 fn execute_application_session_control(
     context: &ApplicationAgentToolContext<'_, '_>,
     run: &ApplicationAgentToolRun,
@@ -6011,8 +6027,19 @@ fn execute_application_session_control(
     let result = (|| -> Result<PhenixValue, ApplicationError> {
         match operation {
             "create" => {
-                let working_directory =
-                    session_control_required_string(arguments, "working_directory")?;
+                let sessions: SessionList =
+                    invoke_application_control(run, ListSessions::ID, PageInput { cursor: None })?;
+                let controller = sessions
+                    .sessions
+                    .into_iter()
+                    .find(|session| session.session_id == run.session_id)
+                    .ok_or_else(|| ApplicationError::NotFound {
+                        resource: run.session_id.to_string(),
+                    })?;
+                let working_directory = child_session_working_directory(
+                    &controller,
+                    session_control_optional_string(arguments, "working_directory")?,
+                )?;
                 let title = session_control_optional_string(arguments, "title")?;
                 let response: SessionInfo = invoke_application_control(
                     run,
@@ -6865,6 +6892,7 @@ mod tests {
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
+        workspace_factory_for, workspace_manifest,
     };
     use phenix_sdk::{
         CapacityKnowledge, CodeQueryAnchor, CodeQueryBudget, CodeQueryProjection,
@@ -8978,6 +9006,100 @@ mod tests {
         assert!(policy.build_authority().permits(&read));
         assert!(policy.build_authority().permits(&shell));
         assert!(!policy.build_authority().permits(&write));
+    }
+
+    #[test]
+    fn workspace_project_instruction_is_loaded_into_execution_context() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-context-instruction-{}-{nonce}",
+            std::process::id()
+        ));
+        let instruction = format!("PHENIX_CONTEXT_INSTRUCTION_{nonce}");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("AGENTS.md"), &instruction).unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = root.clone();
+        builder.embedded_factories.insert(
+            workspace_manifest().id,
+            Arc::new(move || workspace_factory_for(workspace_root.clone())),
+        );
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: root.to_string_lossy().into_owned(),
+                title: Some("context instruction".into()),
+            },
+        )
+        .unwrap();
+        let prompt = worker
+            .prompt(PromptInput {
+                session_id: session.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "show repository instructions".into(),
+                }],
+            })
+            .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+        let projected = worker
+            .invoke_context_command_on(
+                &root_handle,
+                ContextCommand::Project {
+                    execution_id: prompt.execution_id,
+                },
+            )
+            .unwrap();
+        let ContextResponse::Projection { projection } = projected else {
+            panic!("context project returned an unexpected response");
+        };
+        assert!(
+            projection.entries.iter().any(|entry| {
+                entry.resource.descriptor.kind == ContextResourceKind::ProjectInstruction
+                    && entry.resource.descriptor.scope == ContextScope::Workspace
+                    && String::from_utf8_lossy(entry.resource.content.as_ref())
+                        .contains(&instruction)
+            }),
+            "root AGENTS.md was not projected into the execution context"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn child_session_inherits_controller_working_directory_and_rejects_environment_switch() {
+        let controller = SessionInfo {
+            session_id: SessionId::parse("session-controller").unwrap(),
+            title: None,
+            working_directory: "/workspace".into(),
+        };
+
+        assert_eq!(
+            child_session_working_directory(&controller, None).unwrap(),
+            "/workspace"
+        );
+        assert_eq!(
+            child_session_working_directory(&controller, Some("/workspace".into())).unwrap(),
+            "/workspace"
+        );
+        assert!(matches!(
+            child_session_working_directory(&controller, Some("/tmp/other".into())),
+            Err(ApplicationError::Conflict { ref message })
+                if message.contains("cannot change the pinned Environment working directory")
+        ));
     }
 
     #[test]
@@ -11988,6 +12110,36 @@ what question?"
                         ));
                     }
                 }
+            } else if input.trim_end().ends_with("LIFECYCLE_ENV_SWITCH") {
+                match request.continuation.as_slice() {
+                    [] => orchestration_response(
+                        "attempt child environment switch",
+                        vec![orchestration_operation_call(
+                            "lifecycle-create-environment-switch",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([(
+                                "working_directory".into(),
+                                PhenixValue::String("/tmp/other".into()),
+                            )]),
+                        )],
+                    ),
+                    [turn] => {
+                        if turn.tool_results.len() != 1 || !turn.tool_results[0].is_error {
+                            return Err(
+                                "child environment switch was not rejected by phenix.session"
+                                    .into(),
+                            );
+                        }
+                        orchestration_response("controller environment switch rejected", Vec::new())
+                    }
+                    turns => {
+                        return Err(format!(
+                            "environment-switch fixture received {} continuation turns",
+                            turns.len()
+                        ));
+                    }
+                }
             } else if input.trim_end().ends_with("LIFECYCLE_SECOND") {
                 orchestration_response("controller second turn complete", Vec::new())
             } else if input.contains("LIFECYCLE_FIRST") {
@@ -11998,16 +12150,10 @@ what question?"
                             "lifecycle-create-child",
                             "phenix.session",
                             "create",
-                            BTreeMap::from([
-                                (
-                                    "working_directory".into(),
-                                    PhenixValue::String("/workspace".into()),
-                                ),
-                                (
-                                    "title".into(),
-                                    PhenixValue::String("lifecycle child".into()),
-                                ),
-                            ]),
+                            BTreeMap::from([(
+                                "title".into(),
+                                PhenixValue::String("lifecycle child".into()),
+                            )]),
                         )],
                     ),
                     1 => {
@@ -12195,6 +12341,36 @@ what question?"
         assert_eq!(after_self_close.stop_reason, StopReason::EndTurn);
         assert_ne!(self_close.execution_id, after_self_close.execution_id);
 
+        let environment_switch = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_ENV_SWITCH".into(),
+                }],
+            },
+        )
+        .await
+        .expect("rejected child Environment switch must not abort the controller");
+        assert_eq!(environment_switch.stop_reason, StopReason::EndTurn);
+
+        let after_environment_switch = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("rejected child Environment switch must leave the controller usable");
+        assert_eq!(after_environment_switch.stop_reason, StopReason::EndTurn);
+        assert_ne!(
+            environment_switch.execution_id,
+            after_environment_switch.execution_id
+        );
+
         let failed_child_cleanup = invoke_transport_operation::<Prompt>(
             &transport,
             PromptInput {
@@ -12253,6 +12429,13 @@ what question?"
                 &entry.update,
                 SessionChange::TextDelta { text, .. }
                     if text == "controller self close rejected"
+            )
+        }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller environment switch rejected"
             )
         }));
         assert!(snapshot.updates.iter().any(|entry| {
