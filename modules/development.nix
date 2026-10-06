@@ -305,6 +305,7 @@
               exec = ''
                 ${rustRoot}
                 cargo test --quiet --locked -p phenix-harness \
+                  --test acp_session_lifecycle \
                   --test component_graph \
                   --test supported_product_journeys
               '';
