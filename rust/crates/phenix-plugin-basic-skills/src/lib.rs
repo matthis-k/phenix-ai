@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::{
     Authority, ComponentId, ComponentInterface, ComponentManifest, InterfaceId, PermissionId,
     PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SKILL_SERVICE, SkillCommand,
