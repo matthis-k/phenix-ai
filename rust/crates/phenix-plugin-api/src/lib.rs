@@ -479,7 +479,7 @@ fn invoke_skills(
     context
         .sdk
         .skills
-        .invoke_projected(&command)
+        .invoke_fallible_projected::<SkillCommand, SkillResponse, String>(&command)
         .map_err(|error| error.to_string())
 }
 
