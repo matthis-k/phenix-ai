@@ -551,6 +551,16 @@ impl PhenixRuntimeBuilder {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_embedded_factory<F>(&mut self, plugin: PluginId, factory: F) -> bool
+    where
+        F: Fn() -> Box<dyn PluginInstance> + Send + Sync + 'static,
+    {
+        self.embedded_factories
+            .insert(plugin, Arc::new(factory))
+            .is_some()
+    }
+
     pub fn build(self) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
         self.build_using(|resolved| Ok(Kernel::new(resolved.kernel_config().clone())))
     }
