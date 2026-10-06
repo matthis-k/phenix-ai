@@ -9058,6 +9058,41 @@ mod tests {
     }
 
     #[test]
+    fn runtime_plugin_build_plan_requires_every_workspace_build_capability() {
+        let mut plan = serde_json::json!({
+            "source": {
+                "identity": "fixture:partial-build-authority",
+                "revision": "fixture:1"
+            },
+            "steps": [{
+                "executable": "false",
+                "argv": [],
+                "working_directory": ".",
+                "environment": {}
+            }],
+            "artifact_output": "target/fixture-plugin.bin",
+            "configuration": {},
+            "requested_authority": ["workspace.read"]
+        });
+        let partial: PluginBuildPlan = serde_json::from_value(plan.clone()).unwrap();
+        let error = require_runtime_plugin_build_plan_authority(&partial).unwrap_err();
+        assert!(matches!(
+            error,
+            ApplicationError::InvalidInput { message }
+                if message.contains("workspace.shell")
+                    && !message.contains("missing workspace.read")
+        ));
+
+        plan["requested_authority"] =
+            serde_json::json!(["workspace.read", "workspace.shell"]);
+        let complete: PluginBuildPlan = serde_json::from_value(plan).unwrap();
+        assert_eq!(
+            require_runtime_plugin_build_plan_authority(&complete),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn plugin_build_policy_requires_explicit_runtime_and_workspace_authority() {
         let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
         let build = PermissionId::parse(RUNTIME_PLUGIN_BUILD_PERMISSION).unwrap();
