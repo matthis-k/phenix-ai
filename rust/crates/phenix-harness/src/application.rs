@@ -11228,7 +11228,6 @@ mod tests {
         assert_eq!(recalled_global.records, vec![global_memory]);
         adapter.remove(&fresh_execution_id);
 
-
         {
             let harness = worker.harness.lock();
             harness
