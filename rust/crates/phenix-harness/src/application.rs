@@ -7497,9 +7497,9 @@ mod tests {
                     SkillCommand::from_value(&value).map_err(|error| error.to_string())?;
                 let skill = trial_generation_skill();
                 let response = match command {
-                    SkillCommand::Required | SkillCommand::List => {
-                        SkillResponse::Skills { skills: vec![skill] }
-                    }
+                    SkillCommand::Required | SkillCommand::List => SkillResponse::Skills {
+                        skills: vec![skill],
+                    },
                     SkillCommand::Get { id } => SkillResponse::Skill {
                         skill: (id == skill.id).then_some(skill),
                     },
