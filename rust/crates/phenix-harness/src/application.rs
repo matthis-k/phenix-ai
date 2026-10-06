@@ -5051,7 +5051,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.plugin")
                 .expect("static plugin management callable id is valid"),
-            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
+            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Workspace-backed build plans need at least one step and requested_authority must include [\"workspace.read\",\"workspace.shell\"]; Core attenuates that request by caller and host policy. Build and trial use the configured workspace backend. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static plugin operation field is valid"),
@@ -5182,6 +5182,27 @@ fn runtime_plugin_build_authority() -> Authority {
             .into_iter()
             .map(|value| PermissionId::parse(value).expect("static build permission is valid")),
     )
+}
+
+fn require_runtime_plugin_build_plan_authority(
+    plan: &PluginBuildPlan,
+) -> Result<(), ApplicationError> {
+    let required = runtime_plugin_build_authority();
+    let missing = required
+        .permissions()
+        .filter(|permission| !plan.requested_authority().permits(permission))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(ApplicationError::InvalidInput {
+        message: format!(
+            "phenix.plugin build plan requested_authority is missing {}; include [\"workspace.read\",\"workspace.shell\"]",
+            missing.join(", ")
+        ),
+    })
 }
 
 fn runtime_plugin_policy(required_permission: &str) -> PluginManagementPolicy {
@@ -5697,6 +5718,7 @@ fn execute_runtime_plugin_control(
                     RUNTIME_PLUGIN_BUILD_PERMISSION,
                 )?;
                 let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
+                require_runtime_plugin_build_plan_authority(&plan)?;
                 let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
                 let mut store = WorkspacePluginArtifactStore {
                     context,
@@ -5724,6 +5746,13 @@ fn execute_runtime_plugin_control(
                 )?;
                 let request: PluginLoadRequest =
                     runtime_plugin_typed_argument(arguments, "request")?;
+                if let PluginExecution::Runtime {
+                    artifact: PluginArtifactInput::Build(plan),
+                    ..
+                } = &request.manifest.execution
+                {
+                    require_runtime_plugin_build_plan_authority(plan)?;
+                }
                 let plugin = request.manifest.id.clone();
                 let ready_artifact_revision = match &request.manifest.execution {
                     PluginExecution::Runtime {
@@ -11373,10 +11402,14 @@ mod tests {
                 .iter()
                 .any(|tool| tool.id.as_str() == "phenix.session")
         );
+        let plugin_tool = host_tools
+            .iter()
+            .find(|tool| tool.id.as_str() == "phenix.plugin")
+            .expect("enabled orchestration exposes phenix.plugin");
         assert!(
-            host_tools
-                .iter()
-                .any(|tool| tool.id.as_str() == "phenix.plugin")
+            plugin_tool
+                .description
+                .contains("requested_authority must include [\"workspace.read\",\"workspace.shell\"]")
         );
     }
 
