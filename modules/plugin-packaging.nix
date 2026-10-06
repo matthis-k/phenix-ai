@@ -141,10 +141,6 @@ let
                   ''}
                   wrapProgram "$out/bin/$program" \
                     --prefix PATH : ${pkgs.lib.escapeShellArg (pkgs.lib.makeBinPath [ pkgs.bubblewrap ])}
-                  ${pkgs.lib.optionalString (resources != [ ]) ''
-                    wrapProgram "$out/bin/$program" \
-                      --set PHENIX_SKILL_PATH "$out/share/phenix/skills"
-                  ''}
                 fi
               done
             '';
@@ -275,7 +271,6 @@ in
           --arg plugin_packages "''${PHENIX_PLUGIN_PACKAGES:-}" \
           --arg enabled_plugins "''${PHENIX_ENABLED_PLUGINS:-}" \
           --arg layer_policy "''${PHENIX_LAYER_POLICY:-}" \
-          --arg skill_path "''${PHENIX_SKILL_PATH:-}" \
           --arg path "''${PATH:-}" \
           '{
             default_config: $default_config,
@@ -285,7 +280,6 @@ in
             plugin_packages: $plugin_packages,
             enabled_plugins: $enabled_plugins,
             layer_policy: $layer_policy,
-            skill_path: $skill_path,
             path: $path
           }'
       '';
@@ -363,15 +357,12 @@ in
             test -x "${fullFixtureComposition}/bin/phenix"
             test -x "${fullFixtureComposition}/bin/phenix-harness"
             test -f "${fullFixtureComposition}/share/phenix/runtime.json"
-            test -f "${fullFixtureComposition}/share/phenix/skills/write/SKILL.md"
-            test -f "${fullFixtureComposition}/share/phenix/skills/pstack-LICENSE"
 
             "${fullFixtureComposition}/bin/phenix" > "$TMPDIR/full.json"
             jq -e '
               .enabled_plugins == "phenix.product.full"
               and (.default_config | length > 0)
               and (.config | length > 0)
-              and (.skill_path | length > 0)
               and (.path | contains("${pkgs.bubblewrap}/bin"))
             ' "$TMPDIR/full.json" >/dev/null
 
@@ -416,8 +407,6 @@ in
             test -x "${defaultComposition}/bin/phenix"
             test -x "${defaultComposition}/bin/phenix-harness"
             test -f "${defaultComposition}/share/phenix/runtime.json"
-            test -f "${defaultComposition}/share/phenix/skills/write/SKILL.md"
-            test -f "${defaultComposition}/share/phenix/skills/pstack-LICENSE"
 
             export PHENIX_STATE_DB="$TMPDIR/composition.sqlite"
             "${fullComposition}/bin/phenix" --mode=jsonl --list-services > "$TMPDIR/full-services.json"
