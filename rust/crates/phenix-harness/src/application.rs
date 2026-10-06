@@ -8738,8 +8738,8 @@ mod tests {
         .unwrap();
 
         let request = AgentToolExecutionRequest {
-            execution_id,
-            session_id: Some(session_id),
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
             call: ModelToolCall {
                 call_id: "plugin-build".into(),
                 callable_id: CallableId::parse("phenix.plugin").unwrap(),
@@ -8812,6 +8812,90 @@ mod tests {
             assert_eq!(harness.generation(), &active_before);
             assert_eq!(harness.selectable_generations(), generations_before);
         }
+
+        let failed_output = format!(
+            "target/phenix-plugin-build-failed-{}-{nonce}.bin",
+            std::process::id()
+        );
+        let failed_plan = PluginBuildPlan::new(
+            PluginBuildSource {
+                identity: "fixture:application-plugin-build-failure".parse().unwrap(),
+                revision: format!("fixture:failed:{nonce}").parse().unwrap(),
+            },
+            vec![PluginBuildStep {
+                executable: "sh".parse().unwrap(),
+                argv: [
+                    "-c".parse().unwrap(),
+                    "printf 'fixture build failure' >&2; exit 7"
+                        .parse()
+                        .unwrap(),
+                ]
+                .into_iter()
+                .collect(),
+                working_directory: BuildWorkingDirectory::root(),
+                environment: BuildEnvironment::default(),
+            }],
+            failed_output.parse().unwrap(),
+            BTreeMap::new(),
+            runtime_plugin_build_authority(),
+        )
+        .unwrap();
+        let failed_request = AgentToolExecutionRequest {
+            execution_id,
+            session_id: Some(session_id),
+            call: ModelToolCall {
+                call_id: "plugin-build-failed".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("build".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "plan".into(),
+                            PhenixValue::from(serde_json::to_value(&failed_plan).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let failed_output_value = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&failed_request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let failed_value: PhenixValue = serde_json::from_slice(&failed_output_value).unwrap();
+        let failed_response =
+            AgentToolExecutionResponse::try_from(Project(&failed_value)).unwrap();
+        let AgentToolExecutionResponse::Completed { result: failed, .. } = failed_response else {
+            panic!("failed phenix.plugin build must complete as a tool error");
+        };
+        assert!(failed.is_error, "failed plugin build unexpectedly succeeded");
+        let failure = ApplicationError::from_value(&failed.output).unwrap();
+        assert!(
+            matches!(
+                failure,
+                ApplicationError::Failed { ref message }
+                    if message.contains("plugin build step 0 exited with status 7")
+            ),
+            "unexpected plugin build failure: {failure:?}"
+        );
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &active_before);
+            assert_eq!(harness.selectable_generations(), generations_before);
+        }
+        assert!(
+            !std::path::Path::new(&failed_output).exists(),
+            "failed plugin build left an artifact output behind"
+        );
 
         let _ = fs::remove_file(&artifact_output);
         let _ = fs::remove_file(&locator);
