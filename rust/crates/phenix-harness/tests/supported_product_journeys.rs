@@ -764,7 +764,16 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
             },
         },
     );
-    let StepRunnerResponse::Completed { output, .. } = response;
+    let StepRunnerResponse::Completed {
+        attempt, output, ..
+    } = response;
+    assert_eq!(
+        attempt.plan.skills.initial,
+        BTreeSet::from([
+            SkillId::parse("introspection-check").unwrap(),
+            SkillId::parse("write").unwrap(),
+        ])
+    );
     let report: ModelSurfaceReport = serde_json::from_slice(output.as_ref()).unwrap();
 
     assert_eq!(report.model, "fixture-introspection");
