@@ -46,16 +46,16 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
                     .new_session(NewSessionRequest::new(working_directory))
                     .await?;
 
-            connection
-                .prompt(prompt(controller.session_id.to_string(), FIRST))
-                .await?;
+                connection
+                    .prompt(prompt(controller.session_id.to_string(), FIRST))
+                    .await?;
 
-            // This is the critical post-condition missing from the older orchestration
-            // tests: after the model created, prompted, and closed an independent child,
-            // the same ACP connection and controller session must accept a fresh turn.
-            connection
-                .prompt(prompt(controller.session_id.to_string(), SECOND))
-                .await?;
+                // This is the critical post-condition missing from the older orchestration
+                // tests: after the model created, prompted, and closed an independent child,
+                // the same ACP connection and controller session must accept a fresh turn.
+                connection
+                    .prompt(prompt(controller.session_id.to_string(), SECOND))
+                    .await?;
 
                 Ok::<_, ClientError>(())
             }
