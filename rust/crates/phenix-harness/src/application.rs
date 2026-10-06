@@ -8829,6 +8829,68 @@ mod tests {
         )
         .unwrap();
 
+        let mut under_authorized_plan = serde_json::to_value(&plan).unwrap();
+        under_authorized_plan["requested_authority"] = serde_json::json!([]);
+        let under_authorized_request = AgentToolExecutionRequest {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            call: ModelToolCall {
+                call_id: "plugin-build-missing-authority".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("build".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "plan".into(),
+                            PhenixValue::from(under_authorized_plan),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let under_authorized_output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&under_authorized_request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let under_authorized_value: PhenixValue =
+            serde_json::from_slice(&under_authorized_output).unwrap();
+        let under_authorized_response =
+            AgentToolExecutionResponse::try_from(Project(&under_authorized_value)).unwrap();
+        let AgentToolExecutionResponse::Completed {
+            result: under_authorized,
+            ..
+        } = under_authorized_response
+        else {
+            panic!("under-authorized phenix.plugin build must complete as a tool error");
+        };
+        assert!(under_authorized.is_error);
+        let under_authorized_error =
+            ApplicationError::from_value(&under_authorized.output).unwrap();
+        assert!(
+            matches!(
+                under_authorized_error,
+                ApplicationError::InvalidInput { ref message }
+                    if message.contains("requested_authority")
+                        && message.contains("workspace.read")
+                        && message.contains("workspace.shell")
+            ),
+            "unexpected under-authorized plugin build error: {under_authorized_error:?}"
+        );
+        assert!(
+            !std::path::Path::new(&artifact_output).exists(),
+            "under-authorized plugin build executed before authority validation"
+        );
+
         let request = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
             session_id: Some(session_id.clone()),
