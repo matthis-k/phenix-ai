@@ -453,6 +453,7 @@ mod tests {
         ExecutionConfigurationCommand, ModelCommand, OptionContext, OptionValueLayer,
         OptionValueSource,
     };
+    use phenix_sdk::InvocationRequest;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -500,6 +501,71 @@ mod tests {
             }]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn packaged_skills_are_registered_and_required_by_invocation_defaults() {
+        let directory = std::env::temp_dir().join(format!(
+            "phenix-packaged-skills-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let skill_directory = directory.join("skills/write");
+        fs::create_dir_all(&skill_directory).unwrap();
+        fs::write(skill_directory.join("SKILL.md"), "fixture write instructions").unwrap();
+
+        let mut harness = PhenixRuntime::default_suite().unwrap();
+        harness.activate().unwrap();
+        let registered =
+            register_packaged_skills(&mut harness, &directory.join("skills")).unwrap();
+        let write = SkillId::parse("write").unwrap();
+        assert_eq!(registered, BTreeSet::from([write.clone()]));
+
+        let mut configuration = sample_runtime();
+        configuration.required_skills.insert(write.clone());
+        apply_configuration(&mut harness, configuration).unwrap();
+
+        let listed: ContextResponse = invoke_projected(
+            &mut harness,
+            &context_service(),
+            &ContextCommand::List,
+            &default_suite_authority(),
+        )
+        .unwrap();
+        let ContextResponse::Resources { descriptors } = listed else {
+            panic!("expected context resource catalog");
+        };
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.resource_id.as_str() == "skill:write"
+                && descriptor.kind == ContextResourceKind::Skill
+        }));
+
+        let defaults: InvocationDefaultsResponse = invoke_projected(
+            &mut harness,
+            &invocation_defaults_service(),
+            &InvocationDefaultsCommand::Resolve {
+                request: InvocationRequest {
+                    execution_id: "execution-1".into(),
+                    session_id: None,
+                    parent_attempt_id: None,
+                    callable_id: None,
+                    input: b"test".to_vec().into(),
+                    tools: Vec::new(),
+                    continuation: Vec::new(),
+                },
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        let InvocationDefaultsResponse::Params { params } = defaults else {
+            panic!("expected invocation params");
+        };
+        assert_eq!(params.intent.required_skills, BTreeSet::from([write]));
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
