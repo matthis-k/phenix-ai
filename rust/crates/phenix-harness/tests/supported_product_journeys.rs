@@ -16,6 +16,7 @@ use phenix_plugin_catalog::{
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
     RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,
     SessionTreeResponse, WorkspaceCommand, WorkspaceResponse, artifact_component_manifest,
+    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
     model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
@@ -23,7 +24,7 @@ use phenix_sdk::{
     DelegationResourcePolicy, EffectiveModelFeatures, ExecutionResourceCommand,
     ExecutionResourceResponse, InvocationCommand, InvocationIntent, InvocationParams,
     InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
-    RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
+    RoutingEstimateMode, SkillCommand, SkillDefinition, SkillId, StepRunnerResponse, UsagePolicy,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -557,7 +558,9 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
-                    required_skills: BTreeSet::new(),
+                    required_skills: BTreeSet::from([
+                        SkillId::parse("introspection-check").unwrap(),
+                    ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
@@ -631,6 +634,10 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
             || Box::new(IntrospectionModelProvider),
         )
         .unwrap();
+    builder
+        .add_embedded(basic_skills_manifest(), basic_skills_factory)
+        .unwrap();
+    builder.add_component(basic_skills_component_manifest());
     let mut harness = builder.build().unwrap();
     harness.activate().unwrap();
 
@@ -697,31 +704,14 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         },
     );
 
-    let resource_id = ContextResourceId::parse("skill:introspection-check").unwrap();
-    let registered: ContextResponse = invoke_structural(
+    let _: phenix_core::SkillResponse = invoke_structural(
         &mut harness,
-        "phenix.context@1",
-        &ContextCommand::Register {
-            resource_id: resource_id.clone(),
-            kind: ContextResourceKind::Skill,
-            source: "skills/introspection-check/SKILL.md".into(),
-            scope: ContextScope::Workspace,
-            content: b"fixture skill body".to_vec().into(),
-        },
-    );
-    let ContextResponse::Registered { resource } = registered else {
-        panic!("skill registration must return an exact revision");
-    };
-    let _: ContextResponse = invoke_structural(
-        &mut harness,
-        "phenix.context@1",
-        &ContextCommand::Load {
-            execution_id: "introspection-root".into(),
-            resource_id,
-            revision: resource.descriptor.revision,
-            requester: ContextInjectionRequester::User,
-            lifetime: ContextInjectionLifetime::Execution,
-            reason: "verify the model-visible skill surface".into(),
+        "phenix.skills@1",
+        &SkillCommand::Register {
+            skill: SkillDefinition {
+                id: SkillId::parse("introspection-check").unwrap(),
+                content: b"fixture skill body".to_vec().into(),
+            },
         },
     );
 
@@ -795,12 +785,19 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         )])))
         .unwrap()
     );
-    assert_eq!(report.skills.len(), 1);
-    assert_eq!(
-        report.skills[0].source,
-        "skills/introspection-check/SKILL.md"
-    );
-    assert_eq!(report.skills[0].content, "fixture skill body");
+    assert_eq!(report.skills.len(), 2);
+    let explicit = report
+        .skills
+        .iter()
+        .find(|skill| skill.source == "phenix.skills@1:introspection-check")
+        .expect("explicitly required skill must be model-visible");
+    assert_eq!(explicit.content, "fixture skill body");
+    let write = report
+        .skills
+        .iter()
+        .find(|skill| skill.source == "phenix.skills@1:write")
+        .expect("provider-required write skill must be model-visible");
+    assert!(write.content.contains("Must always apply"));
     let phenix_identity = report
         .instructions
         .iter()
