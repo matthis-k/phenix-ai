@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Wire-stable Phenix contract, value, identity, and interface primitives.
 
 mod contract;
