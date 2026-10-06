@@ -10198,7 +10198,10 @@ mod tests {
         );
         assert!(matches!(
             WorkspaceResponse::from_value(&written.output).unwrap(),
-            WorkspaceResponse::Written { ref path, .. } if path == &workspace_path
+            WorkspaceResponse::Written {
+                ref path,
+                version: WorkspaceFileVersion::Present { ref content_hash },
+            } if path == &workspace_path && !content_hash.is_empty()
         ));
 
         let read = invoke_agent_tool(
