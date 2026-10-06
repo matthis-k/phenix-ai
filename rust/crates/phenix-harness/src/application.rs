@@ -11033,10 +11033,7 @@ what question?"
                                     (
                                         "content".into(),
                                         PhenixValue::Map(BTreeMap::from([
-                                            (
-                                                "kind".into(),
-                                                PhenixValue::String("text".into()),
-                                            ),
+                                            ("kind".into(), PhenixValue::String("text".into())),
                                             (
                                                 "text".into(),
                                                 PhenixValue::String("invalid shape".into()),
@@ -11054,9 +11051,7 @@ what question?"
                             .and_then(|turn| turn.tool_results.first())
                             .ok_or_else(|| "missing failing child tool result".to_owned())?;
                         if !failed.is_error {
-                            return Err(
-                                "malformed child prompt unexpectedly succeeded".to_owned()
-                            );
+                            return Err("malformed child prompt unexpectedly succeeded".to_owned());
                         }
                         let child =
                             SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
