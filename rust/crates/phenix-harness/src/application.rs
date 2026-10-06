@@ -9703,7 +9703,8 @@ mod tests {
             .as_nanos();
         let artifact_output = format!("target/phenix-plugin-build-{nonce}.bin");
         let artifact_content = format!("phenix-plugin-build-{nonce}");
-        let command = format!("mkdir -p target && printf %s {artifact_content} > {artifact_output}");
+        let command =
+            format!("mkdir -p target && printf %s {artifact_content} > {artifact_output}");
         let plan = PluginBuildPlan::new(
             phenix_core::PluginBuildSource {
                 identity: "fixture.plugin-build".parse().unwrap(),
