@@ -800,10 +800,12 @@ fn failed_start_keeps_the_previous_generation_active() {
 fn failed_trial_start_leaves_no_resident_candidate() {
     let runtime = runtime("vendor.runtime");
     let bridge = bridge_manifest("fixture.trial-failure.bridge", &runtime);
-    let active_guest =
-        guest_manifest("fixture.trial-failure.guest", runtime.clone(), "sha256:guest-v1");
-    let candidate_guest =
-        guest_manifest("fixture.trial-failure.guest", runtime, "sha256:guest-v2");
+    let active_guest = guest_manifest(
+        "fixture.trial-failure.guest",
+        runtime.clone(),
+        "sha256:guest-v1",
+    );
+    let candidate_guest = guest_manifest("fixture.trial-failure.guest", runtime, "sha256:guest-v2");
     let initial = ResolvedGeneration::resolve(
         [bridge.clone(), active_guest],
         [],
