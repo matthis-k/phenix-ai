@@ -6,7 +6,9 @@ status: specification-only
 
 Give plugin authors one typed call API while keeping target binding explicit at the call site.
 
-A plugin may know a callable contract at compile time even when its provider is loaded, replaced, or unloaded at runtime. Phenix therefore separates contract typing, target binding, and value representation.
+A plugin may know a callable contract at compile time even when its provider is loaded, replaced, or unloaded at runtime. Phenix therefore separates contract declaration, contract requirement, target binding, and value representation.
+
+The Rust authoring vocabulary is contract-first. A plugin declares a contract with `#[phenix_sdk::contract(...)]`, requires it with `#[phenix(require)]`, and provides it with `#[phenix(provide(...))]`. These spellings lower to the existing Core Interface, Import, and Export representation.
 
 ## User model
 
@@ -160,14 +162,16 @@ The generated method delegates to a binding-mode implementation. `CompileTime` i
 
 ## Plugin declarations
 
-Concrete plugin dependencies and capability imports remain distinct.
+Concrete plugin dependencies and contract requirements remain distinct.
 
-A capability import gives the caller a typed runtime member but does not imply a compile-time target:
+A contract requirement gives the caller a typed runtime member but does not imply a compile-time target:
 
 ```rust
-#[phenix(import)]
-sessions: Sessions
+#[phenix(require)]
+sessions: Required<Sessions>
 ```
+
+The requirement lowers to the ordinary Core Interface Import and leaves provider selection to the active Graph Generation.
 
 A concrete static dependency may enable compile-time calls when the dependency is part of the caller's compiled and lifecycle-coupled closure:
 
@@ -206,7 +210,7 @@ An invocation already started before replacement remains pinned to its starting 
 
 ## Failure rules
 
-- Missing required runtime provider fails graph construction when the import is required by the active composition.
+- Missing required runtime provider fails graph construction when the contract requirement is required by the active composition.
 - Missing optional runtime provider produces the existing optional or unavailable behavior when invoked.
 - Dynamic lookup of an unknown binding returns a lookup error.
 - Dynamic lookup with a known contract but incompatible schema returns a typed compatibility error.
@@ -227,5 +231,6 @@ An invocation already started before replacement remains pinned to its starting 
 - Compile-time targets cannot disappear independently while the caller survives.
 - `PhenixValue` is valid with either binding mode when conversion is defined.
 - Runtime-discovered contracts use `ctx.get(...)` or dynamic `ctx.call(...)`.
+- Author-facing `require` and `provide` lower to the canonical Core Import and Export model rather than creating another binding path.
 - Dynamic lookup cannot manufacture compile-time binding.
 - Global callable identity is optional and is required only for late or external lookup.
