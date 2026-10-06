@@ -6,7 +6,7 @@ use phenix_core::{
     Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentInvocationError, ComponentManifest, ContextResourceId, PhenixValue, PluginContext,
     PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient, ServiceContribution,
-    ServiceId, ServiceRole,
+    ServiceId, ServiceRole, SkillId,
 };
 use phenix_sdk::{
     ContextAnchor, ContextCommand, ContextInjectionLifetime, ContextInjectionRequester,
@@ -221,6 +221,13 @@ impl InvocationPackage {
         kind: UsageAttemptKind,
     ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
+        if !is_isolated_helper(kind) {
+            load_required_skills(
+                context,
+                &request.execution_id,
+                &params.intent.required_skills,
+            )?;
+        }
         let mut preparation = if is_isolated_helper(kind) {
             ContextInvocationPreparation {
                 request_input_tokens: u64::try_from(request.input.as_ref().len())
@@ -293,6 +300,57 @@ impl InvocationPackage {
             .map_err(|error| error.to_string())?;
         self.runner.invoke(&step_runner_service(), &encoded, host)
     }
+}
+
+fn load_required_skills(
+    context: &InvocationContext<'_, '_>,
+    execution_id: &str,
+    required_skills: &BTreeSet<SkillId>,
+) -> Result<(), String> {
+    if required_skills.is_empty() {
+        return Ok(());
+    }
+
+    let listed: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::List)
+        .map_err(|error| format!("required skill catalog unavailable: {error}"))?;
+    let ContextResponse::Resources { descriptors } = listed else {
+        return Err("context service returned a non-resource response for required skills".into());
+    };
+
+    for skill in required_skills {
+        let resource_id = ContextResourceId::parse(format!("skill:{}", skill.as_str()))
+            .map_err(|error| format!("invalid required skill resource id for {skill}: {error}"))?;
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| {
+                descriptor.resource_id == resource_id
+                    && descriptor.kind == ContextResourceKind::Skill
+            })
+            .ok_or_else(|| format!("required skill is not registered: {skill}"))?;
+        let loaded: ContextResponse = context
+            .sdk
+            .context
+            .invoke_projected(&ContextCommand::LoadOnce {
+                admission_id: format!("required-skill:{skill}"),
+                execution_id: execution_id.to_owned(),
+                resource_id,
+                revision: descriptor.revision.clone(),
+                requester: ContextInjectionRequester::ContextPolicy,
+                lifetime: ContextInjectionLifetime::Execution,
+                reason: format!("required invocation skill: {skill}"),
+            })
+            .map_err(|error| format!("required skill {skill} could not be loaded: {error}"))?;
+        if !matches!(loaded, ContextResponse::Loaded { .. }) {
+            return Err(format!(
+                "context service returned a non-load response for required skill {skill}"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn prepare_invocation_context(
@@ -496,7 +554,9 @@ impl PluginInstance for InvocationPackage {
                     request: request.clone(),
                 })
                 .map_err(|error| format!("helper invocation parameters unavailable: {error}"))?;
-            let InvocationDefaultsResponse::Params { params } = resolved;
+            let InvocationDefaultsResponse::Params { params } = resolved else {
+                return Err("invocation defaults service returned a non-params helper response".into());
+            };
             let kind = request.kind.usage_kind();
             let encoded = self.invoke_with_kind(
                 &context,
@@ -543,7 +603,9 @@ impl PluginInstance for InvocationPackage {
                     request: request.clone(),
                 })
                 .map_err(|error| format!("default invocation parameters unavailable: {error}"))?;
-            let InvocationDefaultsResponse::Params { params } = resolved;
+            let InvocationDefaultsResponse::Params { params } = resolved else {
+                return Err("invocation defaults service returned a non-params response".into());
+            };
             return self.invoke_explicit(&context, host, request, params);
         }
         self.runner.invoke(service, input, host)
