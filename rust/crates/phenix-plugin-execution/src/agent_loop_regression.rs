@@ -127,6 +127,35 @@ impl PluginInstance for InvocationProvider {
 
         let tool_calls = if let Some(tool) = request.tools.first() {
             match tool.id.as_str() {
+                "fixture.reuse-call-id" => vec![ModelToolCall {
+                    call_id: "reused-call".into(),
+                    callable_id: CallableId::parse("fixture.ok").unwrap(),
+                    input: PhenixValue::String("fixture-reused-input".into()),
+                }],
+                "fixture.duplicate-call-id" if request.continuation.is_empty() => vec![
+                    ModelToolCall {
+                        call_id: "duplicate-call".into(),
+                        callable_id: CallableId::parse("fixture.error").unwrap(),
+                        input: PhenixValue::String("fixture-error-input".into()),
+                    },
+                    ModelToolCall {
+                        call_id: "duplicate-call".into(),
+                        callable_id: CallableId::parse("fixture.ok").unwrap(),
+                        input: PhenixValue::String("fixture-success-input".into()),
+                    },
+                ],
+                "fixture.mixed" if request.continuation.is_empty() => vec![
+                    ModelToolCall {
+                        call_id: "mixed-error".into(),
+                        callable_id: CallableId::parse("fixture.error").unwrap(),
+                        input: PhenixValue::String("fixture-error-input".into()),
+                    },
+                    ModelToolCall {
+                        call_id: "mixed-success".into(),
+                        callable_id: CallableId::parse("fixture.ok").unwrap(),
+                        input: PhenixValue::String("fixture-success-input".into()),
+                    },
+                ],
                 "fixture.many" if request.continuation.is_empty() => (0..11)
                     .map(|index| ModelToolCall {
                         call_id: format!("fixture-call-{index}"),
@@ -163,6 +192,57 @@ impl PluginInstance for InvocationProvider {
                             .any(|tool| tool.id.as_str() == "fixture.loaded")
                     {
                         return Err("activated tool schema was not visible on the next turn".into());
+                    }
+                    if tool.id.as_str() == "fixture.mixed" {
+                        let expected_calls = vec![
+                            ModelToolCall {
+                                call_id: "mixed-error".into(),
+                                callable_id: CallableId::parse("fixture.error").unwrap(),
+                                input: PhenixValue::String("fixture-error-input".into()),
+                            },
+                            ModelToolCall {
+                                call_id: "mixed-success".into(),
+                                callable_id: CallableId::parse("fixture.ok").unwrap(),
+                                input: PhenixValue::String("fixture-success-input".into()),
+                            },
+                        ];
+                        let expected_results = vec![
+                            ModelToolResult {
+                                call_id: "mixed-error".into(),
+                                callable_id: CallableId::parse("fixture.error").unwrap(),
+                                output: PhenixValue::String("fixture-error".into()),
+                                is_error: true,
+                            },
+                            ModelToolResult {
+                                call_id: "mixed-success".into(),
+                                callable_id: CallableId::parse("fixture.ok").unwrap(),
+                                output: PhenixValue::String("fixture-result".into()),
+                                is_error: false,
+                            },
+                        ];
+                        if turn.assistant_output != Bytes::new(b"provider-output".to_vec())
+                            || turn.tool_calls != expected_calls
+                            || turn.tool_results != expected_results
+                        {
+                            return Err(
+                                "agent loop changed mixed tool-call/result correlation".into()
+                            );
+                        }
+                        return context
+                            .kernel
+                            .encode_value(&StepRunnerResponse::Completed {
+                                attempt: fixture_attempt(),
+                                output: Bytes::new(b"provider-output-2".to_vec()),
+                                tool_calls: Vec::new(),
+                                settled: BudgetActual {
+                                    fresh_input_tokens: 1,
+                                    output_tokens: 1,
+                                    cost_microunits: None,
+                                    attempts: 1,
+                                },
+                                settlement_basis: StepSettlementBasis::ReservedMaximum,
+                            })
+                            .map_err(|error| error.to_string());
                     }
                     let expected_result = if tool.id.as_str() == "fixture.error" {
                         ModelToolResult {
@@ -660,6 +740,86 @@ fn tool_executor_can_activate_a_schema_for_the_next_model_turn() {
     assert_eq!(
         progress.lock().unwrap().as_slice(),
         ["call:fixture-call-1", "result:fixture-call-1"]
+    );
+}
+
+#[test]
+fn model_tool_call_id_reuse_across_turns_fails_before_second_execution() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let error = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![
+            descriptor("fixture.reuse-call-id"),
+            descriptor("fixture.ok"),
+        ]),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("duplicate tool call id reused-call"));
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        progress.lock().unwrap().as_slice(),
+        ["call:reused-call", "result:reused-call"]
+    );
+}
+
+#[test]
+fn duplicate_model_tool_call_ids_fail_before_tool_execution() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let error = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![
+            descriptor("fixture.duplicate-call-id"),
+            descriptor("fixture.error"),
+            descriptor("fixture.ok"),
+        ]),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("duplicate tool call id duplicate-call"));
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert!(progress.lock().unwrap().is_empty());
+}
+
+#[test]
+fn neighboring_tool_failure_does_not_change_result_identity() {
+    let (mut kernel, agent_loop, executions, progress) = kernel(true);
+    let output = invoke_agent_loop(
+        &mut kernel,
+        &agent_loop,
+        command(vec![
+            descriptor("fixture.mixed"),
+            descriptor("fixture.error"),
+            descriptor("fixture.ok"),
+        ]),
+    )
+    .unwrap();
+    let output: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let response = AgentLoopResponse::try_from(Project(&output)).unwrap();
+
+    assert_eq!(
+        response,
+        AgentLoopResponse::Completed {
+            output: Bytes::new(b"provider-output-2".to_vec()),
+            usage: AgentLoopUsage {
+                model_calls: 2,
+                tool_calls: 2,
+            },
+        }
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        progress.lock().unwrap().as_slice(),
+        [
+            "call:mixed-error",
+            "result:mixed-error",
+            "call:mixed-success",
+            "result:mixed-success",
+        ]
     );
 }
 

@@ -5005,7 +5005,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
     let mut tools = vec![ModelToolDescriptor {
         id: CallableId::parse("phenix.inspect")
             .expect("static inspection callable id is valid"),
-        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution, execution <execution-id>, dag, dag <execution-id>, trace, values, value <value-id>. A bare application execution id such as execution-42 is accepted as execution lookup shorthand.".to_owned(),
+        description: "Read canonical Phenix runtime state and retained metadata-only diagnostics for debugging. Queries: graph, execution, execution <execution-id>, dag, dag <execution-id>, trace, trace <execution-id>, values, value <value-id>. A bare application execution id such as execution-42 is accepted as execution lookup shorthand.".to_owned(),
         input_schema: PhenixSchema::Table(BTreeMap::from([(
             Key::parse("query").expect("static inspection field is valid"),
             PhenixSchema::String,
@@ -6491,6 +6491,7 @@ fn inspect_runtime(
                 "dag",
                 "dag <execution-id>",
                 "trace",
+                "trace <execution-id>",
                 "values",
                 "value <value-id>",
             ]
@@ -6516,6 +6517,15 @@ fn inspect_runtime(
                 }
                 require_runtime_inspection_read(context.call.authority)?;
                 return inspect_execution_dag(context, execution_id);
+            }
+            if let Some(execution_id) = query.strip_prefix("trace ").map(str::trim) {
+                if execution_id.is_empty() {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "trace query requires an execution id".to_owned(),
+                    });
+                }
+                require_runtime_inspection_read(context.call.authority)?;
+                return inspect_runtime_trace_execution(context, execution_id);
             }
             if let Some(id) = query.strip_prefix("value ").map(str::trim) {
                 if id.is_empty() {
@@ -6544,6 +6554,33 @@ fn inspect_runtime_trace(
         .map(PhenixValue::from)
         .map_err(|error| ApplicationError::Failed {
             message: format!("failed to encode runtime trace: {error}"),
+        })
+}
+
+fn inspect_runtime_trace_execution(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    execution_id: &str,
+) -> Result<PhenixValue, ApplicationError> {
+    let events = context
+        .kernel
+        .runtime_trace()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                phenix_core::RuntimeTraceEvent::Orchestration {
+                    controller_execution,
+                    child_execution,
+                    ..
+                } if controller_execution == execution_id
+                    || child_execution.as_deref() == Some(execution_id)
+            )
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_value(events)
+        .map(PhenixValue::from)
+        .map_err(|error| ApplicationError::Failed {
+            message: format!("failed to encode execution runtime trace: {error}"),
         })
 }
 
@@ -10476,6 +10513,38 @@ mod tests {
         let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
         assert_eq!(recalled.records, vec![memory_record]);
 
+        {
+            let harness = worker.harness.lock();
+            harness
+                .kernel()
+                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+                    controller_session: session_id.to_string(),
+                    controller_execution: execution_id.clone(),
+                    kind: "fixture".into(),
+                    operation: "matching".into(),
+                    target_session: None,
+                    child_execution: None,
+                    selected_generation: harness.generation().as_str().to_owned(),
+                    target_generation: None,
+                    success: true,
+                    error: None,
+                });
+            harness
+                .kernel()
+                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+                    controller_session: session_id.to_string(),
+                    controller_execution: "execution-unrelated".into(),
+                    kind: "fixture".into(),
+                    operation: "unrelated".into(),
+                    target_session: None,
+                    child_execution: None,
+                    selected_generation: harness.generation().as_str().to_owned(),
+                    target_generation: None,
+                    success: true,
+                    error: None,
+                });
+        }
+
         let inspect_queries = [
             ("inspect-help", "help".to_owned()),
             ("inspect-graph", "graph".to_owned()),
@@ -10488,6 +10557,7 @@ mod tests {
             ("inspect-dag-current", "dag".to_owned()),
             ("inspect-dag-explicit", format!("dag {execution_id}")),
             ("inspect-trace", "trace".to_owned()),
+            ("inspect-trace-execution", format!("trace {execution_id}")),
             ("inspect-values", "values".to_owned()),
             ("inspect-value", format!("value {SESSION_PROJECTION_VALUE}")),
         ];
@@ -10567,6 +10637,19 @@ mod tests {
                                     == Some(&PhenixValue::String("service_invocation".into()))
                         )
                     }));
+                }
+                (query, PhenixValue::List(events)) if query.starts_with("trace ") => {
+                    assert_eq!(events.len(), 1);
+                    assert!(matches!(
+                        events.first(),
+                        Some(PhenixValue::Map(fields))
+                            if fields.get("event")
+                                == Some(&PhenixValue::String("orchestration".into()))
+                                && fields.get("controller_execution")
+                                    == Some(&PhenixValue::String(execution_id.clone()))
+                                && fields.get("operation")
+                                    == Some(&PhenixValue::String("matching".into()))
+                    ));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
