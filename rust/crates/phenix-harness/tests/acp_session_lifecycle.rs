@@ -34,15 +34,17 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
             .env("PHENIX_STATE_DB", state.to_string_lossy()),
     );
 
+    let working_directory = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let result = client
-        .connect_with(|connection| async move {
-            let working_directory = std::env::current_dir()
-                .map_err(|error| ClientError::Other(error.to_string()))?
-                .to_string_lossy()
-                .into_owned();
-            let controller = connection
-                .new_session(NewSessionRequest::new(working_directory))
-                .await?;
+        .connect_with(|connection| {
+            let working_directory = working_directory.clone();
+            async move {
+                let controller = connection
+                    .new_session(NewSessionRequest::new(working_directory))
+                    .await?;
 
             connection
                 .prompt(prompt(controller.session_id.to_string(), FIRST))
@@ -55,7 +57,8 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
                 .prompt(prompt(controller.session_id.to_string(), SECOND))
                 .await?;
 
-            Ok::<_, ClientError>(())
+                Ok::<_, ClientError>(())
+            }
         })
         .await;
 
