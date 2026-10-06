@@ -40,10 +40,11 @@
       );
 
       phenixHarnessResources = pkgs.runCommand "phenix-harness-resources" { } ''
-        mkdir -p "$out/share/phenix/skills"
+        mkdir -p "$out/share/phenix/licenses"
         cp ${runtimeConfig} "$out/share/phenix/runtime.json"
-        cp -r ${../config/phenix/skills}/* "$out/share/phenix/skills/"
         cp ${../config/phenix/NOTICE.md} "$out/share/phenix/NOTICE.md"
+        cp ${../rust/crates/phenix-plugin-basic-skills/skills/pstack-LICENSE} \
+          "$out/share/phenix/licenses/pstack-LICENSE"
       '';
 
       supportedPhenix = self.packages.${system}.phenix;
@@ -61,9 +62,10 @@
             printf '%s\n' \
               '{"id":1,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Create","value":{"type":"table","value":{"session":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"},"working_directory":{"type":"option","value":null},"title":{"type":"option","value":null},"lifecycle":{"type":"variant","value":{"tag":"Open","value":{"type":"unit"}}}}}}}}}}' \
               '{"id":2,"service":"phenix.sessions@1","input":{"type":"variant","value":{"tag":"Get","value":{"type":"table","value":{"id":{"type":"string","value":"product-smoke"}}}}}}' \
+              '{"id":3,"service":"phenix.api.skills@1","input":{"type":"variant","value":{"tag":"List","value":{"type":"unit"}}}}' \
               | ${supportedPhenix}/bin/phenix --mode jsonl > "$TMPDIR/product-smoke.jsonl"
             if ! jq -se '
-              length == 2
+              length == 3
               and .[0].id == 1
               and .[0].status == "ok"
               and .[0].output.type == "variant"
@@ -74,14 +76,18 @@
               and .[1].output.type == "variant"
               and .[1].output.value.tag == "Session"
               and (.[1].output | tostring | contains("product-smoke"))
+              and .[2].id == 3
+              and .[2].status == "ok"
+              and .[2].output.type == "variant"
+              and .[2].output.value.tag == "Skills"
+              and (.[2].output | tostring | contains("phenix.skills@1:write"))
             ' "$TMPDIR/product-smoke.jsonl" >/dev/null; then
               cat "$TMPDIR/product-smoke.jsonl" >&2
               exit 1
             fi
 
             test -f ${supportedPhenix}/share/phenix/runtime.json
-            test -f ${supportedPhenix}/share/phenix/skills/write/SKILL.md
-            test -f ${supportedPhenix}/share/phenix/skills/pstack-LICENSE
+            test -f ${supportedPhenix}/share/phenix/licenses/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
 
             touch "$out"

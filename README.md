@@ -33,7 +33,7 @@ frontends / protocol adapters
 
 First-party `phenix-plugin-*` and `phenix-adapter-*` crates own independently selectable runtime behavior through the same core contracts available to alternate providers. A thin `phenix-plugin-catalog` collects embedded factories but owns no durable state or product policy.
 
-`phenix-harness` owns the supported product assembly. It selects plugins, grants authority, chooses persistence, loads product configuration and skills, and exposes the wrapped `phenix` product.
+`phenix-harness` owns the supported product assembly. It selects plugins, grants authority, chooses persistence, loads product configuration, and exposes the wrapped `phenix` product. Skill providers own their skill packages.
 
 `phenix-client` owns the internal runtime client/server wire; it is not a public Client SDK. `phenix-adapter-acp` is the transport-independent ACP runtime plugin. It maps standard ACP and descriptor-backed `_phenix/...` extensions to the fixed application interface.
 
@@ -70,9 +70,9 @@ Plugin-owned durable state is canonical. Core enforces namespace ownership, migr
 
 ### Product configuration and skills
 
-Supported runtime configuration lives in `config/phenix/runtime.nix`. Skills and product resources live under `config/phenix/skills/`.
+Supported runtime configuration lives in `config/phenix/runtime.nix`. Static product skills live with the plugin that provides them. The default set is owned by `phenix-plugin-basic-skills`.
 
-The Harness packages these resources and loads agent definitions, orchestration definitions, and routing profiles through plugin-owned services. Product configuration does not become hidden runtime policy.
+The Harness loads agent definitions, orchestration definitions, and routing profiles through plugin-owned services. Skill activation resolves through `phenix.skills@1` and enters model context through `phenix.context@1`. Product configuration does not become hidden runtime policy.
 
 Packaged definitions and their ownership records commit atomically across the execution and model plugins. Routing ownership is explicit: packaged configuration and provider catalogs reject any profile ID already owned outside their manifest, even when the profile value matches. Later applications compare against the last owned values, update packaged definitions, and retire removed entries from catalogs. Retired entries remain addressable by ID for durable sessions and orchestration references; a session's current retired route remains in its own selection list. A retained ID uses its latest packaged definition. Model-feature publication follows the durable commit and is replayed on startup if interrupted. Provider plugins own credential state directly; routing does not mirror authentication state.
 

@@ -1,5 +1,5 @@
 # Imported Harness resources
 
-`runtime.nix` and the skills under this directory were moved from `matthis-k/phenix-harness` as part of the repository consolidation.
+`runtime.nix` was moved from `matthis-k/phenix-harness` as part of the repository consolidation.
 
-The `pstack-LICENSE` file is preserved unchanged beside the imported skills. It covers the PStack-derived skill material identified by that license.
+The imported static skills now live with `phenix-plugin-basic-skills`. Their preserved `pstack-LICENSE` is packaged with the product license material.

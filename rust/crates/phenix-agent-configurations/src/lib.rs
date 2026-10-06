@@ -9,6 +9,7 @@ pub const FULL_PRODUCT_CONFIGURATION: &str = "phenix.product.full";
 
 const BASIC_AGENT_DEPENDENCIES: &[&str] = &[
     "phenix.agent-loop",
+    "phenix.basic-skills",
     "phenix.context",
     "phenix.execution",
     "phenix.harness.invocation-defaults",
@@ -107,6 +108,7 @@ mod tests {
     fn basic_agent_is_option_free() {
         let dependencies = dependency_ids(basic_agent_configuration_manifest());
         assert!(dependencies.contains("phenix.agent-loop"));
+        assert!(dependencies.contains("phenix.basic-skills"));
         for optional in ["phenix.options", "phenix.memory", "phenix.planning"] {
             assert!(!dependencies.contains(optional));
         }

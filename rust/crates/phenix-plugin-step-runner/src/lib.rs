@@ -21,11 +21,12 @@ use phenix_sdk::{
     InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
     MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
-    StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
-    StepRunnerResponse, UsageAttemptKind, context_service, default_invocation_service,
-    helper_invocation_service, invocation_service, step_runner_service,
+    SkillCommand, SkillDefinition, SkillInterface, SkillResponse, StepAttemptCommand,
+    StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
+    UsageAttemptKind, context_service, default_invocation_service, helper_invocation_service,
+    invocation_service, step_runner_service,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub use runner::{STEP_RUNNER_COMPONENT, STEP_RUNNER_PLUGIN, step_runner_component_id};
 
@@ -71,6 +72,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
     manifest.imports.push(optional_import(
         ContextRecoveryInterface::interface_id(),
         ContextRecoveryInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        SkillInterface::interface_id(),
+        SkillInterface::schema(),
     ));
     manifest.imports.push(optional_import(
         MemoryContextInterface::interface_id(),
@@ -162,6 +167,7 @@ struct InvocationSdk<'host, 'runtime> {
     clock: SdkClient<'host, 'runtime, InvocationClockInterface>,
     context: SdkClient<'host, 'runtime, ContextInterface>,
     recovery: SdkClient<'host, 'runtime, ContextRecoveryInterface>,
+    skills: SdkClient<'host, 'runtime, SkillInterface>,
     memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
     memory: SdkClient<'host, 'runtime, MemoryInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
@@ -182,6 +188,7 @@ fn invocation_context<'host, 'runtime>(
             clock: SdkClient::new(host, component.clone()),
             context: SdkClient::new(host, component.clone()),
             recovery: SdkClient::new(host, component.clone()),
+            skills: SdkClient::new(host, component.clone()),
             memory_context: SdkClient::new(host, component.clone()),
             memory: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
@@ -217,10 +224,18 @@ impl InvocationPackage {
         context: &InvocationContext<'_, '_>,
         host: &PluginHost<'_>,
         request: InvocationRequest,
-        params: InvocationParams,
+        mut params: InvocationParams,
         kind: UsageAttemptKind,
     ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
+        if !is_isolated_helper(kind) {
+            let activated_skills = activate_invocation_skills(
+                context,
+                &request.execution_id,
+                &params.intent.required_skills,
+            )?;
+            params.intent.required_skills.extend(activated_skills);
+        }
         let mut preparation = if is_isolated_helper(kind) {
             ContextInvocationPreparation {
                 request_input_tokens: u64::try_from(request.input.as_ref().len())
@@ -293,6 +308,97 @@ impl InvocationPackage {
             .map_err(|error| error.to_string())?;
         self.runner.invoke(&step_runner_service(), &encoded, host)
     }
+}
+
+fn activate_invocation_skills(
+    context: &InvocationContext<'_, '_>,
+    execution_id: &str,
+    explicitly_required: &BTreeSet<phenix_core::SkillId>,
+) -> Result<BTreeSet<phenix_core::SkillId>, String> {
+    let mut skills = BTreeMap::<phenix_core::SkillId, SkillDefinition>::new();
+
+    match context.sdk.skills.invoke_projected(&SkillCommand::Required) {
+        Ok(SkillResponse::Skills { skills: required }) => {
+            for skill in required {
+                skills.insert(skill.id.clone(), skill);
+            }
+        }
+        Ok(_) => {
+            return Err("skill service returned a non-skills response for required skills".into());
+        }
+        Err(ComponentInvocationError::UnboundImport { .. }) if explicitly_required.is_empty() => {}
+        Err(ComponentInvocationError::UnboundImport { .. }) => {
+            return Err("required skills were requested but no skill provider is available".into());
+        }
+        Err(error) => return Err(format!("required skill discovery failed: {error}")),
+    }
+
+    for id in explicitly_required {
+        if skills.contains_key(id) {
+            continue;
+        }
+        let response: SkillResponse = context
+            .sdk
+            .skills
+            .invoke_projected(&SkillCommand::Get { id: id.clone() })
+            .map_err(|error| format!("required skill {id} lookup failed: {error}"))?;
+        let SkillResponse::Skill { skill: Some(skill) } = response else {
+            return Err(format!("required skill is unavailable: {id}"));
+        };
+        skills.insert(id.clone(), skill);
+    }
+
+    let activated = skills.keys().cloned().collect();
+    for skill in skills.into_values() {
+        activate_skill(context, execution_id, skill)?;
+    }
+    Ok(activated)
+}
+
+fn activate_skill(
+    context: &InvocationContext<'_, '_>,
+    execution_id: &str,
+    skill: SkillDefinition,
+) -> Result<(), String> {
+    let resource_id = ContextResourceId::parse(format!("skill:{}", skill.id))
+        .map_err(|error| format!("invalid skill context resource id: {error}"))?;
+    let registered: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: ContextResourceKind::Skill,
+            source: format!("phenix.skills@1:{}", skill.id),
+            scope: ContextScope::Workspace,
+            content: skill.content,
+        })
+        .map_err(|error| format!("skill {} context registration failed: {error}", skill.id))?;
+    let ContextResponse::Registered { resource } = registered else {
+        return Err(format!(
+            "context service returned a non-registration response for skill {}",
+            skill.id
+        ));
+    };
+    let loaded: ContextResponse = context
+        .sdk
+        .context
+        .invoke_projected(&ContextCommand::LoadOnce {
+            admission_id: format!("skill:{}", skill.id),
+            execution_id: execution_id.to_owned(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: ContextInjectionRequester::ContextPolicy,
+            lifetime: ContextInjectionLifetime::Execution,
+            reason: format!("required skill: {}", skill.id),
+        })
+        .map_err(|error| format!("skill {} activation failed: {error}", skill.id))?;
+    if !matches!(loaded, ContextResponse::Loaded { .. }) {
+        return Err(format!(
+            "context service returned a non-load response for skill {}",
+            skill.id
+        ));
+    }
+    Ok(())
 }
 
 fn prepare_invocation_context(

@@ -2,17 +2,17 @@
 
 use phenix_application_interface::types::SessionProjectionState;
 use phenix_core::{
-    Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
-    ComponentManifest, ContextResourceId, HasPhenixSchema, InterfaceId, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
-    SdkContribution, SdkNamespace, SdkObservableResource, SdkResourceId, ServiceContribution,
-    ServiceId, ServiceRole, ValueId, ValuePath,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, HasPhenixSchema, InterfaceId, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, SdkClient, SdkContribution, SdkNamespace,
+    SdkObservableResource, SdkResourceId, ServiceContribution, ServiceId, ServiceRole, ValueId,
+    ValuePath,
 };
 use phenix_sdk::{
-    ContextCommand, ContextDescriptor, ContextInterface, ContextResourceKind,
-    ContextResourceRevision, ContextResponse, ContextScope, ExecutionAuthority, ExecutionCommand,
-    ExecutionInterface, ExecutionResponse, ModelRoutingInterface, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionSubjectId, OptionValue, OptionsInterface,
+    ContextInterface, ExecutionAuthority, ExecutionCommand, ExecutionInterface, ExecutionResponse,
+    ModelRoutingInterface, OptionCommand, OptionContext, OptionKey, OptionResponse,
+    OptionSubjectId, OptionValue, OptionsInterface, SkillCommand, SkillDefinition, SkillId,
+    SkillInterface, SkillResponse,
 };
 pub use phenix_sdk::{
     SDK_CONFIG_SERVICE, SDK_SESSION_SERVICE, SDK_SKILLS_SERVICE, SDK_TOOLS_SERVICE,
@@ -34,7 +34,7 @@ struct SdkDependencies<'host, 'runtime> {
     sessions: SdkClient<'host, 'runtime, SessionInterface>,
     options: SdkClient<'host, 'runtime, OptionsInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
-    context: SdkClient<'host, 'runtime, ContextInterface>,
+    skills: SdkClient<'host, 'runtime, SkillInterface>,
 }
 
 type SdkRuntimeContext<'host, 'runtime, 'plugin> =
@@ -51,7 +51,7 @@ fn plugin_context<'host, 'runtime, 'plugin>(
             sessions: SdkClient::new(host, component.clone()),
             options: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
-            context: SdkClient::new(host, component),
+            skills: SdkClient::new(host, component),
         },
         config_root,
         (),
@@ -129,7 +129,7 @@ pub fn sdk_component_manifest(maximum_authority: Authority) -> ComponentManifest
                 ExecutionInterface::interface_id(),
                 ExecutionInterface::schema(),
             ),
-            optional_import(ContextInterface::interface_id(), ContextInterface::schema()),
+            optional_import(SkillInterface::interface_id(), SkillInterface::schema()),
         ],
         exports: vec![
             ComponentExport {
@@ -433,107 +433,69 @@ fn skill_command(
     match command {
         SdkSkillCommand::Register { id, content } => {
             require_non_empty("skill id", &id)?;
-            let resource_id = skill_resource_id(&id)?;
-            let response = invoke_context(
+            let id = SkillId::parse(id).map_err(str::to_owned)?;
+            let response = invoke_skills(
                 context,
-                ContextCommand::Register {
-                    resource_id,
-                    kind: ContextResourceKind::Skill,
-                    source: format!("sdk:{id}"),
-                    scope: ContextScope::Workspace,
-                    content,
+                SkillCommand::Register {
+                    skill: SkillDefinition { id, content },
                 },
             )?;
-            let ContextResponse::Registered { resource } = response else {
-                return Err("unexpected context response while registering SDK skill".into());
+            let SkillResponse::Skill { skill } = response else {
+                return Err(
+                    "unexpected skill-provider response while registering SDK skill".into(),
+                );
             };
             Ok(SdkSkillResponse::Skill {
-                skill: Some(skill_from_revision(resource)),
+                skill: skill.map(sdk_skill),
             })
         }
         SdkSkillCommand::Get { id } => {
             require_non_empty("skill id", &id)?;
-            let Some(descriptor) = find_skill_descriptor(context, &id)? else {
-                return Ok(SdkSkillResponse::Skill { skill: None });
-            };
-            let response = invoke_context(
-                context,
-                ContextCommand::Get {
-                    resource_id: descriptor.resource_id,
-                    revision: descriptor.revision,
-                },
-            )?;
-            let ContextResponse::Resource { resource } = response else {
-                return Err("unexpected context response while reading SDK skill".into());
+            let id = SkillId::parse(id).map_err(str::to_owned)?;
+            let response = invoke_skills(context, SkillCommand::Get { id })?;
+            let SkillResponse::Skill { skill } = response else {
+                return Err("unexpected skill-provider response while reading SDK skill".into());
             };
             Ok(SdkSkillResponse::Skill {
-                skill: resource.map(skill_from_revision),
+                skill: skill.map(sdk_skill),
             })
         }
         SdkSkillCommand::List => {
-            let response = invoke_context(context, ContextCommand::List)?;
-            let ContextResponse::Resources { descriptors } = response else {
-                return Err("unexpected context response while listing SDK skills".into());
+            let response = invoke_skills(context, SkillCommand::List)?;
+            let SkillResponse::Skills { skills } = response else {
+                return Err("unexpected skill-provider response while listing SDK skills".into());
             };
             Ok(SdkSkillResponse::Skills {
-                skills: descriptors
-                    .into_iter()
-                    .filter(|descriptor| descriptor.kind == ContextResourceKind::Skill)
-                    .map(skill_summary)
-                    .collect(),
+                skills: skills.into_iter().map(skill_summary).collect(),
             })
         }
     }
 }
 
-fn invoke_context(
+fn invoke_skills(
     context: &SdkRuntimeContext<'_, '_, '_>,
-    command: ContextCommand,
-) -> Result<ContextResponse, String> {
+    command: SkillCommand,
+) -> Result<SkillResponse, String> {
     context
         .sdk
-        .context
-        .invoke_projected(&command)
+        .skills
+        .invoke_fallible_projected::<SkillCommand, SkillResponse, String>(&command)
         .map_err(|error| error.to_string())
 }
 
-fn find_skill_descriptor(
-    context: &SdkRuntimeContext<'_, '_, '_>,
-    id: &str,
-) -> Result<Option<ContextDescriptor>, String> {
-    let response = invoke_context(context, ContextCommand::List)?;
-    let ContextResponse::Resources { descriptors } = response else {
-        return Err("unexpected context response while locating SDK skill".into());
-    };
-    Ok(descriptors.into_iter().find(|descriptor| {
-        descriptor.kind == ContextResourceKind::Skill && skill_id(&descriptor.resource_id) == id
-    }))
-}
-
-fn skill_from_revision(resource: ContextResourceRevision) -> SdkSkill {
+fn sdk_skill(skill: SkillDefinition) -> SdkSkill {
     SdkSkill {
-        id: skill_id(&resource.descriptor.resource_id).to_owned(),
-        content: resource.content,
+        id: skill.id.to_string(),
+        content: skill.content,
     }
 }
 
-fn skill_summary(descriptor: ContextDescriptor) -> SdkSkillSummary {
+fn skill_summary(skill: SkillDefinition) -> SdkSkillSummary {
     SdkSkillSummary {
-        id: skill_id(&descriptor.resource_id).to_owned(),
-        revision: descriptor.revision.to_string(),
-        source: descriptor.source,
+        id: skill.id.to_string(),
+        revision: ArtifactRevision::from_content(skill.content.as_ref()).to_string(),
+        source: format!("phenix.skills@1:{}", skill.id),
     }
-}
-
-fn skill_resource_id(id: &str) -> Result<ContextResourceId, String> {
-    ContextResourceId::parse(format!("skill:{id}")).map_err(str::to_owned)
-}
-
-fn skill_id(resource_id: &ContextResourceId) -> &str {
-    resource_id
-        .as_str()
-        .strip_prefix("skill:")
-        .unwrap_or(resource_id.as_str())
 }
 
 fn require_non_empty(name: &str, value: &str) -> Result<(), String> {

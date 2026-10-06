@@ -262,9 +262,12 @@ mod tests {
             &skill_service(),
             &SkillCommand::List,
         );
-        assert!(
-            matches!(skills, SkillResponse::Skills { skills } if skills[0].id.as_str() == "review")
-        );
+        assert!(matches!(
+            skills,
+            SkillResponse::Skills { skills }
+                if skills.iter().any(|skill| skill.id.as_str() == "review")
+                    && skills.iter().any(|skill| skill.id.as_str() == "write")
+        ));
         let tools: ToolResponse = invoke_component(
             &mut restored,
             basic_tools_component_manifest(),

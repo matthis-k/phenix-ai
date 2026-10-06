@@ -14,6 +14,7 @@ phenix-sdk = { path = "../phenix-sdk" }
 serde_json.workspace = true
 
 [dev-dependencies]
+phenix-plugin-basic-skills = { path = "../phenix-plugin-basic-skills" }
 phenix-plugin-context = { path = "../phenix-plugin-context" }
 phenix-plugin-execution = { path = "../phenix-plugin-execution" }
 phenix-plugin-options = { path = "../phenix-plugin-options" }

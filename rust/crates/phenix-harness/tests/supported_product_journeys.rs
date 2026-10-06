@@ -1,8 +1,8 @@
 use phenix_core::{
-    Authority, ComponentManifest, ContextResourceId, ContextResourceKind, ContextScope, Key,
-    ModelFeatureGenerationId, ModelId, ModelToolDescriptor, PhenixSchema, PhenixValue,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, Project,
-    RoutingProfileId, ServiceContribution, ServiceId, SessionId, ValueError,
+    Authority, ComponentManifest, Key, ModelFeatureGenerationId, ModelId, ModelToolDescriptor,
+    PhenixSchema, PhenixValue, PluginExecution, PluginHost, PluginId, PluginInstance,
+    PluginManifest, Project, RoutingProfileId, ServiceContribution, ServiceId, SessionId,
+    ValueError,
 };
 use phenix_harness::{
     PhenixRuntime, PhenixRuntimeBuilder, default_suite_authority,
@@ -19,11 +19,11 @@ use phenix_plugin_catalog::{
     model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
-    CapacityKnowledge, ContextControl, ContextInjectionLifetime, ContextInjectionRequester,
-    DelegationResourcePolicy, EffectiveModelFeatures, ExecutionResourceCommand,
-    ExecutionResourceResponse, InvocationCommand, InvocationIntent, InvocationParams,
-    InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits, RouteSelectionPolicy,
-    RoutingEstimateMode, StepRunnerResponse, UsagePolicy,
+    CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelFeatures,
+    ExecutionResourceCommand, ExecutionResourceResponse, InvocationCommand, InvocationIntent,
+    InvocationParams, InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits,
+    RouteSelectionPolicy, RoutingEstimateMode, SdkSkillCommand, SdkSkillResponse, SkillId,
+    StepRunnerResponse, UsagePolicy,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -514,7 +514,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             ledger: RootBudgetLedger {
                 root_execution_id: "root".into(),
                 limits: RootBudgetLimits {
-                    fresh_input_tokens: 8_000,
+                    fresh_input_tokens: 16_000,
                     output_tokens: 2_000,
                     cost_microunits: None,
                     attempts: 4,
@@ -541,7 +541,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                 profile_id: RoutingProfileId::parse("parity").unwrap(),
                 policy: UsagePolicy {
                     revision: "fixture-policy".into(),
-                    max_fresh_input_tokens: Some(4_000),
+                    max_fresh_input_tokens: Some(16_000),
                     max_output_tokens: Some(512),
                     max_cost_microunits: None,
                     max_retries: Some(0),
@@ -697,31 +697,12 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         },
     );
 
-    let resource_id = ContextResourceId::parse("skill:introspection-check").unwrap();
-    let registered: ContextResponse = invoke_structural(
+    let _: SdkSkillResponse = invoke_structural(
         &mut harness,
-        "phenix.context@1",
-        &ContextCommand::Register {
-            resource_id: resource_id.clone(),
-            kind: ContextResourceKind::Skill,
-            source: "skills/introspection-check/SKILL.md".into(),
-            scope: ContextScope::Workspace,
+        "phenix.api.skills@1",
+        &SdkSkillCommand::Register {
+            id: "introspection-check".into(),
             content: b"fixture skill body".to_vec().into(),
-        },
-    );
-    let ContextResponse::Registered { resource } = registered else {
-        panic!("skill registration must return an exact revision");
-    };
-    let _: ContextResponse = invoke_structural(
-        &mut harness,
-        "phenix.context@1",
-        &ContextCommand::Load {
-            execution_id: "introspection-root".into(),
-            resource_id,
-            revision: resource.descriptor.revision,
-            requester: ContextInjectionRequester::User,
-            lifetime: ContextInjectionLifetime::Execution,
-            reason: "verify the model-visible skill surface".into(),
         },
     );
 
@@ -768,7 +749,9 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::from([tool_id]),
-                    required_skills: BTreeSet::new(),
+                    required_skills: BTreeSet::from([
+                        SkillId::parse("introspection-check").unwrap()
+                    ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
@@ -781,7 +764,16 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
             },
         },
     );
-    let StepRunnerResponse::Completed { output, .. } = response;
+    let StepRunnerResponse::Completed {
+        attempt, output, ..
+    } = response;
+    assert_eq!(
+        attempt.plan.skills.initial,
+        BTreeSet::from([
+            SkillId::parse("introspection-check").unwrap(),
+            SkillId::parse("write").unwrap(),
+        ])
+    );
     let report: ModelSurfaceReport = serde_json::from_slice(output.as_ref()).unwrap();
 
     assert_eq!(report.model, "fixture-introspection");
@@ -795,12 +787,19 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         )])))
         .unwrap()
     );
-    assert_eq!(report.skills.len(), 1);
-    assert_eq!(
-        report.skills[0].source,
-        "skills/introspection-check/SKILL.md"
-    );
-    assert_eq!(report.skills[0].content, "fixture skill body");
+    assert_eq!(report.skills.len(), 2);
+    let explicit = report
+        .skills
+        .iter()
+        .find(|skill| skill.source == "phenix.skills@1:introspection-check")
+        .expect("explicitly required skill must be model-visible");
+    assert_eq!(explicit.content, "fixture skill body");
+    let write = report
+        .skills
+        .iter()
+        .find(|skill| skill.source == "phenix.skills@1:write")
+        .expect("provider-required write skill must be model-visible");
+    assert!(write.content.contains("Must always apply"));
     let phenix_identity = report
         .instructions
         .iter()
