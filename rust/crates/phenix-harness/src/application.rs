@@ -10995,6 +10995,98 @@ what question?"
 
             let response = if input.trim_end().ends_with("LIFECYCLE_CHILD") {
                 orchestration_response("child lifecycle complete", Vec::new())
+            } else if input.trim_end().ends_with("LIFECYCLE_FAILED_CHILD") {
+                match request.continuation.len() {
+                    0 => orchestration_response(
+                        "create failing child",
+                        vec![orchestration_operation_call(
+                            "lifecycle-create-failing-child",
+                            "phenix.session",
+                            "create",
+                            BTreeMap::from([
+                                (
+                                    "working_directory".into(),
+                                    PhenixValue::String("/workspace".into()),
+                                ),
+                                (
+                                    "title".into(),
+                                    PhenixValue::String("failing lifecycle child".into()),
+                                ),
+                            ]),
+                        )],
+                    ),
+                    1 => {
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        orchestration_response(
+                            "send malformed child prompt",
+                            vec![orchestration_operation_call(
+                                "lifecycle-prompt-failing-child",
+                                "phenix.session",
+                                "prompt",
+                                BTreeMap::from([
+                                    (
+                                        "session_id".into(),
+                                        PhenixValue::String(child.session_id.to_string()),
+                                    ),
+                                    (
+                                        "content".into(),
+                                        PhenixValue::Map(BTreeMap::from([
+                                            (
+                                                "kind".into(),
+                                                PhenixValue::String("text".into()),
+                                            ),
+                                            (
+                                                "text".into(),
+                                                PhenixValue::String("invalid shape".into()),
+                                            ),
+                                        ])),
+                                    ),
+                                ]),
+                            )],
+                        )
+                    }
+                    2 => {
+                        let failed = request
+                            .continuation
+                            .get(1)
+                            .and_then(|turn| turn.tool_results.first())
+                            .ok_or_else(|| "missing failing child tool result".to_owned())?;
+                        if !failed.is_error {
+                            return Err(
+                                "malformed child prompt unexpectedly succeeded".to_owned()
+                            );
+                        }
+                        let child =
+                            SessionInfo::from_value(&orchestration_result(&request, 0)?.output)
+                                .map_err(|error| error.to_string())?;
+                        orchestration_response(
+                            "close failed child",
+                            vec![orchestration_operation_call(
+                                "lifecycle-close-failing-child",
+                                "phenix.session",
+                                "close",
+                                BTreeMap::from([(
+                                    "session_id".into(),
+                                    PhenixValue::String(child.session_id.to_string()),
+                                )]),
+                            )],
+                        )
+                    }
+                    3 => {
+                        let _ = orchestration_result(&request, 2)?;
+                        orchestration_response(
+                            "controller failed child cleanup complete",
+                            Vec::new(),
+                        )
+                    }
+                    turns => {
+                        return Err(format!(
+                            "failed-child lifecycle fixture received {turns} continuation turns"
+                        ));
+                    }
+                }
             } else if input.trim_end().ends_with("LIFECYCLE_SELF_CLOSE") {
                 match request.continuation.as_slice() {
                     [] => {
@@ -11236,6 +11328,36 @@ what question?"
         assert_eq!(after_self_close.stop_reason, StopReason::EndTurn);
         assert_ne!(self_close.execution_id, after_self_close.execution_id);
 
+        let failed_child_cleanup = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_FAILED_CHILD".into(),
+                }],
+            },
+        )
+        .await
+        .expect("failed child prompt cleanup must not abort the controller");
+        assert_eq!(failed_child_cleanup.stop_reason, StopReason::EndTurn);
+
+        let after_failed_child = invoke_transport_operation::<Prompt>(
+            &transport,
+            PromptInput {
+                session_id: controller.session_id.clone(),
+                content: vec![Content::Text {
+                    text: "LIFECYCLE_SECOND".into(),
+                }],
+            },
+        )
+        .await
+        .expect("closing a failed child must leave the controller usable");
+        assert_eq!(after_failed_child.stop_reason, StopReason::EndTurn);
+        assert_ne!(
+            failed_child_cleanup.execution_id,
+            after_failed_child.execution_id
+        );
+
         let snapshot = invoke_transport_operation::<ResumeSession>(
             &transport,
             SessionResumeInput {
@@ -11266,6 +11388,13 @@ what question?"
                     if text == "controller self close rejected"
             )
         }));
+        assert!(snapshot.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. }
+                    if text == "controller failed child cleanup complete"
+            )
+        }));
 
         let sessions =
             invoke_transport_operation::<ListSessions>(&transport, PageInput { cursor: None })
@@ -11277,8 +11406,8 @@ what question?"
                 .iter()
                 .filter(|session| session.working_directory == "/workspace")
                 .count(),
-            2,
-            "controller plus the closed child must remain independently addressable"
+            3,
+            "controller plus both closed children must remain independently addressable"
         );
         assert!(
             sessions
