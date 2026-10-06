@@ -329,7 +329,6 @@ let
   );
 in
 {
-  required_skills = [ "write" ];
   agents = builtins.attrValues agents;
   inherit orchestrations;
   routing_profiles = [
