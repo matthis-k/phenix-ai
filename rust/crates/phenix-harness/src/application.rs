@@ -5051,7 +5051,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.plugin")
                 .expect("static plugin management callable id is valid"),
-            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. For model-facing build plans, omitted or empty requested_authority uses the narrow workspace build authority, still bounded by the parent root; a non-empty requested_authority attenuates it. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
+            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. For model-facing build plans, omitted or empty requested_authority uses the narrow workspace build authority, still bounded by the parent root; a non-empty requested_authority attenuates it. Build returns a complete artifact object that can be used as a ready runtime artifact in a trial request. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static plugin operation field is valid"),
@@ -5356,6 +5356,12 @@ fn runtime_reconciliation_preview_value(preview: &ReconciliationPreview) -> Phen
 
 fn runtime_plugin_build_report_value(report: &PluginBuildReport) -> PhenixValue {
     PhenixValue::Map(BTreeMap::from([
+        (
+            "artifact".to_owned(),
+            PhenixValue::from(
+                serde_json::to_value(&report.artifact).expect("plugin artifact is JSON-compatible"),
+            ),
+        ),
         (
             "artifact_locator".to_owned(),
             PhenixValue::String(report.artifact.locator.clone()),
@@ -6952,8 +6958,9 @@ mod tests {
         BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
         InvocationOutcome, LocalPersistence, ModelFeatureGenerationId, ModelId,
         ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
-        PluginBuildStep, ResourceNamespace, SessionId, SkillCommand, SkillDefinition, SkillId,
-        SkillResponse, TransactionOp, ValueAddress, skill_service,
+        PluginBuildStep, PluginRuntimeAdapter, PluginRuntimeCandidate, ResourceNamespace,
+        SessionId, SkillCommand, SkillDefinition, SkillId, SkillResponse, TransactionOp,
+        ValueAddress, plugin_runtime_adapter_service, skill_service,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -8753,9 +8760,63 @@ mod tests {
         );
     }
 
+    struct LifecycleRuntimeGuest;
+
+    impl PluginInstance for LifecycleRuntimeGuest {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct LifecycleRuntimeAdapter;
+
+    impl PluginRuntimeAdapter for LifecycleRuntimeAdapter {
+        fn prepare(
+            &mut self,
+            _candidate: PluginRuntimeCandidate<'_>,
+        ) -> Result<Box<dyn PluginInstance>, String> {
+            Ok(Box::new(LifecycleRuntimeGuest))
+        }
+    }
+
+    impl PluginInstance for LifecycleRuntimeAdapter {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn plugin_runtime_adapter(&mut self) -> Option<&mut dyn PluginRuntimeAdapter> {
+            Some(self)
+        }
+    }
+
+    fn lifecycle_runtime_adapter_manifest(runtime: &PluginRuntimeId) -> PluginManifest {
+        PluginManifest {
+            id: PluginId::parse("fixture.lifecycle-runtime-adapter").unwrap(),
+            version: 1,
+            execution: PluginExecution::Embedded,
+            dependencies: Vec::new(),
+            services: vec![ServiceContribution {
+                service: plugin_runtime_adapter_service(runtime),
+                role: ServiceRole::Terminal,
+                priority: 100,
+                required_authority: Authority::default(),
+            }],
+            resource_namespaces: Vec::new(),
+            maximum_authority: Authority::default(),
+        }
+    }
+
     #[test]
     fn runtime_plugin_build_executes_workspace_plan_without_changing_generation() {
-        let mut worker = application_worker();
+        let lifecycle_runtime = PluginRuntimeId::parse("fixture.lifecycle-runtime").unwrap();
+        let adapter_manifest = lifecycle_runtime_adapter_manifest(&lifecycle_runtime);
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        builder
+            .add_embedded(adapter_manifest, || Box::new(LifecycleRuntimeAdapter))
+            .unwrap();
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
         enable_runtime_orchestration(&worker);
         let session_id = invoke_operation::<CreateSession>(
             &mut worker,
@@ -8952,6 +9013,15 @@ mod tests {
             Some(PhenixValue::String(revision)) => revision.clone(),
             value => panic!("phenix.plugin build returned invalid revision: {value:?}"),
         };
+        let artifact_value = fields
+            .get("artifact")
+            .expect("phenix.plugin build must expose its structured artifact");
+        let artifact_json = serde_json::Value::from_value(artifact_value)
+            .expect("structured plugin artifact must be JSON-compatible");
+        let artifact: PluginArtifact =
+            serde_json::from_value(artifact_json).expect("structured plugin artifact must decode");
+        assert_eq!(artifact.locator, locator);
+        assert_eq!(artifact.revision.as_ref(), revision);
         assert_eq!(
             revision,
             ArtifactRevision::from_content(artifact_content.as_bytes()).to_string()
@@ -8969,6 +9039,193 @@ mod tests {
         );
         assert_eq!(fs::read(&locator).unwrap(), artifact_content.as_bytes());
 
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &active_before);
+            assert_eq!(harness.selectable_generations(), generations_before);
+        }
+
+        let trial_request = PluginLoadRequest {
+            manifest: PluginManifest {
+                id: PluginId::parse("fixture.lifecycle-runtime-guest").unwrap(),
+                version: 1,
+                execution: PluginExecution::Runtime {
+                    runtime: lifecycle_runtime,
+                    artifact: PluginArtifactInput::Ready(artifact),
+                },
+                dependencies: Vec::new(),
+                services: Vec::new(),
+                resource_namespaces: Vec::new(),
+                maximum_authority: Authority::default(),
+            },
+            components: Vec::new(),
+            entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
+            expected_active_revision: None,
+        };
+        let trial_request = AgentToolExecutionRequest {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            call: ModelToolCall {
+                call_id: "plugin-trial-built-artifact".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("trial".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "request".into(),
+                            PhenixValue::from(serde_json::to_value(&trial_request).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let trial_output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&trial_request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let trial_value: PhenixValue = serde_json::from_slice(&trial_output).unwrap();
+        let trial_response = AgentToolExecutionResponse::try_from(Project(&trial_value)).unwrap();
+        let AgentToolExecutionResponse::Completed { result: trial, .. } = trial_response else {
+            panic!("phenix.plugin trial must complete through the application adapter");
+        };
+        assert!(
+            !trial.is_error,
+            "phenix.plugin trial failed: {:?}",
+            trial.output
+        );
+        let PhenixValue::Map(trial_fields) = trial.output else {
+            panic!("phenix.plugin trial returned a non-map result");
+        };
+        let trial_generation = match trial_fields.get("generation") {
+            Some(PhenixValue::String(generation)) => GenerationId::from(generation.clone()),
+            value => panic!("phenix.plugin trial returned invalid generation: {value:?}"),
+        };
+        assert_ne!(trial_generation, active_before);
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &active_before);
+            assert!(harness.selectable_generations().contains(&trial_generation));
+        }
+
+        for (call_id, operation, generation, expected_active) in [
+            (
+                "plugin-promote-built-artifact",
+                "promote",
+                trial_generation.clone(),
+                trial_generation.clone(),
+            ),
+            (
+                "plugin-rollback-built-artifact",
+                "rollback",
+                active_before.clone(),
+                active_before.clone(),
+            ),
+        ] {
+            let request = AgentToolExecutionRequest {
+                execution_id: execution_id.clone(),
+                session_id: Some(session_id.clone()),
+                call: ModelToolCall {
+                    call_id: call_id.into(),
+                    callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                    input: PhenixValue::Table(BTreeMap::from([
+                        (
+                            Key::parse("operation").unwrap(),
+                            PhenixValue::String(operation.into()),
+                        ),
+                        (
+                            Key::parse("arguments").unwrap(),
+                            PhenixValue::Map(BTreeMap::from([(
+                                "generation".into(),
+                                PhenixValue::String(generation.as_str().to_owned()),
+                            )])),
+                        ),
+                    ])),
+                },
+            };
+            let output = worker
+                .harness
+                .lock()
+                .invoke(
+                    &agent_tool_execution_service(),
+                    &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                    &authority,
+                    None,
+                )
+                .unwrap();
+            let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+            let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+            let AgentToolExecutionResponse::Completed { result, .. } = response else {
+                panic!("phenix.plugin {operation} must complete through the application adapter");
+            };
+            assert!(
+                !result.is_error,
+                "phenix.plugin {operation} failed: {:?}",
+                result.output
+            );
+            let PhenixValue::Map(fields) = result.output else {
+                panic!("phenix.plugin {operation} returned a non-map result");
+            };
+            assert_eq!(
+                fields.get("active_generation"),
+                Some(&PhenixValue::String(expected_active.as_str().to_owned()))
+            );
+        }
+
+        let retire_request = AgentToolExecutionRequest {
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
+            call: ModelToolCall {
+                call_id: "plugin-retire-built-artifact".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("retire".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "generation".into(),
+                            PhenixValue::String(trial_generation.as_str().to_owned()),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let retire_output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&retire_request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let retire_value: PhenixValue = serde_json::from_slice(&retire_output).unwrap();
+        let retire_response = AgentToolExecutionResponse::try_from(Project(&retire_value)).unwrap();
+        let AgentToolExecutionResponse::Completed {
+            result: retired, ..
+        } = retire_response
+        else {
+            panic!("phenix.plugin retire must complete through the application adapter");
+        };
+        assert!(
+            !retired.is_error,
+            "phenix.plugin retire failed: {:?}",
+            retired.output
+        );
         {
             let harness = worker.harness.lock();
             assert_eq!(harness.generation(), &active_before);
