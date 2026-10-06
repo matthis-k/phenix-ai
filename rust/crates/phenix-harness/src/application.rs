@@ -6856,7 +6856,8 @@ mod tests {
         BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
         InvocationOutcome, LocalPersistence, ModelFeatureGenerationId, ModelId,
         ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
-        PluginBuildStep, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
+        PluginBuildStep, ResourceNamespace, SessionId, SkillCommand, SkillDefinition, SkillId,
+        SkillResponse, TransactionOp, ValueAddress, skill_service,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -7465,6 +7466,15 @@ mod tests {
         value: Option<String>,
     }
 
+    const TRIAL_GENERATION_SKILL_MARKER: &str = "TRIAL_GENERATION_SKILL_MARKER";
+
+    fn trial_generation_skill() -> SkillDefinition {
+        SkillDefinition {
+            id: SkillId::parse("trial-generation").unwrap(),
+            content: Bytes::new(TRIAL_GENERATION_SKILL_MARKER.as_bytes().to_vec()),
+        }
+    }
+
     struct MemoryDebugPlugin {
         namespace: ResourceNamespace,
     }
@@ -7480,6 +7490,25 @@ mod tests {
             input: &[u8],
             host: &PluginHost<'_>,
         ) -> Result<Vec<u8>, String> {
+            if service == &skill_service() {
+                let value: PhenixValue =
+                    serde_json::from_slice(input).map_err(|error| error.to_string())?;
+                let command =
+                    SkillCommand::from_value(&value).map_err(|error| error.to_string())?;
+                let skill = trial_generation_skill();
+                let response = match command {
+                    SkillCommand::Required | SkillCommand::List => SkillResponse::Skills {
+                        skills: vec![skill],
+                    },
+                    SkillCommand::Get { id } => SkillResponse::Skill {
+                        skill: (id == skill.id).then_some(skill),
+                    },
+                    SkillCommand::Register { .. } => {
+                        return Err("trial generation skill fixture is read-only".into());
+                    }
+                };
+                return serde_json::to_vec(&response.to_value()).map_err(|error| error.to_string());
+            }
             if service.as_str() != "fixture.memory-debug@1" {
                 return Err(format!(
                     "unsupported memory-debug fixture service: {service}"
@@ -7530,37 +7559,59 @@ mod tests {
         ])
     }
 
-    fn memory_debug_manifest(version: u32, namespace: ResourceNamespace) -> PluginManifest {
+    fn memory_debug_manifest(
+        version: u32,
+        namespace: ResourceNamespace,
+        provides_skill: bool,
+    ) -> PluginManifest {
         let persistence = memory_debug_authority();
+        let mut services = vec![ServiceContribution {
+            role: ServiceRole::Terminal,
+            service: ServiceId::parse("fixture.memory-debug@1").unwrap(),
+            priority: 100,
+            required_authority: Authority::default(),
+        }];
+        if provides_skill {
+            services.push(ServiceContribution {
+                role: ServiceRole::Terminal,
+                service: skill_service(),
+                priority: 100,
+                required_authority: Authority::default(),
+            });
+        }
         PluginManifest {
             id: PluginId::parse("fixture.memory-debug").unwrap(),
             version,
             execution: PluginExecution::Embedded,
             dependencies: Vec::new(),
-            services: vec![ServiceContribution {
-                role: ServiceRole::Terminal,
-                service: ServiceId::parse("fixture.memory-debug@1").unwrap(),
-                priority: 100,
-                required_authority: Authority::default(),
-            }],
+            services,
             resource_namespaces: vec![namespace],
             maximum_authority: persistence,
         }
     }
 
-    fn memory_debug_component() -> ComponentManifest {
+    fn memory_debug_component(provides_skill: bool) -> ComponentManifest {
         let persistence = memory_debug_authority();
+        let mut exports = vec![ComponentExport {
+            interface: InterfaceId::parse("fixture.memory-debug@1").unwrap(),
+            schema: InterfaceSchema::of::<MemoryDebugRequest, MemoryDebugResponse>(),
+            priority: 100,
+            required_authority: persistence.clone(),
+        }];
+        if provides_skill {
+            exports.push(ComponentExport {
+                interface: InterfaceId::parse("phenix.skills@1").unwrap(),
+                schema: InterfaceSchema::of::<SkillCommand, SkillResponse>(),
+                priority: 100,
+                required_authority: Authority::default(),
+            });
+        }
         ComponentManifest {
             listeners: Vec::new(),
             id: ComponentId::parse("fixture.memory-debug").unwrap(),
             owner: PluginId::parse("fixture.memory-debug").unwrap(),
             imports: Vec::new(),
-            exports: vec![ComponentExport {
-                interface: InterfaceId::parse("fixture.memory-debug@1").unwrap(),
-                schema: InterfaceSchema::of::<MemoryDebugRequest, MemoryDebugResponse>(),
-                priority: 100,
-                required_authority: persistence.clone(),
-            }],
+            exports,
             maximum_authority: persistence,
         }
     }
@@ -7699,6 +7750,9 @@ mod tests {
                 return Err("selected child generation did not expose memory.debug".into());
             }
             let input = String::from_utf8_lossy(request.input.as_ref());
+            if !input.contains(TRIAL_GENERATION_SKILL_MARKER) {
+                return Err("selected child generation did not activate its required skill".into());
+            }
             let write = input.contains("store Helios");
             let read = input.contains("recall Helios");
             if !write && !read {
@@ -7776,6 +7830,11 @@ mod tests {
             };
             match request.continuation.len() {
                 0 => {
+                    if String::from_utf8_lossy(request.input.as_ref())
+                        .contains(TRIAL_GENERATION_SKILL_MARKER)
+                    {
+                        return Err("controller G1 unexpectedly activated the G2-only skill".into());
+                    }
                     if request
                         .tools
                         .iter()
@@ -9317,12 +9376,25 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn model_can_trial_plugin_test_memory_across_sessions_and_roll_back() {
         let namespace = ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
-        let first_manifest = memory_debug_manifest(1, namespace.clone());
-        let second_manifest = memory_debug_manifest(2, namespace.clone());
-        let component = memory_debug_component();
+        let first_manifest = memory_debug_manifest(1, namespace.clone(), false);
+        let second_manifest = memory_debug_manifest(2, namespace.clone(), true);
+        assert!(
+            !first_manifest
+                .services
+                .iter()
+                .any(|service| service.service == skill_service())
+        );
+        assert!(
+            second_manifest
+                .services
+                .iter()
+                .any(|service| service.service == skill_service())
+        );
+        let first_component = memory_debug_component(false);
+        let second_component = memory_debug_component(true);
         let trial_request = PluginLoadRequest {
             manifest: second_manifest.map_artifact(PluginArtifactInput::Ready),
-            components: vec![component.clone()],
+            components: vec![second_component],
             entry_triggers: vec![memory_debug_trigger()],
             process_arguments: Vec::new(),
             expected_active_revision: None,
@@ -9343,7 +9415,7 @@ mod tests {
             first_manifest.id.clone(),
             DurableSchema::new(namespace, 1),
         ));
-        builder.add_component(component);
+        builder.add_component(first_component);
         let state_for_factory = Arc::clone(&state);
         builder
             .add_embedded(runtime_orchestration_model_manifest(), move || {
