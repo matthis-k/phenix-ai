@@ -14,8 +14,9 @@ use phenix_plugin_catalog::{
     FrontendCommand, FrontendResponse, HookCommand, HookResponse, JobCommand, JobResponse,
     LanguageCommand, LanguageResponse, ModelCommand, ModelInferenceRequest, ModelInferenceResponse,
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
-    RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,
-    SessionTreeResponse, WorkspaceCommand, WorkspaceResponse, artifact_component_manifest,
+    RoutingProfile, SessionCommand, SessionLifecycle, SessionRecord, SessionResponse,
+    SessionTreeCommand, SessionTreeResponse, WorkspaceCommand, WorkspaceResponse,
+    artifact_component_manifest,
     model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
@@ -852,5 +853,87 @@ fn legacy_hook_dispatcher_is_opt_in_and_replaceable() {
     assert_eq!(
         invoke_value_raw(&mut replacement, &hook_service, &request),
         request
+    );
+}
+
+
+#[test]
+fn closing_linked_child_session_preserves_parent_lifecycle() {
+    let mut harness = PhenixRuntime::default_suite().unwrap();
+    harness.activate().unwrap();
+
+    let parent = SessionId::parse("lifecycle-parent").unwrap();
+    let child = SessionId::parse("lifecycle-child").unwrap();
+    for id in [&parent, &child] {
+        let response: SessionResponse = invoke_structural(
+            &mut harness,
+            "phenix.sessions@1",
+            &SessionCommand::Create {
+                session: SessionRecord::new(id.clone()),
+            },
+        );
+        assert!(matches!(response, SessionResponse::Created { .. }));
+    }
+
+    let lineage: SessionTreeResponse = invoke_structural(
+        &mut harness,
+        "phenix.session-tree@1",
+        &SessionTreeCommand::Link {
+            session_id: child.clone(),
+            parent_session_id: Some(parent.clone()),
+        },
+    );
+    assert!(matches!(
+        lineage,
+        SessionTreeResponse::Lineage { ref lineage }
+            if lineage.session_id == child
+                && lineage.parent_session_id.as_ref() == Some(&parent)
+    ));
+
+    let closed: SessionResponse = invoke_structural(
+        &mut harness,
+        "phenix.sessions@1",
+        &SessionCommand::Close { id: child.clone() },
+    );
+    assert!(matches!(
+        closed,
+        SessionResponse::Updated { ref session }
+            if session.id == child && session.lifecycle == SessionLifecycle::Closed
+    ));
+
+    let parent_state: SessionResponse = invoke_structural(
+        &mut harness,
+        "phenix.sessions@1",
+        &SessionCommand::Get { id: parent.clone() },
+    );
+    assert!(matches!(
+        parent_state,
+        SessionResponse::Session { session: Some(ref session) }
+            if session.id == parent && session.lifecycle == SessionLifecycle::Open
+    ));
+
+    let child_state: SessionResponse = invoke_structural(
+        &mut harness,
+        "phenix.sessions@1",
+        &SessionCommand::Get { id: child.clone() },
+    );
+    assert!(matches!(
+        child_state,
+        SessionResponse::Session { session: Some(ref session) }
+            if session.id == child && session.lifecycle == SessionLifecycle::Closed
+    ));
+
+    let parent_lookup: SessionTreeResponse = invoke_structural(
+        &mut harness,
+        "phenix.session-tree@1",
+        &SessionTreeCommand::Parent {
+            session_id: child,
+        },
+    );
+    assert_eq!(
+        parent_lookup,
+        SessionTreeResponse::Parent {
+            parent_session_id: Some(parent),
+        }
     );
 }
