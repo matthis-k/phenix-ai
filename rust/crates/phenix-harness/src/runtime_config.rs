@@ -1,7 +1,7 @@
 use super::{PhenixRuntime, default_suite_authority};
 use phenix_core::{
-    Authority, CallableId, ContextResourceId, ModelFeatureGenerationId, ModelId, PhenixValue,
-    PluginId, Project, RoutingProfileId, ServiceId, SkillId, ValueError,
+    Authority, CallableId, ModelFeatureGenerationId, ModelId, PhenixValue, PluginId, Project,
+    RoutingProfileId, ServiceId, ValueError,
 };
 use phenix_plugin_catalog::{
     AgentDefinition, COMMON_PROVIDERS, ExecutionConfigurationCommand,
@@ -11,10 +11,7 @@ use phenix_plugin_catalog::{
     execution_configuration_service, model_routing_service, options_service,
 };
 use phenix_sdk::{
-    CacheFeatures, CapacityKnowledge, ContextCommand, ContextControl, ContextResourceKind,
-    ContextResponse, ContextScope, EffectiveModelFeatures, FeatureSupport,
-    InvocationDefaultsCommand, InvocationDefaultsResponse, context_service,
-    invocation_defaults_service,
+    CacheFeatures, CapacityKnowledge, ContextControl, EffectiveModelFeatures, FeatureSupport,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,8 +27,6 @@ const RUNTIME_MODEL_FEATURE_GENERATION: &str = "runtime-config-v1";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeConfiguration {
-    #[serde(default)]
-    required_skills: BTreeSet<SkillId>,
     agents: Vec<AgentDefinition>,
     orchestrations: Vec<OrchestrationDefinition>,
     routing_profiles: Vec<RuntimeRoutingProfile>,
@@ -148,99 +143,9 @@ pub(super) fn apply_default_config_directory(
         )
         .into());
     }
-    register_packaged_skills(harness, &directory.join("skills"))?;
     let runtime = directory.join("runtime.json");
     if runtime.is_file() {
         apply_runtime_config(harness, &runtime)?;
-    }
-    Ok(())
-}
-
-fn register_packaged_skills(
-    harness: &mut PhenixRuntime,
-    directory: &Path,
-) -> Result<BTreeSet<SkillId>, Box<dyn Error>> {
-    if !directory.exists() {
-        return Ok(BTreeSet::new());
-    }
-    if !directory.is_dir() {
-        return Err(format!(
-            "packaged skill path is not a directory: {}",
-            directory.display()
-        )
-        .into());
-    }
-
-    let mut skill_files = fs::read_dir(directory)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path().join("SKILL.md"))
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
-    skill_files.sort();
-
-    let mut registered = BTreeSet::new();
-    for path in skill_files {
-        let skill_name = path
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                format!(
-                    "packaged skill path has no UTF-8 skill name: {}",
-                    path.display()
-                )
-            })?;
-        let skill = SkillId::parse(skill_name.to_owned())?;
-        let resource_id = ContextResourceId::parse(format!("skill:{}", skill.as_str()))?;
-        let response: ContextResponse = invoke_projected(
-            harness,
-            &context_service(),
-            &ContextCommand::Register {
-                resource_id,
-                kind: ContextResourceKind::Skill,
-                source: path.display().to_string(),
-                scope: ContextScope::Workspace,
-                content: fs::read(&path)?.into(),
-            },
-            &default_suite_authority(),
-        )?;
-        if !matches!(response, ContextResponse::Registered { .. }) {
-            return Err(
-                format!("context service rejected packaged skill {}", skill.as_str()).into(),
-            );
-        }
-        registered.insert(skill);
-    }
-    Ok(registered)
-}
-
-fn validate_required_skills(
-    harness: &mut PhenixRuntime,
-    required_skills: &BTreeSet<SkillId>,
-) -> Result<(), Box<dyn Error>> {
-    if required_skills.is_empty() {
-        return Ok(());
-    }
-    let response: ContextResponse = invoke_projected(
-        harness,
-        &context_service(),
-        &ContextCommand::List,
-        &default_suite_authority(),
-    )?;
-    let ContextResponse::Resources { descriptors } = response else {
-        return Err("context service rejected required-skill validation".into());
-    };
-    for skill in required_skills {
-        let resource_id = ContextResourceId::parse(format!("skill:{}", skill.as_str()))?;
-        if !descriptors.iter().any(|descriptor| {
-            descriptor.resource_id == resource_id && descriptor.kind == ContextResourceKind::Skill
-        }) {
-            return Err(format!(
-                "required packaged skill is not registered: {}",
-                skill.as_str()
-            )
-            .into());
-        }
     }
     Ok(())
 }
@@ -350,14 +255,8 @@ fn apply_configuration(
     harness: &mut PhenixRuntime,
     configuration: RuntimeConfiguration,
 ) -> Result<(), Box<dyn Error>> {
-    let RuntimeConfiguration {
-        required_skills,
-        agents,
-        orchestrations,
-        routing_profiles,
-    } = configuration;
-    validate_required_skills(harness, &required_skills)?;
-    let profiles = routing_profiles
+    let profiles = configuration
+        .routing_profiles
         .into_iter()
         .map(RuntimeRoutingProfile::into_routing_profile)
         .collect::<Vec<_>>();
@@ -365,8 +264,8 @@ fn apply_configuration(
         harness,
         &execution_configuration_service(),
         &ExecutionConfigurationCommand::ConfigurePackaged {
-            agents,
-            orchestrations,
+            agents: configuration.agents,
+            orchestrations: configuration.orchestrations,
             profiles,
         },
         &default_suite_authority(),
@@ -378,23 +277,6 @@ fn apply_configuration(
     // and their ownership manifests have already committed as one transaction.
     for profile in profiles {
         publish_routing_profile_runtime_state(harness, &profile)?;
-    }
-    let response: InvocationDefaultsResponse = invoke_projected(
-        harness,
-        &invocation_defaults_service(),
-        &InvocationDefaultsCommand::ConfigureRequiredSkills {
-            required_skills: required_skills.clone(),
-        },
-        &default_suite_authority(),
-    )?;
-    let InvocationDefaultsResponse::RequiredSkillsConfigured {
-        required_skills: configured,
-    } = response
-    else {
-        return Err("invocation defaults service rejected required skills".into());
-    };
-    if configured != required_skills {
-        return Err("invocation defaults service changed the required skill set".into());
     }
     Ok(())
 }
@@ -468,7 +350,6 @@ mod tests {
         ExecutionConfigurationCommand, ModelCommand, OptionContext, OptionValueLayer,
         OptionValueSource,
     };
-    use phenix_sdk::InvocationRequest;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -516,74 +397,6 @@ mod tests {
             }]
         }))
         .unwrap()
-    }
-
-    #[test]
-    fn packaged_skills_are_registered_and_required_by_invocation_defaults() {
-        let directory = std::env::temp_dir().join(format!(
-            "phenix-packaged-skills-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let skill_directory = directory.join("skills/write");
-        fs::create_dir_all(&skill_directory).unwrap();
-        fs::write(
-            skill_directory.join("SKILL.md"),
-            "fixture write instructions",
-        )
-        .unwrap();
-
-        let mut harness = PhenixRuntime::default_suite().unwrap();
-        harness.activate().unwrap();
-        let registered = register_packaged_skills(&mut harness, &directory.join("skills")).unwrap();
-        let write = SkillId::parse("write").unwrap();
-        assert_eq!(registered, BTreeSet::from([write.clone()]));
-
-        let mut configuration = sample_runtime();
-        configuration.required_skills.insert(write.clone());
-        apply_configuration(&mut harness, configuration).unwrap();
-
-        let listed: ContextResponse = invoke_projected(
-            &mut harness,
-            &context_service(),
-            &ContextCommand::List,
-            &default_suite_authority(),
-        )
-        .unwrap();
-        let ContextResponse::Resources { descriptors } = listed else {
-            panic!("expected context resource catalog");
-        };
-        assert!(descriptors.iter().any(|descriptor| {
-            descriptor.resource_id.as_str() == "skill:write"
-                && descriptor.kind == ContextResourceKind::Skill
-        }));
-
-        let defaults: InvocationDefaultsResponse = invoke_projected(
-            &mut harness,
-            &invocation_defaults_service(),
-            &InvocationDefaultsCommand::Resolve {
-                request: InvocationRequest {
-                    execution_id: "execution-1".into(),
-                    session_id: None,
-                    parent_attempt_id: None,
-                    callable_id: None,
-                    input: b"test".to_vec().into(),
-                    tools: Vec::new(),
-                    continuation: Vec::new(),
-                },
-            },
-            &default_suite_authority(),
-        )
-        .unwrap();
-        let InvocationDefaultsResponse::Params { params } = defaults else {
-            panic!("expected invocation params");
-        };
-        assert_eq!(params.intent.required_skills, BTreeSet::from([write]));
-
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -863,7 +676,6 @@ mod tests {
         apply_configuration(
             &mut harness,
             RuntimeConfiguration {
-                required_skills: BTreeSet::new(),
                 agents: vec![],
                 orchestrations: vec![],
                 routing_profiles: vec![],
@@ -902,7 +714,6 @@ mod tests {
         apply_configuration(
             &mut harness,
             RuntimeConfiguration {
-                required_skills: BTreeSet::new(),
                 agents: vec![],
                 orchestrations: vec![],
                 routing_profiles: vec![],
@@ -990,7 +801,6 @@ mod tests {
         let mut harness = PhenixRuntime::default_suite().unwrap();
         harness.activate().unwrap();
         let empty = || RuntimeConfiguration {
-            required_skills: BTreeSet::new(),
             agents: vec![],
             orchestrations: vec![],
             routing_profiles: vec![],
