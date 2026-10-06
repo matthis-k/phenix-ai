@@ -6960,9 +6960,11 @@ mod tests {
         workspace_factory_for, workspace_manifest,
     };
     use phenix_sdk::{
-        CapacityKnowledge, CodeQueryAnchor, CodeQueryBudget, CodeQueryProjection,
-        CodeQuerySelection, ContextControl, EffectiveModelFeatures, ExecutionRecord, MemoryKind,
-        MemoryScope, MemorySourceReference, ModelLimits,
+        CapacityKnowledge, CodeEntityFacetRevisions, CodeEntityRevision, CodeQueryAnchor,
+        CodeQueryBudget, CodeQueryProjection, CodeQuerySelection, ContextControl,
+        DocumentProvenance, EffectiveModelFeatures, ExecutionRecord, LanguageDocumentIdentity,
+        LogicalCodeEntity, MemoryKind, MemoryScope, MemorySourceReference, ModelLimits,
+        ProviderEpoch,
     };
     use std::{
         fs,
@@ -10720,6 +10722,50 @@ mod tests {
 
         let _ = fs::remove_file(&workspace_path);
 
+        let semantic_repository = "fixture-semantic-repository";
+        let semantic_entity = "fixture-semantic-entity";
+        let semantic_revision = CodeEntityRevision {
+            entity: LogicalCodeEntity {
+                id: semantic_entity.into(),
+                repository_id: semantic_repository.into(),
+            },
+            revision: "fixture-semantic-revision-1".into(),
+            sequence: 1,
+            document: LanguageDocumentIdentity {
+                path: "src/semantic_fixture.rs".into(),
+                file_version: Some("sha256:fixture-semantic-file".into()),
+                provenance: DocumentProvenance::WorkspaceBacked,
+            },
+            symbol: Some("crate::semantic_fixture".into()),
+            name: "semantic_fixture".into(),
+            signature_identity: Some("fixture-signature".into()),
+            body_identity: Some("fixture-body".into()),
+            provider_id: "fixture-language-provider".into(),
+            provider_epoch: ProviderEpoch::new(1).unwrap(),
+            facets: CodeEntityFacetRevisions {
+                existence: "fixture-existence".into(),
+                name_location: "fixture-name-location".into(),
+                signature: Some("fixture-signature".into()),
+                body: Some("fixture-body".into()),
+                relations: BTreeMap::new(),
+            },
+        };
+        let language_input =
+            serde_json::to_vec(&PhenixValue::from(&LanguageCommand::RecordEntityRevision {
+                revision: semantic_revision,
+            }))
+            .unwrap();
+        worker
+            .harness
+            .lock()
+            .invoke(
+                &phenix_plugin_catalog::language_service(),
+                &language_input,
+                &worker.authority,
+                None,
+            )
+            .expect("semantic fixture repository must be indexed");
+
         let queried = invoke_agent_tool(
             &worker,
             &execution_id,
@@ -10729,7 +10775,7 @@ mod tests {
                 callable_id: CallableId::parse("code.query").unwrap(),
                 input: CodeQuery {
                     anchor: CodeQueryAnchor::Repository {
-                        repository_id: "fixture-empty-repository".into(),
+                        repository_id: semantic_repository.into(),
                     },
                     selection: CodeQuerySelection::Entities,
                     traversal: None,
@@ -10745,8 +10791,17 @@ mod tests {
         );
         assert!(!queried.is_error, "code.query failed: {:?}", queried.output);
         let queried = CodeQueryResult::from_value(&queried.output).unwrap();
-        assert_eq!(queried.repository_id, "fixture-empty-repository");
-        assert!(queried.entities.is_empty());
+        assert_eq!(queried.repository_id, semantic_repository);
+        assert_eq!(queried.coverage.repository_sequence, 1);
+        assert!(queried.coverage.complete);
+        assert!(
+            queried
+                .entities
+                .iter()
+                .any(|entity| entity.entity.id == semantic_entity
+                    && entity.name.as_deref() == Some("semantic_fixture")),
+            "code.query did not return the seeded semantic entity: {queried:?}"
+        );
 
         let memory_record = MemoryRecord {
             id: "application-agent-memory".into(),
