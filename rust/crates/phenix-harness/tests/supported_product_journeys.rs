@@ -557,9 +557,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
-                    required_skills: BTreeSet::from([
-                        SkillId::parse("introspection-check").unwrap(),
-                    ]),
+                    required_skills: BTreeSet::new(),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
@@ -711,7 +709,7 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
             content: b"fixture skill body".to_vec().into(),
         },
     );
-    let ContextResponse::Registered { resource } = registered else {
+    let ContextResponse::Registered { .. } = registered else {
         panic!("skill registration must return an exact revision");
     };
     let visible_tool = ModelToolDescriptor {
@@ -757,7 +755,9 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::from([tool_id]),
-                    required_skills: BTreeSet::new(),
+                    required_skills: BTreeSet::from([
+                        SkillId::parse("introspection-check").unwrap(),
+                    ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
