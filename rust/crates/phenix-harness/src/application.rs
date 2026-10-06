@@ -8872,12 +8872,14 @@ mod tests {
             )
             .unwrap();
         let failed_value: PhenixValue = serde_json::from_slice(&failed_output_value).unwrap();
-        let failed_response =
-            AgentToolExecutionResponse::try_from(Project(&failed_value)).unwrap();
+        let failed_response = AgentToolExecutionResponse::try_from(Project(&failed_value)).unwrap();
         let AgentToolExecutionResponse::Completed { result: failed, .. } = failed_response else {
             panic!("failed phenix.plugin build must complete as a tool error");
         };
-        assert!(failed.is_error, "failed plugin build unexpectedly succeeded");
+        assert!(
+            failed.is_error,
+            "failed plugin build unexpectedly succeeded"
+        );
         let failure = ApplicationError::from_value(&failed.output).unwrap();
         assert!(
             matches!(
