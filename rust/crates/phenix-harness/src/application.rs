@@ -9764,6 +9764,64 @@ mod tests {
             assert_eq!(harness.selectable_generations().len(), 1);
         }
 
+        let failed_output = format!("target/phenix-plugin-build-failed-{nonce}.bin");
+        let failed_plan = PluginBuildPlan::new(
+            phenix_core::PluginBuildSource {
+                identity: "fixture.plugin-build-failure".parse().unwrap(),
+                revision: format!("fixture-failed-{nonce}").parse().unwrap(),
+            },
+            vec![phenix_core::PluginBuildStep {
+                executable: "sh".parse().unwrap(),
+                argv: vec![
+                    "-c".parse().unwrap(),
+                    "printf 'fixture build failure' >&2; exit 7"
+                        .parse()
+                        .unwrap(),
+                ],
+                working_directory: phenix_core::BuildWorkingDirectory::root(),
+                environment: phenix_core::BuildEnvironment::default(),
+            }],
+            failed_output.parse().unwrap(),
+            BTreeMap::new(),
+            runtime_plugin_build_authority(),
+        )
+        .unwrap();
+        let failed = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "plugin-build-failed".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Map(BTreeMap::from([
+                    ("operation".into(), PhenixValue::String("build".into())),
+                    (
+                        "arguments".into(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "plan".into(),
+                            PhenixValue::from(serde_json::to_value(&failed_plan).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        );
+        assert!(failed.is_error, "failed plugin build unexpectedly succeeded");
+        let failure = ApplicationError::from_value(&failed.output).unwrap();
+        assert!(
+            matches!(
+                failure,
+                ApplicationError::Failed { ref message }
+                    if message.contains("plugin build step 0 exited with status 7")
+            ),
+            "unexpected plugin build failure: {failure:?}"
+        );
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &before_generation);
+            assert_eq!(harness.selectable_generations().len(), 1);
+        }
+        assert!(!Path::new(&failed_output).exists());
+
         fs::remove_file(&artifact_output).unwrap();
         fs::remove_file(locator).unwrap();
     }
