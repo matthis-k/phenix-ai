@@ -23,8 +23,8 @@ use phenix_sdk::{
     MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
     SkillCommand, SkillDefinition, SkillInterface, SkillResponse, StepAttemptCommand,
     StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
-    UsageAttemptKind, context_service, default_invocation_service,
-    helper_invocation_service, invocation_service, step_runner_service,
+    UsageAttemptKind, context_service, default_invocation_service, helper_invocation_service,
+    invocation_service, step_runner_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -322,7 +322,9 @@ fn activate_invocation_skills(
                 skills.insert(skill.id.clone(), skill);
             }
         }
-        Ok(_) => return Err("skill service returned a non-skills response for required skills".into()),
+        Ok(_) => {
+            return Err("skill service returned a non-skills response for required skills".into());
+        }
         Err(ComponentInvocationError::UnboundImport { .. }) if explicitly_required.is_empty() => {}
         Err(ComponentInvocationError::UnboundImport { .. }) => {
             return Err("required skills were requested but no skill provider is available".into());

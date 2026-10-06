@@ -14,8 +14,14 @@ const BUILTIN_SKILLS: &[(&str, &[u8])] = &[
     ("architect", include_bytes!("../skills/architect/SKILL.md")),
     ("grilling", include_bytes!("../skills/grilling/SKILL.md")),
     ("implement", include_bytes!("../skills/implement/SKILL.md")),
-    ("interrogate", include_bytes!("../skills/interrogate/SKILL.md")),
-    ("investigate", include_bytes!("../skills/investigate/SKILL.md")),
+    (
+        "interrogate",
+        include_bytes!("../skills/interrogate/SKILL.md"),
+    ),
+    (
+        "investigate",
+        include_bytes!("../skills/investigate/SKILL.md"),
+    ),
     ("pickup", include_bytes!("../skills/pickup/SKILL.md")),
     ("plan", include_bytes!("../skills/plan/SKILL.md")),
     ("reflect", include_bytes!("../skills/reflect/SKILL.md")),
@@ -111,9 +117,7 @@ fn handle(
         SkillCommand::List => Ok(SkillResponse::Skills {
             skills: read_ids(context)?
                 .into_iter()
-                .map(|id| {
-                    read_skill(context, &id)?.ok_or_else(|| format!("missing skill: {id}"))
-                })
+                .map(|id| read_skill(context, &id)?.ok_or_else(|| format!("missing skill: {id}")))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         SkillCommand::Required => Ok(SkillResponse::Skills {
@@ -194,11 +198,9 @@ fn read_persisted_ids(context: &BasicSkillsContext<'_, '_>) -> Result<Vec<SkillI
 
 fn read_ids(context: &BasicSkillsContext<'_, '_>) -> Result<Vec<SkillId>, String> {
     let mut ids = read_persisted_ids(context)?;
-    ids.extend(
-        BUILTIN_SKILLS
-            .iter()
-            .map(|(id, _)| SkillId::parse((*id).to_owned()).expect("static builtin skill id is valid")),
-    );
+    ids.extend(BUILTIN_SKILLS.iter().map(|(id, _)| {
+        SkillId::parse((*id).to_owned()).expect("static builtin skill id is valid")
+    }));
     ids.sort();
     ids.dedup();
     Ok(ids)

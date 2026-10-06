@@ -1,8 +1,6 @@
 use phenix_core::{ComponentInterface, InterfaceId, InterfaceSchema};
 
-pub use phenix_core::{
-    SKILL_SERVICE, SkillCommand, SkillDefinition, SkillResponse, skill_service,
-};
+pub use phenix_core::{SKILL_SERVICE, SkillCommand, SkillDefinition, SkillResponse, skill_service};
 
 pub struct SkillInterface;
 

@@ -559,7 +559,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
                     required_skills: BTreeSet::from([
-                        SkillId::parse("introspection-check").unwrap(),
+                        SkillId::parse("introspection-check").unwrap()
                     ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,

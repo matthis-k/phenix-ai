@@ -76,8 +76,7 @@ pub(super) fn publish(
     for (id, profile) in &current {
         let raw = read_raw(context, &profile_key(id))?
             .ok_or_else(|| format!("routing profile disappeared: {id}"))?;
-        if decode_stored_profile(&raw)? != *profile
-        {
+        if decode_stored_profile(&raw)? != *profile {
             return Err(format!(
                 "routing profile changed during catalog refresh: {id}"
             ));

@@ -355,5 +355,9 @@ fn sdk_skills_wrap_the_selected_skill_provider() {
     };
     assert!(skills.iter().any(|skill| skill.id == "review"));
     assert!(skills.iter().any(|skill| skill.id == "write"));
-    assert!(skills.iter().all(|skill| skill.source.starts_with("phenix.skills@1:")));
+    assert!(
+        skills
+            .iter()
+            .all(|skill| skill.source.starts_with("phenix.skills@1:"))
+    );
 }

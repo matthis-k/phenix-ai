@@ -2,11 +2,11 @@
 
 use phenix_application_interface::types::SessionProjectionState;
 use phenix_core::{
-    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentImport,
-    ComponentInterface, ComponentManifest, HasPhenixSchema, InterfaceId, PluginContext,
-    PluginExecution, PluginHost, PluginId, PluginInstance, PluginManifest, SdkClient,
-    SdkContribution, SdkNamespace, SdkObservableResource, SdkResourceId, ServiceContribution,
-    ServiceId, ServiceRole, ValueId, ValuePath,
+    ArtifactRevision, Authority, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
+    ComponentManifest, HasPhenixSchema, InterfaceId, PluginContext, PluginExecution, PluginHost,
+    PluginId, PluginInstance, PluginManifest, SdkClient, SdkContribution, SdkNamespace,
+    SdkObservableResource, SdkResourceId, ServiceContribution, ServiceId, ServiceRole, ValueId,
+    ValuePath,
 };
 use phenix_sdk::{
     ContextInterface, ExecutionAuthority, ExecutionCommand, ExecutionInterface, ExecutionResponse,
@@ -444,7 +444,9 @@ fn skill_command(
                 },
             )?;
             let SkillResponse::Skill { skill } = response else {
-                return Err("unexpected skill-provider response while registering SDK skill".into());
+                return Err(
+                    "unexpected skill-provider response while registering SDK skill".into(),
+                );
             };
             Ok(SdkSkillResponse::Skill {
                 skill: skill.map(sdk_skill),
