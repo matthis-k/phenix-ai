@@ -121,7 +121,10 @@ fn capability(value: &str) -> PermissionId {
 }
 
 fn can_persist_query_index(context: &LanguageContext<'_, '_, '_>) -> bool {
-    context.call.authority.permits(&capability(PERSISTENCE_WRITE))
+    context
+        .call
+        .authority
+        .permits(&capability(PERSISTENCE_WRITE))
 }
 
 #[derive(Default)]
@@ -4602,8 +4605,18 @@ mod tests {
 
         drop(kernel);
         let persistence = LocalPersistence::open(&path).unwrap();
-        assert!(persistence.read(&plugin, &namespace, &entity_index).unwrap().is_none());
-        assert!(persistence.read(&plugin, &namespace, &relation_index).unwrap().is_none());
+        assert!(
+            persistence
+                .read(&plugin, &namespace, &entity_index)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            persistence
+                .read(&plugin, &namespace, &relation_index)
+                .unwrap()
+                .is_none()
+        );
 
         let _ = fs::remove_file(path);
     }
