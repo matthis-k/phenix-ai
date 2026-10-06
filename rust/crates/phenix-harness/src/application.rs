@@ -6853,9 +6853,10 @@ mod tests {
         types::{Content, Empty},
     };
     use phenix_core::{
-        Bytes, DurableSchema, DurableSchemaRegistration, InvocationOutcome, LocalPersistence,
-        ModelFeatureGenerationId, ModelId, ModelInferenceFailure, ModelToolTurn,
-        PluginArtifactInput, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
+        BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
+        InvocationOutcome, LocalPersistence, ModelFeatureGenerationId, ModelId,
+        ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
+        PluginBuildStep, ResourceNamespace, SessionId, TransactionOp, ValueAddress,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -8592,6 +8593,228 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn runtime_plugin_build_executes_workspace_plan_without_changing_generation() {
+        let mut worker = application_worker();
+        enable_runtime_orchestration(&worker);
+        let session_id = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("plugin build".into()),
+            },
+        )
+        .unwrap()
+        .session_id;
+        let authority = worker.application_root_authority(&session_id).unwrap();
+        for capability in [
+            RUNTIME_PLUGIN_BUILD_PERMISSION,
+            "workspace.read",
+            "workspace.write",
+            "workspace.shell",
+        ] {
+            assert!(
+                authority.permits(&PermissionId::parse(capability).unwrap()),
+                "runtime plugin build root is missing {capability}"
+            );
+        }
+
+        let sdk = {
+            let harness = worker.harness.lock();
+            harness
+                .resolved_generation()
+                .resolve_sdk_contributions([sdk_contribution()])
+                .unwrap()
+        };
+        let generation = {
+            let harness = worker.harness.lock();
+            ReferenceGenerationId::from(harness.generation())
+        };
+        let (callbacks, _receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.plugin-build-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-plugin-build-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-plugin-build-client-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let surface = {
+            let harness = worker.harness.lock();
+            application_model_tool_surface(
+                &service,
+                &session_id,
+                harness.resolved_generation(),
+                &authority,
+            )
+            .unwrap()
+        };
+        assert!(
+            surface
+                .tools
+                .iter()
+                .any(|tool| tool.id.as_str() == "phenix.plugin")
+        );
+
+        let execution_id = "execution-plugin-build".to_owned();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (progress_sender, _progress_receiver) =
+            mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        let (adapter, root_generation, root_constraints, generations_before) = {
+            let harness = worker.harness.lock();
+            let root = harness.root_execution_handle(&authority);
+            (
+                harness.application_agent_tools().clone(),
+                root.generation()
+                    .cloned()
+                    .expect("runtime plugin build root has a generation"),
+                root.constraints().clone(),
+                harness.selectable_generations(),
+            )
+        };
+        let active_before = root_generation.clone();
+        let (control_transport, _control_receiver) = ChannelTransport::new(1);
+        adapter
+            .register(
+                execution_id.clone(),
+                ApplicationAgentToolRun {
+                    service,
+                    control_transport: control_transport.downgrade(),
+                    harness: Arc::downgrade(&worker.harness),
+                    session_id: session_id.clone(),
+                    execution_id: execution_id.clone(),
+                    root_generation,
+                    root_constraints,
+                    permission_handler: None,
+                    tools: surface.tools,
+                    runtime_entry_triggers: surface.runtime_entry_triggers,
+                    cancellation,
+                    progress_sender,
+                },
+            )
+            .unwrap();
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let artifact_content = format!("phenix-plugin-build-{nonce}");
+        let artifact_output = format!(
+            "target/phenix-plugin-build-{}-{nonce}.bin",
+            std::process::id()
+        );
+        let plan = PluginBuildPlan::new(
+            PluginBuildSource {
+                identity: "fixture:application-plugin-build".parse().unwrap(),
+                revision: format!("fixture:{nonce}").parse().unwrap(),
+            },
+            vec![PluginBuildStep {
+                executable: "sh".parse().unwrap(),
+                argv: [
+                    "-c".parse().unwrap(),
+                    format!(
+                        "mkdir -p target && printf %s '{}' > '{}'",
+                        artifact_content, artifact_output
+                    )
+                    .parse()
+                    .unwrap(),
+                ]
+                .into_iter()
+                .collect(),
+                working_directory: BuildWorkingDirectory::root(),
+                environment: BuildEnvironment::default(),
+            }],
+            artifact_output.parse().unwrap(),
+            BTreeMap::new(),
+            runtime_plugin_build_authority(),
+        )
+        .unwrap();
+
+        let request = AgentToolExecutionRequest {
+            execution_id,
+            session_id: Some(session_id),
+            call: ModelToolCall {
+                call_id: "plugin-build".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("build".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "plan".into(),
+                            PhenixValue::from(serde_json::to_value(&plan).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let output = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = AgentToolExecutionResponse::try_from(Project(&value)).unwrap();
+        let AgentToolExecutionResponse::Completed { result, .. } = response else {
+            panic!("phenix.plugin build must complete through the application adapter");
+        };
+        assert!(
+            !result.is_error,
+            "phenix.plugin build failed: {:?}",
+            result.output
+        );
+
+        let PhenixValue::Map(fields) = result.output else {
+            panic!("phenix.plugin build returned a non-map result");
+        };
+        let locator = match fields.get("locator") {
+            Some(PhenixValue::String(locator)) => locator.clone(),
+            value => panic!("phenix.plugin build returned invalid locator: {value:?}"),
+        };
+        let revision = match fields.get("artifact_revision") {
+            Some(PhenixValue::String(revision)) => revision.clone(),
+            value => panic!("phenix.plugin build returned invalid revision: {value:?}"),
+        };
+        assert_eq!(
+            revision,
+            ArtifactRevision::from_content(artifact_content.as_bytes()).to_string()
+        );
+        assert!(
+            matches!(
+                fields.get("provenance"),
+                Some(PhenixValue::List(values))
+                    if values.iter().any(|value| matches!(
+                        value,
+                        PhenixValue::String(entry) if entry == "workspace-exec:0:sh:0"
+                    ))
+            ),
+            "phenix.plugin build did not report workspace execution provenance"
+        );
+        assert_eq!(fs::read(&locator).unwrap(), artifact_content.as_bytes());
+
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &active_before);
+            assert_eq!(harness.selectable_generations(), generations_before);
+        }
+
+        let _ = fs::remove_file(&artifact_output);
+        let _ = fs::remove_file(&locator);
     }
 
     #[test]
