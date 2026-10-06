@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::{
     Authority, CONTEXT_SERVICE, ComponentId, ComponentInterface, ComponentManifest, ContextCommand,
     ContextDescriptor, ContextResourceId, ContextResourceRevision, ContextResponse,
