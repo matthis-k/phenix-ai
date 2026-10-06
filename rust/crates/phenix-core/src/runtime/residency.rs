@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_roots_can_compare_promote_and_rollback_generations() {
+    fn explicit_roots_can_compare_promote_rollback_and_repromote_generations() {
         let first_manifest = manifest("fixture.residency.first");
         let second_manifest = manifest("fixture.residency.second");
         let first =
@@ -1262,7 +1262,28 @@ mod tests {
                 .unwrap(),
             b"first"
         );
+        assert!(
+            kernel
+                .resident_generation_ids()
+                .contains(&second_generation)
+        );
 
+        kernel.promote_generation(&second_generation).unwrap();
+        assert_eq!(kernel.graph_generation(), Some(&second_generation));
+        assert_eq!(
+            kernel
+                .invoke(&service(), &[], &Authority::default(), None)
+                .unwrap(),
+            b"second"
+        );
+        assert_eq!(
+            kernel
+                .invoke_in_generation(&first_generation, &service(), &[], &constraints, None,)
+                .unwrap(),
+            b"first"
+        );
+
+        kernel.promote_generation(&first_generation).unwrap();
         kernel.retire_generation(&second_generation).unwrap();
         assert_eq!(
             kernel.invoke_in_generation(&second_generation, &service(), &[], &constraints, None,),
