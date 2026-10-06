@@ -6861,7 +6861,8 @@ mod tests {
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
     };
     use phenix_sdk::{
-        CapacityKnowledge, ContextControl, EffectiveModelFeatures, ExecutionRecord, MemoryKind,
+        CapacityKnowledge, CodeQueryAnchor, CodeQueryBudget, CodeQueryProjection,
+        CodeQuerySelection, ContextControl, EffectiveModelFeatures, ExecutionRecord, MemoryKind,
         MemoryScope, MemorySourceReference, ModelLimits,
     };
     use std::{
@@ -9862,6 +9863,34 @@ mod tests {
         assert_eq!(result.call_id, "call-1");
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
+
+        let queried = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "code-query".into(),
+                callable_id: CallableId::parse("code.query").unwrap(),
+                input: CodeQuery {
+                    anchor: CodeQueryAnchor::Repository {
+                        repository_id: "fixture-empty-repository".into(),
+                    },
+                    selection: CodeQuerySelection::Entities,
+                    traversal: None,
+                    projection: CodeQueryProjection::Identity,
+                    budget: CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                }
+                .to_value(),
+            },
+        );
+        assert!(!queried.is_error, "code.query failed: {:?}", queried.output);
+        let queried = CodeQueryResult::from_value(&queried.output).unwrap();
+        assert_eq!(queried.repository_id, "fixture-empty-repository");
+        assert!(queried.entities.is_empty());
 
         let memory_record = MemoryRecord {
             id: "application-agent-memory".into(),
