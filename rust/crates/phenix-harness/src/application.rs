@@ -10262,10 +10262,7 @@ mod tests {
                 call_id: "workspace-git".into(),
                 callable_id: CallableId::parse("workspace.git").unwrap(),
                 input: ApplicationWorkspaceGitToolRequest {
-                    arguments: vec![
-                        "rev-parse".into(),
-                        "--is-inside-work-tree".into(),
-                    ],
+                    arguments: vec!["rev-parse".into(), "--is-inside-work-tree".into()],
                 }
                 .to_value(),
             },
