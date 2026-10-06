@@ -419,7 +419,7 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
         application_agent_tool_trigger(
             ApplicationMemoryRecallToolInterface::interface_id(),
             "memory.recall",
-            "Recall typed durable memories using bounded scope, kind, text, time, and result limits.",
+            "Recall typed durable memories using bounded scope, kind, text, time, and result limits. Durable memory is not injected into every fresh session; call this tool when the current task depends on previously stored memory.",
             application_memory_authority(),
         ),
     ]
@@ -10446,6 +10446,17 @@ mod tests {
                 "workspace.write",
             ]
         );
+        let recall_tool = tools
+            .iter()
+            .find(|tool| tool.id.as_str() == "memory.recall")
+            .expect("memory.recall must be visible");
+        assert!(
+            recall_tool
+                .description
+                .contains("not injected into every fresh session"),
+            "memory.recall must explain the explicit recall contract"
+        );
+
         assert_eq!(report.request, "show available capabilities");
 
         let execution_id = worker.allocate_root_execution().unwrap();
@@ -10468,13 +10479,13 @@ mod tests {
             .register(
                 execution_id.clone(),
                 ApplicationAgentToolRun {
-                    service,
+                    service: service.clone(),
                     control_transport: control_transport.downgrade(),
                     harness: Arc::downgrade(&worker.harness),
                     session_id: session_id.clone(),
                     execution_id: execution_id.clone(),
-                    root_generation,
-                    root_constraints,
+                    root_generation: root_generation.clone(),
+                    root_constraints: root_constraints.clone(),
                     permission_handler: None,
                     tools: tools.clone(),
                     runtime_entry_triggers: surface.runtime_entry_triggers.clone(),
@@ -10868,6 +10879,98 @@ mod tests {
         );
         let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
         assert_eq!(recalled.records, vec![memory_record]);
+
+        let global_memory = MemoryRecord {
+            id: "application-agent-global-memory".into(),
+            kind: MemoryKind::Fact,
+            scope: MemoryScope::Global,
+            content: "Selene persists across fresh sessions".into(),
+            source_refs: vec![MemorySourceReference {
+                service: session_service(),
+                resource: format!("session/{}", session_id.as_str()),
+                start: Some(0),
+                end: Some(0),
+            }],
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 3,
+        };
+        let recorded_global = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "memory-record-global".into(),
+                callable_id: CallableId::parse("memory.record").unwrap(),
+                input: global_memory.to_value(),
+            },
+        );
+        assert!(
+            !recorded_global.is_error,
+            "global memory.record failed: {:?}",
+            recorded_global.output
+        );
+
+        let fresh_session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: Some("fresh memory recall".into()),
+            },
+        )
+        .unwrap();
+        let fresh_execution_id = worker.allocate_root_execution().unwrap();
+        let (fresh_progress_sender, _fresh_progress_receiver) =
+            mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
+        adapter
+            .register(
+                fresh_execution_id.clone(),
+                ApplicationAgentToolRun {
+                    service: service.clone(),
+                    control_transport: control_transport.downgrade(),
+                    harness: Arc::downgrade(&worker.harness),
+                    session_id: fresh_session.session_id.clone(),
+                    execution_id: fresh_execution_id.clone(),
+                    root_generation: root_generation.clone(),
+                    root_constraints: root_constraints.clone(),
+                    permission_handler: None,
+                    tools: tools.clone(),
+                    runtime_entry_triggers: surface.runtime_entry_triggers.clone(),
+                    cancellation: Arc::new(AtomicBool::new(false)),
+                    progress_sender: fresh_progress_sender,
+                },
+            )
+            .unwrap();
+
+        let recalled_global = invoke_agent_tool(
+            &worker,
+            &fresh_execution_id,
+            &fresh_session.session_id,
+            ModelToolCall {
+                call_id: "memory-recall-global-fresh-session".into(),
+                callable_id: CallableId::parse("memory.recall").unwrap(),
+                input: MemoryRecallQuery {
+                    scopes: vec![MemoryScope::Global],
+                    kinds: vec![MemoryKind::Fact],
+                    query: "Selene".into(),
+                    at: 4,
+                    limit: 4,
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !recalled_global.is_error,
+            "fresh-session memory.recall failed: {:?}",
+            recalled_global.output
+        );
+        let recalled_global =
+            ApplicationMemoryRecallResponse::from_value(&recalled_global.output).unwrap();
+        assert_eq!(recalled_global.records, vec![global_memory]);
+        adapter.remove(&fresh_execution_id);
+
 
         {
             let harness = worker.harness.lock();
