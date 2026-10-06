@@ -732,7 +732,7 @@ rust/crates/phenix-harness/src/
 rust/crates/phenix-context/
   main.rs
 
-config/phenix/skills/
+rust/crates/phenix-plugin-basic-skills/skills/
   context-recovery/SKILL.md
 ```
 
