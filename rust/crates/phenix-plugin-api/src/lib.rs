@@ -34,7 +34,6 @@ struct SdkDependencies<'host, 'runtime> {
     sessions: SdkClient<'host, 'runtime, SessionInterface>,
     options: SdkClient<'host, 'runtime, OptionsInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
-    context: SdkClient<'host, 'runtime, ContextInterface>,
     skills: SdkClient<'host, 'runtime, SkillInterface>,
 }
 
@@ -52,7 +51,6 @@ fn plugin_context<'host, 'runtime, 'plugin>(
             sessions: SdkClient::new(host, component.clone()),
             options: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
-            context: SdkClient::new(host, component.clone()),
             skills: SdkClient::new(host, component),
         },
         config_root,
@@ -131,7 +129,6 @@ pub fn sdk_component_manifest(maximum_authority: Authority) -> ComponentManifest
                 ExecutionInterface::interface_id(),
                 ExecutionInterface::schema(),
             ),
-            optional_import(ContextInterface::interface_id(), ContextInterface::schema()),
             optional_import(SkillInterface::interface_id(), SkillInterface::schema()),
         ],
         exports: vec![
