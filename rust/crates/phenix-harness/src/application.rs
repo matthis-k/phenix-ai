@@ -320,6 +320,23 @@ fn application_workspace_git_authority() -> Authority {
     workspace_capability("workspace.git")
 }
 
+fn application_code_query_authority() -> Authority {
+    Authority::new([PermissionId::parse("kernel.persistence.read")
+        .expect("static persistence read permission is valid")])
+}
+
+fn application_memory_authority() -> Authority {
+    Authority::new(
+        [
+            "kernel.persistence.schema",
+            "kernel.persistence.read",
+            "kernel.persistence.write",
+        ]
+        .into_iter()
+        .map(|value| PermissionId::parse(value).expect("static persistence permission is valid")),
+    )
+}
+
 fn application_agent_tool_trigger(
     interface: InterfaceId,
     callable_id: &str,
@@ -386,7 +403,7 @@ pub(crate) fn application_code_tool_triggers() -> Vec<ComponentEntryTrigger> {
         ApplicationCodeQueryToolInterface::interface_id(),
         "code.query",
         "Run a bounded provider-neutral semantic code query over the canonical language index.",
-        Authority::default(),
+        application_code_query_authority(),
     )]
 }
 
@@ -397,13 +414,13 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
             ApplicationMemoryRecordToolInterface::interface_id(),
             "memory.record",
             "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
-            Authority::default(),
+            application_memory_authority(),
         ),
         application_agent_tool_trigger(
             ApplicationMemoryRecallToolInterface::interface_id(),
             "memory.recall",
             "Recall typed durable memories using bounded scope, kind, text, time, and result limits.",
-            Authority::default(),
+            application_memory_authority(),
         ),
     ]
 }
@@ -3391,13 +3408,13 @@ pub(crate) fn application_agent_tool_component_manifest(
                 interface: LanguageInterface::interface_id(),
                 schema: LanguageInterface::schema(),
                 required: false,
-                authority: Authority::default(),
+                authority: application_code_query_authority(),
             },
             ComponentImport {
                 interface: MemoryInterface::interface_id(),
                 schema: MemoryInterface::schema(),
                 required: false,
-                authority: Authority::default(),
+                authority: application_memory_authority(),
             },
         ],
         exports: vec![
@@ -5002,7 +5019,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.session")
                 .expect("static session control callable id is valid"),
-            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content contains canonical text/image/resource parts; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
+            description: "Create, list, resume, prompt, or close another Phenix session through canonical application operations. Arguments: create {working_directory,title?}; list {}; resume {session_id,after_sequence?}; prompt {session_id,content,generation?}, where content is a list of {kind:"text",text}, {kind:"image",mime_type,data}, or {kind:"resource",uri,mime_type?,text?}; close {session_id}. Prompt waits for terminal completion. Omitted generation keeps the controller root generation.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static session operation field is valid"),
@@ -6279,14 +6296,50 @@ fn session_control_content(arguments: &PhenixValue) -> Result<Vec<Content>, Appl
                 .to_owned(),
         });
     };
-    parts
-        .iter()
-        .map(|part| {
-            Content::from_value(part).map_err(|error| ApplicationError::InvalidInput {
-                message: format!("invalid phenix.session content part: {error}"),
+    parts.iter().map(session_control_content_part).collect()
+}
+
+fn session_control_content_part(part: &PhenixValue) -> Result<Content, ApplicationError> {
+    if let Ok(content) = Content::from_value(part) {
+        return Ok(content);
+    }
+
+    let kind = session_control_required_string(part, "kind")?;
+    match kind.as_str() {
+        "text" => Ok(Content::Text {
+            text: session_control_required_string(part, "text")?,
+        }),
+        "resource" => Ok(Content::Resource {
+            uri: session_control_required_string(part, "uri")?,
+            mime_type: session_control_optional_string(part, "mime_type")?,
+            text: session_control_optional_string(part, "text")?,
+        }),
+        "image" => {
+            let data = match session_control_field(part, "data") {
+                Some(PhenixValue::Bytes(data)) => Bytes::new(data.clone()),
+                Some(PhenixValue::String(data)) => Bytes::new(data.as_bytes().to_vec()),
+                Some(_) => {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "phenix.session image data must be bytes or a string".to_owned(),
+                    });
+                }
+                None => {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "phenix.session image data is required".to_owned(),
+                    });
+                }
+            };
+            Ok(Content::Image {
+                mime_type: session_control_required_string(part, "mime_type")?,
+                data,
             })
-        })
-        .collect()
+        }
+        other => Err(ApplicationError::InvalidInput {
+            message: format!(
+                "unsupported phenix.session content kind {other}; expected text, image, or resource"
+            ),
+        }),
+    }
 }
 
 fn session_control_required_string(
