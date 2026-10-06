@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod runtime_config;
 
 use phenix_core::{

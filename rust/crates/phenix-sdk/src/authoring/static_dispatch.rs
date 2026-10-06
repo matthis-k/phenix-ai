@@ -462,8 +462,8 @@ impl<T> StaticPluginInstance<T> {
 
     #[must_use]
     pub fn into_inner(self) -> T {
-        Arc::try_unwrap(self.plugin)
-            .unwrap_or_else(|_| panic!("static plugin state still has live strong references"))
+        Arc::into_inner(self.plugin)
+            .expect("static plugin state has no remaining strong references")
     }
 
     #[doc(hidden)]

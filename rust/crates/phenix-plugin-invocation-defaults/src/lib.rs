@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::{
     Authority, CallableId, ComponentExport, ComponentId, ComponentImport, ComponentInterface,
     ComponentInvocationError, ComponentManifest, InterfaceSchema, ModelToolDescriptor,

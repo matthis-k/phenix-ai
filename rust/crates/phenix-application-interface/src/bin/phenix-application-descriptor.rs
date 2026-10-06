@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_application_interface::{ApplicationDescriptor, application_descriptor, generate};
 use std::{
     env,

@@ -636,7 +636,7 @@ fn schema(
     descriptor
         .types
         .get(id)
-        .unwrap_or_else(|| panic!("application descriptor is missing schema {id}"))
+        .expect("application descriptor contains every referenced schema")
         .clone()
 }
 

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::Authority;
 use phenix_runtime::Runtime;
 use serde_json::json;

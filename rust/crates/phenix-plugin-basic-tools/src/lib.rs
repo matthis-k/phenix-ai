@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use phenix_core::{
     ArtifactRevision, Authority, CallableId, ComponentId, ComponentInterface, ComponentManifest,
     InterfaceId, PermissionId, PluginContext, PluginInstance, PluginManifest, ResourceNamespace,

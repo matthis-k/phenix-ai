@@ -527,6 +527,7 @@
                     exec = ''
                       ${repositoryRoot}
                       bash scripts/check-plugin-architecture.sh
+                      bash scripts/check-rust-safety-policy.sh
                       bash scripts/check-spec-lifecycle-fixtures.sh
                       bash scripts/check-spec-lifecycle.sh
                     '';
@@ -613,6 +614,10 @@
                 exec = ''
                   ${rustRoot}
                   cargo clippy --quiet --workspace --all-targets --locked -- -D warnings
+                  cargo clippy --quiet --workspace --lib --bins --locked -- \
+                    -D warnings \
+                    -D clippy::unwrap_used \
+                    -D clippy::panic
                 '';
               };
             };
