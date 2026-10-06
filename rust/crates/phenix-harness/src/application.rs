@@ -9499,10 +9499,10 @@ mod tests {
 
         let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         let workspace_root = root.clone();
-        builder.embedded_factories.insert(
+        assert!(builder.replace_embedded_factory(
             workspace_manifest().id,
-            Arc::new(move || workspace_factory_for(workspace_root.clone())),
-        );
+            move || workspace_factory_for(workspace_root.clone()),
+        ));
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
         let mut worker = ApplicationWorker::new(harness).unwrap();
@@ -11229,35 +11229,40 @@ mod tests {
         adapter.remove(&fresh_execution_id);
 
         {
-            let harness = worker.harness.lock();
-            harness
-                .kernel()
-                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+            let mut harness = worker.harness.lock();
+            let selected_generation = harness.generation().as_str().to_owned();
+            let traces = Arc::new(phenix_core::RuntimeTraceBuffer::default());
+            harness.kernel_mut().set_runtime_trace_sink(traces.clone());
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::Orchestration {
                     controller_session: session_id.to_string(),
                     controller_execution: execution_id.clone(),
                     kind: "fixture".into(),
                     operation: "matching".into(),
                     target_session: None,
                     child_execution: None,
-                    selected_generation: harness.generation().as_str().to_owned(),
+                    selected_generation: selected_generation.clone(),
                     target_generation: None,
                     success: true,
                     error: None,
-                });
-            harness
-                .kernel()
-                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+                },
+            );
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::Orchestration {
                     controller_session: session_id.to_string(),
                     controller_execution: "execution-unrelated".into(),
                     kind: "fixture".into(),
                     operation: "unrelated".into(),
                     target_session: None,
                     child_execution: None,
-                    selected_generation: harness.generation().as_str().to_owned(),
+                    selected_generation,
                     target_generation: None,
                     success: true,
                     error: None,
-                });
+                },
+            );
         }
 
         let inspect_queries = [
