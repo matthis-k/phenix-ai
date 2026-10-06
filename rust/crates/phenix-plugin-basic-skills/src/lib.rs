@@ -3,7 +3,7 @@ use phenix_core::{
     PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SKILL_SERVICE, SkillCommand,
     SkillDefinition, SkillId, SkillResponse, TransactionOp,
 };
-use phenix_sdk::{SkillInterface, StaticPluginComponentDispatch, StaticPluginDefinition};
+use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
 
 pub const BASIC_SKILLS_PLUGIN: &str = "phenix.basic-skills";
 pub const BASIC_SKILLS_COMPONENT: &str = "phenix.basic-skills";
@@ -225,6 +225,7 @@ fn capability(value: &str) -> PermissionId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_sdk::SkillInterface;
 
     #[test]
     fn plugin_provides_static_skills_and_marks_write_required() {
