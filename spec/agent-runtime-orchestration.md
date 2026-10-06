@@ -523,6 +523,7 @@ Do not overload a durable Session record with a generation field.
 
 Regression coverage proves:
 
+- `phenix.plugin build` materializes its artifact through the configured workspace without changing or staging a graph generation.
 - S0 can create S1 while S0 has an active execution.
 - S0 can synchronously prompt S1 and receive the terminal result.
 - S0 and S1 never have more than one active prompt each.
