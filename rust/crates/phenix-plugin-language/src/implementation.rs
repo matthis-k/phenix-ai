@@ -120,6 +120,10 @@ fn capability(value: &str) -> PermissionId {
     PermissionId::parse(value).expect("static capability is valid")
 }
 
+fn can_persist_query_index(context: &LanguageContext<'_, '_, '_>) -> bool {
+    context.call.authority.permits(&capability(PERSISTENCE_WRITE))
+}
+
 #[derive(Default)]
 struct LanguagePlugin {
     state: LanguageState,
@@ -1962,56 +1966,64 @@ fn query_repository_entities(
                 index,
                 repository_sequence,
             )?;
-            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
-            context
-                .kernel
-                .transact_durable(
-                    &language_namespace(),
-                    &[
-                        TransactionOp::AssertValue {
-                            key: sequence_key.clone(),
-                            expected: sequence_bytes.clone(),
-                        },
-                        TransactionOp::AssertValue {
-                            key: index_key.clone(),
-                            expected: existing_index.clone(),
-                        },
-                        TransactionOp::Put {
-                            key: index_key.clone(),
-                            value: encoded,
-                        },
-                    ],
-                )
-                .map_err(|error| {
-                    format!("code query repository changed while advancing entity index: {error}")
-                })?;
+            if can_persist_query_index(context) {
+                let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+                context
+                    .kernel
+                    .transact_durable(
+                        &language_namespace(),
+                        &[
+                            TransactionOp::AssertValue {
+                                key: sequence_key.clone(),
+                                expected: sequence_bytes.clone(),
+                            },
+                            TransactionOp::AssertValue {
+                                key: index_key.clone(),
+                                expected: existing_index.clone(),
+                            },
+                            TransactionOp::Put {
+                                key: index_key.clone(),
+                                value: encoded,
+                            },
+                        ],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "code query repository changed while advancing entity index: {error}"
+                        )
+                    })?;
+            }
             index
         }
         _ => {
             let index = build_repository_entity_index(context, repository_id, repository_sequence)?;
-            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
-            context
-                .kernel
-                .transact_durable(
-                    &language_namespace(),
-                    &[
-                        TransactionOp::AssertValue {
-                            key: sequence_key,
-                            expected: sequence_bytes,
-                        },
-                        TransactionOp::AssertValue {
-                            key: index_key.clone(),
-                            expected: existing_index,
-                        },
-                        TransactionOp::Put {
-                            key: index_key,
-                            value: encoded,
-                        },
-                    ],
-                )
-                .map_err(|error| {
-                    format!("code query repository changed while building entity index: {error}")
-                })?;
+            if can_persist_query_index(context) {
+                let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+                context
+                    .kernel
+                    .transact_durable(
+                        &language_namespace(),
+                        &[
+                            TransactionOp::AssertValue {
+                                key: sequence_key,
+                                expected: sequence_bytes,
+                            },
+                            TransactionOp::AssertValue {
+                                key: index_key.clone(),
+                                expected: existing_index,
+                            },
+                            TransactionOp::Put {
+                                key: index_key,
+                                value: encoded,
+                            },
+                        ],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "code query repository changed while building entity index: {error}"
+                        )
+                    })?;
+            }
             index
         }
     };
@@ -2441,29 +2453,33 @@ fn query_outgoing_relation_kind(
                 index,
                 repository_sequence,
             )?;
-            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
-            context
-                .kernel
-                .transact_durable(
-                    &language_namespace(),
-                    &[
-                        TransactionOp::AssertValue {
-                            key: sequence_key.clone(),
-                            expected: sequence_bytes.clone(),
-                        },
-                        TransactionOp::AssertValue {
-                            key: index_key.clone(),
-                            expected: existing_index.clone(),
-                        },
-                        TransactionOp::Put {
-                            key: index_key.clone(),
-                            value: encoded,
-                        },
-                    ],
-                )
-                .map_err(|error| {
-                    format!("code query repository changed while advancing relation index: {error}")
-                })?;
+            if can_persist_query_index(context) {
+                let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+                context
+                    .kernel
+                    .transact_durable(
+                        &language_namespace(),
+                        &[
+                            TransactionOp::AssertValue {
+                                key: sequence_key.clone(),
+                                expected: sequence_bytes.clone(),
+                            },
+                            TransactionOp::AssertValue {
+                                key: index_key.clone(),
+                                expected: existing_index.clone(),
+                            },
+                            TransactionOp::Put {
+                                key: index_key.clone(),
+                                value: encoded,
+                            },
+                        ],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "code query repository changed while advancing relation index: {error}"
+                        )
+                    })?;
+            }
             index
         }
         _ => {
@@ -2474,29 +2490,33 @@ fn query_outgoing_relation_kind(
                 repository_entities,
                 repository_sequence,
             )?;
-            let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
-            context
-                .kernel
-                .transact_durable(
-                    &language_namespace(),
-                    &[
-                        TransactionOp::AssertValue {
-                            key: sequence_key,
-                            expected: sequence_bytes,
-                        },
-                        TransactionOp::AssertValue {
-                            key: index_key.clone(),
-                            expected: existing_index,
-                        },
-                        TransactionOp::Put {
-                            key: index_key,
-                            value: encoded,
-                        },
-                    ],
-                )
-                .map_err(|error| {
-                    format!("code query repository changed while building relation index: {error}")
-                })?;
+            if can_persist_query_index(context) {
+                let encoded = serde_json::to_vec(&index).map_err(|error| error.to_string())?;
+                context
+                    .kernel
+                    .transact_durable(
+                        &language_namespace(),
+                        &[
+                            TransactionOp::AssertValue {
+                                key: sequence_key,
+                                expected: sequence_bytes,
+                            },
+                            TransactionOp::AssertValue {
+                                key: index_key.clone(),
+                                expected: existing_index,
+                            },
+                            TransactionOp::Put {
+                                key: index_key,
+                                value: encoded,
+                            },
+                        ],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "code query repository changed while building relation index: {error}"
+                        )
+                    })?;
+            }
             index
         }
     };
