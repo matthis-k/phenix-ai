@@ -25,6 +25,7 @@ pub mod options;
 pub mod planning;
 pub mod primitive_agent_export;
 pub mod sessions;
+pub mod skills;
 #[allow(clippy::large_enum_variant)]
 pub mod step_attempt;
 pub mod step_runner;
@@ -64,6 +65,7 @@ pub use options::*;
 pub use planning::*;
 pub use primitive_agent_export::*;
 pub use sessions::*;
+pub use skills::*;
 pub use step_attempt::*;
 pub use step_runner::*;
 pub use step_transaction::*;
