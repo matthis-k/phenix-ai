@@ -10,6 +10,27 @@ pub const BASIC_SKILLS_COMPONENT: &str = "phenix.basic-skills";
 const BASIC_SKILLS_NAMESPACE: &str = "phenix.basic-skills.state";
 const INDEX_KEY: &str = "skills/@all";
 
+const BUILTIN_SKILLS: &[(&str, &[u8])] = &[
+    ("architect", include_bytes!("../skills/architect/SKILL.md")),
+    ("grilling", include_bytes!("../skills/grilling/SKILL.md")),
+    ("implement", include_bytes!("../skills/implement/SKILL.md")),
+    ("interrogate", include_bytes!("../skills/interrogate/SKILL.md")),
+    ("investigate", include_bytes!("../skills/investigate/SKILL.md")),
+    ("pickup", include_bytes!("../skills/pickup/SKILL.md")),
+    ("plan", include_bytes!("../skills/plan/SKILL.md")),
+    ("reflect", include_bytes!("../skills/reflect/SKILL.md")),
+    ("rust", include_bytes!("../skills/rust/SKILL.md")),
+    ("ship", include_bytes!("../skills/ship/SKILL.md")),
+    (
+        "to-questionnaire",
+        include_bytes!("../skills/to-questionnaire/SKILL.md"),
+    ),
+    ("verify", include_bytes!("../skills/verify/SKILL.md")),
+    ("write", include_bytes!("../skills/write/SKILL.md")),
+];
+
+const REQUIRED_BUILTIN_SKILLS: &[&str] = &["write"];
+
 type BasicSkillsContext<'host, 'runtime> = PluginContext<'host, 'runtime, ()>;
 
 pub struct BasicSkillsInterface;
@@ -91,9 +112,15 @@ fn handle(
             skills: read_ids(context)?
                 .into_iter()
                 .map(|id| {
-                    read_skill(context, &id)?.ok_or_else(|| format!("missing durable skill: {id}"))
+                    read_skill(context, &id)?.ok_or_else(|| format!("missing skill: {id}"))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
+        }),
+        SkillCommand::Required => Ok(SkillResponse::Skills {
+            skills: REQUIRED_BUILTIN_SKILLS
+                .iter()
+                .map(|id| builtin_skill(id).expect("required builtin skill exists"))
+                .collect(),
         }),
     }
 }
@@ -102,7 +129,13 @@ fn write_skill(
     context: &BasicSkillsContext<'_, '_>,
     skill: &SkillDefinition,
 ) -> Result<(), String> {
-    let mut ids = read_ids(context)?;
+    if builtin_skill(skill.id.as_str()).is_some() {
+        return Err(format!(
+            "skill id is owned by the basic-skills plugin: {}",
+            skill.id
+        ));
+    }
+    let mut ids = read_persisted_ids(context)?;
     if !ids.contains(&skill.id) {
         ids.push(skill.id.clone());
         ids.sort();
@@ -125,10 +158,23 @@ fn write_skill(
         .map_err(|error| error.to_string())
 }
 
+fn builtin_skill(id: &str) -> Option<SkillDefinition> {
+    BUILTIN_SKILLS
+        .iter()
+        .find(|(candidate, _)| *candidate == id)
+        .map(|(id, content)| SkillDefinition {
+            id: SkillId::parse((*id).to_owned()).expect("static builtin skill id is valid"),
+            content: content.to_vec().into(),
+        })
+}
+
 fn read_skill(
     context: &BasicSkillsContext<'_, '_>,
     id: &SkillId,
 ) -> Result<Option<SkillDefinition>, String> {
+    if let Some(skill) = builtin_skill(id.as_str()) {
+        return Ok(Some(skill));
+    }
     context
         .kernel
         .read_durable(&namespace(), &format!("skill/{id}"))
@@ -137,13 +183,25 @@ fn read_skill(
         .transpose()
 }
 
-fn read_ids(context: &BasicSkillsContext<'_, '_>) -> Result<Vec<SkillId>, String> {
+fn read_persisted_ids(context: &BasicSkillsContext<'_, '_>) -> Result<Vec<SkillId>, String> {
     context
         .kernel
         .read_durable(&namespace(), INDEX_KEY)
         .map_err(|error| error.to_string())?
         .map(|value| serde_json::from_slice(&value).map_err(|error| error.to_string()))
         .unwrap_or_else(|| Ok(Vec::new()))
+}
+
+fn read_ids(context: &BasicSkillsContext<'_, '_>) -> Result<Vec<SkillId>, String> {
+    let mut ids = read_persisted_ids(context)?;
+    ids.extend(
+        BUILTIN_SKILLS
+            .iter()
+            .map(|(id, _)| SkillId::parse((*id).to_owned()).expect("static builtin skill id is valid")),
+    );
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn namespace() -> ResourceNamespace {
@@ -165,6 +223,19 @@ fn capability(value: &str) -> PermissionId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_provides_static_skills_and_marks_write_required() {
+        let ids = BUILTIN_SKILLS
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(ids.contains("write"));
+        assert!(ids.contains("rust"));
+        assert_eq!(REQUIRED_BUILTIN_SKILLS, &["write"]);
+        let write = builtin_skill("write").expect("write skill is packaged");
+        assert!(String::from_utf8_lossy(write.content.as_ref()).contains("Must always apply"));
+    }
 
     #[test]
     fn generated_authoring_preserves_stable_identity() {
