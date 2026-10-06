@@ -56,6 +56,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
 agent-client-protocol = { version = "2.0.0", features = ["unstable_auth_methods", "unstable_elicitation", "unstable_end_turn_token_usage", "unstable_session_fork", "unstable_mcp_over_acp"] }
