@@ -10998,10 +10998,9 @@ what question?"
             } else if input.trim_end().ends_with("LIFECYCLE_SELF_CLOSE") {
                 match request.continuation.as_slice() {
                     [] => {
-                        let session_id = request
-                            .session_id
-                            .as_ref()
-                            .ok_or_else(|| "controller lifecycle request has no session id".to_owned())?;
+                        let session_id = request.session_id.as_ref().ok_or_else(|| {
+                            "controller lifecycle request has no session id".to_owned()
+                        })?;
                         orchestration_response(
                             "attempt self close",
                             vec![orchestration_operation_call(
