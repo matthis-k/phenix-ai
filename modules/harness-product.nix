@@ -40,10 +40,11 @@
       );
 
       phenixHarnessResources = pkgs.runCommand "phenix-harness-resources" { } ''
-        mkdir -p "$out/share/phenix/skills"
+        mkdir -p "$out/share/phenix/licenses"
         cp ${runtimeConfig} "$out/share/phenix/runtime.json"
-        cp -r ${../config/phenix/skills}/* "$out/share/phenix/skills/"
         cp ${../config/phenix/NOTICE.md} "$out/share/phenix/NOTICE.md"
+        cp ${../rust/crates/phenix-plugin-basic-skills/skills/pstack-LICENSE} \
+          "$out/share/phenix/licenses/pstack-LICENSE"
       '';
 
       supportedPhenix = self.packages.${system}.phenix;
@@ -80,8 +81,7 @@
             fi
 
             test -f ${supportedPhenix}/share/phenix/runtime.json
-            test -f ${supportedPhenix}/share/phenix/skills/write/SKILL.md
-            test -f ${supportedPhenix}/share/phenix/skills/pstack-LICENSE
+            test -f ${supportedPhenix}/share/phenix/licenses/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
 
             touch "$out"
