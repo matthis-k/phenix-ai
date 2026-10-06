@@ -10238,6 +10238,146 @@ mod tests {
         assert_eq!(result.callable_id.as_str(), "bash");
         assert!(!result.is_error);
 
+        let workspace_nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace_path = format!(
+            ".phenix-workspace-tool-{}-{workspace_nonce}.txt",
+            std::process::id()
+        );
+        let workspace_content = format!("workspace-model-tool-{workspace_nonce}");
+
+        let written = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "workspace-write".into(),
+                callable_id: CallableId::parse("workspace.write").unwrap(),
+                input: ApplicationWorkspaceWriteToolRequest {
+                    path: workspace_path.clone(),
+                    content: workspace_content.clone(),
+                    expected_content_hash: None,
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !written.is_error,
+            "workspace.write failed: {:?}",
+            written.output
+        );
+        assert!(matches!(
+            WorkspaceResponse::from_value(&written.output).unwrap(),
+            WorkspaceResponse::Written {
+                ref path,
+                version: WorkspaceFileVersion::Present { ref content_hash },
+            } if path == &workspace_path && !content_hash.is_empty()
+        ));
+
+        let read = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "workspace-read".into(),
+                callable_id: CallableId::parse("workspace.read").unwrap(),
+                input: ApplicationWorkspaceReadToolRequest {
+                    path: workspace_path.clone(),
+                }
+                .to_value(),
+            },
+        );
+        assert!(!read.is_error, "workspace.read failed: {:?}", read.output);
+        assert!(matches!(
+            WorkspaceResponse::from_value(&read.output).unwrap(),
+            WorkspaceResponse::Read {
+                ref path,
+                ref content,
+                ..
+            } if path == &workspace_path && content == &workspace_content
+        ));
+
+        let searched = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "workspace-search".into(),
+                callable_id: CallableId::parse("workspace.search").unwrap(),
+                input: ApplicationWorkspaceSearchToolRequest {
+                    needle: workspace_content.clone(),
+                    path: Some(workspace_path.clone()),
+                    case_sensitive: true,
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !searched.is_error,
+            "workspace.search failed: {:?}",
+            searched.output
+        );
+        assert!(matches!(
+            WorkspaceResponse::from_value(&searched.output).unwrap(),
+            WorkspaceResponse::Search { matches }
+                if matches.iter().any(|found|
+                    found.path == workspace_path
+                        && found.line == 1
+                        && found.text.contains(&workspace_content)
+                )
+        ));
+
+        let git = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "workspace-git".into(),
+                callable_id: CallableId::parse("workspace.git").unwrap(),
+                input: ApplicationWorkspaceGitToolRequest {
+                    arguments: vec!["rev-parse".into(), "--is-inside-work-tree".into()],
+                }
+                .to_value(),
+            },
+        );
+        assert!(!git.is_error, "workspace.git failed: {:?}", git.output);
+        assert!(matches!(
+            WorkspaceResponse::from_value(&git.output).unwrap(),
+            WorkspaceResponse::Process {
+                exit_code: 0,
+                ref stdout,
+                ..
+            } if stdout.trim() == "true"
+        ));
+
+        let discovered = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "workspace-discover".into(),
+                callable_id: CallableId::parse("workspace.discover").unwrap(),
+                input: ApplicationWorkspaceDiscoveryRequest {
+                    workspace_ids: Vec::new(),
+                    repository_remotes: Vec::new(),
+                    recall_terms: Vec::new(),
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !discovered.is_error,
+            "workspace.discover failed: {:?}",
+            discovered.output
+        );
+        let discovered =
+            ApplicationWorkspaceDiscoveryResponse::from_value(&discovered.output).unwrap();
+        assert!(discovered.complete || discovered.reason.is_some());
+
+        let _ = fs::remove_file(&workspace_path);
+
         let queried = invoke_agent_tool(
             &worker,
             &execution_id,
