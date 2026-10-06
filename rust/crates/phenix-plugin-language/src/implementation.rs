@@ -4141,14 +4141,18 @@ mod tests {
     }
 
     fn invoke(kernel: &mut Kernel, command: LanguageCommand) -> Result<LanguageResponse, String> {
+        let authority = language_manifest().maximum_authority;
+        invoke_with_authority(kernel, command, &authority)
+    }
+
+    fn invoke_with_authority(
+        kernel: &mut Kernel,
+        command: LanguageCommand,
+        authority: &Authority,
+    ) -> Result<LanguageResponse, String> {
         let input = serde_json::to_vec(&phenix_core::PhenixValue::from(&command)).unwrap();
         let output = kernel
-            .invoke(
-                &language_service(),
-                &input,
-                &language_manifest().maximum_authority,
-                None,
-            )
+            .invoke(&language_service(), &input, authority, None)
             .map_err(|error| error.to_string())?;
         let output: phenix_core::PhenixValue =
             serde_json::from_slice(&output).map_err(|error| error.to_string())?;
@@ -4508,6 +4512,98 @@ mod tests {
             panic!("expected rebuilt unified query result");
         };
         assert_eq!(rebuilt, result);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unified_query_works_with_read_only_authority_without_persisting_indexes() {
+        let path = temp_db("unified-code-query-read-only");
+        let mut kernel = kernel_with(&path);
+        activate(&mut kernel, 1);
+
+        let a = query_revision("entity-a", "a");
+        let b = query_revision("entity-b", "b");
+        for revision in [&a, &b] {
+            record_query_revision(&mut kernel, revision);
+        }
+        ingest_query_relation(
+            &mut kernel,
+            &a,
+            CodeEntityRelationKind::References,
+            Vec::new(),
+        );
+        ingest_query_relation(
+            &mut kernel,
+            &b,
+            CodeEntityRelationKind::References,
+            vec![CodeEntityRelationTarget {
+                entity: a.entity.clone(),
+                revision: Some(a.revision.clone()),
+            }],
+        );
+
+        drop(kernel);
+        let plugin = language_manifest().id;
+        let namespace = language_namespace();
+        let entity_index = repository_entity_index_key("repo-query");
+        let relation_index =
+            outgoing_relation_index_key("repo-query", CodeRelationKind::References);
+        let mut persistence = LocalPersistence::open(&path).unwrap();
+        persistence
+            .transact(
+                &plugin,
+                &namespace,
+                &[
+                    TransactionOp::Delete {
+                        key: entity_index.clone(),
+                    },
+                    TransactionOp::Delete {
+                        key: relation_index.clone(),
+                    },
+                ],
+            )
+            .unwrap();
+        drop(persistence);
+
+        let mut kernel = kernel_with(&path);
+        let read_only = Authority::new([capability(PERSISTENCE_READ)]);
+        let LanguageResponse::Query { result } = invoke_with_authority(
+            &mut kernel,
+            LanguageCommand::Query {
+                query: CodeQuery {
+                    anchor: CodeQueryAnchor::Entity {
+                        entity: a.entity.clone(),
+                        revision: Some(a.revision.clone()),
+                    },
+                    selection: CodeQuerySelection::Relations {
+                        kinds: vec![CodeRelationKind::References],
+                    },
+                    traversal: Some(phenix_sdk::CodeQueryTraversal {
+                        direction: CodeQueryDirection::Outgoing,
+                        max_depth: 1,
+                    }),
+                    projection: CodeQueryProjection::Identity,
+                    budget: phenix_sdk::CodeQueryBudget {
+                        max_entities: 8,
+                        max_relations: 8,
+                        max_bytes: 16 * 1024,
+                    },
+                },
+            },
+            &read_only,
+        )
+        .unwrap() else {
+            panic!("expected read-only unified query result");
+        };
+        assert_eq!(result.relations.len(), 1);
+        assert_eq!(result.relations[0].source, a.entity);
+        assert_eq!(result.relations[0].target.entity, b.entity);
+
+        drop(kernel);
+        let persistence = LocalPersistence::open(&path).unwrap();
+        assert!(persistence.read(&plugin, &namespace, &entity_index).unwrap().is_none());
+        assert!(persistence.read(&plugin, &namespace, &relation_index).unwrap().is_none());
 
         let _ = fs::remove_file(path);
     }
