@@ -224,16 +224,17 @@ impl InvocationPackage {
         context: &InvocationContext<'_, '_>,
         host: &PluginHost<'_>,
         request: InvocationRequest,
-        params: InvocationParams,
+        mut params: InvocationParams,
         kind: UsageAttemptKind,
     ) -> Result<Vec<u8>, String> {
         let root_execution_id = root_execution_id(context, &request.execution_id)?;
         if !is_isolated_helper(kind) {
-            activate_invocation_skills(
+            let activated_skills = activate_invocation_skills(
                 context,
                 &request.execution_id,
                 &params.intent.required_skills,
             )?;
+            params.intent.required_skills.extend(activated_skills);
         }
         let mut preparation = if is_isolated_helper(kind) {
             ContextInvocationPreparation {
@@ -313,7 +314,7 @@ fn activate_invocation_skills(
     context: &InvocationContext<'_, '_>,
     execution_id: &str,
     explicitly_required: &BTreeSet<phenix_core::SkillId>,
-) -> Result<(), String> {
+) -> Result<BTreeSet<phenix_core::SkillId>, String> {
     let mut skills = BTreeMap::<phenix_core::SkillId, SkillDefinition>::new();
 
     match context.sdk.skills.invoke_projected(&SkillCommand::Required) {
@@ -347,10 +348,11 @@ fn activate_invocation_skills(
         skills.insert(id.clone(), skill);
     }
 
+    let activated = skills.keys().cloned().collect();
     for skill in skills.into_values() {
         activate_skill(context, execution_id, skill)?;
     }
-    Ok(())
+    Ok(activated)
 }
 
 fn activate_skill(
