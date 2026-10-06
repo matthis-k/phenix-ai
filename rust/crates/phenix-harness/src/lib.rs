@@ -214,6 +214,7 @@ impl PhenixRuntimeBuilder {
             invocation_defaults::invocation_defaults_factory,
         )?;
         builder.add_embedded(sdk_manifest(authority.clone()), sdk_factory)?;
+        builder.add_embedded(basic_skills_manifest(), basic_skills_factory)?;
         for component in [
             repository_worker_component_manifest(),
             session_component_manifest(),
@@ -240,6 +241,7 @@ impl PhenixRuntimeBuilder {
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
             sdk_component_manifest(authority),
+            basic_skills_component_manifest(),
         ] {
             builder.add_component(component);
         }
