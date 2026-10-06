@@ -9378,6 +9378,18 @@ mod tests {
         let namespace = ResourceNamespace::parse("fixture.runtime-orchestration.memory").unwrap();
         let first_manifest = memory_debug_manifest(1, namespace.clone(), false);
         let second_manifest = memory_debug_manifest(2, namespace.clone(), true);
+        assert!(
+            !first_manifest
+                .services
+                .iter()
+                .any(|service| service.service == skill_service())
+        );
+        assert!(
+            second_manifest
+                .services
+                .iter()
+                .any(|service| service.service == skill_service())
+        );
         let first_component = memory_debug_component(false);
         let second_component = memory_debug_component(true);
         let trial_request = PluginLoadRequest {
