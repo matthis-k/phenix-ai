@@ -749,7 +749,9 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::from([tool_id]),
-                    required_skills: BTreeSet::from([\n                        SkillId::parse("introspection-check").unwrap(),\n                    ]),
+                    required_skills: BTreeSet::from([
+                        SkillId::parse("introspection-check").unwrap(),
+                    ]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
