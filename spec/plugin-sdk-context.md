@@ -53,7 +53,7 @@ ctx.plugin  current plugin data
 ctx.call    current call metadata
 ```
 
-A plugin may define a local context alias and SDK dependency struct for its declared imports. Unavailable dependencies then remain absent from the business-logic type.
+A plugin may define a local context alias and SDK dependency struct for its declared contract requirements. Unavailable optional requirements then remain absent from the business-logic type.
 
 `phenix_context` constructs a context with `PhenixSdk`. The caller still chooses the settings and state view placed in `ctx.plugin`.
 
@@ -75,7 +75,9 @@ ctx.sdk.config
 
 Some helpers call standard domain interfaces directly. Convenience operations such as session policy, tool registration, skill registration, and config reads use interfaces provided by `phenix-plugin-api` when that plugin is selected and bound.
 
-Each invocation still goes through the caller component's declared import, resolved provider, and effective authority. A missing API plugin therefore produces the ordinary missing or unbound dependency failure. `PhenixSdk` does not provide an in-process fallback.
+Each invocation still goes through the caller component's declared contract requirement, resolved provider, and effective authority. A missing API plugin therefore produces the ordinary missing or unbound dependency failure. `PhenixSdk` does not provide an in-process fallback.
+
+Static `#[phenix(tool)]` and `#[phenix(skill(...))]` declarations generate the required SDK contract edges and registration calls. Plugin business logic does not need to call `register` for those static declarations. Dynamic discovery and runtime-created tools or skills still use the explicit SDK APIs. Generated and manual registration converge on the same tool and skill providers.
 
 Plugins can add typed SDK contracts and access them through:
 
@@ -83,7 +85,7 @@ Plugins can add typed SDK contracts and access them through:
 let testing = ctx.sdk.require::<TestingSdk>();
 ```
 
-The returned client is usable only when the caller component declared and resolved the matching import.
+The returned client is usable only when the caller component declared and resolved the matching contract requirement.
 
 ## Cross-plugin data
 
@@ -151,8 +153,9 @@ A plugin may have multiple components. Component callbacks bind SDK clients to t
 - A plugin instance remains the single owner of mutable instance state.
 - A context carries an explicit settings and state view.
 - Plugin business logic receives `PluginContext`, not `PluginHost`.
-- Typed component imports are available through `ctx.sdk`.
-- Cross-plugin access requires an explicit typed import and remains kernel-mediated.
+- Typed contract requirements are available through `ctx.sdk`.
+- Cross-plugin access requires an explicit typed contract requirement and remains kernel-mediated.
+- Static tool and skill declarations may generate those requirements and registration calls without creating hidden provider lookup.
 - Stateful SDK objects are handles, not shared provider-internal references.
 - Generic kernel mechanisms are available through `ctx.kernel`.
 - Call authority and graph generation are available through `ctx.call`.
@@ -166,7 +169,7 @@ When an admitted delivery runs, Core constructs a fresh listener `PluginHost` bo
 
 The generated listener context therefore exposes ordinary typed imports through `ctx.sdk`, generic kernel mechanisms through `ctx.kernel`, current plugin identity and state through `ctx.plugin`, and call metadata through `ctx.call`. Event metadata remains available through `EventContext`, including emitter, event identity, causality, policy revision, and graph generation.
 
-Listener imports use the same component graph and provider handles as callable handlers. Undeclared imports fail through normal component-graph checks. Persistence uses the ordinary host capability and resource-ownership checks, so a listener cannot write another plugin's namespace or expand its authority.
+Listener contract requirements use the same component graph and provider handles as callable handlers. Undeclared requirements fail through normal component-graph checks. Persistence uses the ordinary host capability and resource-ownership checks, so a listener cannot write another plugin's namespace or expand its authority.
 
 Listener task scopes retain the listener owner, pinned graph generation, and attenuated authority. Spawned work receives owned task metadata rather than a borrowed host. Live listener calls receive the normal call-cancellation token. Reconciliation cancels matching old-generation calls and owned tasks when a plugin generation is stopped or replaced.
 
@@ -174,8 +177,8 @@ Host and SDK borrows remain inside one delivery callback. A listener cannot reta
 
 ## Listener invariants
 
-- A generated listener can call a declared typed import and write its own durable resource.
-- Undeclared imports and foreign namespace writes use the same rejection paths as callable handlers.
+- A generated listener can call a declared typed contract requirement and write its own durable resource.
+- Undeclared requirements and foreign namespace writes use the same rejection paths as callable handlers.
 - Emitter authority cannot be expanded by listener imports, persistence, or spawned tasks.
 - Listener callbacks retain emitter, causality, graph generation, cancellation, and owner identity.
 - Listener task scopes retain owner and graph generation and attenuate requested authority.

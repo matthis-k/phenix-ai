@@ -8,7 +8,8 @@ This file is the source of truth for architecture vocabulary. Code, documentatio
 | --- | --- | --- |
 | **Kernel** | The mechanism layer in `phenix-core`. It resolves and dispatches services, activates generations, hosts plugin lifecycle, attenuates authority, and enforces shared persistence, event, task, and tracing rules. | The Kernel is not the product assembly, frontend, model implementation, or durable owner of plugin domain state. |
 | **Plugin** | An independently selectable unit that contributes behavior or resources through declared manifests and components. | A plugin owns its domain behavior and durable state. Resource-only plugins contribute resources without executable code. |
-| **Interface** | A typed, versioned contract imported and exported by components. | An interface is the semantic contract. A service is the lower-level kernel dispatch identity used to execute an implementation. |
+| **Contract** | A typed, versioned capability description that plugins may declare, require, or provide. | Declaring a contract does not select a provider. Requiring a contract leaves provider selection to resolution. Providing a contract makes an implementation eligible to satisfy requirements. |
+| **Interface** | The current Core representation of a callable contract and its schemas. Components store required contracts as Interface Imports and provided contracts as Interface Exports. | Interface is kernel vocabulary. Contract is the preferred plugin-author vocabulary. A service is the lower-level dispatch identity used to execute an implementation. |
 | **Configuration** | Typed input that selects or parameterizes runtime behavior before a generation is activated. Configuration contributions are attributed, authority-bounded, and merged deterministically. | Product configuration, configuration frontends, resolved configuration, and `KernelConfig` are different stages of the same flow. Configuration is not mutable runtime state. |
 | **Generation** | One immutable resolved runtime topology identified by `GenerationId`. It contains the selected plugins, component graph, dispatch topology, resources, resolved configuration, policy, and authority ceiling. | Activation installs a generation atomically. Reconciliation produces and activates a replacement generation instead of mutating topology piecemeal. |
 | **Execution** | One application-level unit of work tracked through the execution domain. It may contain many invocations and model turns. | An invocation is one call across an interface or service. `PluginExecution` is a qualified manifest term describing how a plugin implementation is hosted. |
@@ -20,7 +21,7 @@ This file is the source of truth for architecture vocabulary. Code, documentatio
 
 **Harness** is the supported product assembly. It selects plugins, configuration, persistence, authority, and packaged resources, then constructs a `PhenixRuntime`. Harness terminology belongs to product assembly, not generic kernel topology.
 
-**Component** is a plugin-owned logical unit that imports and exports interfaces. The resolved component graph records the selected component implementations and their bindings for a generation.
+**Component** is a plugin-owned logical unit that requires and provides contracts. Core lowers those declarations to Interface Imports and Exports. The resolved component graph records the selected component implementations and their bindings for a generation.
 
 **Service** is a kernel dispatch identity. A resolved service plan selects a terminal provider and any ordered layers; component interface bindings lower to these dispatch identities.
 
@@ -51,6 +52,7 @@ This file is the source of truth for architecture vocabulary. Code, documentatio
 - Name the domain before a generic role when the containing scope does not already disambiguate it.
 - Use architectural pattern names only when the implementation performs that pattern.
 - Prefer `Generation` for immutable resolved topology and `Runtime` for the live host that executes it.
+- Prefer `Contract`, `require`, and `provide` in plugin-author documentation. Use Interface Import and Interface Export when describing the Core representation.
 - Prefer `Callable` for invocable references and `Permission` or `Authority` for access control.
 - Prefer `ModelAdapter` for model protocol translation. Keep `ModelProvider` for provider identity and provider-specific routing or authentication.
 - Keep historical product names such as Harness out of generic kernel types and diagnostics unless they refer to the product assembly itself.
