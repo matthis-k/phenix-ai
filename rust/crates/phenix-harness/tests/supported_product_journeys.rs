@@ -514,7 +514,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
             ledger: RootBudgetLedger {
                 root_execution_id: "root".into(),
                 limits: RootBudgetLimits {
-                    fresh_input_tokens: 8_000,
+                    fresh_input_tokens: 16_000,
                     output_tokens: 2_000,
                     cost_microunits: None,
                     attempts: 4,
@@ -541,7 +541,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                 profile_id: RoutingProfileId::parse("parity").unwrap(),
                 policy: UsagePolicy {
                     revision: "fixture-policy".into(),
-                    max_fresh_input_tokens: Some(4_000),
+                    max_fresh_input_tokens: Some(16_000),
                     max_output_tokens: Some(512),
                     max_cost_microunits: None,
                     max_retries: Some(0),
