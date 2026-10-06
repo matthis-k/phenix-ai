@@ -351,6 +351,7 @@ pub enum SkillCommand {
     Register { skill: SkillDefinition },
     Get { id: SkillId },
     List,
+    Required,
 }
 
 #[derive(phenix_sdk_macros::PhenixValue, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
