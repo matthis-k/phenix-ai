@@ -279,6 +279,8 @@ This is management metadata. Detailed graph and execution inspection remains in 
 
 Build materializes a Plugin artifact using the existing typed build plan.
 
+At the model-facing adapter, an omitted or empty build `requested_authority` means "use the narrow workspace build authority required by this operation". Core still intersects that authority with the parent root and host policy. A non-empty request remains an explicit attenuation and is never widened.
+
 Build does not change the active or resident runtime.
 
 The result identifies:

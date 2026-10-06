@@ -5051,7 +5051,7 @@ fn host_model_tools(authority: &Authority) -> Vec<ModelToolDescriptor> {
         tools.push(ModelToolDescriptor {
             id: CallableId::parse("phenix.plugin")
                 .expect("static plugin management callable id is valid"),
-            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
+            description: "Manage resident Plugin generations through Core. Arguments: inspect {}; build {plan}; trial {request}; promote, rollback, or retire {generation}. Build and trial use the configured workspace backend. For model-facing build plans, omitted or empty requested_authority uses the narrow workspace build authority, still bounded by the parent root; a non-empty requested_authority attenuates it. Trial keeps the current default; promote and rollback change the default for future roots.".to_owned(),
             input_schema: PhenixSchema::Table(BTreeMap::from([
                 (
                     Key::parse("operation").expect("static plugin operation field is valid"),
@@ -5190,6 +5190,26 @@ fn runtime_plugin_policy(required_permission: &str) -> PluginManagementPolicy {
             .expect("static plugin management permission is valid")]),
         runtime_plugin_build_authority(),
     )
+}
+
+fn apply_runtime_plugin_default_build_authority(
+    plan: &mut PluginBuildPlan,
+) -> Result<(), ApplicationError> {
+    if plan.requested_authority().permissions().next().is_some() {
+        return Ok(());
+    }
+
+    *plan = PluginBuildPlan::new(
+        plan.source().clone(),
+        plan.steps().to_vec(),
+        plan.artifact_output().clone(),
+        plan.configuration().clone(),
+        runtime_plugin_build_authority(),
+    )
+    .map_err(|error| ApplicationError::InvalidInput {
+        message: format!("invalid phenix.plugin build plan: {error}"),
+    })?;
+    Ok(())
 }
 
 fn runtime_plugin_typed_argument<T>(
@@ -5696,7 +5716,8 @@ fn execute_runtime_plugin_control(
                     context.call.authority,
                     RUNTIME_PLUGIN_BUILD_PERMISSION,
                 )?;
-                let plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
+                let mut plan: PluginBuildPlan = runtime_plugin_typed_argument(arguments, "plan")?;
+                apply_runtime_plugin_default_build_authority(&mut plan)?;
                 let policy = runtime_plugin_policy(RUNTIME_PLUGIN_BUILD_PERMISSION);
                 let mut store = WorkspacePluginArtifactStore {
                     context,
@@ -5722,8 +5743,15 @@ fn execute_runtime_plugin_control(
                     context.call.authority,
                     RUNTIME_PLUGIN_TRIAL_PERMISSION,
                 )?;
-                let request: PluginLoadRequest =
+                let mut request: PluginLoadRequest =
                     runtime_plugin_typed_argument(arguments, "request")?;
+                if let PluginExecution::Runtime {
+                    artifact: PluginArtifactInput::Build(plan),
+                    ..
+                } = &mut request.manifest.execution
+                {
+                    apply_runtime_plugin_default_build_authority(plan)?;
+                }
                 let plugin = request.manifest.id.clone();
                 let ready_artifact_revision = match &request.manifest.execution {
                     PluginExecution::Runtime {
@@ -8796,9 +8824,13 @@ mod tests {
             }],
             artifact_output.parse().unwrap(),
             BTreeMap::new(),
-            runtime_plugin_build_authority(),
+            Authority::default(),
         )
         .unwrap();
+        assert!(
+            plan.requested_authority().permissions().next().is_none(),
+            "fixture must exercise the model-facing default build authority path"
+        );
 
         let request = AgentToolExecutionRequest {
             execution_id: execution_id.clone(),
@@ -8886,26 +8918,19 @@ mod tests {
                 revision: format!("fixture:failed:{nonce}").parse().unwrap(),
             },
             vec![PluginBuildStep {
-                executable: "sh".parse().unwrap(),
-                argv: [
-                    "-c".parse().unwrap(),
-                    "printf 'fixture build failure' >&2; exit 7"
-                        .parse()
-                        .unwrap(),
-                ]
-                .into_iter()
-                .collect(),
+                executable: "false".parse().unwrap(),
+                argv: Vec::new(),
                 working_directory: BuildWorkingDirectory::root(),
                 environment: BuildEnvironment::default(),
             }],
             failed_output.parse().unwrap(),
             BTreeMap::new(),
-            runtime_plugin_build_authority(),
+            Authority::default(),
         )
         .unwrap();
         let failed_request = AgentToolExecutionRequest {
-            execution_id,
-            session_id: Some(session_id),
+            execution_id: execution_id.clone(),
+            session_id: Some(session_id.clone()),
             call: ModelToolCall {
                 call_id: "plugin-build-failed".into(),
                 callable_id: CallableId::parse("phenix.plugin").unwrap(),
@@ -8948,7 +8973,7 @@ mod tests {
             matches!(
                 failure,
                 ApplicationError::Failed { ref message }
-                    if message.contains("plugin build step 0 exited with status 7")
+                    if message.contains("plugin build step 0 exited with status 1")
             ),
             "unexpected plugin build failure: {failure:?}"
         );
@@ -8962,8 +8987,162 @@ mod tests {
             "failed plugin build left an artifact output behind"
         );
 
+        let failed_trial_output = format!(
+            "target/phenix-plugin-trial-build-failed-{}-{nonce}.bin",
+            std::process::id()
+        );
+        let failed_trial_plan = PluginBuildPlan::new(
+            PluginBuildSource {
+                identity: "fixture:application-plugin-trial-build-failure"
+                    .parse()
+                    .unwrap(),
+                revision: format!("fixture:trial-failed:{nonce}").parse().unwrap(),
+            },
+            vec![PluginBuildStep {
+                executable: "false".parse().unwrap(),
+                argv: Vec::new(),
+                working_directory: BuildWorkingDirectory::root(),
+                environment: BuildEnvironment::default(),
+            }],
+            failed_trial_output.parse().unwrap(),
+            BTreeMap::new(),
+            Authority::default(),
+        )
+        .unwrap();
+        let failed_trial = PluginLoadRequest {
+            manifest: PluginManifest {
+                id: PluginId::parse("fixture.application-plugin-trial-build-failure").unwrap(),
+                version: 1,
+                execution: PluginExecution::Runtime {
+                    runtime: PluginRuntimeId::parse("fixture.unreached-runtime").unwrap(),
+                    artifact: PluginArtifactInput::Build(failed_trial_plan),
+                },
+                dependencies: Vec::new(),
+                services: Vec::new(),
+                resource_namespaces: Vec::new(),
+                maximum_authority: Authority::default(),
+            },
+            components: Vec::new(),
+            entry_triggers: Vec::new(),
+            process_arguments: Vec::new(),
+            expected_active_revision: None,
+        };
+        let failed_trial_request = AgentToolExecutionRequest {
+            execution_id,
+            session_id: Some(session_id),
+            call: ModelToolCall {
+                call_id: "plugin-trial-build-failed".into(),
+                callable_id: CallableId::parse("phenix.plugin").unwrap(),
+                input: PhenixValue::Table(BTreeMap::from([
+                    (
+                        Key::parse("operation").unwrap(),
+                        PhenixValue::String("trial".into()),
+                    ),
+                    (
+                        Key::parse("arguments").unwrap(),
+                        PhenixValue::Map(BTreeMap::from([(
+                            "request".into(),
+                            PhenixValue::from(serde_json::to_value(&failed_trial).unwrap()),
+                        )])),
+                    ),
+                ])),
+            },
+        };
+        let failed_trial_output_value = worker
+            .harness
+            .lock()
+            .invoke(
+                &agent_tool_execution_service(),
+                &serde_json::to_vec(&PhenixValue::from(&failed_trial_request)).unwrap(),
+                &authority,
+                None,
+            )
+            .unwrap();
+        let failed_trial_value: PhenixValue =
+            serde_json::from_slice(&failed_trial_output_value).unwrap();
+        let failed_trial_response =
+            AgentToolExecutionResponse::try_from(Project(&failed_trial_value)).unwrap();
+        let AgentToolExecutionResponse::Completed {
+            result: failed_trial,
+            ..
+        } = failed_trial_response
+        else {
+            panic!("failed build-backed phenix.plugin trial must complete as a tool error");
+        };
+        assert!(
+            failed_trial.is_error,
+            "failed build-backed plugin trial unexpectedly succeeded"
+        );
+        let failure = ApplicationError::from_value(&failed_trial.output).unwrap();
+        assert!(
+            matches!(
+                failure,
+                ApplicationError::Failed { ref message }
+                    if message.contains("plugin build step 0 exited with status 1")
+            ),
+            "build-backed trial did not reach its build step: {failure:?}"
+        );
+        {
+            let harness = worker.harness.lock();
+            assert_eq!(harness.generation(), &active_before);
+            assert_eq!(harness.selectable_generations(), generations_before);
+        }
+        assert!(
+            !std::path::Path::new(&failed_trial_output).exists(),
+            "failed build-backed plugin trial left an artifact output behind"
+        );
+
         let _ = fs::remove_file(&artifact_output);
         let _ = fs::remove_file(&locator);
+    }
+
+    #[test]
+    fn model_plugin_build_authority_defaults_only_when_empty() {
+        let plan_value = |requested_authority: serde_json::Value| {
+            serde_json::json!({
+                "source": {
+                    "identity": "fixture:model-build-authority",
+                    "revision": "fixture:1"
+                },
+                "steps": [{
+                    "executable": "false",
+                    "argv": [],
+                    "working_directory": ".",
+                    "environment": {}
+                }],
+                "artifact_output": "target/model-build-authority.bin",
+                "configuration": {},
+                "requested_authority": requested_authority
+            })
+        };
+
+        let mut defaulted: PluginBuildPlan =
+            serde_json::from_value(plan_value(serde_json::json!([]))).unwrap();
+        apply_runtime_plugin_default_build_authority(&mut defaulted).unwrap();
+        assert!(
+            defaulted
+                .requested_authority()
+                .permits(&PermissionId::parse("workspace.read").unwrap())
+        );
+        assert!(
+            defaulted
+                .requested_authority()
+                .permits(&PermissionId::parse("workspace.shell").unwrap())
+        );
+
+        let mut attenuated: PluginBuildPlan =
+            serde_json::from_value(plan_value(serde_json::json!(["workspace.read"]))).unwrap();
+        apply_runtime_plugin_default_build_authority(&mut attenuated).unwrap();
+        assert!(
+            attenuated
+                .requested_authority()
+                .permits(&PermissionId::parse("workspace.read").unwrap())
+        );
+        assert!(
+            !attenuated
+                .requested_authority()
+                .permits(&PermissionId::parse("workspace.shell").unwrap())
+        );
     }
 
     #[test]
