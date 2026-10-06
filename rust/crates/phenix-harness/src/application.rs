@@ -62,7 +62,7 @@ use phenix_provider_sdk::{
     provider_models_service,
 };
 use phenix_sdk::{
-    CodeQuery, CodeQueryResult, ContextCommand, ContextDescriptor, ContextInjectionLifetime,
+    CodeQuery, CodeQueryResult, ContextCommand, ContextInjectionLifetime,
     ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
@@ -1292,35 +1292,6 @@ impl ApplicationWorker {
             .collect()
     }
 
-    fn packaged_skill_sources(&self) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let root = packaged_skill_root(
-            env::var_os("PHENIX_SKILL_PATH").map(PathBuf::from),
-            env::var_os("PHENIX_DEFAULT_CONFIG_DIR").map(PathBuf::from),
-        );
-        let Some(root) = root else {
-            return Ok(Vec::new());
-        };
-        let mut skill_files = Vec::new();
-        collect_skill_files(&root, &root, &mut skill_files).map_err(|error| {
-            ApplicationError::Failed {
-                message: format!("skill discovery failed: {error}"),
-            }
-        })?;
-        skill_files.sort();
-        skill_files
-            .into_iter()
-            .map(|(path, source)| {
-                let content = fs::read(&path).map_err(|error| ApplicationError::Failed {
-                    message: format!("cannot read packaged skill {}: {error}", path.display()),
-                })?;
-                Ok(RepositoryContextSource {
-                    path: source,
-                    content: content.into(),
-                })
-            })
-            .collect()
-    }
-
     fn prepare_execution_context_on(
         &self,
         root: &RootExecutionHandle,
@@ -1330,18 +1301,12 @@ impl ApplicationWorker {
         observe_local_workspace_discovery(session);
         let context_auto =
             self.resolve_bool_option_on(root, &session.session_id, "context.auto_load")?;
-        let skills_auto =
-            self.resolve_bool_option_on(root, &session.session_id, "skills.auto_load")?;
-        if !context_auto && !skills_auto {
+        if !context_auto {
             return Ok(());
         }
 
         let workspace_id = workspace_context_id(&session.working_directory);
-        let sources = if context_auto {
-            self.workspace_context_sources_on(root)?
-        } else {
-            Vec::new()
-        };
+        let sources = self.workspace_context_sources_on(root)?;
         let mut descriptors = if sources.is_empty() {
             Vec::new()
         } else {
@@ -1362,36 +1327,12 @@ impl ApplicationWorker {
             }
         };
 
-        if skills_auto {
-            let packaged = self.packaged_skill_sources()?;
-            if !packaged.is_empty() {
-                let ContextResponse::Discovered {
-                    descriptors: packaged_descriptors,
-                } = self.invoke_context_command_on(
-                    root,
-                    ContextCommand::DiscoverRepository {
-                        workspace_id: "harness".into(),
-                        sources: packaged,
-                    },
-                )?
-                else {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: "packaged skill discovery returned an unexpected response".into(),
-                    });
-                };
-                descriptors.extend(packaged_descriptors);
-            }
-        }
-
         descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
         for descriptor in descriptors {
-            let mandatory_project_instruction = context_auto
-                && descriptor.kind == ContextResourceKind::ProjectInstruction
-                && descriptor.scope == ContextScope::Workspace;
-            let mandatory_skill = skills_auto
-                && descriptor.kind == ContextResourceKind::Skill
-                && self.skill_is_mandatory_on(root, &descriptor)?;
-            if !mandatory_project_instruction && !mandatory_skill {
+            let mandatory_project_instruction =
+                descriptor.kind == ContextResourceKind::ProjectInstruction
+                    && descriptor.scope == ContextScope::Workspace;
+            if !mandatory_project_instruction {
                 continue;
             }
             let response = self.invoke_context_command_on(
@@ -1402,12 +1343,7 @@ impl ApplicationWorker {
                     revision: descriptor.revision,
                     requester: ContextInjectionRequester::ContextPolicy,
                     lifetime: ContextInjectionLifetime::Execution,
-                    reason: if mandatory_skill {
-                        "auto-load mandatory skill"
-                    } else {
-                        "auto-load workspace project instruction"
-                    }
-                    .into(),
+                    reason: "auto-load workspace project instruction".into(),
                 },
             )?;
             if !matches!(response, ContextResponse::Loaded { .. }) {
@@ -1418,35 +1354,6 @@ impl ApplicationWorker {
         }
         Ok(())
     }
-
-    fn skill_is_mandatory_on(
-        &self,
-        root: &RootExecutionHandle,
-        descriptor: &ContextDescriptor,
-    ) -> Result<bool, ApplicationError> {
-        let response = self.invoke_context_command_on(
-            root,
-            ContextCommand::Get {
-                resource_id: descriptor.resource_id.clone(),
-                revision: descriptor.revision.clone(),
-            },
-        )?;
-        let ContextResponse::Resource {
-            resource: Some(resource),
-        } = response
-        else {
-            return Ok(false);
-        };
-        let content = String::from_utf8_lossy(resource.content.as_ref()).to_lowercase();
-        let mut lines = content.lines();
-        if lines.next().is_none_or(|line| line.trim() != "---") {
-            return Ok(false);
-        }
-        Ok(lines.take_while(|line| line.trim() != "---").any(|line| {
-            line.trim_start().starts_with("description:") && line.contains("must always apply")
-        }))
-    }
-
     fn create_session(
         &mut self,
         request: SessionCreateInput,
@@ -3008,37 +2915,6 @@ fn decode<T: ValueCodec>(value: PhenixValue) -> Result<T, ApplicationError> {
     })
 }
 
-fn packaged_skill_root(
-    explicit: Option<PathBuf>,
-    default_config_dir: Option<PathBuf>,
-) -> Option<PathBuf> {
-    explicit.or_else(|| default_config_dir.map(|root| root.join("skills")))
-}
-
-#[cfg(test)]
-mod packaged_skill_root_tests {
-    use super::*;
-
-    #[test]
-    fn explicit_skill_path_overrides_default_config_directory() {
-        assert_eq!(
-            packaged_skill_root(
-                Some(PathBuf::from("/custom/skills")),
-                Some(PathBuf::from("/packaged/phenix")),
-            ),
-            Some(PathBuf::from("/custom/skills")),
-        );
-    }
-
-    #[test]
-    fn default_config_directory_supplies_packaged_skills() {
-        assert_eq!(
-            packaged_skill_root(None, Some(PathBuf::from("/packaged/phenix"))),
-            Some(PathBuf::from("/packaged/phenix/skills")),
-        );
-    }
-}
-
 fn observe_local_workspace_discovery(session: &SessionInfo) {
     let Some(discovery_root) = workspace_discovery::workspace_discovery_root() else {
         return;
@@ -3176,34 +3052,6 @@ fn workspace_context_id(working_directory: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     format!("workspace-{suffix}")
-}
-
-fn collect_skill_files(
-    root: &Path,
-    current: &Path,
-    output: &mut Vec<(PathBuf, String)>,
-) -> Result<(), std::io::Error> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            collect_skill_files(root, &path, output)?;
-            continue;
-        }
-        if !file_type.is_file() || entry.file_name() != "SKILL.md" {
-            continue;
-        }
-        let source = format!(
-            "skills/{}",
-            path.strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/")
-        );
-        output.push((path, source));
-    }
-    Ok(())
 }
 
 fn application_session_info(session: &SessionRecord) -> Result<SessionInfo, ApplicationError> {

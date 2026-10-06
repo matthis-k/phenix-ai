@@ -89,6 +89,16 @@
             test -f ${supportedPhenix}/share/phenix/runtime.json
             test -f ${supportedPhenix}/share/phenix/licenses/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
+            test ! -e ${supportedPhenix}/share/phenix/skills
+
+            if grep -R -F 'PHENIX_SKILL_PATH' ${rustSource}/crates/phenix-harness/src; then
+              echo "Harness must not discover skills through PHENIX_SKILL_PATH" >&2
+              exit 1
+            fi
+            if grep -R -F 'packaged_skill_sources' ${rustSource}/crates/phenix-harness/src; then
+              echo "Harness must not own packaged filesystem skill discovery" >&2
+              exit 1
+            fi
 
             touch "$out"
           '';
