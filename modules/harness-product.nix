@@ -87,6 +87,21 @@
             fi
 
             test -f ${supportedPhenix}/share/phenix/runtime.json
+            jq -e '
+              (.routing_profiles[] | select(.id == "default")) as $default
+              | ($default.default_target.provider == "openai-codex")
+              and (
+                [$default.callable_targets[].provider]
+                | length > 0 and all(. == "openai-codex")
+              )
+              and (
+                [
+                  $default.default_target.provider,
+                  $default.callable_targets[].provider
+                ]
+                | all(. != "openai-api")
+              )
+            ' ${supportedPhenix}/share/phenix/runtime.json >/dev/null
             test -f ${supportedPhenix}/share/phenix/licenses/pstack-LICENSE
             test -f ${supportedPhenix}/share/phenix/NOTICE.md
             test ! -e ${supportedPhenix}/share/phenix/skills
