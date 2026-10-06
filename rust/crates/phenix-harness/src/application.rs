@@ -7855,12 +7855,16 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "store Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![PhenixValue::Map(BTreeMap::from([
+                                        (
+                                            "kind".into(),
+                                            PhenixValue::String("text".into()),
+                                        ),
+                                        (
+                                            "text".into(),
+                                            PhenixValue::String("store Helios".into()),
+                                        ),
+                                    ]))]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
@@ -7918,12 +7922,16 @@ mod tests {
                                 ),
                                 (
                                     "content".into(),
-                                    PhenixValue::List(vec![
-                                        Content::Text {
-                                            text: "recall Helios".into(),
-                                        }
-                                        .to_value(),
-                                    ]),
+                                    PhenixValue::List(vec![PhenixValue::Map(BTreeMap::from([
+                                        (
+                                            "kind".into(),
+                                            PhenixValue::String("text".into()),
+                                        ),
+                                        (
+                                            "text".into(),
+                                            PhenixValue::String("recall Helios".into()),
+                                        ),
+                                    ]))]),
                                 ),
                                 ("generation".into(), PhenixValue::String(g2()?)),
                             ]),
