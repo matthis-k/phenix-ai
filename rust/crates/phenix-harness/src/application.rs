@@ -9499,10 +9499,11 @@ mod tests {
 
         let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         let workspace_root = root.clone();
-        assert!(builder.replace_embedded_factory(
-            workspace_manifest().id,
-            move || workspace_factory_for(workspace_root.clone()),
-        ));
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
         let mut worker = ApplicationWorker::new(harness).unwrap();
