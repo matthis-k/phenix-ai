@@ -3,7 +3,7 @@ use phenix_core::{
     PluginContext, PluginInstance, PluginManifest, ResourceNamespace, SKILL_SERVICE, SkillCommand,
     SkillDefinition, SkillId, SkillResponse, TransactionOp,
 };
-use phenix_sdk::{StaticPluginComponentDispatch, StaticPluginDefinition};
+use phenix_sdk::{SkillInterface, StaticPluginComponentDispatch, StaticPluginDefinition};
 
 pub const BASIC_SKILLS_PLUGIN: &str = "phenix.basic-skills";
 pub const BASIC_SKILLS_COMPONENT: &str = "phenix.basic-skills";
@@ -253,5 +253,6 @@ mod tests {
             component.exports[0].interface,
             BasicSkillsInterface::interface_id()
         );
+        assert_eq!(component.exports[0].schema, SkillInterface::schema());
     }
 }
