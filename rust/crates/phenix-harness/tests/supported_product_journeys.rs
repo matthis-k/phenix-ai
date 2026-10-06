@@ -16,14 +16,13 @@ use phenix_plugin_catalog::{
     ModelResponse, ModelTarget, PlanningCommand, PlanningResponse, RepositoryWorkSnapshot,
     RoutingProfile, SessionCommand, SessionRecord, SessionResponse, SessionTreeCommand,
     SessionTreeResponse, WorkspaceCommand, WorkspaceResponse, artifact_component_manifest,
-    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
     model_inference_service, planning_component_manifest,
 };
 use phenix_sdk::{
     CapacityKnowledge, ContextControl, DelegationResourcePolicy, EffectiveModelFeatures,
     ExecutionResourceCommand, ExecutionResourceResponse, InvocationCommand, InvocationIntent,
     InvocationParams, InvocationRequest, ModelLimits, RootBudgetLedger, RootBudgetLimits,
-    RouteSelectionPolicy, RoutingEstimateMode, SkillCommand, SkillDefinition, SkillId,
+    RouteSelectionPolicy, RoutingEstimateMode, SdkSkillCommand, SdkSkillResponse, SkillId,
     StepRunnerResponse, UsagePolicy,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -558,9 +557,7 @@ fn supported_harness_routes_model_inference_and_tool_calls_through_plugins() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::new(),
-                    required_skills: BTreeSet::from([
-                        SkillId::parse("introspection-check").unwrap()
-                    ]),
+                    required_skills: BTreeSet::new(),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
@@ -634,10 +631,6 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
             || Box::new(IntrospectionModelProvider),
         )
         .unwrap();
-    builder
-        .add_embedded(basic_skills_manifest(), basic_skills_factory)
-        .unwrap();
-    builder.add_component(basic_skills_component_manifest());
     let mut harness = builder.build().unwrap();
     harness.activate().unwrap();
 
@@ -704,14 +697,12 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
         },
     );
 
-    let _: phenix_core::SkillResponse = invoke_structural(
+    let _: SdkSkillResponse = invoke_structural(
         &mut harness,
-        "phenix.skills@1",
-        &SkillCommand::Register {
-            skill: SkillDefinition {
-                id: SkillId::parse("introspection-check").unwrap(),
-                content: b"fixture skill body".to_vec().into(),
-            },
+        "phenix.api.skills@1",
+        &SdkSkillCommand::Register {
+            id: "introspection-check".into(),
+            content: b"fixture skill body".to_vec().into(),
         },
     );
 
@@ -758,7 +749,7 @@ fn introspection_model_reports_model_visible_tools_and_loaded_skills() {
                     required_features: BTreeSet::new(),
                     required_tools: BTreeSet::new(),
                     optional_tools: BTreeSet::from([tool_id]),
-                    required_skills: BTreeSet::new(),
+                    required_skills: BTreeSet::from([SkillId::parse("introspection-check").unwrap()]),
                     optional_skills: BTreeSet::new(),
                     requested_reasoning: None,
                     deadline_at_ms: None,
