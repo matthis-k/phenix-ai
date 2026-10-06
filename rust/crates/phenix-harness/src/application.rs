@@ -8782,9 +8782,9 @@ mod tests {
         let PhenixValue::Map(fields) = result.output else {
             panic!("phenix.plugin build returned a non-map result");
         };
-        let locator = match fields.get("locator") {
+        let locator = match fields.get("artifact_locator") {
             Some(PhenixValue::String(locator)) => locator.clone(),
-            value => panic!("phenix.plugin build returned invalid locator: {value:?}"),
+            value => panic!("phenix.plugin build returned invalid artifact locator: {value:?}"),
         };
         let revision = match fields.get("artifact_revision") {
             Some(PhenixValue::String(revision)) => revision.clone(),
