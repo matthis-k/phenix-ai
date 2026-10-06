@@ -439,6 +439,8 @@
                   "rust-format"
                   "statix"
                   "actionlint"
+                  "dependency-audit"
+                  "dependency-policy"
                   "plugin-architecture"
                   "structural-boundaries"
                   "application-interface"
@@ -492,6 +494,36 @@
                     exec = ''
                       ${repositoryRoot}
                       statix check --ignore '.git/**'
+                    '';
+                  };
+
+                  dependency-audit = {
+                    description = "RustSec dependency vulnerability audit";
+                    ci = sourceCi // {
+                      stepName = "Dependency audit";
+                    };
+                    runtimeInputs = pkgs: [
+                      pkgs.cargo-audit
+                      pkgs.git
+                    ];
+                    exec = ''
+                      ${rustRoot}
+                      cargo audit
+                    '';
+                  };
+
+                  dependency-policy = {
+                    description = "Dependency license and source policy";
+                    ci = sourceCi // {
+                      stepName = "Dependency policy";
+                    };
+                    runtimeInputs = pkgs: [
+                      pkgs.cargo-deny
+                      pkgs.git
+                    ];
+                    exec = ''
+                      ${rustRoot}
+                      cargo deny check licenses sources
                     '';
                   };
 
@@ -667,6 +699,8 @@
           pkgs.actionlint
           pkgs.bubblewrap
           pkgs.cargo
+          pkgs.cargo-audit
+          pkgs.cargo-deny
           pkgs.clippy
           pkgs.git
           pkgs.jq
