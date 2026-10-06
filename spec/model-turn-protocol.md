@@ -101,7 +101,7 @@ Each tool result contains:
 
 Tool failures are data returned to the model unless execution policy requires the whole agent run to fail. A tool panic or transport failure is never represented as successful tool output.
 
-The next model turn receives tool results in the same order as the originating tool calls. Parallel execution must not reorder the conversation record.
+The next model turn receives tool results in the same order as the originating tool calls. Parallel execution must not reorder the conversation record. Call ids remain unique for the full execution because application and frontend transports use the call id to update the original tool-call record.
 
 ## Streaming
 
@@ -146,6 +146,7 @@ Validate the request before provider invocation:
 
 Validate assistant tool calls before tool invocation:
 
+- call ids are non-empty and unique for the execution; later turns cannot reuse a prior call id
 - each tool call references a declared tool
 - tool arguments satisfy the consumer tool schema
 

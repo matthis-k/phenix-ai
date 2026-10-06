@@ -471,6 +471,7 @@ fn run(
     validate_initial_tools(&tools)?;
     let mut continuation = Vec::<ModelToolTurn>::new();
     let mut observations = BTreeMap::<CallableId, ToolObservation>::new();
+    let mut seen_tool_call_ids = std::collections::BTreeSet::<String>::new();
     let mut usage = AgentLoopUsage {
         model_calls: 0,
         tool_calls: 0,
@@ -599,6 +600,19 @@ fn run(
         } = response;
         let actual = u32::try_from(tool_calls.len())
             .map_err(|_| "model returned too many tool calls to represent".to_owned())?;
+        if let Err(reason) = validate_model_tool_calls(&tool_calls, &mut seen_tool_call_ids) {
+            emit_agent_diagnostic(
+                context,
+                AgentDiagnosticEvent::ModelTurnFailed {
+                    execution_id: execution_id.clone(),
+                    session_id: session_id.clone(),
+                    turn: usage.model_calls,
+                    reason: reason.clone(),
+                },
+            );
+            emit_run_failed(context, &execution_id, &session_id, &usage, &reason);
+            return Err(reason);
+        }
         emit_agent_diagnostic(
             context,
             AgentDiagnosticEvent::ModelTurnCompleted {
@@ -777,6 +791,26 @@ fn run(
     }
 }
 
+fn validate_model_tool_calls(
+    calls: &[ModelToolCall],
+    seen: &mut std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let mut current = std::collections::BTreeSet::new();
+    for call in calls {
+        if call.call_id.trim().is_empty() {
+            return Err("model returned a tool call with an empty call id".to_owned());
+        }
+        if seen.contains(&call.call_id) || !current.insert(call.call_id.clone()) {
+            return Err(format!(
+                "model returned duplicate tool call id {}",
+                call.call_id
+            ));
+        }
+    }
+    seen.extend(current);
+    Ok(())
+}
+
 fn validate_initial_tools(tools: &[ModelToolDescriptor]) -> Result<(), String> {
     let mut ids = std::collections::BTreeSet::new();
     for tool in tools {
@@ -872,6 +906,63 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_tool_call_ids_must_be_nonempty_and_unique_for_the_execution() {
+        let mut seen = std::collections::BTreeSet::new();
+        assert!(validate_model_tool_calls(&[], &mut seen).is_ok());
+        assert!(
+            validate_model_tool_calls(
+                &[ModelToolCall {
+                    call_id: String::new(),
+                    callable_id: CallableId::parse("fixture.tool").unwrap(),
+                    input: PhenixValue::Unit,
+                }],
+                &mut seen,
+            )
+            .unwrap_err()
+            .contains("empty call id")
+        );
+
+        let duplicate = vec![
+            ModelToolCall {
+                call_id: "call-1".into(),
+                callable_id: CallableId::parse("fixture.one").unwrap(),
+                input: PhenixValue::Unit,
+            },
+            ModelToolCall {
+                call_id: "call-1".into(),
+                callable_id: CallableId::parse("fixture.two").unwrap(),
+                input: PhenixValue::Unit,
+            },
+        ];
+        assert!(
+            validate_model_tool_calls(&duplicate, &mut seen)
+                .unwrap_err()
+                .contains("duplicate tool call id call-1")
+        );
+        assert!(seen.is_empty());
+
+        validate_model_tool_calls(
+            &[ModelToolCall {
+                call_id: "call-across-turns".into(),
+                callable_id: CallableId::parse("fixture.one").unwrap(),
+                input: PhenixValue::Unit,
+            }],
+            &mut seen,
+        )
+        .unwrap();
+        let reused = validate_model_tool_calls(
+            &[ModelToolCall {
+                call_id: "call-across-turns".into(),
+                callable_id: CallableId::parse("fixture.two").unwrap(),
+                input: PhenixValue::Unit,
+            }],
+            &mut seen,
+        )
+        .unwrap_err();
+        assert!(reused.contains("duplicate tool call id call-across-turns"));
+    }
 
     #[test]
     fn tool_execution_import_carries_agent_loop_authority() {
