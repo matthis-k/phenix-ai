@@ -372,7 +372,8 @@ fn configure_fixture(harness: &mut PhenixRuntime) -> Result<(), Box<dyn Error>> 
         }
     }
     let option = OptionCommand::Set {
-        key: OptionKey::parse("agent.runtime_orchestration")?,
+        key: OptionKey::parse("agent.runtime_orchestration")
+            .expect("static fixture option key is valid"),
         scope: OptionScope::Global,
         value: OptionValue::Bool(true),
     };
