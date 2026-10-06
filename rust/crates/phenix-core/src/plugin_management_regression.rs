@@ -822,6 +822,10 @@ fn failed_trial_start_leaves_no_resident_candidate() {
     .unwrap();
     let active_generation = initial.generation().clone();
     let candidate_generation = candidate.generation().clone();
+    assert_ne!(
+        candidate_generation, active_generation,
+        "fixture must resolve a distinct candidate generation"
+    );
 
     let fail = Arc::new(AtomicBool::new(false));
     let mut kernel = Kernel::new(initial.kernel_config().clone());
