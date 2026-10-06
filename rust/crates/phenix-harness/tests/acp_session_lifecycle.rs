@@ -10,7 +10,7 @@ use std::{
 const FIRST: &str = "PHENIX_FIXTURE_CHILD_CLOSE_FIRST";
 const SECOND: &str = "PHENIX_FIXTURE_CHILD_CLOSE_SECOND";
 
-fn prompt(session_id: impl Into<agent_client_protocol::SessionId>, text: &str) -> PromptRequest {
+fn prompt(session_id: &str, text: &str) -> PromptRequest {
     PromptRequest::new(
         session_id,
         vec![ContentBlock::Text(TextContent::new(text))],
@@ -41,14 +41,14 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
                 .await?;
 
             connection
-                .prompt(prompt(controller.session_id.clone(), FIRST))
+                .prompt(prompt(&controller.session_id.to_string(), FIRST))
                 .await?;
 
             // This is the critical post-condition missing from the older orchestration
             // tests: after the model created, prompted, and closed an independent child,
             // the same ACP connection and controller session must accept a fresh turn.
             connection
-                .prompt(prompt(controller.session_id.clone(), SECOND))
+                .prompt(prompt(&controller.session_id.to_string(), SECOND))
                 .await?;
 
             Ok::<_, ClientError>(())
