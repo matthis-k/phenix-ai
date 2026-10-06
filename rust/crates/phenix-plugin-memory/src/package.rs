@@ -314,30 +314,6 @@ fn validate_recall_request(request: &MemoryContextRecallRequest) -> Result<(), S
     Ok(())
 }
 
-#[cfg(test)]
-mod recall_validation_tests {
-    use super::*;
-
-    #[test]
-    fn recall_does_not_reimpose_classifier_policy_limits() {
-        let request = MemoryContextRecallRequest {
-            request_id: "request-1".into(),
-            scopes: vec![phenix_sdk::MemoryScope::Global],
-            prompt: "x".repeat(8 * 1024),
-            known: Vec::new(),
-            needs: (0..8)
-                .map(|index| ContextNeed::Task {
-                    query: format!("{index}:{}", "q".repeat(1024)),
-                })
-                .collect(),
-            at: 1,
-            limit: 8,
-        };
-
-        validate_recall_request(&request).unwrap();
-    }
-}
-
 fn need_query(need: &ContextNeed) -> &str {
     match need {
         ContextNeed::Workspace { query }
@@ -495,3 +471,28 @@ fn persist_context_state(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod recall_validation_tests {
+    use super::*;
+
+    #[test]
+    fn recall_does_not_reimpose_classifier_policy_limits() {
+        let request = MemoryContextRecallRequest {
+            request_id: "request-1".into(),
+            scopes: vec![phenix_sdk::MemoryScope::Global],
+            prompt: "x".repeat(8 * 1024),
+            known: Vec::new(),
+            needs: (0..8)
+                .map(|index| ContextNeed::Task {
+                    query: format!("{index}:{}", "q".repeat(1024)),
+                })
+                .collect(),
+            at: 1,
+            limit: 8,
+        };
+
+        validate_recall_request(&request).unwrap();
+    }
+}
+
