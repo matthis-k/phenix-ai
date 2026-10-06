@@ -12,6 +12,6 @@ impl ComponentInterface for SkillInterface {
     }
 
     fn schema() -> InterfaceSchema {
-        InterfaceSchema::of::<SkillCommand, SkillResponse>()
+        InterfaceSchema::fallible_of::<SkillCommand, SkillResponse, String>()
     }
 }
