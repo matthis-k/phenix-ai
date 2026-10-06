@@ -2,6 +2,9 @@ use super::*;
 use phenix_core::{
     Kernel, KernelConfig, PermissionId, ResolvedGeneration, ResolvedGenerationActivation,
 };
+use phenix_plugin_basic_skills::{
+    basic_skills_component_manifest, basic_skills_factory, basic_skills_manifest,
+};
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
     execution_component_manifest, execution_factory, execution_manifest,
@@ -285,23 +288,26 @@ fn sdk_tools_wrap_execution_callables() {
 }
 
 #[test]
-fn sdk_skills_wrap_context_resources() {
+fn sdk_skills_wrap_the_selected_skill_provider() {
     let authority = authority();
     let execution_manifest = execution_manifest(authority.clone());
-    let context_manifest = context_manifest();
+    let skills_manifest = basic_skills_manifest();
     let sdk_manifest = sdk_manifest(authority.clone());
     let manifests = vec![
         execution_manifest.clone(),
-        context_manifest.clone(),
+        skills_manifest.clone(),
         sdk_manifest.clone(),
     ];
-    let resolved = ResolvedGeneration::resolve(
+    let resolved = ResolvedGeneration::resolve_with_durable_schemas(
         manifests.clone(),
         [
             execution_component_manifest(authority.clone()),
-            context_component_manifest(),
+            basic_skills_component_manifest(),
             sdk_component_manifest(authority.clone()),
         ],
+        <phenix_plugin_basic_skills::Plugin as phenix_sdk::StaticPluginResources>::durable_schema_registrations(
+            &skills_manifest.id,
+        ),
         [],
         &authority,
     )
@@ -311,7 +317,7 @@ fn sdk_skills_wrap_context_resources() {
         .register_embedded_factory(execution_manifest.id, execution_factory)
         .unwrap();
     kernel
-        .register_embedded_factory(context_manifest.id, context_factory)
+        .register_embedded_factory(skills_manifest.id, basic_skills_factory)
         .unwrap();
     kernel
         .register_embedded_factory(sdk_manifest.id, sdk_factory)
@@ -344,8 +350,10 @@ fn sdk_skills_wrap_context_resources() {
             None,
         )
         .unwrap();
-    assert!(matches!(
-        projected::<SdkSkillResponse>(&list),
-        SdkSkillResponse::Skills { skills } if skills.len() == 1 && skills[0].id == "review"
-    ));
+    let SdkSkillResponse::Skills { skills } = projected::<SdkSkillResponse>(&list) else {
+        panic!("expected SDK skill summaries");
+    };
+    assert!(skills.iter().any(|skill| skill.id == "review"));
+    assert!(skills.iter().any(|skill| skill.id == "write"));
+    assert!(skills.iter().all(|skill| skill.source.starts_with("phenix.skills@1:")));
 }
