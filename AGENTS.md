@@ -1,6 +1,6 @@
 # Phenix AI repository instructions
 
-Treat executable code and deterministic tests as authoritative. `README.md` owns current architecture and subsystem boundaries. `DEVELOPMENT.md` owns the human-facing development and validation surface. `config/phenix/` owns supported product configuration and skills.
+Treat executable code and deterministic tests as authoritative. `README.md` owns current architecture and subsystem boundaries. `DEVELOPMENT.md` owns the human-facing development and validation surface. `config/phenix/runtime.nix` owns supported product configuration. Skill-provider plugins own their skill packages; `phenix-plugin-basic-skills` owns the default static set.
 
 Fix or remove documentation that disagrees with the current tree in the same change.
 
