@@ -2462,6 +2462,59 @@ mod tests {
     }
 
     #[test]
+    fn canonical_tool_calls_reapply_provider_wire_projection() {
+        let unit = unit_tool();
+        let unit_call = ModelToolCall {
+            call_id: "call-unit".to_owned(),
+            callable_id: unit.id.clone(),
+            input: PhenixValue::Unit,
+        };
+        assert_eq!(
+            tool_arguments(std::slice::from_ref(&unit), &unit_call).unwrap(),
+            "{}"
+        );
+
+        let scalar = ModelToolDescriptor {
+            id: CallableId::parse("fixture.scalar").unwrap(),
+            description: "Scalar input".to_owned(),
+            input_schema: PhenixSchema::U64,
+            output_schema: PhenixSchema::Unit,
+        };
+        let scalar_call = ModelToolCall {
+            call_id: "call-scalar".to_owned(),
+            callable_id: scalar.id.clone(),
+            input: PhenixValue::U64(7),
+        };
+        assert_eq!(
+            tool_arguments(std::slice::from_ref(&scalar), &scalar_call).unwrap(),
+            "{\"value\":7}"
+        );
+
+        let table = tool();
+        let table_call = ModelToolCall {
+            call_id: "call-table".to_owned(),
+            callable_id: table.id.clone(),
+            input: PhenixValue::Table(BTreeMap::from([(
+                Key::parse("value").unwrap(),
+                PhenixValue::String("typed".to_owned()),
+            )])),
+        };
+        assert_eq!(
+            tool_arguments(std::slice::from_ref(&table), &table_call).unwrap(),
+            "{\"value\":\"typed\"}"
+        );
+
+        let noncanonical_table_call = ModelToolCall {
+            input: PhenixValue::Map(BTreeMap::from([(
+                "value".to_owned(),
+                PhenixValue::String("typed".to_owned()),
+            )])),
+            ..table_call
+        };
+        assert!(tool_arguments(&[table], &noncanonical_table_call).is_err());
+    }
+
+    #[test]
     fn provider_protocols_encode_the_same_model_tool_surface() {
         let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
 
