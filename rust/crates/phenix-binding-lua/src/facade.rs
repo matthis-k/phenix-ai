@@ -810,21 +810,7 @@ fn decode_outcome(
         RequestProjection::SessionClose { session_id } => {
             let acknowledgement = decode(&value)?;
             let mut state = core.state.borrow_mut();
-            state.closed_sessions.insert(session_id.clone());
-            state.sessions.remove(session_id);
-            state.session_info.remove(session_id);
-            state.selections.remove(session_id);
-            state.repairs.remove(session_id);
-            state.repair_backlog.remove(session_id);
-            state.latest_execution.remove(session_id);
-            state.provenance.retain(|(id, _), _| id != session_id);
-            state.events.retain(|event| match event {
-                FacadeEvent::SessionSnapshot { projection, .. } => {
-                    projection.session.session_id.as_str() != session_id
-                }
-                FacadeEvent::SessionUpdate(update) => update.session_id.as_str() != session_id,
-                FacadeEvent::Status => true,
-            });
+            mark_session_closed(&mut state, session_id);
             state.events.push_back(FacadeEvent::Status);
             Ok(FacadeOutcome::Acknowledged(acknowledgement))
         }
@@ -909,6 +895,48 @@ fn outcome_to_lua(lua: &Lua, core: &Rc<FacadeCore>, outcome: &FacadeOutcome) -> 
     }
 }
 
+fn mark_session_closed(state: &mut FacadeState, session_id: &str) {
+    state.closed_sessions.insert(session_id.to_owned());
+    state.sessions.remove(session_id);
+    state.session_info.remove(session_id);
+    state.selections.remove(session_id);
+    state.repairs.remove(session_id);
+    state.repair_backlog.remove(session_id);
+    state.latest_execution.remove(session_id);
+    state.provenance.retain(|(id, _), _| id != session_id);
+    state.events.retain(|event| match event {
+        FacadeEvent::SessionSnapshot { projection, .. } => {
+            projection.session.session_id.as_str() != session_id
+        }
+        FacadeEvent::SessionUpdate(update) => update.session_id.as_str() != session_id,
+        FacadeEvent::Status => true,
+    });
+}
+
+fn apply_closed_session_update(state: &mut FacadeState, update: SessionUpdate) {
+    let session_id = update.session_id.to_string();
+    mark_session_closed(state, &session_id);
+    state.events.push_back(FacadeEvent::SessionUpdate(update));
+    state.events.push_back(FacadeEvent::Status);
+}
+
+fn is_closed_session_repair_conflict(error: &BindingError, session_id: &str) -> bool {
+    if error.kind != ErrorKind::Rejected || error.code != "conflict" {
+        return false;
+    }
+    let expected = format!("session is closed: {session_id}");
+    if error.message.contains(&expected) {
+        return true;
+    }
+    error
+        .details
+        .as_ref()
+        .as_ref()
+        .and_then(|details| details.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|message| message == expected)
+}
+
 fn install_created_session(core: &FacadeCore, info: SessionInfo) {
     let key = info.session_id.to_string();
     let projection = SessionProjection {
@@ -953,6 +981,13 @@ fn install_snapshot(core: &FacadeCore, snapshot: SessionSnapshot, reason: &'stat
 fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
     let key = update.session_id.to_string();
     if core.state.borrow().closed_sessions.contains(&key) {
+        return;
+    }
+    if matches!(
+        &update.update,
+        phenix_application_interface::types::SessionChange::Closed
+    ) {
+        apply_closed_session_update(&mut core.state.borrow_mut(), update);
         return;
     }
     let needs_repair;
@@ -1076,6 +1111,11 @@ fn drive_repairs(core: &FacadeCore) {
                 core,
                 BindingError::conversion("session repair returned a non-application response"),
             ),
+            Some(Err(error)) if is_closed_session_repair_conflict(&error, &session_id) => {
+                let mut state = core.state.borrow_mut();
+                mark_session_closed(&mut state, &session_id);
+                state.events.push_back(FacadeEvent::Status);
+            }
             Some(Err(error)) => fail_core(core, error),
         }
     }
@@ -1812,4 +1852,89 @@ fn snake_case(value: &str) -> String {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_facade_state() -> FacadeState {
+        FacadeState {
+            phase: FacadePhase::Ready,
+            error: None,
+            bootstrap: None,
+            permission_handler: None,
+            elicitation_handler: None,
+            permission_ref: None,
+            elicitation_ref: None,
+            events: VecDeque::new(),
+            sessions: BTreeMap::new(),
+            session_info: BTreeMap::new(),
+            closed_sessions: std::collections::BTreeSet::new(),
+            repairs: BTreeMap::new(),
+            repair_backlog: BTreeMap::new(),
+            selections: BTreeMap::new(),
+            provenance: BTreeMap::new(),
+            latest_execution: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn external_closed_child_is_scoped_to_that_session() {
+        let mut state = empty_facade_state();
+        let session_id = SessionId::parse("session-21").unwrap();
+        state
+            .repair_backlog
+            .insert(session_id.to_string(), Vec::new());
+        state
+            .latest_execution
+            .insert(session_id.to_string(), "execution-29".into());
+
+        apply_closed_session_update(
+            &mut state,
+            SessionUpdate {
+                session_id: session_id.clone(),
+                sequence: 3,
+                update: phenix_application_interface::types::SessionChange::Closed,
+            },
+        );
+
+        assert_eq!(state.phase, FacadePhase::Ready);
+        assert!(state.error.is_none());
+        assert!(state.closed_sessions.contains(session_id.as_str()));
+        assert!(!state.repair_backlog.contains_key(session_id.as_str()));
+        assert!(!state.latest_execution.contains_key(session_id.as_str()));
+        assert!(matches!(
+            state.events.front(),
+            Some(FacadeEvent::SessionUpdate(SessionUpdate {
+                update: phenix_application_interface::types::SessionChange::Closed,
+                ..
+            }))
+        ));
+        assert!(matches!(state.events.back(), Some(FacadeEvent::Status)));
+    }
+
+    #[test]
+    fn closed_child_repair_conflict_is_not_a_connection_failure() {
+        let session_id = "session-21";
+        let error = BindingError {
+            kind: ErrorKind::Rejected,
+            code: "conflict".into(),
+            message: format!(
+                "ACP peer rejected request (conflict): session is closed: {session_id}"
+            ),
+            details: Box::new(Some(serde_json::json!({
+                "message": format!("session is closed: {session_id}")
+            }))),
+        };
+        assert!(is_closed_session_repair_conflict(&error, session_id));
+
+        let unrelated = BindingError {
+            kind: ErrorKind::Rejected,
+            code: "conflict".into(),
+            message: "different conflict".into(),
+            details: Box::new(None),
+        };
+        assert!(!is_closed_session_repair_conflict(&unrelated, session_id));
+    }
 }
