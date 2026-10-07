@@ -21,12 +21,11 @@ use phenix_sdk::{
     InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryQueryOrder,
     MemoryResponse, MemoryScope, MemoryStructuredQuery, MemoryTimeBounds, PlannedStepRequest,
-    ProjectionRevision, RecallEvidence, RecallResolution,
-    SessionCommand, SessionInterface, SessionResponse, SkillCommand, SkillDefinition,
-    SkillInterface, SkillResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptResponse,
-    StepRunnerCommand, StepRunnerResponse, UsageAttemptKind, context_service,
-    default_invocation_service, helper_invocation_service, invocation_service, step_runner_service,
-    workspace_context_id,
+    ProjectionRevision, RecallEvidence, RecallResolution, SessionCommand, SessionInterface,
+    SessionResponse, SkillCommand, SkillDefinition, SkillInterface, SkillResponse,
+    StepAttemptCommand, StepAttemptInterface, StepAttemptResponse, StepRunnerCommand,
+    StepRunnerResponse, UsageAttemptKind, context_service, default_invocation_service,
+    helper_invocation_service, invocation_service, step_runner_service, workspace_context_id,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -588,30 +587,26 @@ fn recover_invocation_context(
         return Ok(preparation);
     };
 
-    let memory: MemoryResponse =
-        match context
-            .sdk
-            .memory
-            .invoke_projected(&MemoryCommand::Query {
-                query: MemoryStructuredQuery {
-                    scopes,
-                    kinds: Vec::new(),
-                    ids: vec![winner.candidate.memory_id.clone()],
-                    source_service: None,
-                    source_resource: None,
-                    time: MemoryTimeBounds {
-                        as_of: memory_now_s,
-                        created_from: None,
-                        created_until: None,
-                    },
-                    order: MemoryQueryOrder::NewestFirst,
-                    limit: 1,
-                },
-            }) {
-            Ok(response) => response,
-            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
-            Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
-        };
+    let memory: MemoryResponse = match context.sdk.memory.invoke_projected(&MemoryCommand::Query {
+        query: MemoryStructuredQuery {
+            scopes,
+            kinds: Vec::new(),
+            ids: vec![winner.candidate.memory_id.clone()],
+            source_service: None,
+            source_resource: None,
+            time: MemoryTimeBounds {
+                as_of: memory_now_s,
+                created_from: None,
+                created_until: None,
+            },
+            order: MemoryQueryOrder::NewestFirst,
+            limit: 1,
+        },
+    }) {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+        Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
+    };
     let MemoryResponse::Query { mut records } = memory else {
         return Ok(preparation);
     };
