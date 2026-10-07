@@ -10,7 +10,8 @@ use phenix_sdk::{
     CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
     MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, memory_context_service, memory_service,
+    MemoryRecord, MemoryResponse, MemorySearchQuery, MemoryTimeBounds, memory_context_service,
+    memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -166,18 +167,22 @@ fn recall_context(
     let response = invoke_memory(
         core,
         host,
-        MemoryCommand::Recall {
-            query: MemoryRecallQuery {
+        MemoryCommand::Search {
+            query: MemorySearchQuery {
                 scopes: request.scopes.clone(),
                 kinds: Vec::new(),
                 query: request.prompt.clone(),
-                at: request.at,
+                time: MemoryTimeBounds {
+                    as_of: request.at,
+                    created_from: None,
+                    created_until: None,
+                },
                 limit: candidate_limit,
             },
         },
     )?;
-    let MemoryResponse::Recall { records } = response else {
-        return Err("memory recall returned the wrong response kind".into());
+    let MemoryResponse::Search { records } = response else {
+        return Err("memory search returned the wrong response kind".into());
     };
     let lexical_saturated = records.len() >= candidate_limit as usize;
     let recalled: BTreeMap<String, MemoryRecord> = records
