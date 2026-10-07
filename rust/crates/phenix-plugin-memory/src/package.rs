@@ -9,9 +9,9 @@ use phenix_core::{
 use phenix_sdk::{
     CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
     MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
-    MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
-    MemoryRecord, MemoryResponse, MemorySearchQuery, MemoryTimeBounds, memory_context_service,
-    memory_service,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryQueryOrder,
+    MemoryRecord, MemoryResponse, MemorySearchQuery, MemoryStructuredQuery, MemoryTimeBounds,
+    memory_context_service, memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -388,24 +388,30 @@ fn memory_is_current(
     record: &MemoryRecord,
     at: u64,
 ) -> Result<bool, String> {
-    if record.valid_from.is_some_and(|valid_from| at < valid_from)
-        || record
-            .valid_until
-            .is_some_and(|valid_until| at >= valid_until)
-    {
-        return Ok(false);
-    }
     let response = invoke_memory(
         core,
         host,
-        MemoryCommand::GetFreshness {
-            id: record.id.clone(),
+        MemoryCommand::Query {
+            query: MemoryStructuredQuery {
+                scopes: vec![record.scope.clone()],
+                kinds: vec![record.kind.clone()],
+                ids: vec![record.id.clone()],
+                source_service: None,
+                source_resource: None,
+                time: MemoryTimeBounds {
+                    as_of: at,
+                    created_from: None,
+                    created_until: None,
+                },
+                order: MemoryQueryOrder::NewestFirst,
+                limit: 1,
+            },
         },
     )?;
-    let MemoryResponse::Freshness { state } = response else {
-        return Err("memory freshness returned the wrong response kind".into());
+    let MemoryResponse::Query { records } = response else {
+        return Err("memory query returned the wrong response kind".into());
     };
-    Ok(state.is_some_and(|state| state.freshness == MemoryFreshness::Current))
+    Ok(records.iter().any(|candidate| candidate.id == record.id))
 }
 
 fn get_memory(
