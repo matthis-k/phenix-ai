@@ -300,6 +300,41 @@ mod deterministic_recall {
     }
 
     #[test]
+    fn exact_anchor_fallback_rejects_reference_invalidated_memory() {
+        let path = temp_db("recall-invalidated-exact-anchor");
+        let mut kernel = kernel(&path);
+        seed(&mut kernel);
+        invoke_memory(
+            &mut kernel,
+            MemoryCommand::ObserveRevision {
+                service: ServiceId::parse("fixture.history@1").unwrap(),
+                resource: "turn/1".into(),
+                revision: "rev-2".into(),
+                observed_at: 25,
+                limit: 10,
+            },
+        );
+
+        let mut recall = request(vec![ContextAnchor::Project {
+            key: "phenix".into(),
+        }]);
+        recall.prompt = "unrelated text that cannot lexically match".into();
+        let response = invoke_context(
+            &mut kernel,
+            MemoryContextCommand::Recall { request: recall },
+        )
+        .unwrap();
+        let MemoryContextResponse::Recall { candidates, .. } = response else {
+            panic!("expected recall response");
+        };
+        assert!(
+            candidates.is_empty(),
+            "exact anchor must not bypass source-reference invalidation"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn conflicting_known_project_filters_candidate_before_ranking() {
         let path = temp_db("recall-anchor-compatibility");
         let mut kernel = kernel(&path);
