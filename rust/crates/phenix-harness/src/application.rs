@@ -3795,7 +3795,7 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                 return Err(format!("unknown memory: {}", request.memory_id));
             };
             if record.source_refs.is_empty() {
-                return Err("automatic memory association requires exact source references".into());
+                return Err("explicit memory association requires exact source references".into());
             }
             let anchor_bytes =
                 serde_json::to_vec(&request.anchor).map_err(|error| error.to_string())?;
@@ -7314,6 +7314,66 @@ mod tests {
             response,
             MemoryContextResponse::Association { state: Some(_) }
         ));
+    }
+
+    #[test]
+    fn explicit_memory_association_rejects_unprovenanced_record() {
+        let mut harness = crate::PhenixRuntimeBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+
+        let record = MemoryRecord {
+            id: "memory-unprovenanced".into(),
+            kind: phenix_sdk::MemoryKind::Fact,
+            scope: phenix_sdk::MemoryScope::Workspace {
+                workspace_id: "phenix".into(),
+            },
+            content: "unprovenanced memory".into(),
+            source_refs: Vec::new(),
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 11,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Record {
+            record: record.clone(),
+        }))
+        .unwrap();
+        harness
+            .invoke(
+                &phenix_sdk::memory_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+
+        let input = serde_json::to_vec(&PhenixValue::from(&ApplicationMemoryAssociateRequest {
+            memory_id: record.id,
+            anchor: ContextAnchor::Project {
+                key: "phenix".into(),
+            },
+        }))
+        .unwrap();
+        let error = harness
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("explicit memory association requires exact source references"),
+            "unexpected association error: {error}"
+        );
     }
 
     #[test]
