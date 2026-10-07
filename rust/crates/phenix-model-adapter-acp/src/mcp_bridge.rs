@@ -414,10 +414,7 @@ fn model_tool_json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterEr
     }
 }
 
-fn model_tool_arguments(
-    schema: &PhenixSchema,
-    value: Value,
-) -> Result<Value, ModelAdapterError> {
+fn model_tool_arguments(schema: &PhenixSchema, value: Value) -> Result<Value, ModelAdapterError> {
     let object = value.as_object().ok_or_else(|| {
         ModelAdapterError::Protocol("model tool arguments must be a JSON object".to_owned())
     })?;
@@ -606,7 +603,9 @@ mod tests {
     #[test]
     fn unit_tool_list_uses_empty_object_schema_and_projects_empty_arguments_to_null() {
         let bridge = ToolBridge::default();
-        bridge.provision(&surface_with_schema(PhenixSchema::Unit)).unwrap();
+        bridge
+            .provision(&surface_with_schema(PhenixSchema::Unit))
+            .unwrap();
         let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
         let schema = &listed["tools"][0]["inputSchema"];
         assert_eq!(schema["type"], "object");
@@ -622,7 +621,9 @@ mod tests {
     #[test]
     fn scalar_tool_list_uses_value_envelope_and_unwraps_before_dispatch() {
         let bridge = ToolBridge::default();
-        bridge.provision(&surface_with_schema(PhenixSchema::U64)).unwrap();
+        bridge
+            .provision(&surface_with_schema(PhenixSchema::U64))
+            .unwrap();
         let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
         let schema = &listed["tools"][0]["inputSchema"];
         assert_eq!(schema["type"], "object");
