@@ -153,6 +153,45 @@ mod association_persistence {
     }
 
     #[test]
+    fn explicit_link_provenance_survives_plugin_restart() {
+        let path = temp_db("explicit-link-restart");
+        {
+            let mut kernel = kernel(&path);
+            invoke_memory(&mut kernel, MemoryCommand::Record { record: record() });
+            let mut explicit = observation("event-explicit");
+            explicit.source = AssociationObservationSource::ExplicitLink;
+            invoke_context(
+                &mut kernel,
+                MemoryContextCommand::Observe {
+                    observation: explicit,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut restored = kernel(&path);
+        let response = invoke_context(
+            &mut restored,
+            MemoryContextCommand::GetAssociation {
+                memory_id: "memory-phenix".into(),
+                anchor: ContextAnchor::Project {
+                    key: "phenix".into(),
+                },
+            },
+        )
+        .unwrap();
+        let MemoryContextResponse::Association { state: Some(state) } = response else {
+            panic!("expected persisted explicit association");
+        };
+        assert!(
+            state
+                .observation_sources
+                .contains(&AssociationObservationSource::ExplicitLink)
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn observation_requires_existing_memory_and_exact_provenance() {
         let path = temp_db("association-validation");
         let mut kernel = kernel(&path);
@@ -221,6 +260,42 @@ mod deterministic_recall {
         assert_eq!(candidates.len(), 1);
         assert!(candidates[0].signals.contains(&MemoryContextMatch::Lexical));
         assert_eq!(candidates[0].evidence_class(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_link_upgrades_a_relevant_candidate_to_strong_evidence() {
+        let path = temp_db("recall-explicit-link");
+        let mut kernel = kernel(&path);
+        invoke_memory(&mut kernel, MemoryCommand::Record { record: record() });
+        let mut explicit = observation("event-explicit");
+        explicit.source = AssociationObservationSource::ExplicitLink;
+        invoke_context(
+            &mut kernel,
+            MemoryContextCommand::Observe {
+                observation: explicit,
+            },
+        )
+        .unwrap();
+
+        let response = invoke_context(
+            &mut kernel,
+            MemoryContextCommand::Recall {
+                request: request(Vec::new()),
+            },
+        )
+        .unwrap();
+        let MemoryContextResponse::Recall { candidates, .. } = response else {
+            panic!("expected recall response");
+        };
+        assert_eq!(candidates.len(), 1);
+        assert!(
+            candidates[0]
+                .signals
+                .contains(&MemoryContextMatch::ExplicitLink)
+        );
+        assert!(candidates[0].signals.contains(&MemoryContextMatch::Lexical));
+        assert_eq!(candidates[0].evidence_class(), 4);
         let _ = fs::remove_file(path);
     }
 
