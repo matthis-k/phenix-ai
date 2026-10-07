@@ -2,7 +2,7 @@ use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimi
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use phenix_core::{
     CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelId,
-    ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
+    Key, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
     ValueCodec,
 };
@@ -41,6 +41,16 @@ pub trait ProtocolAdapter: Send + Sync {
     ) -> Result<ProviderRequest, ProviderError>;
 
     fn decode(&self, response: &ProviderResponse) -> Result<ModelInferenceResponse, ProviderError>;
+
+    fn decode_for_request(
+        &self,
+        request: &ModelInferenceRequest,
+        response: &ProviderResponse,
+    ) -> Result<ModelInferenceResponse, ProviderError> {
+        let mut decoded = self.decode(response)?;
+        normalize_model_tool_calls(request, &mut decoded, self.name())?;
+        Ok(decoded)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -398,12 +408,39 @@ fn parse_openai_callable_id(name: &str) -> Result<CallableId, ProviderError> {
     parse_callable_id(&id)
 }
 
+fn model_tool_json_schema(schema: &PhenixSchema) -> Result<Value, ProviderError> {
+    match schema {
+        PhenixSchema::Unit => Ok(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        })),
+        PhenixSchema::Table(_) | PhenixSchema::Map(_) => json_schema(schema),
+        PhenixSchema::Variant(_) => {
+            let Value::Object(mut object) = json_schema(schema)? else {
+                unreachable!("variant JSON Schema is an object")
+            };
+            object.insert("type".to_owned(), Value::String("object".to_owned()));
+            Ok(Value::Object(object))
+        }
+        _ => Ok(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "value": json_schema(schema)?,
+            },
+            "required": ["value"],
+            "additionalProperties": false,
+        })),
+    }
+}
+
 fn openai_tool(tool: &ModelToolDescriptor) -> Result<Value, ProviderError> {
     Ok(serde_json::json!({
         "type": "function",
         "name": openai_tool_name(&tool.id),
         "description": tool.description,
-        "parameters": json_schema(&tool.input_schema)?,
+        "parameters": model_tool_json_schema(&tool.input_schema)?,
     }))
 }
 
@@ -413,7 +450,7 @@ fn openai_chat_tool(tool: &ModelToolDescriptor) -> Result<Value, ProviderError> 
         "function": {
             "name": openai_tool_name(&tool.id),
             "description": tool.description,
-            "parameters": json_schema(&tool.input_schema)?,
+            "parameters": model_tool_json_schema(&tool.input_schema)?,
         },
     }))
 }
@@ -422,7 +459,7 @@ fn anthropic_tool(tool: &ModelToolDescriptor) -> Result<Value, ProviderError> {
     Ok(serde_json::json!({
         "name": tool.id.as_str(),
         "description": tool.description,
-        "input_schema": json_schema(&tool.input_schema)?,
+        "input_schema": model_tool_json_schema(&tool.input_schema)?,
     }))
 }
 
@@ -480,9 +517,48 @@ fn phenix_json(value: &PhenixValue) -> Result<Value, ProviderError> {
     }
 }
 
-fn tool_arguments(call: &ModelToolCall) -> Result<String, ProviderError> {
-    serde_json::to_string(&phenix_json(&call.input)?).map_err(|error| ProviderError::Protocol {
-        message: format!("cannot encode model tool arguments: {error}"),
+fn model_tool_input_json(
+    schema: &PhenixSchema,
+    value: &PhenixValue,
+) -> Result<Value, ProviderError> {
+    schema
+        .parse(value)
+        .map_err(|error| ProviderError::InvalidRequest {
+            message: format!("model tool input violates its declared schema: {error}"),
+        })?;
+    match schema {
+        PhenixSchema::Unit => Ok(serde_json::json!({})),
+        PhenixSchema::Table(_) | PhenixSchema::Map(_) | PhenixSchema::Variant(_) => {
+            phenix_json(value)
+        }
+        _ => Ok(serde_json::json!({"value": phenix_json(value)?})),
+    }
+}
+
+fn model_tool_input_for_call(
+    tools: &[ModelToolDescriptor],
+    call: &ModelToolCall,
+) -> Result<Value, ProviderError> {
+    let tool = tools
+        .iter()
+        .find(|tool| tool.id == call.callable_id)
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message: format!(
+                "model tool continuation references unavailable callable {}",
+                call.callable_id
+            ),
+        })?;
+    model_tool_input_json(&tool.input_schema, &call.input)
+}
+
+fn tool_arguments(
+    tools: &[ModelToolDescriptor],
+    call: &ModelToolCall,
+) -> Result<String, ProviderError> {
+    serde_json::to_string(&model_tool_input_for_call(tools, call)?).map_err(|error| {
+        ProviderError::Protocol {
+            message: format!("cannot encode model tool arguments: {error}"),
+        }
     })
 }
 
@@ -847,7 +923,7 @@ fn openai_responses_request(
                     "type": "function_call",
                     "call_id": call.call_id,
                     "name": openai_tool_name(&call.callable_id),
-                    "arguments": tool_arguments(call)?,
+                    "arguments": tool_arguments(&request.tools, call)?,
                 }));
             }
             for result in &turn.tool_results {
@@ -889,7 +965,7 @@ fn openai_chat_request(
                     "type": "function",
                     "function": {
                         "name": openai_tool_name(&call.callable_id),
-                        "arguments": tool_arguments(call)?,
+                        "arguments": tool_arguments(&request.tools, call)?,
                     },
                 }))
             })
@@ -942,7 +1018,7 @@ fn anthropic_request(
                 "type": "tool_use",
                 "id": call.call_id,
                 "name": call.callable_id.as_str(),
-                "input": phenix_json(&call.input)?,
+                "input": model_tool_input_for_call(&request.tools, call)?,
             }));
         }
         messages.push(serde_json::json!({"role": "assistant", "content": assistant}));
@@ -992,6 +1068,289 @@ fn parse_arguments(
         value.clone()
     };
     Ok(value.into())
+}
+
+fn incompatible_tool_input(provider: &str, message: impl Into<String>) -> ProviderError {
+    ProviderError::Protocol {
+        message: format!("{provider} returned incompatible tool input: {}", message.into()),
+    }
+}
+
+fn into_tool_object(
+    value: PhenixValue,
+    provider: &str,
+) -> Result<BTreeMap<String, PhenixValue>, ProviderError> {
+    match value {
+        PhenixValue::Map(values) => Ok(values),
+        PhenixValue::Table(values) => Ok(values
+            .into_iter()
+            .map(|(key, value)| (key.as_str().to_owned(), value))
+            .collect()),
+        other => Err(incompatible_tool_input(
+            provider,
+            format!("expected object, got {}", other.kind()),
+        )),
+    }
+}
+
+fn project_tool_value(
+    schema: &PhenixSchema,
+    value: PhenixValue,
+    provider: &str,
+) -> Result<PhenixValue, ProviderError> {
+    let projected = match schema {
+        PhenixSchema::Any => value,
+        PhenixSchema::Never => {
+            return Err(incompatible_tool_input(
+                provider,
+                "declared schema does not accept any value",
+            ));
+        }
+        PhenixSchema::Unit => match value {
+            PhenixValue::Unit => PhenixValue::Unit,
+            PhenixValue::Map(values) if values.is_empty() => PhenixValue::Unit,
+            PhenixValue::Table(values) if values.is_empty() => PhenixValue::Unit,
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected empty object for unit input, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::Bool => match value {
+            value @ PhenixValue::Bool(_) => value,
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected boolean, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::I64 => match value {
+            value @ PhenixValue::I64(_) => value,
+            PhenixValue::U64(value) => PhenixValue::I64(i64::try_from(value).map_err(|_| {
+                incompatible_tool_input(provider, "integer does not fit signed 64-bit input")
+            })?),
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected integer, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::U64 => match value {
+            value @ PhenixValue::U64(_) => value,
+            PhenixValue::I64(value) => PhenixValue::U64(u64::try_from(value).map_err(|_| {
+                incompatible_tool_input(provider, "integer is negative for unsigned input")
+            })?),
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected unsigned integer, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::F64 => match value {
+            value @ PhenixValue::F64(_) => value,
+            PhenixValue::I64(value) => PhenixValue::F64(
+                value
+                    .to_string()
+                    .parse()
+                    .expect("i64 string always parses as finite f64"),
+            ),
+            PhenixValue::U64(value) => PhenixValue::F64(
+                value
+                    .to_string()
+                    .parse()
+                    .expect("u64 string always parses as finite f64"),
+            ),
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected number, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::String => match value {
+            value @ PhenixValue::String(_) => value,
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected string, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::Bytes => match value {
+            value @ PhenixValue::Bytes(_) => value,
+            PhenixValue::String(value) => PhenixValue::Bytes(
+                BASE64_STANDARD.decode(value).map_err(|error| {
+                    incompatible_tool_input(provider, format!("invalid base64 bytes: {error}"))
+                })?,
+            ),
+            other => {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected base64 string, got {}", other.kind()),
+                ));
+            }
+        },
+        PhenixSchema::Option(item) => match value {
+            PhenixValue::Unit => PhenixValue::Option(None),
+            PhenixValue::Option(None) => PhenixValue::Option(None),
+            PhenixValue::Option(Some(value)) => PhenixValue::Option(Some(Box::new(
+                project_tool_value(item, *value, provider)?,
+            ))),
+            value => PhenixValue::Option(Some(Box::new(project_tool_value(
+                item, value, provider,
+            )?))),
+        },
+        PhenixSchema::Array { item, .. } | PhenixSchema::List(item) => {
+            let PhenixValue::List(values) = value else {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("expected array, got {}", value.kind()),
+                ));
+            };
+            PhenixValue::List(
+                values
+                    .into_iter()
+                    .map(|value| project_tool_value(item, value, provider))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+        PhenixSchema::Map(item) => {
+            let values = into_tool_object(value, provider)?;
+            PhenixValue::Map(
+                values
+                    .into_iter()
+                    .map(|(key, value)| {
+                        project_tool_value(item, value, provider).map(|value| (key, value))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?,
+            )
+        }
+        PhenixSchema::Table(fields) => {
+            let mut values = into_tool_object(value, provider)?;
+            let mut projected = BTreeMap::new();
+            for (key, field_schema) in fields {
+                let value = values.remove(key.as_str()).ok_or_else(|| {
+                    incompatible_tool_input(provider, format!("missing field {}", key.as_str()))
+                })?;
+                projected.insert(
+                    key.clone(),
+                    project_tool_value(field_schema, value, provider)?,
+                );
+            }
+            if let Some(key) = values.keys().next() {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("unexpected field {key}"),
+                ));
+            }
+            PhenixValue::Table(projected)
+        }
+        PhenixSchema::Variant(variants) => {
+            if let PhenixValue::Variant { tag, value } = value {
+                let payload_schema = variants.get(&tag).ok_or_else(|| {
+                    incompatible_tool_input(provider, format!("unknown variant {tag}"))
+                })?;
+                PhenixValue::Variant {
+                    tag,
+                    value: Box::new(project_tool_value(payload_schema, *value, provider)?),
+                }
+            } else {
+                let mut values = into_tool_object(value, provider)?;
+                let tag = match values.remove("tag") {
+                    Some(PhenixValue::String(tag)) => Key::parse(tag).map_err(|error| {
+                        incompatible_tool_input(provider, format!("invalid variant tag: {error}"))
+                    })?,
+                    Some(other) => {
+                        return Err(incompatible_tool_input(
+                            provider,
+                            format!("variant tag must be a string, got {}", other.kind()),
+                        ));
+                    }
+                    None => {
+                        return Err(incompatible_tool_input(provider, "variant has no tag"));
+                    }
+                };
+                let value = values
+                    .remove("value")
+                    .ok_or_else(|| incompatible_tool_input(provider, "variant has no value"))?;
+                if let Some(key) = values.keys().next() {
+                    return Err(incompatible_tool_input(
+                        provider,
+                        format!("unexpected variant field {key}"),
+                    ));
+                }
+                let payload_schema = variants.get(&tag).ok_or_else(|| {
+                    incompatible_tool_input(provider, format!("unknown variant {tag}"))
+                })?;
+                PhenixValue::Variant {
+                    tag,
+                    value: Box::new(project_tool_value(payload_schema, value, provider)?),
+                }
+            }
+        }
+        PhenixSchema::Callable { .. } | PhenixSchema::Object { .. } => {
+            return Err(incompatible_tool_input(
+                provider,
+                "opaque capability references cannot cross the model boundary",
+            ));
+        }
+    };
+    schema
+        .parse(&projected)
+        .map_err(|error| incompatible_tool_input(provider, error.to_string()))?;
+    Ok(projected)
+}
+
+fn project_model_tool_input(
+    schema: &PhenixSchema,
+    value: PhenixValue,
+    provider: &str,
+) -> Result<PhenixValue, ProviderError> {
+    match schema {
+        PhenixSchema::Unit
+        | PhenixSchema::Table(_)
+        | PhenixSchema::Map(_)
+        | PhenixSchema::Variant(_) => project_tool_value(schema, value, provider),
+        _ => {
+            let mut values = into_tool_object(value, provider)?;
+            let value = values
+                .remove("value")
+                .ok_or_else(|| incompatible_tool_input(provider, "input envelope has no value"))?;
+            if let Some(key) = values.keys().next() {
+                return Err(incompatible_tool_input(
+                    provider,
+                    format!("unexpected input envelope field {key}"),
+                ));
+            }
+            project_tool_value(schema, value, provider)
+        }
+    }
+}
+
+fn normalize_model_tool_calls(
+    request: &ModelInferenceRequest,
+    response: &mut ModelInferenceResponse,
+    provider: &str,
+) -> Result<(), ProviderError> {
+    for call in &mut response.tool_calls {
+        let tool = request
+            .tools
+            .iter()
+            .find(|tool| tool.id == call.callable_id)
+            .ok_or_else(|| ProviderError::Protocol {
+                message: format!(
+                    "{provider} returned undeclared tool call {}",
+                    call.callable_id
+                ),
+            })?;
+        let input = std::mem::replace(&mut call.input, PhenixValue::Unit);
+        call.input = project_model_tool_input(&tool.input_schema, input, provider)?;
+    }
+    Ok(())
 }
 
 const OPENAI_USAGE_MAPPING_REVISION: &str = "openai-inclusive-input-v1";
@@ -1430,6 +1789,21 @@ mod tests {
     fn request_with_tool() -> ModelInferenceRequest {
         let mut request = request();
         request.tools.push(tool());
+        request
+    }
+
+    fn unit_tool() -> ModelToolDescriptor {
+        ModelToolDescriptor {
+            id: CallableId::parse("fixture.unit").unwrap(),
+            description: "No-argument tool".to_owned(),
+            input_schema: PhenixSchema::Unit,
+            output_schema: PhenixSchema::Unit,
+        }
+    }
+
+    fn request_with_unit_tool() -> ModelInferenceRequest {
+        let mut request = request();
+        request.tools.push(unit_tool());
         request
     }
 
@@ -1877,6 +2251,171 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(anthropic.output.as_ref(), b"anthropic");
+    }
+
+    #[test]
+    fn provider_protocols_encode_unit_tool_inputs_as_empty_objects() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let request = request_with_unit_tool();
+
+        let responses = Protocol::OpenAiResponses
+            .encode(&endpoint, &request)
+            .unwrap();
+        let responses: Value = serde_json::from_slice(&responses.body).unwrap();
+        assert_eq!(responses["tools"][0]["parameters"]["type"], "object");
+        assert_eq!(responses["tools"][0]["parameters"]["properties"], serde_json::json!({}));
+        assert_eq!(responses["tools"][0]["parameters"]["required"], serde_json::json!([]));
+        assert_eq!(responses["tools"][0]["parameters"]["additionalProperties"], false);
+
+        let chat = Protocol::OpenAiChatCompletions
+            .encode(&endpoint, &request)
+            .unwrap();
+        let chat: Value = serde_json::from_slice(&chat.body).unwrap();
+        assert_eq!(chat["tools"][0]["function"]["parameters"]["type"], "object");
+
+        let anthropic = Protocol::AnthropicMessages
+            .encode(&endpoint, &request)
+            .unwrap();
+        let anthropic: Value = serde_json::from_slice(&anthropic.body).unwrap();
+        assert_eq!(anthropic["tools"][0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn provider_protocols_project_empty_object_calls_back_to_unit() {
+        let request = request_with_unit_tool();
+
+        let responses = Protocol::OpenAiResponses
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "output":[{
+                            "type":"function_call",
+                            "call_id":"call-unit",
+                            "name":"phx1_fixture_dunit",
+                            "arguments":"{}"
+                        }]
+                    }),
+                ),
+            )
+            .unwrap();
+        assert_eq!(responses.tool_calls[0].input, PhenixValue::Unit);
+
+        let chat = Protocol::OpenAiChatCompletions
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "choices":[{"message":{
+                            "content":null,
+                            "tool_calls":[{
+                                "id":"call-unit",
+                                "type":"function",
+                                "function":{
+                                    "name":"phx1_fixture_dunit",
+                                    "arguments":"{}"
+                                }
+                            }]
+                        }}]
+                    }),
+                ),
+            )
+            .unwrap();
+        assert_eq!(chat.tool_calls[0].input, PhenixValue::Unit);
+
+        let anthropic = Protocol::AnthropicMessages
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "content":[{
+                            "type":"tool_use",
+                            "id":"call-unit",
+                            "name":"fixture.unit",
+                            "input":{}
+                        }]
+                    }),
+                ),
+            )
+            .unwrap();
+        assert_eq!(anthropic.tool_calls[0].input, PhenixValue::Unit);
+    }
+
+    #[test]
+    fn request_aware_decode_restores_structural_table_inputs() {
+        let request = request_with_tool();
+        let decoded = Protocol::OpenAiResponses
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "output":[{
+                            "type":"function_call",
+                            "call_id":"call-table",
+                            "name":"phx1_fixture_decho",
+                            "arguments":"{\"value\":\"typed\"}"
+                        }]
+                    }),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(
+            decoded.tool_calls[0].input,
+            PhenixValue::Table(BTreeMap::from([(
+                Key::parse("value").unwrap(),
+                PhenixValue::String("typed".to_owned())
+            )]))
+        );
+    }
+
+    #[test]
+    fn scalar_model_tool_inputs_use_a_value_envelope() {
+        let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
+        let mut request = request();
+        request.tools.push(ModelToolDescriptor {
+            id: CallableId::parse("fixture.scalar").unwrap(),
+            description: "Scalar input".to_owned(),
+            input_schema: PhenixSchema::U64,
+            output_schema: PhenixSchema::Unit,
+        });
+
+        let encoded = Protocol::OpenAiResponses
+            .encode(&endpoint, &request)
+            .unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"]["value"]["type"],
+            "integer"
+        );
+
+        let decoded = Protocol::OpenAiResponses
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "output":[{
+                            "type":"function_call",
+                            "call_id":"call-scalar",
+                            "name":"phx1_fixture_dscalar",
+                            "arguments":"{\"value\":7}"
+                        }]
+                    }),
+                ),
+            )
+            .unwrap();
+        assert_eq!(decoded.tool_calls[0].input, PhenixValue::U64(7));
     }
 
     #[test]
