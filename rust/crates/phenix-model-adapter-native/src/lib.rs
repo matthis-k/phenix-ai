@@ -895,13 +895,7 @@ mod tests {
 
         let scalar_tools = tool_surface_with_schema("scalar", PhenixSchema::U64);
         assert_eq!(
-            dispatch_tool_call(
-                &scalar_tools,
-                &mut host,
-                "scalar",
-                &json!({"value": 7})
-            )
-            .unwrap(),
+            dispatch_tool_call(&scalar_tools, &mut host, "scalar", &json!({"value": 7})).unwrap(),
             "ok"
         );
         assert_eq!(
