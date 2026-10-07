@@ -11319,10 +11319,7 @@ mod tests {
             ("inspect-dag-explicit", format!("dag {execution_id}")),
             ("inspect-trace", "trace".to_owned()),
             ("inspect-trace-execution", format!("trace {execution_id}")),
-            (
-                "inspect-trace-chain",
-                format!("trace-chain {execution_id}"),
-            ),
+            ("inspect-trace-chain", format!("trace-chain {execution_id}")),
             ("inspect-values", "values".to_owned()),
             ("inspect-value", format!("value {SESSION_PROJECTION_VALUE}")),
         ];
@@ -11375,9 +11372,9 @@ mod tests {
                         queries.contains(&PhenixValue::String("execution <execution-id>".into()))
                     );
                     assert!(queries.contains(&PhenixValue::String("dag <execution-id>".into())));
-                    assert!(queries.contains(&PhenixValue::String(
-                        "trace-chain <execution-id>".into()
-                    )));
+                    assert!(
+                        queries.contains(&PhenixValue::String("trace-chain <execution-id>".into()))
+                    );
                 }
                 ("graph", PhenixValue::Map(graph)) => {
                     assert!(matches!(
