@@ -10741,8 +10741,8 @@ mod tests {
         let call = ModelToolCall {
             call_id: "call-1".into(),
             callable_id: CallableId::parse("bash").unwrap(),
-            input: PhenixValue::Map(BTreeMap::from([(
-                "command".to_owned(),
+            input: PhenixValue::Table(BTreeMap::from([(
+                Key::parse("command").unwrap(),
                 PhenixValue::String("printf phenix-runtime-bash".into()),
             )])),
         };
