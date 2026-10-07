@@ -834,15 +834,21 @@ fn discover_project_files(
 }
 
 fn validate_project_discovery_name(value: &str) -> Result<(), String> {
+    if value.contains(['/', '\\', '\0', ':']) {
+        return Err(format!(
+            "project discovery names must be portable single path components: {value}"
+        ));
+    }
+
     let mut components = Path::new(value).components();
     let Some(Component::Normal(_)) = components.next() else {
         return Err(format!(
-            "project discovery names must be single path components: {value}"
+            "project discovery names must be portable single path components: {value}"
         ));
     };
     if components.next().is_some() {
         return Err(format!(
-            "project discovery names must be single path components: {value}"
+            "project discovery names must be portable single path components: {value}"
         ));
     }
     Ok(())
@@ -1734,6 +1740,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("single path components"));
+
+        for invalid in [r"nested\\CLAUDE.md", "C:CLAUDE.md"] {
+            let error = invoke(
+                &mut kernel,
+                WorkspaceCommand::DiscoverProjectFiles {
+                    working_directory: root.to_string_lossy().into_owned(),
+                    root_markers: vec![".git".into()],
+                    file_names: vec![invalid.into()],
+                },
+                &authority(&[WORKSPACE_READ]),
+            )
+            .unwrap_err();
+            assert!(error.contains("single path components"));
+        }
 
         let _ = fs::remove_dir_all(root);
     }
