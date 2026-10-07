@@ -987,7 +987,8 @@ fn ingest_session_update(core: &FacadeCore, update: SessionUpdate) {
         &update.update,
         phenix_application_interface::types::SessionChange::Closed
     ) {
-        apply_closed_session_update(&mut core.state.borrow_mut(), update);
+        let mut state = core.state.borrow_mut();
+        apply_closed_session_update(&mut state, update);
         return;
     }
     let needs_repair;
