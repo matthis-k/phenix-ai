@@ -170,6 +170,10 @@ impl PluginInstance for RecoverySupport {
                 .map_err(|error| error.to_string())?;
             let response = match command {
                 MemoryContextCommand::Recall { request } => {
+                    assert_eq!(
+                        request.at, 1,
+                        "memory recovery must convert the millisecond invocation clock to Unix seconds"
+                    );
                     assert!(
                         matches!(
                             request.prompt.as_str(),
