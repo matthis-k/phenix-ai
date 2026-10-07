@@ -426,11 +426,19 @@ fn model_tool_arguments(schema: &PhenixSchema, value: Value) -> Result<Value, Mo
             }
         }
         PhenixSchema::Map(_) | PhenixSchema::Table(_) => Ok(value),
-        _ => object.get("value").cloned().ok_or_else(|| {
-            ModelAdapterError::Protocol(
-                "model tool arguments are missing the required value field".to_owned(),
-            )
-        }),
+        _ => {
+            let value = object.get("value").cloned().ok_or_else(|| {
+                ModelAdapterError::Protocol(
+                    "model tool arguments are missing the required value field".to_owned(),
+                )
+            })?;
+            if object.len() != 1 {
+                return Err(ModelAdapterError::Protocol(
+                    "model tool argument envelope must contain only the value field".to_owned(),
+                ));
+            }
+            Ok(value)
+        }
     }
 }
 
@@ -628,6 +636,9 @@ mod tests {
         assert_eq!(
             model_tool_arguments(&PhenixSchema::U64, json!({"value": 7})).unwrap(),
             json!(7)
+        );
+        assert!(
+            model_tool_arguments(&PhenixSchema::U64, json!({"value": 7, "extra": true})).is_err()
         );
     }
 
