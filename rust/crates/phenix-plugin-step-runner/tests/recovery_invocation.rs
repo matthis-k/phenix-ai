@@ -33,7 +33,7 @@ use phenix_sdk::{
     SessionRecord, SessionResponse, StepRunnerResponse, UsagePolicy, context_recovery_service,
     default_invocation_service, execution_resource_service, execution_service,
     invocation_clock_service, invocation_defaults_service, memory_context_service, memory_service,
-    session_service,
+    session_service, workspace_context_id,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -136,7 +136,11 @@ impl PluginInstance for RecoverySupport {
                 )
                 .map_err(|error| error.to_string())?;
             let ContextRecoveryCommand::Assess { request } = command;
-            assert_eq!(request.prompt, "work on prs");
+            assert!(
+                matches!(request.prompt.as_str(), "work on prs" | "recover workspace memory"),
+                "unexpected recovery prompt: {}",
+                request.prompt
+            );
             let decision = if request.state.has_durable_session_history
                 || request.state.has_explicit_resource
             {
@@ -163,7 +167,26 @@ impl PluginInstance for RecoverySupport {
                 .map_err(|error| error.to_string())?;
             let response = match command {
                 MemoryContextCommand::Recall { request } => {
-                    assert_eq!(request.prompt, "work on prs");
+                    assert!(
+                        matches!(request.prompt.as_str(), "work on prs" | "recover workspace memory"),
+                        "unexpected recall prompt: {}",
+                        request.prompt
+                    );
+                    if request.prompt == "recover workspace memory" {
+                        let workspace_id = workspace_context_id("/workspace");
+                        assert_eq!(
+                            request.scopes,
+                            vec![
+                                MemoryScope::Global,
+                                MemoryScope::Workspace {
+                                    workspace_id: workspace_id.clone(),
+                                },
+                            ]
+                        );
+                        assert!(request.known.contains(&ContextAnchor::Workspace {
+                            workspace_id,
+                        }));
+                    }
                     MemoryContextResponse::Recall {
                         candidates: vec![MemoryContextCandidate {
                             memory_id: "memory-1".into(),
@@ -552,6 +575,48 @@ fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
             && stage == "model_dispatch"
             && outcome == "completed"
     )));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fresh_session_recovers_with_the_canonical_workspace_scope() {
+    let path = temp_db();
+    let mut kernel = kernel(&path);
+    setup(&mut kernel);
+
+    let session_id = phenix_core::SessionId::parse("workspace-session").unwrap();
+    let _: SessionResponse = invoke(
+        &mut kernel,
+        session_service(),
+        &SessionCommand::Create {
+            session: SessionRecord::application(
+                session_id.clone(),
+                "/workspace".into(),
+                Some("workspace recovery".into()),
+            ),
+        },
+    );
+
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        default_invocation_service(),
+        &DefaultInvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "workspace-root".into(),
+                session_id: Some(session_id),
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"recover workspace memory".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.contains(RECOVERED_MARKER));
+    assert!(text.contains("recover workspace memory"));
 
     let _ = fs::remove_file(path);
 }
