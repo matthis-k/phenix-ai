@@ -7450,6 +7450,24 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    #[test]
+    fn memory_time_filters_parse_without_agent_supplied_unix_timestamps() {
+        assert_eq!(
+            parse_application_memory_datetime("1970-01-02").unwrap(),
+            24 * 60 * 60
+        );
+        assert_eq!(
+            parse_application_memory_datetime("1970-01-01T01:02:03Z").unwrap(),
+            60 * 60 + 2 * 60 + 3
+        );
+        assert_eq!(
+            parse_application_memory_duration("2 days").unwrap(),
+            2 * 24 * 60 * 60
+        );
+        assert!(parse_application_memory_datetime("2026-02-30").is_err());
+        assert!(parse_application_memory_duration("1 month").is_err());
+    }
+
     fn session(id: &str, title: Option<&str>) -> SessionInfo {
         SessionInfo {
             session_id: SessionId::parse(id).unwrap(),
@@ -11241,7 +11259,7 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         assert_eq!(
             tools
                 .iter()
@@ -11251,6 +11269,7 @@ mod tests {
                 "bash",
                 "code.query",
                 "memory.associate",
+                "memory.query",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
@@ -11279,7 +11298,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 11);
+        assert_eq!(report.tools.len(), 12);
         assert_eq!(
             report
                 .tools
@@ -11290,6 +11309,7 @@ mod tests {
                 "bash",
                 "code.query",
                 "memory.associate",
+                "memory.query",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
@@ -11300,15 +11320,21 @@ mod tests {
                 "workspace.write",
             ]
         );
+        let query_tool = tools
+            .iter()
+            .find(|tool| tool.id.as_str() == "memory.query")
+            .expect("memory.query must be visible");
+        assert!(
+            query_tool.description.contains("does not use semantic relevance"),
+            "memory.query must explain the direct structured-query contract"
+        );
         let recall_tool = tools
             .iter()
             .find(|tool| tool.id.as_str() == "memory.recall")
             .expect("memory.recall must be visible");
         assert!(
-            recall_tool
-                .description
-                .contains("not injected into every fresh session"),
-            "memory.recall must explain the explicit recall contract"
+            recall_tool.description.contains("optional semantic"),
+            "memory.recall must explain the ranked search contract"
         );
 
         assert_eq!(report.request, "show available capabilities");
@@ -11667,25 +11693,26 @@ mod tests {
             "code.query did not return the seeded semantic entity: {queried:?}"
         );
 
-        let memory_record = MemoryRecord {
+        let session_source = MemorySourceReference {
+            service: session_service(),
+            resource: format!("session/{}", session_id.as_str()),
+            start: Some(0),
+            end: Some(0),
+        };
+        let memory_request = ApplicationMemoryRecordRequest {
             id: "application-agent-memory".into(),
             kind: MemoryKind::Fact,
             scope: MemoryScope::Session {
                 session_id: session_id.clone(),
             },
             content: "Helios is durable".into(),
-            source_refs: vec![MemorySourceReference {
-                service: session_service(),
-                resource: format!("session/{}", session_id.as_str()),
-                start: Some(0),
-                end: Some(0),
-            }],
+            source_refs: vec![session_source.clone()],
             supporting_dependencies: Vec::new(),
             supersedes: Vec::new(),
             valid_from: None,
             valid_until: None,
-            created_at: 1,
         };
+        let before_record = application_memory_now().unwrap();
         let recorded = invoke_agent_tool(
             &worker,
             &execution_id,
@@ -11693,18 +11720,54 @@ mod tests {
             ModelToolCall {
                 call_id: "memory-record".into(),
                 callable_id: CallableId::parse("memory.record").unwrap(),
-                input: memory_record.to_value(),
+                input: memory_request.to_value(),
             },
         );
+        let after_record = application_memory_now().unwrap();
         assert!(
             !recorded.is_error,
             "memory.record failed: {:?}",
             recorded.output
         );
-        assert_eq!(
-            MemoryRecord::from_value(&recorded.output).unwrap(),
-            memory_record
+        let memory_record = MemoryRecord::from_value(&recorded.output).unwrap();
+        assert_eq!(memory_record.id, "application-agent-memory");
+        assert_eq!(memory_record.content, "Helios is durable");
+        assert_eq!(memory_record.source_refs, vec![session_source.clone()]);
+        assert!(
+            (before_record..=after_record).contains(&memory_record.created_at),
+            "memory.record must use the runtime clock"
         );
+
+        let queried_memory = invoke_agent_tool(
+            &worker,
+            &execution_id,
+            &session_id,
+            ModelToolCall {
+                call_id: "memory-query".into(),
+                callable_id: CallableId::parse("memory.query").unwrap(),
+                input: ApplicationMemoryQueryRequest {
+                    scopes: vec![MemoryScope::Session {
+                        session_id: session_id.clone(),
+                    }],
+                    kinds: vec![MemoryKind::Fact],
+                    ids: vec![memory_record.id.clone()],
+                    source_service: Some(session_service()),
+                    source_resource: Some(session_source.resource.clone()),
+                    time: None,
+                    order: Some(MemoryQueryOrder::NewestFirst),
+                    limit: 4,
+                }
+                .to_value(),
+            },
+        );
+        assert!(
+            !queried_memory.is_error,
+            "memory.query failed: {:?}",
+            queried_memory.output
+        );
+        let queried_memory =
+            ApplicationMemoryRecallResponse::from_value(&queried_memory.output).unwrap();
+        assert_eq!(queried_memory.records, vec![memory_record.clone()]);
 
         let recalled = invoke_agent_tool(
             &worker,
@@ -11713,13 +11776,13 @@ mod tests {
             ModelToolCall {
                 call_id: "memory-recall".into(),
                 callable_id: CallableId::parse("memory.recall").unwrap(),
-                input: MemoryRecallQuery {
+                input: ApplicationMemoryRecallRequest {
                     scopes: vec![MemoryScope::Session {
                         session_id: session_id.clone(),
                     }],
                     kinds: vec![MemoryKind::Fact],
                     query: "Helios".into(),
-                    at: 2,
+                    time: None,
                     limit: 4,
                 }
                 .to_value(),
@@ -11733,22 +11796,16 @@ mod tests {
         let recalled = ApplicationMemoryRecallResponse::from_value(&recalled.output).unwrap();
         assert_eq!(recalled.records, vec![memory_record]);
 
-        let global_memory = MemoryRecord {
+        let global_request = ApplicationMemoryRecordRequest {
             id: "application-agent-global-memory".into(),
             kind: MemoryKind::Fact,
             scope: MemoryScope::Global,
             content: "Selene persists across fresh sessions".into(),
-            source_refs: vec![MemorySourceReference {
-                service: session_service(),
-                resource: format!("session/{}", session_id.as_str()),
-                start: Some(0),
-                end: Some(0),
-            }],
+            source_refs: vec![session_source],
             supporting_dependencies: Vec::new(),
             supersedes: Vec::new(),
             valid_from: None,
             valid_until: None,
-            created_at: 3,
         };
         let recorded_global = invoke_agent_tool(
             &worker,
@@ -11757,7 +11814,7 @@ mod tests {
             ModelToolCall {
                 call_id: "memory-record-global".into(),
                 callable_id: CallableId::parse("memory.record").unwrap(),
-                input: global_memory.to_value(),
+                input: global_request.to_value(),
             },
         );
         assert!(
@@ -11765,6 +11822,7 @@ mod tests {
             "global memory.record failed: {:?}",
             recorded_global.output
         );
+        let global_memory = MemoryRecord::from_value(&recorded_global.output).unwrap();
 
         let fresh_session = invoke_operation::<CreateSession>(
             &mut worker,
@@ -11804,11 +11862,11 @@ mod tests {
             ModelToolCall {
                 call_id: "memory-recall-global-fresh-session".into(),
                 callable_id: CallableId::parse("memory.recall").unwrap(),
-                input: MemoryRecallQuery {
+                input: ApplicationMemoryRecallRequest {
                     scopes: vec![MemoryScope::Global],
                     kinds: vec![MemoryKind::Fact],
                     query: "Selene".into(),
-                    at: 4,
+                    time: None,
                     limit: 4,
                 }
                 .to_value(),
