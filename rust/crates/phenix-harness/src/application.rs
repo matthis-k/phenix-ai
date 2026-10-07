@@ -12890,7 +12890,7 @@ what question?"
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn model_child_close_preserves_controller_for_next_execution() {
+    async fn model_child_close_preserves_controller_with_admitted_client_tool() {
         let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         builder
             .add_embedded(controller_lifecycle_model_manifest(), || {
