@@ -234,15 +234,17 @@ impl PluginInstance for RecoverySupport {
                 .kernel
                 .decode_projected::<MemoryCommand>(&MemoryInterface::interface_id(), input)
                 .map_err(|error| error.to_string())?;
-            let MemoryCommand::Get { id } = command else {
-                return Err("fixture memory service only supports get".into());
+            let MemoryCommand::Query { query } = command else {
+                return Err("fixture memory service only supports query".into());
             };
-            assert_eq!(id, "memory-1");
+            assert_eq!(query.ids, vec!["memory-1"]);
+            assert_eq!(query.time.as_of, 1);
+            assert_eq!(query.limit, 1);
             return context
                 .kernel
-                .encode_value(&MemoryResponse::Memory {
-                    record: Some(MemoryRecord {
-                        id,
+                .encode_value(&MemoryResponse::Query {
+                    records: vec![MemoryRecord {
+                        id: "memory-1".into(),
                         kind: MemoryKind::Fact,
                         scope: MemoryScope::Global,
                         content: RECOVERED_MARKER.into(),
@@ -251,8 +253,8 @@ impl PluginInstance for RecoverySupport {
                         supersedes: Vec::new(),
                         valid_from: None,
                         valid_until: None,
-                        created_at: 100,
-                    }),
+                        created_at: 0,
+                    }],
                 })
                 .map_err(|error| error.to_string());
         }
