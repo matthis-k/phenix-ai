@@ -4,7 +4,7 @@ use super::{
 };
 use phenix_core::{ComponentInterface, InterfaceId, ServiceId};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::BTreeSet};
 
 pub const MEMORY_CONTEXT_SERVICE: &str = "memory.context@1";
 
@@ -46,7 +46,7 @@ impl MemoryContextMatch {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, phenix_sdk_macros::PhenixValue,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AssociationObservationSource {
@@ -89,6 +89,8 @@ pub struct MemoryAssociationConfirmation {
 #[serde(deny_unknown_fields)]
 pub struct MemoryAssociationState {
     pub association: MemoryContextAssociation,
+    #[serde(default)]
+    pub observation_sources: BTreeSet<AssociationObservationSource>,
     pub observation_count: u32,
     pub confirmed_recoveries: u32,
     pub last_observed_at: u64,
@@ -100,6 +102,7 @@ impl MemoryAssociationState {
     pub fn apply_observation(&self, event: &MemoryAssociationObservation) -> Self {
         let mut next = self.clone();
         next.association = event.association.clone();
+        next.observation_sources.insert(event.source);
         next.observation_count = next.observation_count.saturating_add(1);
         next.last_observed_at = next.last_observed_at.max(event.association.observed_at);
         next

@@ -220,6 +220,12 @@ fn recall_context(
         }
 
         let mut signals = BTreeSet::new();
+        if association
+            .observation_sources
+            .contains(&phenix_sdk::AssociationObservationSource::ExplicitLink)
+        {
+            signals.insert(MemoryContextMatch::ExplicitLink);
+        }
         if exact_anchor {
             signals.insert(MemoryContextMatch::ExactAnchor);
         }

@@ -507,6 +507,8 @@ Each candidate exposes signals, while selection uses this fixed class:
 0: Recency | Semantic only
 ```
 
+`ExplicitLink` is durable observation provenance. Recall emits it only for an association that was explicitly linked and is otherwise eligible for candidate generation in the requested scope. The signal strengthens a relevant candidate; it does not bypass scope, freshness, anchor-compatibility, or candidate-generation filters.
+
 Within one class order by:
 
 ```text
