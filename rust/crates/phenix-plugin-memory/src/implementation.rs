@@ -25,11 +25,10 @@ use phenix_sdk::{
     MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
     MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
     MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
-    MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope, MemorySearchQuery,
-    MemoryStructuredQuery,
-    MemorySourceReference, context_compaction_service, context_expansion_service,
-    memory_consolidate_callable, memory_extract_callable, memory_resolve_callable, memory_service,
-    memory_summarize_callable, memory_validate_callable,
+    MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope,
+    MemorySearchQuery, MemorySourceReference, MemoryStructuredQuery, context_compaction_service,
+    context_expansion_service, memory_consolidate_callable, memory_extract_callable,
+    memory_resolve_callable, memory_service, memory_summarize_callable, memory_validate_callable,
 };
 
 const MEMORY_PLUGIN: &str = "phenix.memory";
@@ -802,10 +801,7 @@ fn routed_model_bytes(
     Ok(response.output.as_ref().to_vec())
 }
 
-fn memory_records_at(
-    context: &MemoryContext<'_, '_>,
-    at: u64,
-) -> MemoryResult<Vec<MemoryRecord>> {
+fn memory_records_at(context: &MemoryContext<'_, '_>, at: u64) -> MemoryResult<Vec<MemoryRecord>> {
     let records: Vec<MemoryRecord> = load_records(context, RECORD_INDEX, record_key_str)?;
     let mut current = Vec::new();
     for record in records {
