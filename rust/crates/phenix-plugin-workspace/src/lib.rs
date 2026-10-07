@@ -6,6 +6,6 @@ pub use implementation::*;
 pub use phenix_sdk::{
     WORKSPACE_SERVICE, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
     WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
-    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
+    WorkspaceInterface, WorkspaceProjectFile, WorkspaceResponse, WorkspaceSearchMatch,
+    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
 };

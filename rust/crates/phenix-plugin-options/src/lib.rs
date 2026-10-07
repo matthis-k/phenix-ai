@@ -230,6 +230,7 @@ pub enum OptionValue {
     Bool(bool),
     Integer(i64),
     String(String),
+    StringList(Vec<String>),
 }
 
 impl OptionValue {
@@ -239,6 +240,7 @@ impl OptionValue {
             (Self::Bool(_), Self::Bool(_))
                 | (Self::Integer(_), Self::Integer(_))
                 | (Self::String(_), Self::String(_))
+                | (Self::StringList(_), Self::StringList(_))
         )
     }
 }
@@ -550,6 +552,21 @@ pub fn default_option_definitions() -> Vec<OptionDefinition> {
         builtin_definition(
             "context.auto_load",
             OptionValue::Bool(true),
+            [Global, Session, Agent],
+        ),
+        builtin_definition(
+            "context.project_doc_max_bytes",
+            OptionValue::Integer(32 * 1024),
+            [Global, Session, Agent],
+        ),
+        builtin_definition(
+            "context.project_root_markers",
+            OptionValue::StringList(vec![".git".into()]),
+            [Global, Session, Agent],
+        ),
+        builtin_definition(
+            "context.project_doc_fallback_filenames",
+            OptionValue::StringList(Vec::new()),
             [Global, Session, Agent],
         ),
         builtin_definition(

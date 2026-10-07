@@ -16,7 +16,7 @@ An option has:
 - one typed default value;
 - the scopes where callers may override it.
 
-Supported value types are boolean, integer, and string.
+Supported value types are boolean, integer, string, and string-list.
 
 Supported scopes are global, session, and agent. Session and agent scopes require a non-empty subject identity.
 
@@ -69,6 +69,9 @@ The first-party options plugin defines reasonable defaults for common Phenix beh
 | `tools.confirmation` | `"ask"` | global, session, agent |
 | `skills.auto_load` | `true` | global, session, agent |
 | `context.auto_load` | `true` | global, session, agent |
+| `context.project_doc_max_bytes` | `32768` | global, session, agent |
+| `context.project_root_markers` | `[".git"]` | global, session, agent |
+| `context.project_doc_fallback_filenames` | `[]` | global, session, agent |
 | `agent.max_parallel_tasks` | `1` | global, agent |
 
 An option has no effect until a consuming plugin uses it. This keeps the options plugin generic and avoids hidden kernel behavior.

@@ -60,6 +60,7 @@ enum SettingValue {
     Bool(bool),
     Integer(i64),
     String(String),
+    StringList(Vec<String>),
 }
 
 impl From<SettingValue> for OptionValue {
@@ -68,6 +69,7 @@ impl From<SettingValue> for OptionValue {
             SettingValue::Bool(value) => Self::Bool(value),
             SettingValue::Integer(value) => Self::Integer(value),
             SettingValue::String(value) => Self::String(value),
+            SettingValue::StringList(value) => Self::StringList(value),
         }
     }
 }
@@ -530,7 +532,7 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join("settings.json"),
-            r#"{"global":{"session.auto_create":false}}"#,
+            r#"{"global":{"session.auto_create":false,"context.project_doc_fallback_filenames":["CLAUDE.md"]}}"#,
         )
         .unwrap();
         let mut harness = PhenixRuntime::default_suite().unwrap();
@@ -558,6 +560,24 @@ mod tests {
             response,
             OptionResponse::Value { option }
                 if option.value == OptionValue::Bool(false)
+                    && option.source == OptionValueSource::Global
+                    && option.layer == OptionValueLayer::File
+        ));
+
+        let response: OptionResponse = invoke_projected(
+            &mut harness,
+            &options_service(),
+            &OptionCommand::Resolve {
+                key: OptionKey::parse("context.project_doc_fallback_filenames").unwrap(),
+                context: OptionContext::default(),
+            },
+            &default_suite_authority(),
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            OptionResponse::Value { option }
+                if option.value == OptionValue::StringList(vec!["CLAUDE.md".into()])
                     && option.source == OptionValueSource::Global
                     && option.layer == OptionValueLayer::File
         ));

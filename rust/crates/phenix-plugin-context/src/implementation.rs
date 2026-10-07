@@ -137,6 +137,12 @@ fn handle(
         } => Ok(ContextResponse::Discovered {
             descriptors: discover_repository(context, &workspace_id, sources)?,
         }),
+        ContextCommand::DiscoverProjectInstructions {
+            workspace_id,
+            sources,
+        } => Ok(ContextResponse::Discovered {
+            descriptors: discover_project_instructions(context, &workspace_id, sources)?,
+        }),
         ContextCommand::Load {
             execution_id,
             resource_id,
@@ -244,14 +250,37 @@ fn register_resource(
 fn discover_repository(
     context: &ContextPluginContext<'_, '_>,
     workspace_id: &str,
+    sources: Vec<RepositoryContextSource>,
+) -> Result<Vec<ContextDescriptor>, String> {
+    discover_repository_sources(context, workspace_id, sources, None)
+}
+
+fn discover_project_instructions(
+    context: &ContextPluginContext<'_, '_>,
+    workspace_id: &str,
+    sources: Vec<RepositoryContextSource>,
+) -> Result<Vec<ContextDescriptor>, String> {
+    discover_repository_sources(
+        context,
+        workspace_id,
+        sources,
+        Some(ContextResourceKind::ProjectInstruction),
+    )
+}
+
+fn discover_repository_sources(
+    context: &ContextPluginContext<'_, '_>,
+    workspace_id: &str,
     mut sources: Vec<RepositoryContextSource>,
+    forced_kind: Option<ContextResourceKind>,
 ) -> Result<Vec<ContextDescriptor>, String> {
     validate_identity("workspace id", workspace_id)?;
     sources.sort_by(|left, right| left.path.cmp(&right.path));
     let mut descriptors = Vec::new();
     for source in sources {
-        let Some(kind) = project_file_kind(&source.path) else {
-            continue;
+        let kind = match forced_kind.clone().or_else(|| project_file_kind(&source.path)) {
+            Some(kind) => kind,
+            None => continue,
         };
         let scope = match kind {
             ContextResourceKind::Skill => ContextScope::Workspace,

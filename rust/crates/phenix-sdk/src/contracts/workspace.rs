@@ -84,6 +84,12 @@ pub struct WorkspaceEntry {
     pub kind: WorkspaceEntryKind,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
+pub struct WorkspaceProjectFile {
+    pub path: String,
+    pub content: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, PhenixValue)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceWriteAtomicity {
@@ -129,6 +135,11 @@ pub enum WorkspaceCommand {
     List {
         path: Option<String>,
         recursive: bool,
+    },
+    DiscoverProjectFiles {
+        working_directory: String,
+        root_markers: Vec<String>,
+        file_names: Vec<String>,
     },
     ReadBytes {
         path: String,
@@ -192,6 +203,10 @@ pub enum WorkspaceResponse {
     },
     List {
         entries: Vec<WorkspaceEntry>,
+    },
+    ProjectFiles {
+        root: String,
+        files: Vec<WorkspaceProjectFile>,
     },
     ReadBytes {
         path: String,
