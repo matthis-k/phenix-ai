@@ -733,13 +733,13 @@ fn discover_project_files(
                     EnvironmentCommand::Stat {
                         path: environment_path(&candidate),
                     },
-                )? {
-                    EnvironmentResponse::Metadata { kind: Some(_) } => {
+                ) {
+                    Ok(EnvironmentResponse::Metadata { kind: Some(_) }) => {
                         matched = true;
                         break;
                     }
-                    EnvironmentResponse::Metadata { kind: None } => {}
-                    other => {
+                    Ok(EnvironmentResponse::Metadata { kind: None }) | Err(_) => {}
+                    Ok(other) => {
                         return Err(format!(
                             "project discovery stat {} returned unexpected response {other:?}",
                             candidate.display()
@@ -779,6 +779,24 @@ fn discover_project_files(
     for directory in directories {
         for file_name in &file_names {
             let candidate = directory.join(file_name);
+            match environment(
+                context,
+                EnvironmentCommand::Stat {
+                    path: environment_path(&candidate),
+                },
+            )? {
+                EnvironmentResponse::Metadata {
+                    kind: Some(EnvironmentFileKind::File),
+                } => {}
+                EnvironmentResponse::Metadata { .. } => continue,
+                other => {
+                    return Err(format!(
+                        "project discovery stat {} returned unexpected response {other:?}",
+                        candidate.display()
+                    ));
+                }
+            }
+
             let response = environment(
                 context,
                 EnvironmentCommand::ReadFile {
@@ -794,12 +812,7 @@ fn discover_project_files(
             let Some(content) = content else {
                 continue;
             };
-            let content = String::from_utf8(content).map_err(|_| {
-                format!(
-                    "project discovery requires UTF-8 text: {}",
-                    candidate.display()
-                )
-            })?;
+            let content = String::from_utf8_lossy(&content).into_owned();
             let relative = candidate.strip_prefix(&project_root).map_err(|_| {
                 format!(
                     "project discovery result escaped root: {}",
@@ -1565,6 +1578,69 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(outer);
+    }
+
+    #[test]
+    fn project_file_discovery_skips_non_file_override() {
+        let root = temp_workspace("project-discovery-non-file-override");
+        fs::create_dir_all(root.join("AGENTS.override.md")).unwrap();
+        fs::write(root.join("AGENTS.md"), "project rules").unwrap();
+
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: root.to_string_lossy().into_owned(),
+                root_markers: Vec::new(),
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "project rules".into(),
+                }],
+            }
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_file_discovery_uses_lossy_utf8() {
+        let root = temp_workspace("project-discovery-lossy-utf8");
+        fs::write(root.join("AGENTS.md"), b"project\xff rules").unwrap();
+
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: root.to_string_lossy().into_owned(),
+                root_markers: Vec::new(),
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "project\u{FFFD} rules".into(),
+                }],
+            }
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

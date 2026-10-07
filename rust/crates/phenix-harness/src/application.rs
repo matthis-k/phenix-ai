@@ -1637,6 +1637,10 @@ impl ApplicationWorker {
         fallback_filenames: Vec<String>,
         max_bytes: usize,
     ) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
+        if max_bytes == 0 {
+            return Ok(Vec::new());
+        }
+
         let response = self.invoke_workspace_command_on(
             root,
             WorkspaceCommand::DiscoverProjectFiles {
