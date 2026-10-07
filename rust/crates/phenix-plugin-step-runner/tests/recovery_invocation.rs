@@ -31,9 +31,9 @@ use phenix_sdk::{
     RecallResolution, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile, SessionCommand,
     SessionHistoryContentPart, SessionHistoryDraft, SessionHistoryFinishReason, SessionHistoryRole,
     SessionRecord, SessionResponse, StepRunnerResponse, UsagePolicy, context_recovery_service,
-    default_invocation_service,
-    execution_resource_service, execution_service, invocation_clock_service,
-    invocation_defaults_service, memory_context_service, memory_service, session_service,
+    default_invocation_service, execution_resource_service, execution_service,
+    invocation_clock_service, invocation_defaults_service, memory_context_service, memory_service,
+    session_service,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -739,7 +739,6 @@ fn durable_session_history_suppresses_fallback_memory_recovery() {
 
     let _ = fs::remove_file(path);
 }
-
 
 #[test]
 fn user_explicit_resource_suppresses_recovery_with_automatic_baseline_context() {
