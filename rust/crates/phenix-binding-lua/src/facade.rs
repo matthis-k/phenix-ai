@@ -255,6 +255,9 @@ impl UserData for FacadeClient {
                 core: Rc::clone(&this.core),
             })
         });
+        methods.add_method("tools", |lua, this, ()| {
+            super::bind(lua, this.core.raw.clone())
+        });
         methods.add_method("authentication_methods", |lua, this, ()| {
             require_ready(&this.core)?;
             let request = application_request::<AppDiscoverAuthentication>(

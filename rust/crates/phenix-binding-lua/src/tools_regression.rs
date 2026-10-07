@@ -178,3 +178,21 @@ fn malformed_metadata_does_not_retain_a_handler() {
     assert!(client.local_callables.borrow().entries.is_empty());
     assert!(commands.try_recv().is_err());
 }
+
+#[test]
+fn application_facade_exposes_client_tool_registry() {
+    let lua = Lua::new();
+    let options = lua.create_table().unwrap();
+    options.set("command", "false").unwrap();
+    let client = facade::connect(&lua, options).expect("application facade connects");
+    lua.globals()
+        .set("application_client", lua.create_userdata(client).unwrap())
+        .unwrap();
+
+    let register_kind: String = lua
+        .load("local tools = application_client:tools(); return type(tools.register)")
+        .eval()
+        .expect("application facade exposes native client tools");
+
+    assert_eq!(register_kind, "function");
+}
