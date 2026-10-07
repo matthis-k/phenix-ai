@@ -179,7 +179,6 @@ fn malformed_metadata_does_not_retain_a_handler() {
     assert!(commands.try_recv().is_err());
 }
 
-
 #[test]
 fn application_facade_exposes_client_tool_registry() {
     let lua = Lua::new();
