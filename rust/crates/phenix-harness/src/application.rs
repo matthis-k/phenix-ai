@@ -7196,6 +7196,111 @@ mod tests {
             assert!(memory.effective_authority().permits(capability));
         }
         assert!(!memory.effective_authority().permits(&shell));
+
+        let memory_context = graph
+            .import_handle(
+                &application_agent_tool_component_id(),
+                &MemoryContextInterface::interface_id(),
+            )
+            .unwrap()
+            .expect("application memory association binds the memory context provider");
+        assert_eq!(
+            memory_context.owning_plugin(),
+            &PluginId::parse("phenix.memory").unwrap()
+        );
+        for capability in [&schema, &read, &write] {
+            assert!(memory_context.effective_authority().permits(capability));
+        }
+        assert!(!memory_context.effective_authority().permits(&shell));
+    }
+
+    #[test]
+    fn explicit_memory_association_uses_exact_record_provenance() {
+        let mut harness = crate::PhenixRuntimeBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+
+        let source = phenix_sdk::MemorySourceReference {
+            service: ServiceId::parse("fixture.history@1").unwrap(),
+            resource: "turn/1".into(),
+            start: None,
+            end: None,
+        };
+        let record = MemoryRecord {
+            id: "memory-associated".into(),
+            kind: phenix_sdk::MemoryKind::Fact,
+            scope: phenix_sdk::MemoryScope::Workspace {
+                workspace_id: "phenix".into(),
+            },
+            content: "remember the phenix workspace".into(),
+            source_refs: vec![source.clone()],
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 10,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Record {
+            record: record.clone(),
+        }))
+        .unwrap();
+        harness
+            .invoke(
+                &phenix_sdk::memory_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+
+        let anchor = ContextAnchor::Project {
+            key: "phenix".into(),
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&ApplicationMemoryAssociateRequest {
+            memory_id: record.id.clone(),
+            anchor: anchor.clone(),
+        }))
+        .unwrap();
+        let output = harness
+            .invoke(
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &Authority::default(),
+                None,
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let state = MemoryAssociationState::try_from(Project(&value)).unwrap();
+        assert_eq!(state.association.memory_id, record.id);
+        assert_eq!(state.association.anchor, anchor);
+        assert_eq!(state.association.source_refs, vec![source]);
+        assert_eq!(state.observation_count, 1);
+
+        let input = serde_json::to_vec(&PhenixValue::from(
+            &MemoryContextCommand::GetAssociation {
+                memory_id: "memory-associated".into(),
+                anchor: ContextAnchor::Project {
+                    key: "phenix".into(),
+                },
+            },
+        ))
+        .unwrap();
+        let output = harness
+            .invoke(
+                &phenix_sdk::memory_context_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = MemoryContextResponse::try_from(Project(&value)).unwrap();
+        assert!(matches!(
+            response,
+            MemoryContextResponse::Association { state: Some(_) }
+        ));
     }
 
     #[test]
