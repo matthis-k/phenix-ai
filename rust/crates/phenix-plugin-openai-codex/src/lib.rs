@@ -279,12 +279,31 @@ fn decode_codex_response(
     protocol: Protocol,
     response: &ProviderResponse,
 ) -> Result<ModelInferenceResponse, ProviderError> {
+    decode_codex_response_inner(protocol, None, response)
+}
+
+fn decode_codex_response_for_request(
+    protocol: Protocol,
+    request: &ModelInferenceRequest,
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
+    decode_codex_response_inner(protocol, Some(request), response)
+}
+
+fn decode_codex_response_inner(
+    protocol: Protocol,
+    request: Option<&ModelInferenceRequest>,
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
     let is_event_stream = response
         .headers
         .get("content-type")
         .is_some_and(|value| value.contains("text/event-stream"));
     if !is_event_stream && serde_json::from_slice::<Value>(&response.body).is_ok() {
-        return protocol.decode(response);
+        return match request {
+            Some(request) => protocol.decode_for_request(request, response),
+            None => protocol.decode(response),
+        };
     }
 
     let body = std::str::from_utf8(&response.body).map_err(|_| ProviderError::Protocol {
@@ -375,7 +394,10 @@ fn decode_codex_response(
             message: format!("cannot encode completed Codex response: {error}"),
         })?,
     };
-    protocol.decode(&completed_response)
+    match request {
+        Some(request) => protocol.decode_for_request(request, &completed_response),
+        None => protocol.decode(&completed_response),
+    }
 }
 
 impl OpenAiCodexPlugin {
@@ -451,7 +473,8 @@ impl OpenAiCodexPlugin {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
-            let mut decoded = decode_codex_response(protocol, &response)?;
+            let mut decoded =
+                decode_codex_response_for_request(protocol, &request, &response)?;
             decoded.provider_metadata.insert(
                 "provider".to_owned(),
                 PhenixValue::String(OPENAI_CODEX_PROVIDER.to_owned()),
