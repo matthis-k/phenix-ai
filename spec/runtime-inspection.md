@@ -110,7 +110,7 @@ This is observation only. Reading topology grants no service, capability, filesy
 
 Structured logs remain append-only diagnostics.
 
-Runtime events should carry stable identifiers where available:
+Runtime events should carry stable identifiers where available. Execution-scoped runtime stages carry an explicit `execution_id`; model dispatch and other execution work no longer depend on parsing generic policy text.
 
 ```text
 graph_generation
@@ -131,6 +131,8 @@ An agent can use logs to find the relevant identity, then use `phenix.inspect` t
 Inspection obeys the caller's generation, authority, and runtime boundary.
 
 State-bearing and retained-diagnostic queries (`execution`, `dag`, `trace`, `trace <execution-id>`, `values`, and `value <id>`) require the caller to hold `kernel.persistence.read`. Execution-scoped trace inspection returns retained orchestration records whose controller or child execution matches the requested execution. Graph and help queries do not grant access to runtime values or services.
+
+`trace-chain <execution-id>` follows only explicit orchestration links. It does not reinterpret execution parentage or session history as orchestration.
 
 Inspection never returns secret values merely because a secret provider exists. Secret-bearing plugins expose redacted descriptors or explicit safe inspection values.
 
