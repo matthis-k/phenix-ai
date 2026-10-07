@@ -25,7 +25,8 @@ use phenix_sdk::{
     MemoryEmbeddingResponse, MemoryExpansion, MemoryExtractionRequest, MemoryFreshness,
     MemoryFreshnessRecord, MemoryInterface, MemoryKind, MemoryNode, MemoryRankCandidate,
     MemoryRankInterface, MemoryRankRequest, MemoryRankResponse, MemoryRecallQuery, MemoryRecord,
-    MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope,
+    MemoryResponse, MemoryRevalidationOutcome, MemoryRevisionCursor, MemoryScope, MemorySearchQuery,
+    MemoryStructuredQuery,
     MemorySourceReference, context_compaction_service, context_expansion_service,
     memory_consolidate_callable, memory_extract_callable, memory_resolve_callable, memory_service,
     memory_summarize_callable, memory_validate_callable,
@@ -206,6 +207,19 @@ fn handle(context: &MemoryContext<'_, '_>, command: MemoryCommand) -> MemoryResu
                 serde_json::json!({ "records": records.len() }),
             );
             Ok(MemoryResponse::Recall { records })
+        }
+        MemoryCommand::Query { query } => {
+            let records = query_memory(context, query)?;
+            Ok(MemoryResponse::Query { records })
+        }
+        MemoryCommand::Search { query } => {
+            let records = search_memory(context, query)?;
+            observe(
+                context,
+                RECALL_EVENT,
+                serde_json::json!({ "records": records.len(), "mode": "search" }),
+            );
+            Ok(MemoryResponse::Search { records })
         }
         MemoryCommand::Extract { request } => Ok(MemoryResponse::Record {
             record: extract_memory(context, request)?,
@@ -788,9 +802,9 @@ fn routed_model_bytes(
     Ok(response.output.as_ref().to_vec())
 }
 
-fn recall_memory(
+fn memory_records_at(
     context: &MemoryContext<'_, '_>,
-    query: MemoryRecallQuery,
+    at: u64,
 ) -> MemoryResult<Vec<MemoryRecord>> {
     let records: Vec<MemoryRecord> = load_records(context, RECORD_INDEX, record_key_str)?;
     let mut current = Vec::new();
@@ -799,43 +813,110 @@ fn recall_memory(
         let state_key = freshness_key(&id);
         let mut state: MemoryFreshnessRecord =
             read_record(context, &state_key)?.unwrap_or_else(|| initial_state(&record, None));
-        if synchronize_code_support(context, &record, &mut state, query.at)? {
+        if synchronize_code_support(context, &record, &mut state, at)? {
             write_record(context, &state_key, &state)?;
         }
-        match deterministic_outcome(&record, &state, query.at) {
+        match deterministic_outcome(&record, &state, at) {
             MemoryRevalidationOutcome::KeepCurrent => current.push(record),
             MemoryRevalidationOutcome::Expire => {
                 if state.freshness == MemoryFreshness::Current {
                     state.freshness = MemoryFreshness::Historical;
-                    state.changed_at = query.at;
+                    state.changed_at = at;
                     write_record(context, &state_key, &state)?;
                 }
-                if query.at < state.changed_at {
+                if at < state.changed_at {
                     current.push(record);
                 }
             }
             MemoryRevalidationOutcome::NeedsValidation
             | MemoryRevalidationOutcome::RetainHistorical => {
-                if query.at < state.changed_at {
+                if at < state.changed_at {
                     current.push(record);
                 }
             }
             MemoryRevalidationOutcome::Supersede => {}
         }
     }
+    Ok(current)
+}
+
+fn query_memory(
+    context: &MemoryContext<'_, '_>,
+    query: MemoryStructuredQuery,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    let current = memory_records_at(context, query.time.as_of)?;
+    retrieval::query(current, &query)
+}
+
+fn search_memory(
+    context: &MemoryContext<'_, '_>,
+    query: MemorySearchQuery,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    let current = memory_records_at(context, query.time.as_of)?;
+    let requested_limit = query.limit;
+    let candidate_limit = requested_limit.saturating_mul(4).min(100);
+    let mut candidate_query = query.clone();
+    candidate_query.limit = candidate_limit;
+    let mut candidates = retrieval::search(current.clone(), &candidate_query)?;
+
+    if !query.query.trim().is_empty() && candidate_limit > 0 {
+        let mut pool_query = query.clone();
+        pool_query.query.clear();
+        pool_query.limit = 100;
+        let pool = retrieval::search(current, &pool_query)?;
+        append_semantic_pool(
+            context,
+            pool,
+            &query.query,
+            candidate_limit,
+            &mut candidates,
+        )?;
+    }
+
+    rerank_candidates(context, &query.query, requested_limit, candidates)
+}
+
+fn recall_memory(
+    context: &MemoryContext<'_, '_>,
+    query: MemoryRecallQuery,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    let current = memory_records_at(context, query.at)?;
     let requested_limit = query.limit;
     let candidate_limit = requested_limit.saturating_mul(4).min(100);
     let mut candidate_query = query.clone();
     candidate_query.limit = candidate_limit;
     let mut candidates = retrieval::recall(current.clone(), &candidate_query)?;
-    append_semantic_candidates(context, &current, &query, candidate_limit, &mut candidates)?;
+
+    if !query.query.trim().is_empty() && candidate_limit > 0 {
+        let mut pool_query = query.clone();
+        pool_query.query.clear();
+        pool_query.limit = 100;
+        let pool = retrieval::recall(current, &pool_query)?;
+        append_semantic_pool(
+            context,
+            pool,
+            &query.query,
+            candidate_limit,
+            &mut candidates,
+        )?;
+    }
+
+    rerank_candidates(context, &query.query, requested_limit, candidates)
+}
+
+fn rerank_candidates(
+    context: &MemoryContext<'_, '_>,
+    query: &str,
+    requested_limit: u32,
+    mut candidates: Vec<MemoryRecord>,
+) -> MemoryResult<Vec<MemoryRecord>> {
     if candidates.len() <= 1 {
         candidates.truncate(requested_limit as usize);
         return Ok(candidates);
     }
 
     let request = MemoryRankRequest {
-        query: query.query,
+        query: query.to_owned(),
         candidates: candidates
             .iter()
             .map(|record| MemoryRankCandidate {
@@ -878,26 +959,18 @@ fn recall_memory(
     Ok(ranked)
 }
 
-fn append_semantic_candidates(
+fn append_semantic_pool(
     context: &MemoryContext<'_, '_>,
-    current: &[MemoryRecord],
-    query: &MemoryRecallQuery,
+    pool: Vec<MemoryRecord>,
+    query: &str,
     limit: u32,
     candidates: &mut Vec<MemoryRecord>,
 ) -> MemoryResult<()> {
-    if query.query.trim().is_empty() || limit == 0 {
+    if pool.is_empty() || query.trim().is_empty() || limit == 0 {
         return Ok(());
     }
 
-    let mut pool_query = query.clone();
-    pool_query.query.clear();
-    pool_query.limit = 100;
-    let pool = retrieval::recall(current.to_vec(), &pool_query)?;
-    if pool.is_empty() {
-        return Ok(());
-    }
-
-    let inputs = std::iter::once(query.query.clone())
+    let inputs = std::iter::once(query.to_owned())
         .chain(pool.iter().map(|record| record.content.clone()))
         .collect();
     let Ok(response): Result<MemoryEmbeddingResponse, _> = context
