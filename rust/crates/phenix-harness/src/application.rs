@@ -7279,6 +7279,20 @@ mod tests {
         assert_eq!(state.association.source_refs, vec![source]);
         assert_eq!(state.observation_count, 1);
 
+        let replay = harness
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
+            )
+            .unwrap();
+        let replay: PhenixValue = serde_json::from_slice(&replay).unwrap();
+        let replay = MemoryAssociationState::try_from(Project(&replay)).unwrap();
+        assert_eq!(replay.observation_count, 1);
+
         let input = serde_json::to_vec(&PhenixValue::from(&MemoryContextCommand::GetAssociation {
             memory_id: "memory-associated".into(),
             anchor: ContextAnchor::Project {
