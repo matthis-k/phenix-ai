@@ -62,15 +62,14 @@ use phenix_provider_sdk::{
     provider_models_service,
 };
 use phenix_sdk::{
-    CodeQuery, CodeQueryResult, ContextCommand, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
-    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
-    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    AssociationObservationSource, ContextAnchor, ExecutionResponse, LanguageCommand,
-    LanguageInterface, LanguageResponse, MemoryAssociationObservation, MemoryAssociationState,
-    MemoryCommand, MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface,
-    MemoryContextResponse, MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse,
-    ModelCommand, ModelResponse,
+    AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
+    LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
+    MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
+    MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse, ModelCommand, ModelResponse,
     ModelTarget, OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope,
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
     RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
@@ -7278,14 +7277,12 @@ mod tests {
         assert_eq!(state.association.source_refs, vec![source]);
         assert_eq!(state.observation_count, 1);
 
-        let input = serde_json::to_vec(&PhenixValue::from(
-            &MemoryContextCommand::GetAssociation {
-                memory_id: "memory-associated".into(),
-                anchor: ContextAnchor::Project {
-                    key: "phenix".into(),
-                },
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryContextCommand::GetAssociation {
+            memory_id: "memory-associated".into(),
+            anchor: ContextAnchor::Project {
+                key: "phenix".into(),
             },
-        ))
+        }))
         .unwrap();
         let output = harness
             .invoke(
