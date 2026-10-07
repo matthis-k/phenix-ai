@@ -17,3 +17,4 @@ serde_json.workspace = true
 phenix-plugin-context = { path = "../phenix-plugin-context" }
 phenix-plugin-execution = { path = "../phenix-plugin-execution" }
 phenix-plugin-models = { path = "../phenix-plugin-models" }
+phenix-plugin-sessions = { path = "../phenix-plugin-sessions" }
