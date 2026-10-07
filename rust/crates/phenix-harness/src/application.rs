@@ -66,8 +66,11 @@ use phenix_sdk::{
     ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
     ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse, MemoryCommand,
-    MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse, ModelCommand, ModelResponse,
+    AssociationObservationSource, ContextAnchor, ExecutionResponse, LanguageCommand,
+    LanguageInterface, LanguageResponse, MemoryAssociationObservation, MemoryAssociationState,
+    MemoryCommand, MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface,
+    MemoryContextResponse, MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse,
+    ModelCommand, ModelResponse,
     ModelTarget, OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope,
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
     RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
@@ -110,6 +113,8 @@ const APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE: &str =
 const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str = "phenix.application-agent-tools.code-query@1";
 const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
+const APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.memory-associate@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-recall@1";
 const RUNTIME_INSPECTION_READ_PERMISSION: &str = "kernel.persistence.read";
@@ -187,7 +192,14 @@ struct ApplicationWorkspaceGitToolInterface;
 struct ApplicationWorkspaceDiscoveryToolInterface;
 struct ApplicationCodeQueryToolInterface;
 struct ApplicationMemoryRecordToolInterface;
+struct ApplicationMemoryAssociateToolInterface;
 struct ApplicationMemoryRecallToolInterface;
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryAssociateRequest {
+    memory_id: String,
+    anchor: ContextAnchor,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationMemoryRecallResponse {
@@ -273,6 +285,17 @@ impl ComponentInterface for ApplicationMemoryRecordToolInterface {
 
     fn schema() -> InterfaceSchema {
         InterfaceSchema::of::<MemoryRecord, MemoryRecord>()
+    }
+}
+
+impl ComponentInterface for ApplicationMemoryAssociateToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE)
+            .expect("static memory associate tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<ApplicationMemoryAssociateRequest, MemoryAssociationState>()
     }
 }
 
@@ -414,6 +437,12 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
             ApplicationMemoryRecordToolInterface::interface_id(),
             "memory.record",
             "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
+            application_memory_authority(),
+        ),
+        application_agent_tool_trigger(
+            ApplicationMemoryAssociateToolInterface::interface_id(),
+            "memory.associate",
+            "Link an existing durable memory to an explicit workspace, repository, project, task, session, or resource anchor so it can participate in automatic contextual recall. The memory must already contain exact durable source references.",
             application_memory_authority(),
         ),
         application_agent_tool_trigger(
@@ -3416,6 +3445,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required: false,
                 authority: application_memory_authority(),
             },
+            ComponentImport {
+                interface: MemoryContextInterface::interface_id(),
+                schema: MemoryContextInterface::schema(),
+                required: false,
+                authority: application_memory_authority(),
+            },
         ],
         exports: vec![
             ComponentExport {
@@ -3467,6 +3502,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required_authority: Authority::default(),
             },
             ComponentExport {
+                interface: ApplicationMemoryAssociateToolInterface::interface_id(),
+                schema: ApplicationMemoryAssociateToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
                 interface: ApplicationMemoryRecallToolInterface::interface_id(),
                 schema: ApplicationMemoryRecallToolInterface::schema(),
                 priority: 100,
@@ -3508,6 +3549,7 @@ struct ApplicationAgentToolSdk<'host, 'runtime> {
     sessions: SdkClient<'host, 'runtime, SessionInterface>,
     language: SdkClient<'host, 'runtime, LanguageInterface>,
     memory: SdkClient<'host, 'runtime, MemoryInterface>,
+    memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -3524,6 +3566,7 @@ fn application_agent_tool_context<'host, 'runtime>(
             sessions: SdkClient::new(host, application_agent_tool_component_id()),
             language: SdkClient::new(host, application_agent_tool_component_id()),
             memory: SdkClient::new(host, application_agent_tool_component_id()),
+            memory_context: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -3729,6 +3772,68 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             return context
                 .kernel
                 .encode_value(&record)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationMemoryAssociateRequest>(
+                    &ApplicationMemoryAssociateToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .memory
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Get {
+                    id: request.memory_id.clone(),
+                })
+                .map_err(|error| error.to_string())?;
+            let MemoryResponse::Memory {
+                record: Some(record),
+            } = response
+            else {
+                return Err(format!("unknown memory: {}", request.memory_id));
+            };
+            if record.source_refs.is_empty() {
+                return Err("automatic memory association requires exact source references".into());
+            }
+            let anchor_bytes =
+                serde_json::to_vec(&request.anchor).map_err(|error| error.to_string())?;
+            let anchor_identity = Sha256::digest(anchor_bytes);
+            let event_id = format!(
+                "explicit-link:{}:{}",
+                record.id,
+                anchor_identity
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            );
+            let response = context
+                .sdk
+                .memory_context
+                .invoke_projected::<MemoryContextCommand, MemoryContextResponse>(
+                    &MemoryContextCommand::Observe {
+                        observation: MemoryAssociationObservation {
+                            event_id: event_id.clone(),
+                            request_id: event_id,
+                            source: AssociationObservationSource::ExplicitLink,
+                            association: MemoryContextAssociation {
+                                memory_id: record.id,
+                                anchor: request.anchor,
+                                source_refs: record.source_refs,
+                                observed_at: record.created_at,
+                            },
+                        },
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            let MemoryContextResponse::Observed { state, .. } = response else {
+                return Err("memory context service returned a non-observation response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&state)
                 .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_MEMORY_RECALL_TOOL_SERVICE {
