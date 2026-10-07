@@ -6950,17 +6950,18 @@ fn configured_capabilities() -> Vec<ContractId> {
 mod tests {
     use super::*;
     use phenix_application_interface::{
-        ApplicationTransport, Cancel, CloseSession, CreateSession, DiscoverAuthentication,
-        ListSessions, Prompt, RenameSession, ResumeSession,
-        types::{Content, Empty},
+        AddClientTool, ApplicationTransport, Cancel, CloseSession, CreateSession,
+        DiscoverAuthentication, ListSessions, Prompt, RenameSession, ResumeSession,
+        types::{ClientToolAddInput, ClientToolDefinition, Content, Empty},
     };
     use phenix_core::{
         BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
-        InvocationOutcome, LocalPersistence, ModelFeatureGenerationId, ModelId,
-        ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
-        PluginBuildStep, PluginRuntimeAdapter, PluginRuntimeCandidate, ResourceNamespace,
-        SessionId, SkillCommand, SkillDefinition, SkillId, SkillResponse, TransactionOp,
-        ValueAddress, plugin_runtime_adapter_service, skill_service,
+        CallableId, CallableRef, InvocationOutcome, LocalPersistence, ModelFeatureGenerationId,
+        ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
+        PluginBuildStep, PluginRuntimeAdapter, PluginRuntimeCandidate, ReferenceId,
+        ReferenceOwnerId, ResourceNamespace, SessionId, SkillCommand, SkillDefinition, SkillId,
+        SkillResponse, TransactionOp, Type, ValueAddress, plugin_runtime_adapter_service,
+        skill_service,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -12919,6 +12920,10 @@ what question?"
             ReferenceGenerationId::from(harness.generation())
         };
         let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let client_owner =
+            ClientConnectionId::parse("fixture-controller-lifecycle-client").unwrap();
+        let client_generation =
+            ReferenceGenerationId::parse("fixture-controller-lifecycle-generation").unwrap();
         let service = SdkApplicationService::new(
             &sdk,
             worker.projection().store(),
@@ -12926,12 +12931,10 @@ what question?"
             PluginRuntimeId::parse("fixture-controller-lifecycle-runtime").unwrap(),
             generation,
             callbacks,
-            ClientReferenceIdentity::new(
-                ClientConnectionId::parse("fixture-controller-lifecycle-client").unwrap(),
-                ReferenceGenerationId::parse("fixture-controller-lifecycle-generation").unwrap(),
-            ),
+            ClientReferenceIdentity::new(client_owner.clone(), client_generation.clone()),
         )
         .unwrap();
+        let admission_service = service.clone();
 
         let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
         let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
@@ -12951,6 +12954,31 @@ what question?"
         )
         .await
         .unwrap();
+
+        let client_tool = CallableRef::new(
+            ContractId::parse("fixture.controller-lifecycle-client-tool@1").unwrap(),
+            ReferenceOwnerId::Client(client_owner),
+            client_generation,
+            ReferenceId::parse("handler").unwrap(),
+        );
+        admission_service
+            .invoke(
+                &ContractId::parse(AddClientTool::ID).unwrap(),
+                ClientToolAddInput {
+                    session_id: controller.session_id.clone(),
+                    tool: ClientToolDefinition {
+                        id: CallableId::parse("fixture.client.context").unwrap(),
+                        description: "Client context fixture".into(),
+                        input: Type::Unit,
+                        output: Type::Unit,
+                        capabilities: Vec::new(),
+                        requires_permission: false,
+                        invoke: PhenixValue::Callable(client_tool),
+                    },
+                }
+                .to_value(),
+            )
+            .expect("controller client tool admission must succeed");
 
         let first = invoke_transport_operation::<Prompt>(
             &transport,
