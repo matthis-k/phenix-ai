@@ -1725,17 +1725,7 @@ fn run_attempt_with_retry_route(
             ModelDispatchFailure,
         >(&ModelDispatchCommand::InvokePrepared { prepared })
     {
-        Ok(response) => {
-            trace_execution_stage(
-                context,
-                &attribution.execution_id,
-                trace_session_id.clone(),
-                "model_dispatch",
-                "completed",
-                None,
-            );
-            response
-        },
+        Ok(response) => response,
         Err(CallError::Domain(failure)) => {
             trace_execution_stage(
                 context,
@@ -1885,6 +1875,14 @@ fn run_attempt_with_retry_route(
         )?;
         return Err("model dispatch returned preflight readiness after dispatch".into());
     };
+    trace_execution_stage(
+        context,
+        &attribution.execution_id,
+        trace_session_id,
+        "model_dispatch",
+        "completed",
+        None,
+    );
 
     record_routing_evidence(context, &decision, true, Some(&response.usage));
     let (settled, settlement_basis) = successful_actual(&plan, &response.usage);
