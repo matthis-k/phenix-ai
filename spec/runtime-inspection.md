@@ -46,7 +46,7 @@ Baseline queries:
 | `execution` | current root execution record |
 | `dag` | current root execution plus descendant executions and worker tasks |
 | `trace` | retained metadata-only runtime diagnostics from the configured trace sink; an empty result does not prove that no event occurred |
-| `trace <execution-id>` | retained diagnostics directly tied to one execution |
+| `trace <execution-id>` | retained diagnostics associated directly with one execution |
 | `trace-chain <execution-id>` | retained diagnostics for the execution plus explicit orchestration-linked controllers and children |
 | `values` | all values in the application ObservableStore with owner, schema, version, snapshot policy, and current value |
 | `value <value-id>` | one observable root value with owner, schema, version, snapshot policy, and current value |
