@@ -89,7 +89,10 @@ impl RuntimeTraceEvent {
     }
 
     fn carries_execution_correlation(&self) -> bool {
-        matches!(self, Self::ExecutionStage { .. } | Self::Orchestration { .. })
+        matches!(
+            self,
+            Self::ExecutionStage { .. } | Self::Orchestration { .. }
+        )
     }
 }
 
