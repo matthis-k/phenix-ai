@@ -70,13 +70,13 @@ use phenix_sdk::{
     LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
     MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
     MemoryDependencyRevision, MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecord,
-    MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference,
-    MemoryStructuredQuery, MemoryTimeBounds, ModelCommand, ModelResponse, ModelTarget, OptionCommand,
-    OptionContext, OptionKey, OptionResponse, OptionScope,
-    OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
-    RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, context_service, execution_resource_service,
-    execution_service, model_routing_service, options_service, workspace_context_id,
+    MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference, MemoryStructuredQuery,
+    MemoryTimeBounds, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
+    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
+    RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
+    WorkspaceEntryKind, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
+    context_service, execution_resource_service, execution_service, model_routing_service,
+    options_service, workspace_context_id,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -116,8 +116,7 @@ const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
 const APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-associate@1";
-const APPLICATION_MEMORY_QUERY_TOOL_SERVICE: &str =
-    "phenix.application-agent-tools.memory-query@1";
+const APPLICATION_MEMORY_QUERY_TOOL_SERVICE: &str = "phenix.application-agent-tools.memory-query@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-recall@1";
 const RUNTIME_INSPECTION_READ_PERMISSION: &str = "kernel.persistence.read";
@@ -392,8 +391,7 @@ fn resolve_application_memory_time(
     let modes = u8::from(has_max_age) + u8::from(has_as_of) + u8::from(has_created_range);
     if modes > 1 {
         return Err(
-            "memory time filter must use only max_age, as_of, or created_from/created_until"
-                .into(),
+            "memory time filter must use only max_age, as_of, or created_from/created_until".into(),
         );
     }
 
@@ -11325,7 +11323,9 @@ mod tests {
             .find(|tool| tool.id.as_str() == "memory.query")
             .expect("memory.query must be visible");
         assert!(
-            query_tool.description.contains("does not use semantic relevance"),
+            query_tool
+                .description
+                .contains("does not use semantic relevance"),
             "memory.query must explain the direct structured-query contract"
         );
         let recall_tool = tools
