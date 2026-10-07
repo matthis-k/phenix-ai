@@ -6955,8 +6955,8 @@ mod tests {
         types::{ClientToolAddInput, ClientToolDefinition, Content, Empty},
     };
     use phenix_core::{
-        BuildEnvironment, BuildWorkingDirectory, Bytes, DurableSchema, DurableSchemaRegistration,
-        CallableId, CallableRef, InvocationOutcome, LocalPersistence, ModelFeatureGenerationId,
+        BuildEnvironment, BuildWorkingDirectory, Bytes, CallableId, CallableRef, DurableSchema,
+        DurableSchemaRegistration, InvocationOutcome, LocalPersistence, ModelFeatureGenerationId,
         ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
         PluginBuildStep, PluginRuntimeAdapter, PluginRuntimeCandidate, ReferenceId,
         ReferenceOwnerId, ResourceNamespace, SessionId, SkillCommand, SkillDefinition, SkillId,

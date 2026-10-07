@@ -75,7 +75,6 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
     let _ = fs::remove_file(state);
 }
 
-
 #[tokio::test]
 async fn application_extensions_preserve_controller_after_child_cleanup() {
     let nonce = SystemTime::now()
@@ -111,8 +110,8 @@ async fn application_extensions_preserve_controller_after_child_cleanup() {
                         .to_value(),
                     )
                     .await?;
-                let controller =
-                    SessionInfo::from_value(&created).expect("create extension returns SessionInfo");
+                let controller = SessionInfo::from_value(&created)
+                    .expect("create extension returns SessionInfo");
 
                 // The Lua binding does this immediately after application-session creation
                 // to populate standard ACP config options. Keep it in the regression because
