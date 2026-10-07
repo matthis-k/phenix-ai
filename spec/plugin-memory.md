@@ -241,7 +241,7 @@ created_from: "2026-09-01"
 created_until: "2026-10-01"
 ```
 
-The application boundary parses these forms and resolves them against the runtime clock. Internal memory contracts may use normalized timestamps after that boundary.
+The application boundary parses these forms and resolves them against the runtime clock. Internal memory timestamps use Unix seconds. Callers with millisecond clocks convert once at the memory boundary.
 
 ### Reference-backed freshness
 
