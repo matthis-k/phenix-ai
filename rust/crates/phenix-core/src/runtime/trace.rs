@@ -87,6 +87,13 @@ impl RuntimeTraceEvent {
             _ => false,
         }
     }
+
+    fn carries_execution_correlation(&self) -> bool {
+        matches!(
+            self,
+            Self::ExecutionStage { .. } | Self::Orchestration { .. }
+        )
+    }
 }
 
 /// Infallible destination for kernel runtime diagnostics.
@@ -151,7 +158,19 @@ impl RuntimeTraceSink for RuntimeTraceBuffer {
     fn record(&self, event: RuntimeTraceEvent) {
         let mut events = self.events.lock();
         if events.len() == self.capacity.get() {
-            events.pop_front();
+            let first_uncorrelated = events
+                .iter()
+                .position(|retained| !retained.carries_execution_correlation());
+
+            match (event.carries_execution_correlation(), first_uncorrelated) {
+                (_, Some(index)) => {
+                    events.remove(index);
+                }
+                (true, None) => {
+                    events.pop_front();
+                }
+                (false, None) => return,
+            }
         }
         events.push_back(event);
     }
@@ -260,6 +279,70 @@ mod tests {
 
         let events = buffer.snapshot();
         assert_eq!(events, vec![policy_trace("two"), policy_trace("three")]);
+    }
+
+    #[test]
+    fn trace_buffer_preserves_execution_correlation_under_diagnostic_churn() {
+        let buffer = RuntimeTraceBuffer::new(NonZeroUsize::new(3).unwrap());
+        let orchestration = RuntimeTraceEvent::Orchestration {
+            controller_session: "session-1".into(),
+            controller_execution: "execution-1".into(),
+            kind: "session".into(),
+            operation: "prompt".into(),
+            target_session: Some("session-2".into()),
+            child_execution: Some("execution-2".into()),
+            selected_generation: "g1".into(),
+            target_generation: None,
+            success: true,
+            error: None,
+        };
+        let child_stage = RuntimeTraceEvent::ExecutionStage {
+            execution_id: "execution-2".into(),
+            session_id: Some("session-2".into()),
+            source: "phenix.step-runner".into(),
+            stage: "model_dispatch".into(),
+            outcome: "completed".into(),
+            reason: None,
+        };
+
+        buffer.record(orchestration.clone());
+        buffer.record(child_stage.clone());
+        buffer.record(policy_trace("one"));
+        for stage in ["two", "three", "four", "five"] {
+            buffer.record(policy_trace(stage));
+        }
+
+        let events = buffer.snapshot();
+        assert!(events.contains(&orchestration));
+        assert!(events.contains(&child_stage));
+        assert_eq!(events.len(), 3);
+        assert_eq!(events.last(), Some(&policy_trace("five")));
+    }
+
+    #[test]
+    fn trace_buffer_drops_uncorrelated_noise_before_execution_history() {
+        let buffer = RuntimeTraceBuffer::new(NonZeroUsize::new(2).unwrap());
+        let first = RuntimeTraceEvent::ExecutionStage {
+            execution_id: "execution-1".into(),
+            session_id: None,
+            source: "fixture".into(),
+            stage: "dispatch".into(),
+            outcome: "completed".into(),
+            reason: None,
+        };
+        let second = RuntimeTraceEvent::ExecutionStage {
+            execution_id: "execution-2".into(),
+            session_id: None,
+            source: "fixture".into(),
+            stage: "dispatch".into(),
+            outcome: "completed".into(),
+            reason: None,
+        };
+        buffer.record(first.clone());
+        buffer.record(second.clone());
+        buffer.record(policy_trace("noise"));
+
+        assert_eq!(buffer.snapshot(), vec![first, second]);
     }
 
     #[test]
