@@ -1,0 +1,69 @@
+name: Shared binary cache
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-binary-cache-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: true
+
+# Publish only after the main CI has validated the exact revision.
+# Downstream repositories only need the public cache name; write credentials stay here.
+jobs:
+  publish:
+    if: >-
+      vars.PHENIX_CACHIX_CACHE != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            max-jobs = auto
+
+      - name: Restore Phenix Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: "phenix-product-nix-${{ runner.os }}-${{ hashFiles('modules/rust-artifacts.nix', 'flake.lock', 'rust/Cargo.lock', 'rust/**/Cargo.toml') }}"
+          restore-prefixes-first-match: |
+            phenix-product-nix-${{ runner.os }}-
+          gc-max-store-size-linux: "4G"
+
+      - name: Resolve downstream Phenix outputs
+        id: outputs
+        run: |
+          set -euo pipefail
+          nix build --no-link --print-out-paths \
+            .#phenix \
+            .#phenix-binding-lua \
+            .#phenix-acp-fixture \
+            | tee "$RUNNER_TEMP/phenix-cache-paths"
+          paths="$(tr '\n' ' ' < "$RUNNER_TEMP/phenix-cache-paths")"
+          test -n "$paths"
+          printf 'paths=%s\n' "$paths" >> "$GITHUB_OUTPUT"
+
+      - name: Publish downstream closure
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ vars.PHENIX_CACHIX_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          useDaemon: false
+          pathsToPush: ${{ steps.outputs.outputs.paths }}
