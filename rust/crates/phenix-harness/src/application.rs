@@ -8886,18 +8886,20 @@ mod tests {
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, _progress_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
-        let (adapter, root_generation, root_constraints, generations_before) = {
+        let (adapter, root, generations_before) = {
             let harness = worker.harness.lock();
             let root = harness.root_execution_handle(&authority);
             (
                 harness.application_agent_tools().clone(),
-                root.generation()
-                    .cloned()
-                    .expect("runtime plugin build root has a generation"),
-                root.constraints().clone(),
+                root,
                 harness.selectable_generations(),
             )
         };
+        let root_generation = root
+            .generation()
+            .cloned()
+            .expect("runtime plugin build root has a generation");
+        let root_constraints = root.constraints().clone();
         let active_before = root_generation.clone();
         let (control_transport, _control_receiver) = ChannelTransport::new(1);
         adapter
@@ -8981,13 +8983,10 @@ mod tests {
                 ])),
             },
         };
-        let output = worker
-            .harness
-            .lock()
+        let output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9084,13 +9083,10 @@ mod tests {
                 ])),
             },
         };
-        let trial_output = worker
-            .harness
-            .lock()
+        let trial_output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&trial_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9153,13 +9149,10 @@ mod tests {
                     ])),
                 },
             };
-            let output = worker
-                .harness
-                .lock()
+            let output = root
                 .invoke(
                     &agent_tool_execution_service(),
                     &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                    &authority,
                     None,
                 )
                 .unwrap();
@@ -9203,13 +9196,10 @@ mod tests {
                 ])),
             },
         };
-        let retire_output = worker
-            .harness
-            .lock()
+        let retire_output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&retire_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9273,13 +9263,10 @@ mod tests {
                 ])),
             },
         };
-        let failed_output_value = worker
-            .harness
-            .lock()
+        let failed_output_value = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&failed_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9372,13 +9359,10 @@ mod tests {
                 ])),
             },
         };
-        let failed_trial_output_value = worker
-            .harness
-            .lock()
+        let failed_trial_output_value = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&failed_trial_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
