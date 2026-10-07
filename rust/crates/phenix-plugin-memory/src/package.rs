@@ -394,7 +394,7 @@ fn memory_is_current(
         MemoryCommand::Query {
             query: MemoryStructuredQuery {
                 scopes: vec![record.scope.clone()],
-                kinds: vec![record.kind.clone()],
+                kinds: vec![record.kind],
                 ids: vec![record.id.clone()],
                 source_service: None,
                 source_resource: None,
