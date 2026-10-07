@@ -3794,9 +3794,7 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             else {
                 return Err(format!("unknown memory: {}", request.memory_id));
             };
-            if record.source_refs.is_empty() {
-                return Err("explicit memory association requires exact source references".into());
-            }
+            validate_explicit_memory_association_record(&record)?;
             let anchor_bytes =
                 serde_json::to_vec(&request.anchor).map_err(|error| error.to_string())?;
             let anchor_identity = Sha256::digest(anchor_bytes);
