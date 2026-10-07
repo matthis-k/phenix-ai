@@ -103,7 +103,7 @@ async fn main() {
                     call_id: "fixture-model-call".to_owned(),
                     callable_id: CallableId::parse("fixture.client.echo")
                         .expect("fixture client tool id is valid"),
-                    input: PhenixValue::String("hello".to_owned()),
+                    input: PhenixValue::Unit,
                 },
                 |_| panic!("permission callback must not run for a permission-free fixture tool"),
             )
@@ -114,7 +114,7 @@ async fn main() {
             change,
             ExecutionChange::ToolResult {
                 call_id: "fixture-model-call".to_owned(),
-                output: PhenixValue::String("hello from Lua".to_owned()),
+                output: PhenixValue::String("unit from Lua".to_owned()),
             }
         );
     });

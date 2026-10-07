@@ -154,7 +154,7 @@ impl ProviderPlugin {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
-            let mut decoded = protocol.decode(&response)?;
+            let mut decoded = protocol.decode_for_request(&request, &response)?;
             decoded.provider_metadata.insert(
                 "protocol".to_owned(),
                 PhenixValue::String(protocol.name().to_owned()),

@@ -303,7 +303,7 @@ impl ToolBridge {
         }
         let arguments = request.arguments.unwrap_or_default();
 
-        let (callable, worker) = {
+        let (callable, input_schema, worker) = {
             let state = self.state.lock().map_err(|_| {
                 agent_client_protocol::Error::internal_error().data("ACP tool bridge lock poisoned")
             })?;
@@ -317,8 +317,12 @@ impl ToolBridge {
                 agent_client_protocol::Error::internal_error()
                     .data("ACP tool call arrived outside an active execution")
             })?;
-            (callable.id.clone(), worker)
+            (callable.id.clone(), callable.input_schema.clone(), worker)
         };
+        let arguments =
+            model_tool_arguments(&input_schema, Value::Object(arguments)).map_err(|error| {
+                agent_client_protocol::Error::invalid_params().data(error.to_string())
+            })?;
 
         let (response_tx, response_rx) = mpsc::sync_channel(1);
         worker
@@ -378,13 +382,64 @@ fn is_current_protocol(version: &ProtocolVersion) -> bool {
 }
 
 fn json_schema_object(schema: &PhenixSchema) -> Result<Map<String, Value>, ModelAdapterError> {
-    let value = json_schema(schema)?;
+    let value = model_tool_json_schema(schema)?;
     let Value::Object(object) = value else {
         return Err(ModelAdapterError::Protocol(
-            "Phenix callable JSON Schema must be an object".to_owned(),
+            "model tool JSON Schema must be an object".to_owned(),
         ));
     };
     Ok(object)
+}
+
+fn model_tool_json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
+    match schema {
+        PhenixSchema::Unit => Ok(json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        })),
+        PhenixSchema::Map(_) | PhenixSchema::Table(_) => json_schema(schema),
+        _ => Ok(json!({
+            "type": "object",
+            "properties": {
+                "value": json_schema(schema)?,
+            },
+            "required": ["value"],
+            "additionalProperties": false,
+        })),
+    }
+}
+
+fn model_tool_arguments(schema: &PhenixSchema, value: Value) -> Result<Value, ModelAdapterError> {
+    let object = value.as_object().ok_or_else(|| {
+        ModelAdapterError::Protocol("model tool arguments must be a JSON object".to_owned())
+    })?;
+    match schema {
+        PhenixSchema::Unit => {
+            if object.is_empty() {
+                Ok(Value::Null)
+            } else {
+                Err(ModelAdapterError::Protocol(
+                    "unit model tool arguments must be an empty object".to_owned(),
+                ))
+            }
+        }
+        PhenixSchema::Map(_) | PhenixSchema::Table(_) => Ok(value),
+        _ => {
+            let value = object.get("value").cloned().ok_or_else(|| {
+                ModelAdapterError::Protocol(
+                    "model tool arguments are missing the required value field".to_owned(),
+                )
+            })?;
+            if object.len() != 1 {
+                return Err(ModelAdapterError::Protocol(
+                    "model tool argument envelope must contain only the value field".to_owned(),
+                ));
+            }
+            Ok(value)
+        }
+    }
 }
 
 fn json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
@@ -470,19 +525,35 @@ mod tests {
     use phenix_model_adapter::{ModelAdapterFeatures, ToolProvision};
     use std::collections::BTreeSet;
 
-    fn callable() -> CallableDescriptor {
+    fn callable_with_schema(input_schema: PhenixSchema) -> CallableDescriptor {
         CallableDescriptor {
             id: CallableId::parse("phenix.echo").unwrap(),
             kind: CallableKind::Agent,
             description: "Echo a value".to_owned(),
-            input_schema: PhenixSchema::Table(BTreeMap::from([(
-                "value".parse().unwrap(),
-                PhenixSchema::String,
-            )])),
+            input_schema,
             output_schema: PhenixSchema::String,
             features: CallableFeatureSet::default(),
             policy: CallablePolicy::default(),
         }
+    }
+
+    fn callable() -> CallableDescriptor {
+        callable_with_schema(PhenixSchema::Table(BTreeMap::from([(
+            "value".parse().unwrap(),
+            PhenixSchema::String,
+        )])))
+    }
+
+    fn surface_with_schema(input_schema: PhenixSchema) -> PreparedToolSurface {
+        ToolProvision {
+            callables: vec![callable_with_schema(input_schema)],
+        }
+        .prepare(&ModelAdapterFeatures {
+            tool_presentations: BTreeSet::from([ToolPresentation::AcpExtension]),
+            images: false,
+            persistent_sessions: false,
+        })
+        .unwrap()
     }
 
     fn surface() -> PreparedToolSurface {
@@ -532,6 +603,116 @@ mod tests {
             listed["tools"][0]["inputSchema"]["properties"]["value"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn unit_tool_list_uses_empty_object_schema_and_projects_empty_arguments_to_null() {
+        let bridge = ToolBridge::default();
+        bridge
+            .provision(&surface_with_schema(PhenixSchema::Unit))
+            .unwrap();
+        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
+        let schema = &listed["tools"][0]["inputSchema"];
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"], json!({}));
+        assert_eq!(schema["required"], json!([]));
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            model_tool_arguments(&PhenixSchema::Unit, json!({})).unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn scalar_tool_list_uses_value_envelope_and_unwraps_before_dispatch() {
+        let bridge = ToolBridge::default();
+        bridge
+            .provision(&surface_with_schema(PhenixSchema::U64))
+            .unwrap();
+        let listed = bridge.list_tools(&ProtocolVersion::V_2026_07_28).unwrap();
+        let schema = &listed["tools"][0]["inputSchema"];
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["value"]["type"], "integer");
+        assert_eq!(
+            model_tool_arguments(&PhenixSchema::U64, json!({"value": 7})).unwrap(),
+            json!(7)
+        );
+        assert!(
+            model_tool_arguments(&PhenixSchema::U64, json!({"value": 7, "extra": true})).is_err()
+        );
+    }
+
+    #[test]
+    fn every_supported_model_tool_schema_has_an_object_root() {
+        let schemas = vec![
+            PhenixSchema::Any,
+            PhenixSchema::Never,
+            PhenixSchema::Unit,
+            PhenixSchema::Bool,
+            PhenixSchema::I64,
+            PhenixSchema::U64,
+            PhenixSchema::F64,
+            PhenixSchema::String,
+            PhenixSchema::Bytes,
+            PhenixSchema::Option(Box::new(PhenixSchema::String)),
+            PhenixSchema::Array {
+                item: Box::new(PhenixSchema::String),
+                len: 1,
+            },
+            PhenixSchema::List(Box::new(PhenixSchema::String)),
+            PhenixSchema::Map(Box::new(PhenixSchema::String)),
+            PhenixSchema::Table(BTreeMap::new()),
+        ];
+        for schema in schemas {
+            let json = model_tool_json_schema(&schema).unwrap();
+            assert_eq!(json["type"], "object", "non-object root for {schema:?}");
+        }
+    }
+
+    #[test]
+    fn nested_unit_keeps_null_semantics() {
+        let schema = model_tool_json_schema(&PhenixSchema::Table(BTreeMap::from([(
+            "done".parse().unwrap(),
+            PhenixSchema::Unit,
+        )])))
+        .unwrap();
+        assert_eq!(schema["properties"]["done"]["type"], "null");
+    }
+
+    #[test]
+    fn unit_tool_call_projects_empty_object_back_to_canonical_unit_json() {
+        let bridge = ToolBridge::default();
+        let surface = surface_with_schema(PhenixSchema::Unit);
+        let (worker, receiver) = mpsc::channel();
+        bridge.bind_execution(&surface, worker).unwrap();
+
+        let worker = std::thread::spawn(move || {
+            let WorkerMessage::ToolCall(request) = receiver.recv().unwrap() else {
+                panic!("expected ACP tool call");
+            };
+            assert_eq!(request.invocation.callable.as_str(), "phenix.echo");
+            assert_eq!(
+                request.invocation.arguments_json, "null",
+                "unit input must reach the runtime as canonical JSON null"
+            );
+            request
+                .response
+                .send(Ok(ToolResult {
+                    output: "ok".to_owned(),
+                    success: true,
+                }))
+                .unwrap();
+        });
+
+        let params = json!({
+            "name": "phenix.echo",
+            "arguments": {}
+        });
+        let params = params.as_object().unwrap();
+        bridge
+            .call_tool(Some(params), &ProtocolVersion::V_2026_07_28)
+            .unwrap();
+        worker.join().unwrap();
     }
 
     #[test]

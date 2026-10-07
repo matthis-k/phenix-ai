@@ -275,8 +275,25 @@ fn canonicalize_codex_input_item(item: Value) -> Result<Value, ProviderError> {
     Ok(codex_message(role, content.to_owned()))
 }
 
+#[cfg(test)]
 fn decode_codex_response(
     protocol: Protocol,
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
+    decode_codex_response_inner(protocol, None, response)
+}
+
+fn decode_codex_response_for_request(
+    protocol: Protocol,
+    request: &ModelInferenceRequest,
+    response: &ProviderResponse,
+) -> Result<ModelInferenceResponse, ProviderError> {
+    decode_codex_response_inner(protocol, Some(request), response)
+}
+
+fn decode_codex_response_inner(
+    protocol: Protocol,
+    request: Option<&ModelInferenceRequest>,
     response: &ProviderResponse,
 ) -> Result<ModelInferenceResponse, ProviderError> {
     let is_event_stream = response
@@ -284,7 +301,10 @@ fn decode_codex_response(
         .get("content-type")
         .is_some_and(|value| value.contains("text/event-stream"));
     if !is_event_stream && serde_json::from_slice::<Value>(&response.body).is_ok() {
-        return protocol.decode(response);
+        return match request {
+            Some(request) => protocol.decode_for_request(request, response),
+            None => protocol.decode(response),
+        };
     }
 
     let body = std::str::from_utf8(&response.body).map_err(|_| ProviderError::Protocol {
@@ -375,7 +395,10 @@ fn decode_codex_response(
             message: format!("cannot encode completed Codex response: {error}"),
         })?,
     };
-    protocol.decode(&completed_response)
+    match request {
+        Some(request) => protocol.decode_for_request(request, &completed_response),
+        None => protocol.decode(&completed_response),
+    }
 }
 
 impl OpenAiCodexPlugin {
@@ -451,7 +474,7 @@ impl OpenAiCodexPlugin {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
-            let mut decoded = decode_codex_response(protocol, &response)?;
+            let mut decoded = decode_codex_response_for_request(protocol, &request, &response)?;
             decoded.provider_metadata.insert(
                 "provider".to_owned(),
                 PhenixValue::String(OPENAI_CODEX_PROVIDER.to_owned()),
@@ -1468,6 +1491,51 @@ mod tests {
                 PhenixValue::String("streamed".to_owned())
             )]))
         );
+    }
+
+    #[test]
+    fn codex_unit_tools_keep_object_wire_shape_and_restore_unit_input() {
+        let mut request = model_request();
+        request.tools.push(phenix_core::ModelToolDescriptor {
+            id: phenix_core::CallableId::parse("fixture.unit").unwrap(),
+            description: "No-argument tool".to_owned(),
+            input_schema: phenix_core::PhenixSchema::Unit,
+            output_schema: phenix_core::PhenixSchema::Unit,
+        });
+
+        let endpoint = Endpoint::parse(RESPONSES_ENDPOINT).unwrap();
+        let encoded = codex_request(&endpoint, &request).unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"],
+            serde_json::json!({})
+        );
+        assert_eq!(
+            body["tools"][0]["parameters"]["required"],
+            serde_json::json!([])
+        );
+
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"item-1\",\"type\":\"function_call\",\"call_id\":\"call-unit\",\"name\":\"phx1_fixture_dunit\",\"arguments\":\"{}\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded =
+            decode_codex_response_for_request(Protocol::OpenAiResponses, &request, &response)
+                .unwrap();
+        assert_eq!(decoded.tool_calls.len(), 1);
+        assert_eq!(decoded.tool_calls[0].callable_id.as_str(), "fixture.unit");
+        assert_eq!(decoded.tool_calls[0].input, PhenixValue::Unit);
     }
 
     #[test]

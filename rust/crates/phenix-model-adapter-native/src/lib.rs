@@ -122,7 +122,7 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
         })
         .to_string());
     };
-    let arguments_json = match serde_json::to_string(fn_arguments) {
+    let arguments = match serde_json::to_value(fn_arguments) {
         Ok(arguments) => arguments,
         Err(error) => {
             return Ok(json!({
@@ -131,6 +131,19 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
             .to_string());
         }
     };
+    let arguments = match schema_adapter::model_tool_arguments(&descriptor.input_schema, arguments)
+    {
+        Ok(arguments) => arguments,
+        Err(error) => {
+            return Ok(json!({
+                "error": format!("invalid tool arguments: {error}")
+            })
+            .to_string());
+        }
+    };
+    let arguments_json = serde_json::to_string(&arguments).map_err(|error| {
+        ModelAdapterError::Protocol(format!("cannot encode projected tool arguments: {error}"))
+    })?;
     match host.invoke_tool(ToolInvocation {
         callable: descriptor.id.clone(),
         arguments_json,
@@ -466,7 +479,7 @@ impl NativeModelSession {
             .callables()
             .iter()
             .map(|descriptor| {
-                let schema = schema_adapter::json_schema(&descriptor.input_schema)?;
+                let schema = schema_adapter::model_tool_json_schema(&descriptor.input_schema)?;
                 Ok(Tool::new(descriptor.id.as_str())
                     .with_description(descriptor.description.clone())
                     .with_schema(schema))
@@ -822,6 +835,74 @@ mod tests {
             self.calls += 1;
             self.result.clone()
         }
+    }
+
+    fn tool_surface_with_schema(id: &str, input_schema: PhenixSchema) -> PreparedToolSurface {
+        ToolProvision {
+            callables: vec![CallableDescriptor {
+                id: CallableId::parse(id).unwrap(),
+                kind: CallableKind::Tool,
+                description: "test tool".to_owned(),
+                input_schema,
+                output_schema: PhenixSchema::String,
+                features: CallableFeatureSet::default(),
+                policy: CallablePolicy::default(),
+            }],
+        }
+        .prepare(&ModelAdapterFeatures {
+            tool_presentations: BTreeSet::from([ToolPresentation::Native]),
+            images: false,
+            persistent_sessions: false,
+        })
+        .unwrap()
+    }
+
+    #[derive(Default)]
+    struct CapturingToolHost {
+        invocation: Option<ToolInvocation>,
+    }
+
+    impl ModelAdapterHost for CapturingToolHost {
+        fn emit(&mut self, _event: ModelEvent) -> Result<(), ModelAdapterError> {
+            Ok(())
+        }
+
+        fn invoke_tool(
+            &mut self,
+            invocation: ToolInvocation,
+        ) -> Result<ToolResult, ModelAdapterError> {
+            self.invocation = Some(invocation);
+            Ok(ToolResult {
+                output: "ok".to_owned(),
+                success: true,
+            })
+        }
+    }
+
+    #[test]
+    fn native_dispatch_projects_model_object_arguments_back_to_canonical_inputs() {
+        let mut host = CapturingToolHost::default();
+        let unit_tools = tool_surface_with_schema("unit", PhenixSchema::Unit);
+        assert_eq!(
+            dispatch_tool_call(&unit_tools, &mut host, "unit", &json!({})).unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            host.invocation.take().unwrap().arguments_json,
+            "null",
+            "unit input must reach the runtime as canonical JSON null"
+        );
+
+        let scalar_tools = tool_surface_with_schema("scalar", PhenixSchema::U64);
+        assert_eq!(
+            dispatch_tool_call(&scalar_tools, &mut host, "scalar", &json!({"value": 7})).unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            host.invocation.take().unwrap().arguments_json,
+            "7",
+            "scalar envelope must be removed before runtime dispatch"
+        );
     }
 
     #[test]
