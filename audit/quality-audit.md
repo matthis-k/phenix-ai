@@ -9,7 +9,7 @@ This report is generated from and must remain consistent with `audit/quality-aud
 ## Scope
 
 - Tracked blobs at start: 583
-- Classified blobs: 582
+- Classified blobs: 583
 - Audit units: 101
 - Generated projections explicitly excluded from line-level semantic review: 2
 - Current status: **AUDIT INCOMPLETE**
