@@ -35,7 +35,7 @@
   ],
   "totals": {
     "tracked_blobs": 583,
-    "classified_blobs": 582,
+    "classified_blobs": 583,
     "generated_exclusions": 2,
     "audit_units": 101
   },
@@ -8009,6 +8009,118 @@
       "overall_disposition": "pending"
     },
     {
+      "id": "rust-dependency-policy",
+      "files": [
+        "rust/deny.toml"
+      ],
+      "bytes": 0,
+      "categories": {
+        "architecture and dependency direction": {
+          "status": "pending",
+          "evidence": []
+        },
+        "ownership and lifecycle": {
+          "status": "pending",
+          "evidence": []
+        },
+        "state authority and duplication": {
+          "status": "pending",
+          "evidence": []
+        },
+        "resolution / dispatch duplication": {
+          "status": "pending",
+          "evidence": []
+        },
+        "type and invariant modeling": {
+          "status": "pending",
+          "evidence": []
+        },
+        "parsing and external-input boundaries": {
+          "status": "pending",
+          "evidence": []
+        },
+        "API and contract design": {
+          "status": "pending",
+          "evidence": []
+        },
+        "error semantics and translation": {
+          "status": "pending",
+          "evidence": []
+        },
+        "authority / permissions / capability boundaries": {
+          "status": "pending",
+          "evidence": []
+        },
+        "concurrency and cancellation": {
+          "status": "pending",
+          "evidence": []
+        },
+        "resource cleanup": {
+          "status": "pending",
+          "evidence": []
+        },
+        "persistence and recovery behavior": {
+          "status": "pending",
+          "evidence": []
+        },
+        "configuration ownership": {
+          "status": "pending",
+          "evidence": []
+        },
+        "dead code and obsolete compatibility paths": {
+          "status": "pending",
+          "evidence": []
+        },
+        "speculative abstraction / unnecessary indirection": {
+          "status": "pending",
+          "evidence": []
+        },
+        "naming and terminology consistency": {
+          "status": "pending",
+          "evidence": []
+        },
+        "public API consistency": {
+          "status": "pending",
+          "evidence": []
+        },
+        "observability and diagnostics": {
+          "status": "pending",
+          "evidence": []
+        },
+        "test quality and missing behavioral coverage": {
+          "status": "pending",
+          "evidence": []
+        },
+        "comments, TODOs, FIXMEs, HACKs, temporary workarounds": {
+          "status": "pending",
+          "evidence": []
+        },
+        "dependency/features/build complexity": {
+          "status": "pending",
+          "evidence": []
+        },
+        "documentation accuracy": {
+          "status": "pending",
+          "evidence": []
+        },
+        "documentation coverage": {
+          "status": "pending",
+          "evidence": []
+        },
+        "duplicated documentation or duplicated sources of truth": {
+          "status": "pending",
+          "evidence": []
+        }
+      },
+      "findings": [],
+      "evidence": [],
+      "remediation_status": "not-started",
+      "re_audit_status": "not-started",
+      "exclusions": [],
+      "cross_unit_notes": [],
+      "overall_disposition": "pending"
+    },
+    {
       "id": "rust-harness-application",
       "files": [
         "rust/crates/phenix-harness/src/application.rs"
@@ -11772,120 +11884,6 @@
       "re_audit_status": "not-started",
       "exclusions": [],
       "cross_unit_notes": [],
-      "overall_disposition": "pending"
-    },
-    {
-      "id": "unclassified",
-      "files": [
-        "rust/deny.toml"
-      ],
-      "bytes": 480,
-      "categories": {
-        "architecture and dependency direction": {
-          "status": "pending",
-          "evidence": []
-        },
-        "ownership and lifecycle": {
-          "status": "pending",
-          "evidence": []
-        },
-        "state authority and duplication": {
-          "status": "pending",
-          "evidence": []
-        },
-        "resolution / dispatch duplication": {
-          "status": "pending",
-          "evidence": []
-        },
-        "type and invariant modeling": {
-          "status": "pending",
-          "evidence": []
-        },
-        "parsing and external-input boundaries": {
-          "status": "pending",
-          "evidence": []
-        },
-        "API and contract design": {
-          "status": "pending",
-          "evidence": []
-        },
-        "error semantics and translation": {
-          "status": "pending",
-          "evidence": []
-        },
-        "authority / permissions / capability boundaries": {
-          "status": "pending",
-          "evidence": []
-        },
-        "concurrency and cancellation": {
-          "status": "pending",
-          "evidence": []
-        },
-        "resource cleanup": {
-          "status": "pending",
-          "evidence": []
-        },
-        "persistence and recovery behavior": {
-          "status": "pending",
-          "evidence": []
-        },
-        "configuration ownership": {
-          "status": "pending",
-          "evidence": []
-        },
-        "dead code and obsolete compatibility paths": {
-          "status": "pending",
-          "evidence": []
-        },
-        "speculative abstraction / unnecessary indirection": {
-          "status": "pending",
-          "evidence": []
-        },
-        "naming and terminology consistency": {
-          "status": "pending",
-          "evidence": []
-        },
-        "public API consistency": {
-          "status": "pending",
-          "evidence": []
-        },
-        "observability and diagnostics": {
-          "status": "pending",
-          "evidence": []
-        },
-        "test quality and missing behavioral coverage": {
-          "status": "pending",
-          "evidence": []
-        },
-        "comments, TODOs, FIXMEs, HACKs, temporary workarounds": {
-          "status": "pending",
-          "evidence": []
-        },
-        "dependency/features/build complexity": {
-          "status": "pending",
-          "evidence": []
-        },
-        "documentation accuracy": {
-          "status": "pending",
-          "evidence": []
-        },
-        "documentation coverage": {
-          "status": "pending",
-          "evidence": []
-        },
-        "duplicated documentation or duplicated sources of truth": {
-          "status": "pending",
-          "evidence": []
-        }
-      },
-      "findings": [],
-      "evidence": [],
-      "remediation_status": "not-started",
-      "re_audit_status": "not-started",
-      "exclusions": [],
-      "cross_unit_notes": [
-        "BLOCKER: classification mapping failed for one or more tracked files."
-      ],
       "overall_disposition": "pending"
     }
   ],
