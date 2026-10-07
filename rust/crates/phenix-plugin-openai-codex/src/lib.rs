@@ -275,6 +275,7 @@ fn canonicalize_codex_input_item(item: Value) -> Result<Value, ProviderError> {
     Ok(codex_message(role, content.to_owned()))
 }
 
+#[cfg(test)]
 fn decode_codex_response(
     protocol: Protocol,
     response: &ProviderResponse,
