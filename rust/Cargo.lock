@@ -2135,6 +2135,7 @@ dependencies = [
  "phenix-plugin-context",
  "phenix-plugin-execution",
  "phenix-plugin-models",
+ "phenix-plugin-sessions",
  "phenix-sdk",
  "serde",
  "serde_json",

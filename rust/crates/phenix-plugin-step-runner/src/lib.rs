@@ -21,10 +21,10 @@ use phenix_sdk::{
     InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
     MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
     MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
-    SkillCommand, SkillDefinition, SkillInterface, SkillResponse, StepAttemptCommand,
-    StepAttemptInterface, StepAttemptResponse, StepRunnerCommand, StepRunnerResponse,
-    UsageAttemptKind, context_service, default_invocation_service, helper_invocation_service,
-    invocation_service, step_runner_service,
+    SessionCommand, SessionInterface, SessionResponse, SkillCommand, SkillDefinition,
+    SkillInterface, SkillResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptResponse,
+    StepRunnerCommand, StepRunnerResponse, UsageAttemptKind, context_service,
+    default_invocation_service, helper_invocation_service, invocation_service, step_runner_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -84,6 +84,10 @@ pub fn step_runner_component_manifest(maximum_authority: Authority) -> Component
     manifest.imports.push(optional_import(
         MemoryInterface::interface_id(),
         MemoryInterface::schema(),
+    ));
+    manifest.imports.push(optional_import(
+        SessionInterface::interface_id(),
+        SessionInterface::schema(),
     ));
     for interface in [
         (
@@ -170,6 +174,7 @@ struct InvocationSdk<'host, 'runtime> {
     skills: SdkClient<'host, 'runtime, SkillInterface>,
     memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
     memory: SdkClient<'host, 'runtime, MemoryInterface>,
+    sessions: SdkClient<'host, 'runtime, SessionInterface>,
     execution: SdkClient<'host, 'runtime, ExecutionInterface>,
     attempts: SdkClient<'host, 'runtime, StepAttemptInterface>,
 }
@@ -191,6 +196,7 @@ fn invocation_context<'host, 'runtime>(
             skills: SdkClient::new(host, component.clone()),
             memory_context: SdkClient::new(host, component.clone()),
             memory: SdkClient::new(host, component.clone()),
+            sessions: SdkClient::new(host, component.clone()),
             execution: SdkClient::new(host, component.clone()),
             attempts: SdkClient::new(host, component),
         },
@@ -419,6 +425,28 @@ fn prepare_invocation_context(
     Ok(preparation)
 }
 
+fn durable_session_has_history(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<bool, String> {
+    let Some(session_id) = request.session_id.clone() else {
+        return Ok(false);
+    };
+    let response = match context
+        .sdk
+        .sessions
+        .invoke_projected(&SessionCommand::History { id: session_id })
+    {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(false),
+        Err(error) => return Err(format!("session history lookup failed: {error}")),
+    };
+    let SessionResponse::History { entries } = response else {
+        return Err("session service returned a non-history response during recovery".into());
+    };
+    Ok(!entries.is_empty())
+}
+
 fn recover_invocation_context(
     context: &InvocationContext<'_, '_>,
     request: &InvocationRequest,
@@ -447,8 +475,8 @@ fn recover_invocation_context(
         .collect::<Vec<_>>();
     let state = phenix_sdk::ContextRecoveryState {
         anchors: anchors.clone(),
-        has_durable_session_history: false,
-        has_explicit_resource: !projection.entries.is_empty(),
+        has_durable_session_history: durable_session_has_history(context, request)?,
+        has_explicit_resource: projection.has_user_explicit_resource(),
     };
     let prompt = String::from_utf8_lossy(request.input.as_ref()).into_owned();
     let assessed: ContextRecoveryResponse =

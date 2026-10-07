@@ -13,6 +13,7 @@ use phenix_plugin_models::{
     model_inference_service, model_routing_component_manifest, model_routing_factory,
     model_routing_manifest,
 };
+use phenix_plugin_sessions::{session_component_manifest, session_factory, session_manifest};
 use phenix_plugin_step_runner::{
     step_runner_component_manifest, step_runner_factory, step_runner_manifest,
 };
@@ -27,10 +28,12 @@ use phenix_sdk::{
     MemoryCommand, MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface,
     MemoryContextMatch, MemoryContextResponse, MemoryInterface, MemoryKind, MemoryRecord,
     MemoryResponse, MemoryScope, ModelCommand, ModelLimits, ModelResponse, ModelTarget,
-    RecallResolution, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile,
-    StepRunnerResponse, UsagePolicy, context_recovery_service, default_invocation_service,
-    execution_resource_service, execution_service, invocation_clock_service,
-    invocation_defaults_service, memory_context_service, memory_service,
+    RecallResolution, RouteSelectionPolicy, RoutingEstimateMode, RoutingProfile, SessionCommand,
+    SessionHistoryContentPart, SessionHistoryDraft, SessionHistoryFinishReason, SessionHistoryRole,
+    SessionRecord, SessionResponse, StepRunnerResponse, UsagePolicy, context_recovery_service,
+    default_invocation_service, execution_resource_service, execution_service,
+    invocation_clock_service, invocation_defaults_service, memory_context_service, memory_service,
+    session_service,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -133,16 +136,20 @@ impl PluginInstance for RecoverySupport {
                 .map_err(|error| error.to_string())?;
             let ContextRecoveryCommand::Assess { request } = command;
             assert_eq!(request.prompt, "work on prs");
-            assert!(!request.state.has_explicit_resource);
+            let decision = if request.state.has_durable_session_history
+                || request.state.has_explicit_resource
+            {
+                ContextRecoveryDecision::Sufficient
+            } else {
+                ContextRecoveryDecision::Missing {
+                    needs: vec![ContextNeed::Task {
+                        query: "work on prs".into(),
+                    }],
+                }
+            };
             return context
                 .kernel
-                .encode_value(&ContextRecoveryResponse::Decision {
-                    decision: ContextRecoveryDecision::Missing {
-                        needs: vec![ContextNeed::Task {
-                            query: "work on prs".into(),
-                        }],
-                    },
-                })
+                .encode_value(&ContextRecoveryResponse::Decision { decision })
                 .map_err(|error| error.to_string());
         }
         if service == &memory_context_service() {
@@ -321,12 +328,14 @@ fn kernel(path: &PathBuf) -> Kernel {
     let execution = execution_manifest(authority.clone());
     let context = context_manifest();
     let models = model_routing_manifest(authority.clone());
+    let sessions = session_manifest();
     let runner = step_runner_manifest(authority.clone());
     let provider = provider_manifest();
     let support = support_manifest();
     let execution_id = execution.id.clone();
     let context_id = context.id.clone();
     let models_id = models.id.clone();
+    let sessions_id = sessions.id.clone();
     let runner_id = runner.id.clone();
     let provider_id = provider.id.clone();
     let support_id = support.id.clone();
@@ -335,6 +344,7 @@ fn kernel(path: &PathBuf) -> Kernel {
             execution.clone(),
             context.clone(),
             models.clone(),
+            sessions.clone(),
             runner.clone(),
             provider.clone(),
             support.clone(),
@@ -343,6 +353,7 @@ fn kernel(path: &PathBuf) -> Kernel {
             execution_component_manifest(authority.clone()),
             context_component_manifest(),
             model_routing_component_manifest(authority.clone()),
+            session_component_manifest(),
             step_runner_component_manifest(authority.clone()),
             support_component(),
         ],
@@ -352,7 +363,10 @@ fn kernel(path: &PathBuf) -> Kernel {
     .unwrap();
     let persistence = LocalPersistence::open(path).unwrap();
     let mut kernel = Kernel::with_persistence(
-        KernelConfig::new([execution, context, models, runner, provider, support]).unwrap(),
+        KernelConfig::new([
+            execution, context, models, sessions, runner, provider, support,
+        ])
+        .unwrap(),
         persistence,
     );
     kernel.activate_resolved_generation(&resolved).unwrap();
@@ -364,6 +378,9 @@ fn kernel(path: &PathBuf) -> Kernel {
         .unwrap();
     kernel
         .register_embedded_factory(models_id, model_routing_factory)
+        .unwrap();
+    kernel
+        .register_embedded_factory(sessions_id, session_factory)
         .unwrap();
     kernel
         .register_embedded_factory(runner_id, step_runner_factory)
@@ -519,6 +536,277 @@ fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
     let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
     assert!(text.contains(RECOVERED_MARKER));
     assert!(text.contains("work on prs"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn context_policy_skill_does_not_suppress_memory_recovery() {
+    let path = temp_db();
+    let mut kernel = kernel(&path);
+    setup(&mut kernel);
+
+    let resource_id = phenix_core::ContextResourceId::parse("skill:write").unwrap();
+    let registered: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: phenix_sdk::ContextResourceKind::Skill,
+            source: "packaged/write/SKILL.md".into(),
+            scope: phenix_sdk::ContextScope::Workspace,
+            content: b"mandatory baseline skill".to_vec().into(),
+        },
+    );
+    let phenix_sdk::ContextResponse::Registered { resource } = registered else {
+        panic!("expected registered skill");
+    };
+    let _: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Load {
+            execution_id: "root".into(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: phenix_sdk::ContextInjectionRequester::ContextPolicy,
+            lifetime: phenix_sdk::ContextInjectionLifetime::Execution,
+            reason: "auto-load mandatory skill".into(),
+        },
+    );
+
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        default_invocation_service(),
+        &DefaultInvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "root".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"work on prs".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.contains("mandatory baseline skill"));
+    assert!(text.contains(RECOVERED_MARKER));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn context_policy_project_instruction_does_not_suppress_memory_recovery() {
+    let path = temp_db();
+    let mut kernel = kernel(&path);
+    setup(&mut kernel);
+
+    let resource_id = phenix_core::ContextResourceId::parse("project:agents").unwrap();
+    let registered: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: phenix_sdk::ContextResourceKind::ProjectInstruction,
+            source: "AGENTS.md".into(),
+            scope: phenix_sdk::ContextScope::Workspace,
+            content: b"automatic project instruction".to_vec().into(),
+        },
+    );
+    let phenix_sdk::ContextResponse::Registered { resource } = registered else {
+        panic!("expected registered project instruction");
+    };
+    let _: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Load {
+            execution_id: "root".into(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: phenix_sdk::ContextInjectionRequester::ContextPolicy,
+            lifetime: phenix_sdk::ContextInjectionLifetime::Execution,
+            reason: "auto-load workspace project instruction".into(),
+        },
+    );
+
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        default_invocation_service(),
+        &DefaultInvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "root".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"work on prs".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.contains("automatic project instruction"));
+    assert!(text.contains(RECOVERED_MARKER));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn durable_session_history_suppresses_fallback_memory_recovery() {
+    let path = temp_db();
+    let mut kernel = kernel(&path);
+    setup(&mut kernel);
+
+    let session_id = phenix_core::SessionId::parse("resumed-session").unwrap();
+    let _: SessionResponse = invoke(
+        &mut kernel,
+        session_service(),
+        &SessionCommand::Create {
+            session: SessionRecord::new(session_id.clone()),
+        },
+    );
+    let _: SessionResponse = invoke(
+        &mut kernel,
+        session_service(),
+        &SessionCommand::AppendHistory {
+            id: session_id.clone(),
+            entry: SessionHistoryDraft {
+                role: SessionHistoryRole::Assistant,
+                content: vec![SessionHistoryContentPart::Text {
+                    text: "prior durable turn".into(),
+                }],
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                finish_reason: Some(SessionHistoryFinishReason::Complete),
+                usage: None,
+                context_revision: "context-1".into(),
+                instruction_revision: "instructions-1".into(),
+            },
+        },
+    );
+
+    let resource_id = phenix_core::ContextResourceId::parse("skill:write").unwrap();
+    let registered: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Register {
+            resource_id: resource_id.clone(),
+            kind: phenix_sdk::ContextResourceKind::Skill,
+            source: "packaged/write/SKILL.md".into(),
+            scope: phenix_sdk::ContextScope::Workspace,
+            content: b"mandatory baseline skill".to_vec().into(),
+        },
+    );
+    let phenix_sdk::ContextResponse::Registered { resource } = registered else {
+        panic!("expected registered skill");
+    };
+    let _: phenix_sdk::ContextResponse = invoke(
+        &mut kernel,
+        phenix_sdk::context_service(),
+        &phenix_sdk::ContextCommand::Load {
+            execution_id: "root".into(),
+            resource_id,
+            revision: resource.descriptor.revision,
+            requester: phenix_sdk::ContextInjectionRequester::ContextPolicy,
+            lifetime: phenix_sdk::ContextInjectionLifetime::Execution,
+            reason: "auto-load mandatory skill".into(),
+        },
+    );
+
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        default_invocation_service(),
+        &DefaultInvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "root".into(),
+                session_id: Some(session_id),
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"work on prs".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.contains("mandatory baseline skill"));
+    assert!(text.contains("work on prs"));
+    assert!(!text.contains(RECOVERED_MARKER));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn user_explicit_resource_suppresses_recovery_with_automatic_baseline_context() {
+    let path = temp_db();
+    let mut kernel = kernel(&path);
+    setup(&mut kernel);
+
+    for (id, requester, content) in [
+        (
+            "skill:write",
+            phenix_sdk::ContextInjectionRequester::ContextPolicy,
+            "mandatory baseline skill",
+        ),
+        (
+            "resource:user-note",
+            phenix_sdk::ContextInjectionRequester::User,
+            "explicit user context",
+        ),
+    ] {
+        let resource_id = phenix_core::ContextResourceId::parse(id).unwrap();
+        let registered: phenix_sdk::ContextResponse = invoke(
+            &mut kernel,
+            phenix_sdk::context_service(),
+            &phenix_sdk::ContextCommand::Register {
+                resource_id: resource_id.clone(),
+                kind: phenix_sdk::ContextResourceKind::External,
+                source: id.into(),
+                scope: phenix_sdk::ContextScope::Workspace,
+                content: content.as_bytes().to_vec().into(),
+            },
+        );
+        let phenix_sdk::ContextResponse::Registered { resource } = registered else {
+            panic!("expected registered resource");
+        };
+        let _: phenix_sdk::ContextResponse = invoke(
+            &mut kernel,
+            phenix_sdk::context_service(),
+            &phenix_sdk::ContextCommand::Load {
+                execution_id: "root".into(),
+                resource_id,
+                revision: resource.descriptor.revision,
+                requester,
+                lifetime: phenix_sdk::ContextInjectionLifetime::Execution,
+                reason: "recovery gate fixture".into(),
+            },
+        );
+    }
+
+    let response: StepRunnerResponse = invoke(
+        &mut kernel,
+        default_invocation_service(),
+        &DefaultInvocationCommand::Invoke {
+            request: InvocationRequest {
+                execution_id: "root".into(),
+                session_id: None,
+                parent_attempt_id: None,
+                callable_id: None,
+                input: b"work on prs".to_vec().into(),
+                tools: Vec::new(),
+                continuation: Vec::new(),
+            },
+        },
+    );
+    let StepRunnerResponse::Completed { output, .. } = response;
+    let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
+    assert!(text.contains("mandatory baseline skill"));
+    assert!(text.contains("explicit user context"));
+    assert!(!text.contains(RECOVERED_MARKER));
 
     let _ = fs::remove_file(path);
 }
