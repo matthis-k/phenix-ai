@@ -539,15 +539,9 @@ fn model_tool_input_for_call(
     tools: &[ModelToolDescriptor],
     call: &ModelToolCall,
 ) -> Result<Value, ProviderError> {
-    let tool = tools
-        .iter()
-        .find(|tool| tool.id == call.callable_id)
-        .ok_or_else(|| ProviderError::InvalidRequest {
-            message: format!(
-                "model tool continuation references unavailable callable {}",
-                call.callable_id
-            ),
-        })?;
+    let Some(tool) = tools.iter().find(|tool| tool.id == call.callable_id) else {
+        return phenix_json(&call.input);
+    };
     model_tool_input_json(&tool.input_schema, &call.input)
 }
 
@@ -1340,16 +1334,13 @@ fn normalize_model_tool_calls(
     provider: &str,
 ) -> Result<(), ProviderError> {
     for call in &mut response.tool_calls {
-        let tool = request
+        let Some(tool) = request
             .tools
             .iter()
             .find(|tool| tool.id == call.callable_id)
-            .ok_or_else(|| ProviderError::Protocol {
-                message: format!(
-                    "{provider} returned undeclared tool call {}",
-                    call.callable_id
-                ),
-            })?;
+        else {
+            continue;
+        };
         let input = std::mem::replace(&mut call.input, PhenixValue::Unit);
         call.input = project_model_tool_input(&tool.input_schema, input, provider)?;
     }
@@ -2459,6 +2450,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(decoded.tool_calls[0].input, PhenixValue::U64(7));
+    }
+
+    #[test]
+    fn undeclared_tool_calls_stay_round_trippable_for_agent_error_handling() {
+        let request = request_with_tool();
+        let decoded = Protocol::OpenAiResponses
+            .decode_for_request(
+                &request,
+                &response(
+                    200,
+                    &[],
+                    serde_json::json!({
+                        "output":[{
+                            "type":"function_call",
+                            "call_id":"call-missing",
+                            "name":"phx1_fixture_dmissing",
+                            "arguments":"{}"
+                        }]
+                    }),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(decoded.tool_calls.len(), 1);
+        let call = &decoded.tool_calls[0];
+        assert_eq!(call.callable_id.as_str(), "fixture.missing");
+        assert_eq!(call.input, PhenixValue::Map(BTreeMap::new()));
+        assert_eq!(tool_arguments(&request.tools, call).unwrap(), "{}");
     }
 
     #[test]
