@@ -131,7 +131,8 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
             .to_string());
         }
     };
-    let arguments = match schema_adapter::model_tool_arguments(&descriptor.input_schema, arguments) {
+    let arguments = match schema_adapter::model_tool_arguments(&descriptor.input_schema, arguments)
+    {
         Ok(arguments) => arguments,
         Err(error) => {
             return Ok(json!({
@@ -140,10 +141,9 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
             .to_string());
         }
     };
-    let arguments_json = serde_json::to_string(&arguments)
-        .map_err(|error| ModelAdapterError::Protocol(format!(
-            "cannot encode projected tool arguments: {error}"
-        )))?;
+    let arguments_json = serde_json::to_string(&arguments).map_err(|error| {
+        ModelAdapterError::Protocol(format!("cannot encode projected tool arguments: {error}"))
+    })?;
     match host.invoke_tool(ToolInvocation {
         callable: descriptor.id.clone(),
         arguments_json,
