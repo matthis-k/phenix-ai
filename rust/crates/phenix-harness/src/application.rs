@@ -701,7 +701,7 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
         application_agent_tool_trigger(
             ApplicationMemoryQueryToolInterface::interface_id(),
             "memory.query",
-            "Query canonical durable memory by exact structured selectors. This path does not use semantic relevance. Omit time for current state, or use max_age, as_of, created_from, and created_until with human-readable durations or UTC dates.",
+            "Query canonical durable memory without semantic relevance. Use this for recent or oldest entries, exact ids, source references, kinds, and time windows. Omit time for current state, or use max_age, as_of, created_from, and created_until with human-readable durations or UTC dates.",
             application_memory_authority(),
         ),
         application_agent_tool_trigger(
