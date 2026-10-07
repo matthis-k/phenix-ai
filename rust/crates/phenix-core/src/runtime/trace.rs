@@ -46,6 +46,14 @@ pub enum RuntimeTraceEvent {
         outcome: String,
         error: Option<String>,
     },
+    ExecutionStage {
+        execution_id: String,
+        session_id: Option<String>,
+        source: String,
+        stage: String,
+        outcome: String,
+        reason: Option<String>,
+    },
     Orchestration {
         controller_session: String,
         controller_execution: String,
@@ -58,6 +66,27 @@ pub enum RuntimeTraceEvent {
         success: bool,
         error: Option<String>,
     },
+}
+
+impl RuntimeTraceEvent {
+    #[must_use]
+    pub fn is_associated_with_execution(&self, execution_id: &str) -> bool {
+        match self {
+            Self::ExecutionStage {
+                execution_id: observed,
+                ..
+            } => observed == execution_id,
+            Self::Orchestration {
+                controller_execution,
+                child_execution,
+                ..
+            } => {
+                controller_execution == execution_id
+                    || child_execution.as_deref() == Some(execution_id)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Infallible destination for kernel runtime diagnostics.
@@ -231,6 +260,35 @@ mod tests {
 
         let events = buffer.snapshot();
         assert_eq!(events, vec![policy_trace("two"), policy_trace("three")]);
+    }
+
+    #[test]
+    fn execution_correlation_is_typed() {
+        let event = RuntimeTraceEvent::ExecutionStage {
+            execution_id: "execution-2".into(),
+            session_id: Some("session-1".into()),
+            source: "phenix.context".into(),
+            stage: "invocation_preparation".into(),
+            outcome: "completed".into(),
+            reason: None,
+        };
+        assert!(event.is_associated_with_execution("execution-2"));
+        assert!(!event.is_associated_with_execution("execution-1"));
+
+        let orchestration = RuntimeTraceEvent::Orchestration {
+            controller_session: "session-1".into(),
+            controller_execution: "execution-1".into(),
+            kind: "session".into(),
+            operation: "prompt".into(),
+            target_session: Some("session-2".into()),
+            child_execution: Some("execution-2".into()),
+            selected_generation: "g1".into(),
+            target_generation: None,
+            success: true,
+            error: None,
+        };
+        assert!(orchestration.is_associated_with_execution("execution-1"));
+        assert!(orchestration.is_associated_with_execution("execution-2"));
     }
 
     #[test]
