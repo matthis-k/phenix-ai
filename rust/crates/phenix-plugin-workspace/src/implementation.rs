@@ -1331,10 +1331,20 @@ mod tests {
                         pty: false,
                     },
                 },
+                EnvironmentCommand::Stat { path } if path.ends_with(".git") => {
+                    return Err("fixture marker stat denied".into());
+                }
+                EnvironmentCommand::Stat { path } => EnvironmentResponse::Metadata {
+                    kind: path.ends_with("AGENTS.md").then_some(EnvironmentFileKind::File),
+                },
                 EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
-                    content: path
-                        .ends_with("input.txt")
-                        .then(|| b"virtual-content".to_vec()),
+                    content: if path.ends_with("input.txt") {
+                        Some(b"virtual-content".to_vec())
+                    } else if path.ends_with("AGENTS.md") {
+                        Some(b"fixture project rules".to_vec())
+                    } else {
+                        None
+                    },
                 },
                 EnvironmentCommand::WriteFile { .. } => EnvironmentResponse::Written,
                 EnvironmentCommand::ReadContentReference { reference } => {
@@ -1496,6 +1506,70 @@ mod tests {
                 serde_json::from_slice(&output).map_err(|error| error.to_string())?;
             WorkspaceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
         }
+    }
+
+    #[test]
+    fn project_file_discovery_ignores_failed_root_marker_probes() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedGeneration::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_generation(&resolved).unwrap();
+
+        let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
+        let workspace_root = virtual_root.clone();
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(workspace_root.clone())
+            })
+            .unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(FixtureEnvironment {
+                    commands: Arc::clone(&recorded),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: virtual_root.to_string_lossy().into_owned(),
+                root_markers: vec![".git".into()],
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: virtual_root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "fixture project rules".into(),
+                }],
+            }
+        );
+        assert!(commands.lock().unwrap().iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Stat { path } if path.ends_with(".git")
+        )));
     }
 
     #[test]
