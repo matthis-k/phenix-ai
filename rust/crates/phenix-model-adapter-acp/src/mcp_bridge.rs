@@ -671,6 +671,43 @@ mod tests {
     }
 
     #[test]
+    fn unit_tool_call_projects_empty_object_back_to_canonical_unit_json() {
+        let bridge = ToolBridge::default();
+        let surface = surface_with_schema(PhenixSchema::Unit);
+        let (worker, receiver) = mpsc::channel();
+        bridge.bind_execution(&surface, worker).unwrap();
+
+        let worker = std::thread::spawn(move || {
+            let WorkerMessage::ToolCall(request) = receiver.recv().unwrap() else {
+                panic!("expected ACP tool call");
+            };
+            assert_eq!(request.invocation.callable.as_str(), "phenix.echo");
+            assert_eq!(
+                request.invocation.arguments_json,
+                "null",
+                "unit input must reach the runtime as canonical JSON null"
+            );
+            request
+                .response
+                .send(Ok(ToolResult {
+                    output: "ok".to_owned(),
+                    success: true,
+                }))
+                .unwrap();
+        });
+
+        let params = json!({
+            "name": "phenix.echo",
+            "arguments": {}
+        });
+        let params = params.as_object().unwrap();
+        bridge
+            .call_tool(Some(params), &ProtocolVersion::V_2026_07_28)
+            .unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn legacy_tool_list_keeps_legacy_wire_shape() {
         let bridge = ToolBridge::default();
         bridge.provision(&surface()).unwrap();
