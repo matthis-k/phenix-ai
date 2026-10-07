@@ -11304,6 +11304,17 @@ mod tests {
                     reason: None,
                 },
             );
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::ExecutionStage {
+                    execution_id: "execution-child".into(),
+                    session_id: Some(session_id.to_string()),
+                    source: "fixture".into(),
+                    stage: "model_dispatch".into(),
+                    outcome: "completed".into(),
+                    reason: None,
+                },
+            );
         }
 
         let inspect_queries = [
