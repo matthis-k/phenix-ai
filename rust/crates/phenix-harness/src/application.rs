@@ -493,10 +493,7 @@ fn parse_application_memory_datetime(value: &str) -> Result<u64, String> {
         .ok_or_else(|| "memory date must use YYYY-MM-DD".to_owned())?
         .parse::<u64>()
         .map_err(|_| "memory date must use YYYY-MM-DD".to_owned())?;
-    if date_parts.next().is_some()
-        || !(1970..=9999).contains(&year)
-        || !(1..=12).contains(&month)
-    {
+    if date_parts.next().is_some() || !(1970..=9999).contains(&year) || !(1..=12).contains(&month) {
         return Err(
             "memory date must be a valid UTC date from 1970-01-01 through 9999-12-31".into(),
         );
