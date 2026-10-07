@@ -112,7 +112,7 @@ This is observation only. Reading topology grants no service, capability, filesy
 
 Structured logs remain append-only diagnostics.
 
-The bounded in-memory runtime trace retains execution-stage and orchestration events ahead of generic service and policy diagnostics. Once the buffer contains only execution-correlated events, normal oldest-first eviction resumes.
+The bounded in-memory runtime trace retains execution-stage and orchestration events ahead of generic service and policy diagnostics. When full, a new generic diagnostic replaces an older generic diagnostic when one exists; otherwise the new generic diagnostic is dropped. A new execution-correlated event replaces the oldest retained event only when every retained event is already execution-correlated.
 
 Runtime events should carry stable identifiers where available. Execution-scoped runtime stages carry an explicit `execution_id`; model dispatch and other execution work no longer depend on parsing generic policy text.
 
