@@ -11271,7 +11271,7 @@ mod tests {
                     kind: "fixture".into(),
                     operation: "matching".into(),
                     target_session: None,
-                    child_execution: None,
+                    child_execution: Some("execution-child".into()),
                     selected_generation: selected_generation.clone(),
                     target_generation: None,
                     success: true,
@@ -11428,7 +11428,15 @@ mod tests {
                     )));
                 }
                 (query, PhenixValue::List(events)) if query.starts_with("trace-chain ") => {
-                    assert_eq!(events.len(), 2);
+                    assert_eq!(events.len(), 3);
+                    assert!(events.iter().any(|event| matches!(
+                        event,
+                        PhenixValue::Map(fields)
+                            if fields.get("event")
+                                == Some(&PhenixValue::String("execution_stage".into()))
+                                && fields.get("execution_id")
+                                    == Some(&PhenixValue::String("execution-child".into()))
+                    )));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
