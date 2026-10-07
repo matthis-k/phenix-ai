@@ -10855,7 +10855,7 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 11);
         assert_eq!(
             tools
                 .iter()
@@ -10864,6 +10864,7 @@ mod tests {
             vec![
                 "bash",
                 "code.query",
+                "memory.associate",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
@@ -10892,7 +10893,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 10);
+        assert_eq!(report.tools.len(), 11);
         assert_eq!(
             report
                 .tools
@@ -10902,6 +10903,7 @@ mod tests {
             vec![
                 "bash",
                 "code.query",
+                "memory.associate",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
