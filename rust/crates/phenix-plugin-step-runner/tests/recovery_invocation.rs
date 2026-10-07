@@ -3,7 +3,7 @@ use phenix_core::{
     KernelConfig, LocalPersistence, ModelFeatureGenerationId, ModelId, ModelInferenceRequest,
     ModelInferenceResponse, PhenixValue, PluginContext, PluginExecution, PluginHost, PluginId,
     PluginInstance, PluginManifest, Project, ResolvedGeneration, ResolvedGenerationActivation,
-    ServiceContribution, ServiceId, ServiceRole, ValueError,
+    RuntimeTraceBuffer, RuntimeTraceEvent, ServiceContribution, ServiceId, ServiceRole, ValueError,
 };
 use phenix_plugin_context::{context_component_manifest, context_factory, context_manifest};
 use phenix_plugin_execution::{
@@ -39,6 +39,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::PathBuf,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -515,6 +516,8 @@ fn setup(kernel: &mut Kernel) {
 fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
     let path = temp_db();
     let mut kernel = kernel(&path);
+    let traces = Arc::new(RuntimeTraceBuffer::default());
+    kernel.set_runtime_trace_sink(traces.clone());
     setup(&mut kernel);
 
     let response: StepRunnerResponse = invoke(
@@ -536,6 +539,19 @@ fn default_invocation_recovers_memory_then_materializes_the_same_invocation() {
     let text = String::from_utf8(output.as_ref().to_vec()).unwrap();
     assert!(text.contains(RECOVERED_MARKER));
     assert!(text.contains("work on prs"));
+    assert!(traces.snapshot().iter().any(|event| matches!(
+        event,
+        RuntimeTraceEvent::ExecutionStage {
+            execution_id,
+            source,
+            stage,
+            outcome,
+            ..
+        } if execution_id == "root"
+            && source == "phenix.step-runner"
+            && stage == "model_dispatch"
+            && outcome == "completed"
+    )));
 
     let _ = fs::remove_file(path);
 }

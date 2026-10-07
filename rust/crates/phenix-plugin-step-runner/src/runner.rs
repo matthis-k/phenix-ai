@@ -154,6 +154,26 @@ fn trace_policy_stage(
         });
 }
 
+fn trace_execution_stage(
+    context: &StepRunnerContext<'_, '_>,
+    execution_id: &str,
+    session_id: Option<String>,
+    stage: &str,
+    outcome: &str,
+    reason: Option<String>,
+) {
+    context
+        .kernel
+        .record_runtime_trace(RuntimeTraceEvent::ExecutionStage {
+            execution_id: execution_id.to_owned(),
+            session_id,
+            source: "phenix.step-runner".into(),
+            stage: stage.into(),
+            outcome: outcome.into(),
+            reason,
+        });
+}
+
 fn context<'host, 'runtime>(
     host: &'host PluginHost<'runtime>,
 ) -> StepRunnerContext<'host, 'runtime> {
@@ -1560,6 +1580,16 @@ fn run_attempt_with_retry_route(
             )
         };
 
+    let trace_session_id = session_id.as_ref().map(ToString::to_string);
+    trace_execution_stage(
+        context,
+        &attribution.execution_id,
+        trace_session_id.clone(),
+        "model_preflight",
+        "started",
+        None,
+    );
+
     let prepared: ModelDispatchResponse =
         match context
             .sdk
@@ -1601,6 +1631,14 @@ fn run_attempt_with_retry_route(
                     Some(&plan.policy_revision),
                     Some(reason.clone()),
                 );
+                trace_execution_stage(
+                    context,
+                    &attribution.execution_id,
+                    trace_session_id.clone(),
+                    "model_preflight",
+                    "failed",
+                    Some(reason.clone()),
+                );
                 return fail_before_dispatch(
                     context,
                     &attribution.root_execution_id,
@@ -1634,6 +1672,14 @@ fn run_attempt_with_retry_route(
         Some(&plan.policy_revision),
         None,
     );
+    trace_execution_stage(
+        context,
+        &attribution.execution_id,
+        trace_session_id.clone(),
+        "model_preflight",
+        "completed",
+        None,
+    );
     if prepared.decision() != &decision {
         return fail_before_dispatch(
             context,
@@ -1661,6 +1707,15 @@ fn run_attempt_with_retry_route(
         );
     }
 
+    trace_execution_stage(
+        context,
+        &attribution.execution_id,
+        trace_session_id.clone(),
+        "model_dispatch",
+        "started",
+        None,
+    );
+
     let dispatched: ModelDispatchResponse = match context
         .sdk
         .dispatch
@@ -1672,6 +1727,14 @@ fn run_attempt_with_retry_route(
     {
         Ok(response) => response,
         Err(CallError::Domain(failure)) => {
+            trace_execution_stage(
+                context,
+                &attribution.execution_id,
+                trace_session_id.clone(),
+                "model_dispatch",
+                "failed",
+                Some(failure.failure.message().to_owned()),
+            );
             record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
@@ -1752,6 +1815,14 @@ fn run_attempt_with_retry_route(
             ));
         }
         Err(CallError::Runtime(error)) => {
+            trace_execution_stage(
+                context,
+                &attribution.execution_id,
+                trace_session_id.clone(),
+                "model_dispatch",
+                "failed",
+                Some(error.to_string()),
+            );
             record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
@@ -1764,6 +1835,14 @@ fn run_attempt_with_retry_route(
             return Err(format!("prepared model dispatch runtime failure: {error}"));
         }
         Err(CallError::Conversion(error)) => {
+            trace_execution_stage(
+                context,
+                &attribution.execution_id,
+                trace_session_id.clone(),
+                "model_dispatch",
+                "failed",
+                Some(error.to_string()),
+            );
             record_routing_evidence(context, &decision, false, None);
             settle_after_dispatch(
                 context,
@@ -1777,6 +1856,14 @@ fn run_attempt_with_retry_route(
         }
     };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        trace_execution_stage(
+            context,
+            &attribution.execution_id,
+            trace_session_id.clone(),
+            "model_dispatch",
+            "failed",
+            Some("model dispatch returned readiness after invoke".into()),
+        );
         record_routing_evidence(context, &decision, false, None);
         settle_after_dispatch(
             context,
@@ -1788,6 +1875,14 @@ fn run_attempt_with_retry_route(
         )?;
         return Err("model dispatch returned preflight readiness after dispatch".into());
     };
+    trace_execution_stage(
+        context,
+        &attribution.execution_id,
+        trace_session_id,
+        "model_dispatch",
+        "completed",
+        None,
+    );
 
     record_routing_evidence(context, &decision, true, Some(&response.usage));
     let (settled, settlement_basis) = successful_actual(&plan, &response.usage);

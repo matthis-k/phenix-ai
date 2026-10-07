@@ -6553,6 +6553,7 @@ fn inspect_runtime(
                 "dag <execution-id>",
                 "trace",
                 "trace <execution-id>",
+                "trace-chain <execution-id>",
                 "values",
                 "value <value-id>",
             ]
@@ -6587,6 +6588,15 @@ fn inspect_runtime(
                 }
                 require_runtime_inspection_read(context.call.authority)?;
                 return inspect_runtime_trace_execution(context, execution_id);
+            }
+            if let Some(execution_id) = query.strip_prefix("trace-chain ").map(str::trim) {
+                if execution_id.is_empty() {
+                    return Err(ApplicationError::InvalidInput {
+                        message: "trace-chain query requires an execution id".to_owned(),
+                    });
+                }
+                require_runtime_inspection_read(context.call.authority)?;
+                return inspect_runtime_trace_chain(context, execution_id);
             }
             if let Some(id) = query.strip_prefix("value ").map(str::trim) {
                 if id.is_empty() {
@@ -6626,22 +6636,57 @@ fn inspect_runtime_trace_execution(
         .kernel
         .runtime_trace()
         .into_iter()
-        .filter(|event| {
-            matches!(
-                event,
-                phenix_core::RuntimeTraceEvent::Orchestration {
-                    controller_execution,
-                    child_execution,
-                    ..
-                } if controller_execution == execution_id
-                    || child_execution.as_deref() == Some(execution_id)
-            )
-        })
+        .filter(|event| event.is_associated_with_execution(execution_id))
         .collect::<Vec<_>>();
     serde_json::to_value(events)
         .map(PhenixValue::from)
         .map_err(|error| ApplicationError::Failed {
             message: format!("failed to encode execution runtime trace: {error}"),
+        })
+}
+
+fn inspect_runtime_trace_chain(
+    context: &ApplicationAgentToolContext<'_, '_>,
+    execution_id: &str,
+) -> Result<PhenixValue, ApplicationError> {
+    let trace = context.kernel.runtime_trace();
+    let mut executions = BTreeSet::from([execution_id.to_owned()]);
+    loop {
+        let before = executions.len();
+        for event in &trace {
+            if let phenix_core::RuntimeTraceEvent::Orchestration {
+                controller_execution,
+                child_execution,
+                ..
+            } = event
+            {
+                let child_included = child_execution
+                    .as_ref()
+                    .is_some_and(|child| executions.contains(child));
+                if executions.contains(controller_execution) || child_included {
+                    executions.insert(controller_execution.clone());
+                    if let Some(child) = child_execution {
+                        executions.insert(child.clone());
+                    }
+                }
+            }
+        }
+        if executions.len() == before {
+            break;
+        }
+    }
+    let events = trace
+        .into_iter()
+        .filter(|event| {
+            executions
+                .iter()
+                .any(|execution| event.is_associated_with_execution(execution))
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_value(events)
+        .map(PhenixValue::from)
+        .map_err(|error| ApplicationError::Failed {
+            message: format!("failed to encode runtime trace chain: {error}"),
         })
 }
 
@@ -11226,7 +11271,7 @@ mod tests {
                     kind: "fixture".into(),
                     operation: "matching".into(),
                     target_session: None,
-                    child_execution: None,
+                    child_execution: Some("execution-child".into()),
                     selected_generation: selected_generation.clone(),
                     target_generation: None,
                     success: true,
@@ -11248,6 +11293,28 @@ mod tests {
                     error: None,
                 },
             );
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::ExecutionStage {
+                    execution_id: execution_id.clone(),
+                    session_id: Some(session_id.to_string()),
+                    source: "fixture".into(),
+                    stage: "model_dispatch".into(),
+                    outcome: "completed".into(),
+                    reason: None,
+                },
+            );
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::ExecutionStage {
+                    execution_id: "execution-child".into(),
+                    session_id: Some(session_id.to_string()),
+                    source: "fixture".into(),
+                    stage: "model_dispatch".into(),
+                    outcome: "completed".into(),
+                    reason: None,
+                },
+            );
         }
 
         let inspect_queries = [
@@ -11263,6 +11330,7 @@ mod tests {
             ("inspect-dag-explicit", format!("dag {execution_id}")),
             ("inspect-trace", "trace".to_owned()),
             ("inspect-trace-execution", format!("trace {execution_id}")),
+            ("inspect-trace-chain", format!("trace-chain {execution_id}")),
             ("inspect-values", "values".to_owned()),
             ("inspect-value", format!("value {SESSION_PROJECTION_VALUE}")),
         ];
@@ -11315,6 +11383,9 @@ mod tests {
                         queries.contains(&PhenixValue::String("execution <execution-id>".into()))
                     );
                     assert!(queries.contains(&PhenixValue::String("dag <execution-id>".into())));
+                    assert!(
+                        queries.contains(&PhenixValue::String("trace-chain <execution-id>".into()))
+                    );
                 }
                 ("graph", PhenixValue::Map(graph)) => {
                     assert!(matches!(
@@ -11344,17 +11415,36 @@ mod tests {
                     }));
                 }
                 (query, PhenixValue::List(events)) if query.starts_with("trace ") => {
-                    assert_eq!(events.len(), 1);
-                    assert!(matches!(
-                        events.first(),
-                        Some(PhenixValue::Map(fields))
+                    assert_eq!(events.len(), 2);
+                    assert!(events.iter().any(|event| matches!(
+                        event,
+                        PhenixValue::Map(fields)
                             if fields.get("event")
                                 == Some(&PhenixValue::String("orchestration".into()))
                                 && fields.get("controller_execution")
                                     == Some(&PhenixValue::String(execution_id.clone()))
                                 && fields.get("operation")
                                     == Some(&PhenixValue::String("matching".into()))
-                    ));
+                    )));
+                    assert!(events.iter().any(|event| matches!(
+                        event,
+                        PhenixValue::Map(fields)
+                            if fields.get("event")
+                                == Some(&PhenixValue::String("execution_stage".into()))
+                                && fields.get("execution_id")
+                                    == Some(&PhenixValue::String(execution_id.clone()))
+                    )));
+                }
+                (query, PhenixValue::List(events)) if query.starts_with("trace-chain ") => {
+                    assert_eq!(events.len(), 3);
+                    assert!(events.iter().any(|event| matches!(
+                        event,
+                        PhenixValue::Map(fields)
+                            if fields.get("event")
+                                == Some(&PhenixValue::String("execution_stage".into()))
+                                && fields.get("execution_id")
+                                    == Some(&PhenixValue::String("execution-child".into()))
+                    )));
                 }
                 ("values", PhenixValue::List(values)) => {
                     assert!(values.iter().any(|value| {
