@@ -1494,6 +1494,45 @@ mod tests {
     }
 
     #[test]
+    fn codex_unit_tools_keep_object_wire_shape_and_restore_unit_input() {
+        let mut request = model_request();
+        request.tools.push(phenix_core::ModelToolDescriptor {
+            id: phenix_core::CallableId::parse("fixture.unit").unwrap(),
+            description: "No-argument tool".to_owned(),
+            input_schema: phenix_core::PhenixSchema::Unit,
+            output_schema: phenix_core::PhenixSchema::Unit,
+        });
+
+        let endpoint = Endpoint::parse(RESPONSES_ENDPOINT).unwrap();
+        let encoded = codex_request(&endpoint, &request).unwrap();
+        let body: Value = serde_json::from_slice(&encoded.body).unwrap();
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert_eq!(body["tools"][0]["parameters"]["properties"], serde_json::json!({}));
+        assert_eq!(body["tools"][0]["parameters"]["required"], serde_json::json!([]));
+
+        let response = ProviderResponse {
+            status: 200,
+            headers: BTreeMap::from([(
+                "content-type".to_owned(),
+                "text/event-stream".to_owned(),
+            )]),
+            body: concat!(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"item-1\",\"type\":\"function_call\",\"call_id\":\"call-unit\",\"name\":\"phx1_fixture_dunit\",\"arguments\":\"{}\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-1\",\"usage\":{}}}\n\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        };
+
+        let decoded =
+            decode_codex_response_for_request(Protocol::OpenAiResponses, &request, &response)
+                .unwrap();
+        assert_eq!(decoded.tool_calls.len(), 1);
+        assert_eq!(decoded.tool_calls[0].callable_id.as_str(), "fixture.unit");
+        assert_eq!(decoded.tool_calls[0].input, PhenixValue::Unit);
+    }
+
+    #[test]
     fn codex_provider_owns_its_declared_model_catalog() {
         let manifest = openai_codex_manifest();
         assert!(
