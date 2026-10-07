@@ -476,6 +476,14 @@ mod recovery_projection_tests {
     }
 
     #[test]
+    fn workspace_context_identity_is_stable() {
+        assert_eq!(
+            workspace_context_id("/workspace"),
+            "workspace-c52ddf65534b7b4603508435"
+        );
+    }
+
+    #[test]
     fn recovery_explicit_resource_ignores_context_policy_baseline() {
         let projection = ExecutionContextProjection {
             execution_id: "execution-1".into(),
