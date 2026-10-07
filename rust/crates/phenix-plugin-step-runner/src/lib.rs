@@ -534,6 +534,7 @@ fn recover_invocation_context(
         return Ok(preparation);
     };
 
+    let memory_now_s = now_ms / 1_000;
     let recall: MemoryContextResponse =
         match context
             .sdk
@@ -545,7 +546,7 @@ fn recover_invocation_context(
                     prompt,
                     known: anchors,
                     needs: needs.clone(),
-                    at: now_ms,
+                    at: memory_now_s,
                     limit: 8,
                 },
             }) {
