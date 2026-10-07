@@ -317,15 +317,12 @@ impl ToolBridge {
                 agent_client_protocol::Error::internal_error()
                     .data("ACP tool call arrived outside an active execution")
             })?;
-            (
-                callable.id.clone(),
-                callable.input_schema.clone(),
-                worker,
-            )
+            (callable.id.clone(), callable.input_schema.clone(), worker)
         };
-        let arguments = model_tool_arguments(&input_schema, Value::Object(arguments)).map_err(
-            |error| agent_client_protocol::Error::invalid_params().data(error.to_string()),
-        )?;
+        let arguments =
+            model_tool_arguments(&input_schema, Value::Object(arguments)).map_err(|error| {
+                agent_client_protocol::Error::invalid_params().data(error.to_string())
+            })?;
 
         let (response_tx, response_rx) = mpsc::sync_channel(1);
         worker
@@ -684,8 +681,7 @@ mod tests {
             };
             assert_eq!(request.invocation.callable.as_str(), "phenix.echo");
             assert_eq!(
-                request.invocation.arguments_json,
-                "null",
+                request.invocation.arguments_json, "null",
                 "unit input must reach the runtime as canonical JSON null"
             );
             request
