@@ -12,10 +12,22 @@ pub use phenix_core::{
     ContextDescriptor, ContextResourceKind, ContextResourceRevision, ContextScope,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const CONTEXT_SERVICE: &str = "phenix.context@1";
 pub const CONTEXT_RECOVERY_SERVICE: &str = "phenix.context-recovery@1";
 pub const CONTEXT_IDENTIFY_NEEDS_CALLABLE: &str = "context.identify_needs";
+
+#[must_use]
+pub fn workspace_context_id(working_directory: &str) -> String {
+    let digest = Sha256::digest(working_directory.as_bytes());
+    let suffix = digest
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("workspace-{suffix}")
+}
 
 #[derive(
     Clone,
