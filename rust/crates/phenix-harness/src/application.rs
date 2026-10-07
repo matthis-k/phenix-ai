@@ -74,7 +74,7 @@ use phenix_sdk::{
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
     RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
     WorkspaceInterface, WorkspaceResponse, context_service, execution_resource_service,
-    execution_service, model_routing_service, options_service,
+    execution_service, model_routing_service, options_service, workspace_context_id,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -3086,17 +3086,6 @@ fn discover_workspaces(
         complete: reason.is_none(),
         reason,
     })
-}
-
-// Keep repository context identity stable across sessions that use the same workspace.
-fn workspace_context_id(working_directory: &str) -> String {
-    let digest = Sha256::digest(working_directory.as_bytes());
-    let suffix = digest
-        .iter()
-        .take(12)
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("workspace-{suffix}")
 }
 
 fn application_session_info(session: &SessionRecord) -> Result<SessionInfo, ApplicationError> {
