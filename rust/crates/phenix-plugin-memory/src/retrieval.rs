@@ -57,7 +57,11 @@ pub(crate) fn query(
                 &superseded,
             ) && within_created_bounds(record, &query.time)
                 && (query.ids.is_empty() || query.ids.contains(&record.id))
-                && matches_source(record, query.source_service.as_ref(), query.source_resource.as_deref())
+                && matches_source(
+                    record,
+                    query.source_service.as_ref(),
+                    query.source_resource.as_deref(),
+                )
         })
         .collect::<Vec<_>>();
 
@@ -225,9 +229,7 @@ fn lexical_score(content: &str, query: &str, terms: &[&str]) -> Option<u32> {
 mod tests {
     use super::*;
     use phenix_core::{ServiceId, SessionId};
-    use phenix_sdk::{
-        MemoryKind, MemoryScope, MemorySourceReference, MemoryTimeBounds,
-    };
+    use phenix_sdk::{MemoryKind, MemoryScope, MemorySourceReference, MemoryTimeBounds};
 
     fn record(id: &str, content: &str, created_at: u64) -> MemoryRecord {
         MemoryRecord {
