@@ -10291,6 +10291,17 @@ mod tests {
             vec![("AGENTS.md".to_owned(), "cwd rules".to_owned())]
         );
 
+        let disabled = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                vec!["../invalid-fallback".into()],
+                0,
+            )
+            .unwrap();
+        assert!(disabled.is_empty());
+
         let _ = fs::remove_dir_all(root);
     }
 
