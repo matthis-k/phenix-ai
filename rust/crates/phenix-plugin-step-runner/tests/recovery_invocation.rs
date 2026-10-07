@@ -137,7 +137,10 @@ impl PluginInstance for RecoverySupport {
                 .map_err(|error| error.to_string())?;
             let ContextRecoveryCommand::Assess { request } = command;
             assert!(
-                matches!(request.prompt.as_str(), "work on prs" | "recover workspace memory"),
+                matches!(
+                    request.prompt.as_str(),
+                    "work on prs" | "recover workspace memory"
+                ),
                 "unexpected recovery prompt: {}",
                 request.prompt
             );
@@ -168,7 +171,10 @@ impl PluginInstance for RecoverySupport {
             let response = match command {
                 MemoryContextCommand::Recall { request } => {
                     assert!(
-                        matches!(request.prompt.as_str(), "work on prs" | "recover workspace memory"),
+                        matches!(
+                            request.prompt.as_str(),
+                            "work on prs" | "recover workspace memory"
+                        ),
                         "unexpected recall prompt: {}",
                         request.prompt
                     );
@@ -183,9 +189,11 @@ impl PluginInstance for RecoverySupport {
                                 },
                             ]
                         );
-                        assert!(request.known.contains(&ContextAnchor::Workspace {
-                            workspace_id,
-                        }));
+                        assert!(
+                            request
+                                .known
+                                .contains(&ContextAnchor::Workspace { workspace_id })
+                        );
                     }
                     MemoryContextResponse::Recall {
                         candidates: vec![MemoryContextCandidate {
