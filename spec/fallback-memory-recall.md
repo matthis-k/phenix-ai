@@ -466,6 +466,8 @@ known anchors: <= 32
 
 Recall uses existing memory records/freshness first.
 
+For a bound application session, recovery queries `Global` plus the canonical workspace scope derived from the session working directory. Bootstrap recovery without a bound workspace remains global until workspace selection supplies a workspace identity.
+
 Hard filters run before ranking:
 
 1. scope/authority;
