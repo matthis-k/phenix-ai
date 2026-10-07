@@ -122,7 +122,7 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
         })
         .to_string());
     };
-    let arguments_json = match serde_json::to_string(fn_arguments) {
+    let arguments = match serde_json::to_value(fn_arguments) {
         Ok(arguments) => arguments,
         Err(error) => {
             return Ok(json!({
@@ -131,6 +131,19 @@ fn dispatch_tool_call<T: serde::Serialize + ?Sized>(
             .to_string());
         }
     };
+    let arguments = match schema_adapter::model_tool_arguments(&descriptor.input_schema, arguments) {
+        Ok(arguments) => arguments,
+        Err(error) => {
+            return Ok(json!({
+                "error": format!("invalid tool arguments: {error}")
+            })
+            .to_string());
+        }
+    };
+    let arguments_json = serde_json::to_string(&arguments)
+        .map_err(|error| ModelAdapterError::Protocol(format!(
+            "cannot encode projected tool arguments: {error}"
+        )))?;
     match host.invoke_tool(ToolInvocation {
         callable: descriptor.id.clone(),
         arguments_json,
@@ -466,7 +479,7 @@ impl NativeModelSession {
             .callables()
             .iter()
             .map(|descriptor| {
-                let schema = schema_adapter::json_schema(&descriptor.input_schema)?;
+                let schema = schema_adapter::model_tool_json_schema(&descriptor.input_schema)?;
                 Ok(Tool::new(descriptor.id.as_str())
                     .with_description(descriptor.description.clone())
                     .with_schema(schema))
