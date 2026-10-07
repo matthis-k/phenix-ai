@@ -19,8 +19,9 @@ use phenix_sdk::{
     InvocationClockResponse, InvocationCommand, InvocationDefaultsCommand,
     InvocationDefaultsInterface, InvocationDefaultsResponse, InvocationInterface, InvocationParams,
     InvocationRequest, MemoryCommand, MemoryContextCommand, MemoryContextInterface,
-    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryResponse,
-    MemoryScope, PlannedStepRequest, ProjectionRevision, RecallEvidence, RecallResolution,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryQueryOrder,
+    MemoryResponse, MemoryScope, MemoryStructuredQuery, MemoryTimeBounds, PlannedStepRequest,
+    ProjectionRevision, RecallEvidence, RecallResolution,
     SessionCommand, SessionInterface, SessionResponse, SkillCommand, SkillDefinition,
     SkillInterface, SkillResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptResponse,
     StepRunnerCommand, StepRunnerResponse, UsageAttemptKind, context_service,
@@ -542,7 +543,7 @@ fn recover_invocation_context(
             .invoke_projected(&MemoryContextCommand::Recall {
                 request: MemoryContextRecallRequest {
                     request_id: format!("recovery:{}:{now_ms}", request.execution_id),
-                    scopes,
+                    scopes: scopes.clone(),
                     prompt,
                     known: anchors,
                     needs: needs.clone(),
@@ -587,17 +588,34 @@ fn recover_invocation_context(
         return Ok(preparation);
     };
 
-    let memory: MemoryResponse = match context.sdk.memory.invoke_projected(&MemoryCommand::Get {
-        id: winner.candidate.memory_id.clone(),
-    }) {
-        Ok(response) => response,
-        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
-        Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
+    let memory: MemoryResponse =
+        match context
+            .sdk
+            .memory
+            .invoke_projected(&MemoryCommand::Query {
+                query: MemoryStructuredQuery {
+                    scopes,
+                    kinds: Vec::new(),
+                    ids: vec![winner.candidate.memory_id.clone()],
+                    source_service: None,
+                    source_resource: None,
+                    time: MemoryTimeBounds {
+                        as_of: memory_now_s,
+                        created_from: None,
+                        created_until: None,
+                    },
+                    order: MemoryQueryOrder::NewestFirst,
+                    limit: 1,
+                },
+            }) {
+            Ok(response) => response,
+            Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(preparation),
+            Err(error) => return Err(format!("recovered memory lookup failed: {error}")),
+        };
+    let MemoryResponse::Query { mut records } = memory else {
+        return Ok(preparation);
     };
-    let MemoryResponse::Memory {
-        record: Some(record),
-    } = memory
-    else {
+    let Some(record) = records.pop() else {
         return Ok(preparation);
     };
     let source = format!("memory:{}", record.id);
