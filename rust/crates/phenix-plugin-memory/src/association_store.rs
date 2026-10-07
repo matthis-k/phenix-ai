@@ -46,6 +46,7 @@ impl AssociationStore {
                 .cloned()
                 .unwrap_or_else(|| MemoryAssociationState {
                     association: observation.association.clone(),
+                    observation_sources: BTreeSet::new(),
                     observation_count: 0,
                     confirmed_recoveries: 0,
                     last_observed_at: 0,
