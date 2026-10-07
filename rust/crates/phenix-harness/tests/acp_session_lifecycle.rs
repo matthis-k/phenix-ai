@@ -34,24 +34,31 @@ async fn child_session_cleanup_preserves_controller_and_acp_connection() {
             .env("PHENIX_STATE_DB", state.to_string_lossy()),
     );
 
+    let working_directory = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let result = client
-        .connect_with(|connection| async move {
-            let controller = connection
-                .new_session(NewSessionRequest::new("/workspace"))
-                .await?;
+        .connect_with(|connection| {
+            let working_directory = working_directory.clone();
+            async move {
+                let controller = connection
+                    .new_session(NewSessionRequest::new(working_directory))
+                    .await?;
 
-            connection
-                .prompt(prompt(controller.session_id.to_string(), FIRST))
-                .await?;
+                connection
+                    .prompt(prompt(controller.session_id.to_string(), FIRST))
+                    .await?;
 
-            // This is the critical post-condition missing from the older orchestration
-            // tests: after the model created, prompted, and closed an independent child,
-            // the same ACP connection and controller session must accept a fresh turn.
-            connection
-                .prompt(prompt(controller.session_id.to_string(), SECOND))
-                .await?;
+                // This is the critical post-condition missing from the older orchestration
+                // tests: after the model created, prompted, and closed an independent child,
+                // the same ACP connection and controller session must accept a fresh turn.
+                connection
+                    .prompt(prompt(controller.session_id.to_string(), SECOND))
+                    .await?;
 
-            Ok::<_, ClientError>(())
+                Ok::<_, ClientError>(())
+            }
         })
         .await;
 

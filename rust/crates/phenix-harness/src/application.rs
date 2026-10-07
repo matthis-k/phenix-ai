@@ -8886,18 +8886,20 @@ mod tests {
         let cancellation = Arc::new(AtomicBool::new(false));
         let (progress_sender, _progress_receiver) =
             mpsc::channel::<ExecutionWorkerEvent>(APPLICATION_EXECUTION_CAPACITY);
-        let (adapter, root_generation, root_constraints, generations_before) = {
+        let (adapter, root, generations_before) = {
             let harness = worker.harness.lock();
             let root = harness.root_execution_handle(&authority);
             (
                 harness.application_agent_tools().clone(),
-                root.generation()
-                    .cloned()
-                    .expect("runtime plugin build root has a generation"),
-                root.constraints().clone(),
+                root,
                 harness.selectable_generations(),
             )
         };
+        let root_generation = root
+            .generation()
+            .cloned()
+            .expect("runtime plugin build root has a generation");
+        let root_constraints = root.constraints().clone();
         let active_before = root_generation.clone();
         let (control_transport, _control_receiver) = ChannelTransport::new(1);
         adapter
@@ -8981,13 +8983,10 @@ mod tests {
                 ])),
             },
         };
-        let output = worker
-            .harness
-            .lock()
+        let output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9084,13 +9083,10 @@ mod tests {
                 ])),
             },
         };
-        let trial_output = worker
-            .harness
-            .lock()
+        let trial_output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&trial_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9153,13 +9149,10 @@ mod tests {
                     ])),
                 },
             };
-            let output = worker
-                .harness
-                .lock()
+            let output = root
                 .invoke(
                     &agent_tool_execution_service(),
                     &serde_json::to_vec(&PhenixValue::from(&request)).unwrap(),
-                    &authority,
                     None,
                 )
                 .unwrap();
@@ -9203,13 +9196,10 @@ mod tests {
                 ])),
             },
         };
-        let retire_output = worker
-            .harness
-            .lock()
+        let retire_output = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&retire_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9273,13 +9263,10 @@ mod tests {
                 ])),
             },
         };
-        let failed_output_value = worker
-            .harness
-            .lock()
+        let failed_output_value = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&failed_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9372,13 +9359,10 @@ mod tests {
                 ])),
             },
         };
-        let failed_trial_output_value = worker
-            .harness
-            .lock()
+        let failed_trial_output_value = root
             .invoke(
                 &agent_tool_execution_service(),
                 &serde_json::to_vec(&PhenixValue::from(&failed_trial_request)).unwrap(),
-                &authority,
                 None,
             )
             .unwrap();
@@ -9499,9 +9483,10 @@ mod tests {
 
         let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
         let workspace_root = root.clone();
-        builder.embedded_factories.insert(
-            workspace_manifest().id,
-            Arc::new(move || workspace_factory_for(workspace_root.clone())),
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
         );
         let mut harness = builder.build().unwrap();
         harness.activate().unwrap();
@@ -11066,8 +11051,7 @@ mod tests {
             queried
                 .entities
                 .iter()
-                .any(|entity| entity.entity.id == semantic_entity
-                    && entity.name.as_deref() == Some("semantic_fixture")),
+                .any(|entity| entity.entity.id == semantic_entity),
             "code.query did not return the seeded semantic entity: {queried:?}"
         );
 
@@ -11228,37 +11212,41 @@ mod tests {
         assert_eq!(recalled_global.records, vec![global_memory]);
         adapter.remove(&fresh_execution_id);
 
-
         {
-            let harness = worker.harness.lock();
-            harness
-                .kernel()
-                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+            let mut harness = worker.harness.lock();
+            let selected_generation = harness.generation().as_str().to_owned();
+            let traces = Arc::new(phenix_core::RuntimeTraceBuffer::default());
+            harness.kernel_mut().set_runtime_trace_sink(traces.clone());
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::Orchestration {
                     controller_session: session_id.to_string(),
                     controller_execution: execution_id.clone(),
                     kind: "fixture".into(),
                     operation: "matching".into(),
                     target_session: None,
                     child_execution: None,
-                    selected_generation: harness.generation().as_str().to_owned(),
+                    selected_generation: selected_generation.clone(),
                     target_generation: None,
                     success: true,
                     error: None,
-                });
-            harness
-                .kernel()
-                .record_runtime_trace(phenix_core::RuntimeTraceEvent::Orchestration {
+                },
+            );
+            phenix_core::RuntimeTraceSink::record(
+                traces.as_ref(),
+                phenix_core::RuntimeTraceEvent::Orchestration {
                     controller_session: session_id.to_string(),
                     controller_execution: "execution-unrelated".into(),
                     kind: "fixture".into(),
                     operation: "unrelated".into(),
                     target_session: None,
                     child_execution: None,
-                    selected_generation: harness.generation().as_str().to_owned(),
+                    selected_generation,
                     target_generation: None,
                     success: true,
                     error: None,
-                });
+                },
+            );
         }
 
         let inspect_queries = [

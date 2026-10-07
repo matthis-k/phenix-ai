@@ -96,6 +96,12 @@ fn fixture_session_call(
     }
 }
 
+fn fixture_working_directory() -> Result<String, String> {
+    env::current_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("fixture working directory is unavailable: {error}"))
+}
+
 fn fixture_session_orchestration(
     request: &ModelInferenceRequest,
 ) -> Result<Option<ModelInferenceResponse>, String> {
@@ -112,23 +118,26 @@ fn fixture_session_orchestration(
     }
 
     let response = match request.continuation.len() {
-        0 => fixture_response(
-            "create lifecycle child",
-            vec![fixture_session_call(
-                "fixture-create-child",
-                "create",
-                BTreeMap::from([
-                    (
-                        "working_directory".to_owned(),
-                        PhenixValue::String("/workspace".to_owned()),
-                    ),
-                    (
-                        "title".to_owned(),
-                        PhenixValue::String("fixture lifecycle child".to_owned()),
-                    ),
-                ]),
-            )],
-        ),
+        0 => {
+            let working_directory = fixture_working_directory()?;
+            fixture_response(
+                "create lifecycle child",
+                vec![fixture_session_call(
+                    "fixture-create-child",
+                    "create",
+                    BTreeMap::from([
+                        (
+                            "working_directory".to_owned(),
+                            PhenixValue::String(working_directory),
+                        ),
+                        (
+                            "title".to_owned(),
+                            PhenixValue::String("fixture lifecycle child".to_owned()),
+                        ),
+                    ]),
+                )],
+            )
+        }
         1 => {
             let child = SessionInfo::from_value(&fixture_tool_result(request, 0)?.output)
                 .map_err(|error| error.to_string())?;

@@ -906,6 +906,7 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_core::PhenixValue;
 
     #[test]
     fn model_tool_call_ids_must_be_nonempty_and_unique_for_the_execution() {
