@@ -69,8 +69,10 @@ use phenix_sdk::{
     ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
     LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
     MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
-    MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse, ModelCommand, ModelResponse,
-    ModelTarget, OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope,
+    MemoryDependencyRevision, MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecallQuery,
+    MemoryRecord, MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference,
+    MemoryStructuredQuery, MemoryTimeBounds, ModelCommand, ModelResponse, ModelTarget, OptionCommand,
+    OptionContext, OptionKey, OptionResponse, OptionScope,
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
     RootBudgetLimits, RoutingProfile, WorkspaceCommand, WorkspaceEntryKind, WorkspaceFileVersion,
     WorkspaceInterface, WorkspaceResponse, context_service, execution_resource_service,
@@ -114,6 +116,8 @@ const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
 const APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-associate@1";
+const APPLICATION_MEMORY_QUERY_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.memory-query@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-recall@1";
 const RUNTIME_INSPECTION_READ_PERMISSION: &str = "kernel.persistence.read";
@@ -192,12 +196,55 @@ struct ApplicationWorkspaceDiscoveryToolInterface;
 struct ApplicationCodeQueryToolInterface;
 struct ApplicationMemoryRecordToolInterface;
 struct ApplicationMemoryAssociateToolInterface;
+struct ApplicationMemoryQueryToolInterface;
 struct ApplicationMemoryRecallToolInterface;
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryTimeFilter {
+    max_age: Option<String>,
+    as_of: Option<String>,
+    created_from: Option<String>,
+    created_until: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryRecordRequest {
+    id: String,
+    kind: MemoryKind,
+    scope: MemoryScope,
+    content: String,
+    source_refs: Vec<MemorySourceReference>,
+    supporting_dependencies: Vec<MemoryDependencyRevision>,
+    supersedes: Vec<String>,
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationMemoryAssociateRequest {
     memory_id: String,
     anchor: ContextAnchor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryQueryRequest {
+    scopes: Vec<MemoryScope>,
+    kinds: Vec<MemoryKind>,
+    ids: Vec<String>,
+    source_service: Option<ServiceId>,
+    source_resource: Option<String>,
+    time: Option<ApplicationMemoryTimeFilter>,
+    order: Option<MemoryQueryOrder>,
+    limit: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryRecallRequest {
+    scopes: Vec<MemoryScope>,
+    kinds: Vec<MemoryKind>,
+    query: String,
+    time: Option<ApplicationMemoryTimeFilter>,
+    limit: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
@@ -283,7 +330,7 @@ impl ComponentInterface for ApplicationMemoryRecordToolInterface {
     }
 
     fn schema() -> InterfaceSchema {
-        InterfaceSchema::of::<MemoryRecord, MemoryRecord>()
+        InterfaceSchema::of::<ApplicationMemoryRecordRequest, MemoryRecord>()
     }
 }
 
@@ -298,6 +345,17 @@ impl ComponentInterface for ApplicationMemoryAssociateToolInterface {
     }
 }
 
+impl ComponentInterface for ApplicationMemoryQueryToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_MEMORY_QUERY_TOOL_SERVICE)
+            .expect("static memory query tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<ApplicationMemoryQueryRequest, ApplicationMemoryRecallResponse>()
+    }
+}
+
 impl ComponentInterface for ApplicationMemoryRecallToolInterface {
     fn interface_id() -> InterfaceId {
         InterfaceId::parse(APPLICATION_MEMORY_RECALL_TOOL_SERVICE)
@@ -305,7 +363,203 @@ impl ComponentInterface for ApplicationMemoryRecallToolInterface {
     }
 
     fn schema() -> InterfaceSchema {
-        InterfaceSchema::of::<MemoryRecallQuery, ApplicationMemoryRecallResponse>()
+        InterfaceSchema::of::<ApplicationMemoryRecallRequest, ApplicationMemoryRecallResponse>()
+    }
+}
+
+fn application_memory_now() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))
+}
+
+fn resolve_application_memory_time(
+    filter: Option<ApplicationMemoryTimeFilter>,
+) -> Result<MemoryTimeBounds, String> {
+    let now = application_memory_now()?;
+    let Some(filter) = filter else {
+        return Ok(MemoryTimeBounds {
+            as_of: now,
+            created_from: None,
+            created_until: None,
+        });
+    };
+
+    let has_max_age = filter.max_age.is_some();
+    let has_as_of = filter.as_of.is_some();
+    let has_created_range = filter.created_from.is_some() || filter.created_until.is_some();
+    let modes = u8::from(has_max_age) + u8::from(has_as_of) + u8::from(has_created_range);
+    if modes > 1 {
+        return Err(
+            "memory time filter must use only max_age, as_of, or created_from/created_until"
+                .into(),
+        );
+    }
+
+    if let Some(age) = filter.max_age {
+        let age = parse_application_memory_duration(&age)?;
+        return Ok(MemoryTimeBounds {
+            as_of: now,
+            created_from: Some(now.saturating_sub(age)),
+            created_until: None,
+        });
+    }
+    if let Some(as_of) = filter.as_of {
+        return Ok(MemoryTimeBounds {
+            as_of: parse_application_memory_datetime(&as_of)?,
+            created_from: None,
+            created_until: None,
+        });
+    }
+
+    let created_from = filter
+        .created_from
+        .as_deref()
+        .map(parse_application_memory_datetime)
+        .transpose()?;
+    let created_until = filter
+        .created_until
+        .as_deref()
+        .map(parse_application_memory_datetime)
+        .transpose()?;
+    if let (Some(from), Some(until)) = (created_from, created_until)
+        && from >= until
+    {
+        return Err("memory created_from must be earlier than created_until".into());
+    }
+    Ok(MemoryTimeBounds {
+        as_of: now,
+        created_from,
+        created_until,
+    })
+}
+
+fn parse_application_memory_duration(value: &str) -> Result<u64, String> {
+    let value = value.trim().to_ascii_lowercase();
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    if split == 0 {
+        return Err("memory max_age must start with a positive integer".into());
+    }
+    let amount = value[..split]
+        .parse::<u64>()
+        .map_err(|error| format!("invalid memory max_age: {error}"))?;
+    if amount == 0 {
+        return Err("memory max_age must be greater than zero".into());
+    }
+    let unit = value[split..].trim();
+    let seconds = match unit {
+        "s" | "sec" | "second" | "seconds" => 1,
+        "m" | "min" | "minute" | "minutes" => 60,
+        "h" | "hour" | "hours" => 60 * 60,
+        "d" | "day" | "days" => 24 * 60 * 60,
+        "w" | "week" | "weeks" => 7 * 24 * 60 * 60,
+        _ => {
+            return Err(
+                "memory max_age unit must be seconds, minutes, hours, days, or weeks".into(),
+            );
+        }
+    };
+    amount
+        .checked_mul(seconds)
+        .ok_or_else(|| "memory max_age is too large".into())
+}
+
+fn parse_application_memory_datetime(value: &str) -> Result<u64, String> {
+    let value = value.trim();
+    let (date, time) = match value.split_once('T') {
+        Some((date, time)) => {
+            let time = time
+                .strip_suffix('Z')
+                .ok_or_else(|| "memory datetime must use UTC with a trailing Z".to_owned())?;
+            (date, Some(time))
+        }
+        None => (value, None),
+    };
+
+    let mut date_parts = date.split('-');
+    let year = date_parts
+        .next()
+        .ok_or_else(|| "memory date must use YYYY-MM-DD".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "memory date must use YYYY-MM-DD".to_owned())?;
+    let month = date_parts
+        .next()
+        .ok_or_else(|| "memory date must use YYYY-MM-DD".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "memory date must use YYYY-MM-DD".to_owned())?;
+    let day = date_parts
+        .next()
+        .ok_or_else(|| "memory date must use YYYY-MM-DD".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "memory date must use YYYY-MM-DD".to_owned())?;
+    if date_parts.next().is_some() || year < 1970 || !(1..=12).contains(&month) {
+        return Err("memory date must be a valid UTC date on or after 1970-01-01".into());
+    }
+    let max_day = application_memory_days_in_month(year, month);
+    if day == 0 || day > max_day {
+        return Err("memory date contains an invalid day".into());
+    }
+
+    let (hour, minute, second) = match time {
+        None => (0, 0, 0),
+        Some(time) => {
+            let mut parts = time.split(':');
+            let hour = parts
+                .next()
+                .ok_or_else(|| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?
+                .parse::<u64>()
+                .map_err(|_| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?;
+            let minute = parts
+                .next()
+                .ok_or_else(|| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?
+                .parse::<u64>()
+                .map_err(|_| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?;
+            let second = parts
+                .next()
+                .ok_or_else(|| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?
+                .parse::<u64>()
+                .map_err(|_| "memory datetime must use YYYY-MM-DDTHH:MM:SSZ".to_owned())?;
+            if parts.next().is_some() || hour > 23 || minute > 59 || second > 59 {
+                return Err("memory datetime contains an invalid UTC time".into());
+            }
+            (hour, minute, second)
+        }
+    };
+
+    let mut days = 0_u64;
+    for candidate_year in 1970..year {
+        days += if application_memory_is_leap_year(candidate_year) {
+            366
+        } else {
+            365
+        };
+    }
+    for candidate_month in 1..month {
+        days += application_memory_days_in_month(year, candidate_month);
+    }
+    days += day - 1;
+
+    days.checked_mul(24 * 60 * 60)
+        .and_then(|seconds| seconds.checked_add(hour * 60 * 60))
+        .and_then(|seconds| seconds.checked_add(minute * 60))
+        .and_then(|seconds| seconds.checked_add(second))
+        .ok_or_else(|| "memory datetime is too large".into())
+}
+
+fn application_memory_is_leap_year(year: u64) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
+fn application_memory_days_in_month(year: u64, month: u64) -> u64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if application_memory_is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
     }
 }
 
@@ -435,7 +689,7 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
         application_agent_tool_trigger(
             ApplicationMemoryRecordToolInterface::interface_id(),
             "memory.record",
-            "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
+            "Persist one typed memory record. Phenix assigns created_at from the runtime clock. Preserve durable source references and exact supporting dependencies so source changes can invalidate derived memory.",
             application_memory_authority(),
         ),
         application_agent_tool_trigger(
@@ -445,9 +699,15 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
             application_memory_authority(),
         ),
         application_agent_tool_trigger(
+            ApplicationMemoryQueryToolInterface::interface_id(),
+            "memory.query",
+            "Query canonical durable memory by exact structured selectors. This path does not use semantic relevance. Omit time for current state, or use max_age, as_of, created_from, and created_until with human-readable durations or UTC dates.",
+            application_memory_authority(),
+        ),
+        application_agent_tool_trigger(
             ApplicationMemoryRecallToolInterface::interface_id(),
             "memory.recall",
-            "Recall typed durable memories using bounded scope, kind, text, time, and result limits. Durable memory is not injected into every fresh session; call this tool when the current task depends on previously stored memory.",
+            "Search durable memory by text using exact and lexical retrieval plus optional semantic and reranking indexes. Omit time for current state, or use max_age, as_of, created_from, and created_until with human-readable durations or UTC dates.",
             application_memory_authority(),
         ),
     ]
@@ -3496,6 +3756,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required_authority: Authority::default(),
             },
             ComponentExport {
+                interface: ApplicationMemoryQueryToolInterface::interface_id(),
+                schema: ApplicationMemoryQueryToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
                 interface: ApplicationMemoryRecallToolInterface::interface_id(),
                 schema: ApplicationMemoryRecallToolInterface::schema(),
                 priority: 100,
@@ -3740,13 +4006,33 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                 .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_MEMORY_RECORD_TOOL_SERVICE {
-            let record = context
+            let request = context
                 .kernel
-                .decode_projected::<MemoryRecord>(
+                .decode_projected::<ApplicationMemoryRecordRequest>(
                     &ApplicationMemoryRecordToolInterface::interface_id(),
                     input,
                 )
                 .map_err(|error| error.to_string())?;
+            let record = MemoryRecord {
+                id: request.id,
+                kind: request.kind,
+                scope: request.scope,
+                content: request.content,
+                source_refs: request.source_refs,
+                supporting_dependencies: request.supporting_dependencies,
+                supersedes: request.supersedes,
+                valid_from: request
+                    .valid_from
+                    .as_deref()
+                    .map(parse_application_memory_datetime)
+                    .transpose()?,
+                valid_until: request
+                    .valid_until
+                    .as_deref()
+                    .map(parse_application_memory_datetime)
+                    .transpose()?,
+                created_at: application_memory_now()?,
+            };
             let response = context
                 .sdk
                 .memory
@@ -3822,21 +4108,59 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
                 .encode_value(&state)
                 .map_err(|error| error.to_string());
         }
-        if service.as_str() == APPLICATION_MEMORY_RECALL_TOOL_SERVICE {
-            let query = context
+        if service.as_str() == APPLICATION_MEMORY_QUERY_TOOL_SERVICE {
+            let request = context
                 .kernel
-                .decode_projected::<MemoryRecallQuery>(
+                .decode_projected::<ApplicationMemoryQueryRequest>(
+                    &ApplicationMemoryQueryToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let query = MemoryStructuredQuery {
+                scopes: request.scopes,
+                kinds: request.kinds,
+                ids: request.ids,
+                source_service: request.source_service,
+                source_resource: request.source_resource,
+                time: resolve_application_memory_time(request.time)?,
+                order: request.order.unwrap_or(MemoryQueryOrder::NewestFirst),
+                limit: request.limit,
+            };
+            let response = context
+                .sdk
+                .memory
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Query { query })
+                .map_err(|error| error.to_string())?;
+            let MemoryResponse::Query { records } = response else {
+                return Err("memory service returned a non-query response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&ApplicationMemoryRecallResponse { records })
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_MEMORY_RECALL_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationMemoryRecallRequest>(
                     &ApplicationMemoryRecallToolInterface::interface_id(),
                     input,
                 )
                 .map_err(|error| error.to_string())?;
+            let query = MemorySearchQuery {
+                scopes: request.scopes,
+                kinds: request.kinds,
+                query: request.query,
+                time: resolve_application_memory_time(request.time)?,
+                limit: request.limit,
+            };
             let response = context
                 .sdk
                 .memory
-                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Recall { query })
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Search { query })
                 .map_err(|error| error.to_string())?;
-            let MemoryResponse::Recall { records } = response else {
-                return Err("memory service returned a non-recall response".into());
+            let MemoryResponse::Search { records } = response else {
+                return Err("memory service returned a non-search response".into());
             };
             return context
                 .kernel
