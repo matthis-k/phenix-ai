@@ -627,6 +627,33 @@ mod tests {
     }
 
     #[test]
+    fn every_supported_model_tool_schema_has_an_object_root() {
+        let schemas = vec![
+            PhenixSchema::Any,
+            PhenixSchema::Never,
+            PhenixSchema::Unit,
+            PhenixSchema::Bool,
+            PhenixSchema::I64,
+            PhenixSchema::U64,
+            PhenixSchema::F64,
+            PhenixSchema::String,
+            PhenixSchema::Bytes,
+            PhenixSchema::Option(Box::new(PhenixSchema::String)),
+            PhenixSchema::Array {
+                item: Box::new(PhenixSchema::String),
+                len: 1,
+            },
+            PhenixSchema::List(Box::new(PhenixSchema::String)),
+            PhenixSchema::Map(Box::new(PhenixSchema::String)),
+            PhenixSchema::Table(BTreeMap::new()),
+        ];
+        for schema in schemas {
+            let json = model_tool_json_schema(&schema).unwrap();
+            assert_eq!(json["type"], "object", "non-object root for {schema:?}");
+        }
+    }
+
+    #[test]
     fn nested_unit_keeps_null_semantics() {
         let schema = model_tool_json_schema(&PhenixSchema::Table(BTreeMap::from([(
             "done".parse().unwrap(),
