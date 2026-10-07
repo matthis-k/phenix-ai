@@ -25,6 +25,7 @@ use phenix_sdk::{
     SkillInterface, SkillResponse, StepAttemptCommand, StepAttemptInterface, StepAttemptResponse,
     StepRunnerCommand, StepRunnerResponse, UsageAttemptKind, context_service,
     default_invocation_service, helper_invocation_service, invocation_service, step_runner_service,
+    workspace_context_id,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -447,6 +448,30 @@ fn durable_session_has_history(
     Ok(!entries.is_empty())
 }
 
+fn recovery_workspace_id(
+    context: &InvocationContext<'_, '_>,
+    request: &InvocationRequest,
+) -> Result<Option<String>, String> {
+    let Some(session_id) = request.session_id.clone() else {
+        return Ok(None);
+    };
+    let response = match context
+        .sdk
+        .sessions
+        .invoke_projected(&SessionCommand::Get { id: session_id })
+    {
+        Ok(response) => response,
+        Err(ComponentInvocationError::UnboundImport { .. }) => return Ok(None),
+        Err(error) => return Err(format!("session lookup failed during recovery: {error}")),
+    };
+    let SessionResponse::Session { session } = response else {
+        return Err("session service returned a non-session response during recovery".into());
+    };
+    Ok(session
+        .and_then(|session| session.working_directory)
+        .map(|working_directory| workspace_context_id(&working_directory)))
+}
+
 fn recover_invocation_context(
     context: &InvocationContext<'_, '_>,
     request: &InvocationRequest,
@@ -464,7 +489,7 @@ fn recover_invocation_context(
     let ContextResponse::Projection { projection } = projected else {
         return Err("context service returned a non-projection response during recovery".into());
     };
-    let anchors = projection
+    let mut anchors = projection
         .entries
         .iter()
         .take(32)
@@ -473,6 +498,15 @@ fn recover_invocation_context(
             resource: entry.resource.descriptor.resource_id.as_str().to_owned(),
         })
         .collect::<Vec<_>>();
+    let mut scopes = vec![MemoryScope::Global];
+    if let Some(workspace_id) = recovery_workspace_id(context, request)? {
+        if anchors.len() < 32 {
+            anchors.push(ContextAnchor::Workspace {
+                workspace_id: workspace_id.clone(),
+            });
+        }
+        scopes.push(MemoryScope::Workspace { workspace_id });
+    }
     let state = phenix_sdk::ContextRecoveryState {
         anchors: anchors.clone(),
         has_durable_session_history: durable_session_has_history(context, request)?,
@@ -507,7 +541,7 @@ fn recover_invocation_context(
             .invoke_projected(&MemoryContextCommand::Recall {
                 request: MemoryContextRecallRequest {
                     request_id: format!("recovery:{}:{now_ms}", request.execution_id),
-                    scopes: vec![MemoryScope::Global],
+                    scopes,
                     prompt,
                     known: anchors,
                     needs: needs.clone(),
