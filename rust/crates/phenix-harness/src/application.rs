@@ -69,8 +69,8 @@ use phenix_sdk::{
     ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
     LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
     MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
-    MemoryDependencyRevision, MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference,
+    MemoryDependencyRevision, MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecord,
+    MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference,
     MemoryStructuredQuery, MemoryTimeBounds, ModelCommand, ModelResponse, ModelTarget, OptionCommand,
     OptionContext, OptionKey, OptionResponse, OptionScope,
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
@@ -550,7 +550,7 @@ fn parse_application_memory_datetime(value: &str) -> Result<u64, String> {
 }
 
 fn application_memory_is_leap_year(year: u64) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 fn application_memory_days_in_month(year: u64, month: u64) -> u64 {
