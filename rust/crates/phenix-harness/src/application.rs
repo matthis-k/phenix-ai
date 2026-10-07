@@ -7263,11 +7263,13 @@ mod tests {
         }))
         .unwrap();
         let output = harness
-            .invoke(
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
                 &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
                 &input,
-                &Authority::default(),
-                None,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
             )
             .unwrap();
         let value: PhenixValue = serde_json::from_slice(&output).unwrap();
