@@ -1,8 +1,8 @@
 use crate::{Endpoint, ProviderError, ProviderRequest, ProviderResponse, RateLimits};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use phenix_core::{
-    CallableId, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelId,
-    Key, ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
+    CallableId, Key, ModelCacheControl, ModelCacheRetention, ModelCacheWritePolicy, ModelId,
+    ModelInferenceRequest, ModelInferenceResponse, ModelToolCall, ModelToolDescriptor,
     ModelToolResult, ModelToolTurn, ModelTurnUsage, PhenixSchema, PhenixValue, UsageQuantity,
     ValueCodec,
 };
@@ -1072,7 +1072,10 @@ fn parse_arguments(
 
 fn incompatible_tool_input(provider: &str, message: impl Into<String>) -> ProviderError {
     ProviderError::Protocol {
-        message: format!("{provider} returned incompatible tool input: {}", message.into()),
+        message: format!(
+            "{provider} returned incompatible tool input: {}",
+            message.into()
+        ),
     }
 }
 
@@ -1182,11 +1185,11 @@ fn project_tool_value(
         },
         PhenixSchema::Bytes => match value {
             value @ PhenixValue::Bytes(_) => value,
-            PhenixValue::String(value) => PhenixValue::Bytes(
-                BASE64_STANDARD.decode(value).map_err(|error| {
+            PhenixValue::String(value) => {
+                PhenixValue::Bytes(BASE64_STANDARD.decode(value).map_err(|error| {
                     incompatible_tool_input(provider, format!("invalid base64 bytes: {error}"))
-                })?,
-            ),
+                })?)
+            }
             other => {
                 return Err(incompatible_tool_input(
                     provider,
@@ -1197,12 +1200,12 @@ fn project_tool_value(
         PhenixSchema::Option(item) => match value {
             PhenixValue::Unit => PhenixValue::Option(None),
             PhenixValue::Option(None) => PhenixValue::Option(None),
-            PhenixValue::Option(Some(value)) => PhenixValue::Option(Some(Box::new(
-                project_tool_value(item, *value, provider)?,
-            ))),
-            value => PhenixValue::Option(Some(Box::new(project_tool_value(
-                item, value, provider,
-            )?))),
+            PhenixValue::Option(Some(value)) => {
+                PhenixValue::Option(Some(Box::new(project_tool_value(item, *value, provider)?)))
+            }
+            value => {
+                PhenixValue::Option(Some(Box::new(project_tool_value(item, value, provider)?)))
+            }
         },
         PhenixSchema::Array { item, .. } | PhenixSchema::List(item) => {
             let PhenixValue::List(values) = value else {
@@ -2263,9 +2266,18 @@ mod tests {
             .unwrap();
         let responses: Value = serde_json::from_slice(&responses.body).unwrap();
         assert_eq!(responses["tools"][0]["parameters"]["type"], "object");
-        assert_eq!(responses["tools"][0]["parameters"]["properties"], serde_json::json!({}));
-        assert_eq!(responses["tools"][0]["parameters"]["required"], serde_json::json!([]));
-        assert_eq!(responses["tools"][0]["parameters"]["additionalProperties"], false);
+        assert_eq!(
+            responses["tools"][0]["parameters"]["properties"],
+            serde_json::json!({})
+        );
+        assert_eq!(
+            responses["tools"][0]["parameters"]["required"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            responses["tools"][0]["parameters"]["additionalProperties"],
+            false
+        );
 
         let chat = Protocol::OpenAiChatCompletions
             .encode(&endpoint, &request)

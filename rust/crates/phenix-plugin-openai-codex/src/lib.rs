@@ -473,8 +473,7 @@ impl OpenAiCodexPlugin {
                 return Err(normalize_http_error(&response));
             }
             let limits = RateLimits::from_headers(&response.headers);
-            let mut decoded =
-                decode_codex_response_for_request(protocol, &request, &response)?;
+            let mut decoded = decode_codex_response_for_request(protocol, &request, &response)?;
             decoded.provider_metadata.insert(
                 "provider".to_owned(),
                 PhenixValue::String(OPENAI_CODEX_PROVIDER.to_owned()),
