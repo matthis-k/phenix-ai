@@ -14,9 +14,8 @@ use phenix_sdk::{
     LanguageDocumentIdentity, LanguageResponse, LogicalCodeEntity, MemoryCanonicalReference,
     MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind, MemoryQueryOrder,
     MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope,
-    MemorySourceReference, MemoryStructuredQuery, MemoryTimeBounds,
-    ProviderEpoch, helper_invocation_service, memory_resolve_callable, memory_service,
-    memory_validate_callable,
+    MemorySourceReference, MemoryStructuredQuery, MemoryTimeBounds, ProviderEpoch,
+    helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
 };
 use std::{
     collections::BTreeMap,
