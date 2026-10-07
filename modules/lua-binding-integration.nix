@@ -137,12 +137,13 @@ _: {
               client = client,
               session_id = "fixture-session",
               id = "fixture.client.echo",
-              description = "Echo text through the Lua host",
-              input = { type = "string" },
+              description = "Exercise a zero-argument client tool through the Lua host",
+              input = { type = "unit" },
               output = { type = "string" },
             }, function(value)
+              assert(value == nil, "unit client tool input must reach Lua as nil")
               tool_calls = tool_calls + 1
-              return value .. " from Lua"
+              return "unit from Lua"
             end)
             local remove = await(registration, "tool registration")
             assert(type(remove) == "function")
