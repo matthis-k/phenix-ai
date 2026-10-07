@@ -78,6 +78,20 @@ pub struct ExecutionContextProjection {
     pub entries: Vec<ProjectedContextEntry>,
 }
 
+impl ExecutionContextProjection {
+    /// Return whether the projection contains context the user explicitly supplied.
+    ///
+    /// Recovery treats only user-requested exact resources as explicit context. Automatic
+    /// baseline context such as mandatory skills and discovered project instructions does not
+    /// suppress fallback memory recovery.
+    #[must_use]
+    pub fn has_user_explicit_resource(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.injection.requester == ContextInjectionRequester::User)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct ContextInvocationPreparation {
@@ -412,4 +426,58 @@ pub fn context_recovery_service() -> ServiceId {
 pub fn context_identify_needs_callable() -> CallableId {
     CallableId::parse(CONTEXT_IDENTIFY_NEEDS_CALLABLE)
         .expect("static context recovery callable id is valid")
+}
+
+#[cfg(test)]
+mod recovery_projection_tests {
+    use super::*;
+    use phenix_core::{ContextResourceId, ContextRevisionId};
+
+    fn entry(requester: ContextInjectionRequester) -> ProjectedContextEntry {
+        let resource_id = ContextResourceId::parse("skill:write").unwrap();
+        let revision = ContextRevisionId::parse("revision").unwrap();
+        ProjectedContextEntry {
+            injection: ContextInjection {
+                sequence: 1,
+                execution_id: "execution-1".into(),
+                source: ExactContextReference {
+                    resource_id: resource_id.clone(),
+                    revision: revision.clone(),
+                },
+                requester,
+                lifetime: ContextInjectionLifetime::Execution,
+                reason: "test".into(),
+            },
+            resource: ContextResourceRevision {
+                descriptor: ContextDescriptor {
+                    resource_id,
+                    revision,
+                    kind: ContextResourceKind::Skill,
+                    source: "test".into(),
+                    scope: ContextScope::Workspace,
+                    content_identity: "test".into(),
+                    estimated_bytes: 1,
+                },
+                content: b"x".to_vec().into(),
+            },
+        }
+    }
+
+    #[test]
+    fn recovery_explicit_resource_ignores_context_policy_baseline() {
+        let projection = ExecutionContextProjection {
+            execution_id: "execution-1".into(),
+            entries: vec![entry(ContextInjectionRequester::ContextPolicy)],
+        };
+        assert!(!projection.has_user_explicit_resource());
+    }
+
+    #[test]
+    fn recovery_explicit_resource_accepts_user_exact_resource() {
+        let projection = ExecutionContextProjection {
+            execution_id: "execution-1".into(),
+            entries: vec![entry(ContextInjectionRequester::User)],
+        };
+        assert!(projection.has_user_explicit_resource());
+    }
 }
