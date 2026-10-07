@@ -126,8 +126,9 @@ pub use phenix_plugin_language::{
     language_manifest, language_service,
 };
 pub use phenix_plugin_memory::{
-    MEMORY_SERVICE, MemoryCommand, MemoryInterface, MemoryKind, MemoryNode, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryScope, MemorySourceReference, memory_component_id,
+    MEMORY_SERVICE, MemoryCommand, MemoryInterface, MemoryKind, MemoryNode, MemoryQueryOrder,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryScope, MemorySearchQuery,
+    MemorySourceReference, MemoryStructuredQuery, MemoryTimeBounds, memory_component_id,
     memory_component_manifest, memory_factory, memory_manifest, memory_service,
 };
 pub use phenix_plugin_models::{

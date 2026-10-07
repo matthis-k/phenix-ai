@@ -113,6 +113,55 @@ pub struct MemoryRecallQuery {
     pub limit: u32,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    phenix_sdk_macros::PhenixValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryQueryOrder {
+    NewestFirst,
+    OldestFirst,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryTimeBounds {
+    pub as_of: u64,
+    pub created_from: Option<u64>,
+    pub created_until: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryStructuredQuery {
+    pub scopes: Vec<MemoryScope>,
+    pub kinds: Vec<MemoryKind>,
+    pub ids: Vec<String>,
+    pub source_service: Option<ServiceId>,
+    pub source_resource: Option<String>,
+    pub time: MemoryTimeBounds,
+    pub order: MemoryQueryOrder,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
+#[serde(deny_unknown_fields)]
+pub struct MemorySearchQuery {
+    pub scopes: Vec<MemoryScope>,
+    pub kinds: Vec<MemoryKind>,
+    pub query: String,
+    pub time: MemoryTimeBounds,
+    pub limit: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryExtractionObservation {
@@ -182,6 +231,12 @@ pub enum MemoryCommand {
     },
     Recall {
         query: MemoryRecallQuery,
+    },
+    Query {
+        query: MemoryStructuredQuery,
+    },
+    Search {
+        query: MemorySearchQuery,
     },
     Extract {
         request: MemoryExtractionRequest,
@@ -255,6 +310,12 @@ pub enum MemoryResponse {
         record: Option<MemoryRecord>,
     },
     Recall {
+        records: Vec<MemoryRecord>,
+    },
+    Query {
+        records: Vec<MemoryRecord>,
+    },
+    Search {
         records: Vec<MemoryRecord>,
     },
     Expansion {

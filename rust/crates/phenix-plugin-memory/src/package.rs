@@ -9,8 +9,9 @@ use phenix_core::{
 use phenix_sdk::{
     CandidateCompleteness, ContextAnchor, ContextNeed, MemoryAssociationObservation, MemoryCommand,
     MemoryContextCandidate, MemoryContextCommand, MemoryContextInterface, MemoryContextMatch,
-    MemoryContextRecallRequest, MemoryContextResponse, MemoryFreshness, MemoryInterface,
-    MemoryRecallQuery, MemoryRecord, MemoryResponse, memory_context_service, memory_service,
+    MemoryContextRecallRequest, MemoryContextResponse, MemoryInterface, MemoryQueryOrder,
+    MemoryRecord, MemoryResponse, MemorySearchQuery, MemoryStructuredQuery, MemoryTimeBounds,
+    memory_context_service, memory_service,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -166,18 +167,22 @@ fn recall_context(
     let response = invoke_memory(
         core,
         host,
-        MemoryCommand::Recall {
-            query: MemoryRecallQuery {
+        MemoryCommand::Search {
+            query: MemorySearchQuery {
                 scopes: request.scopes.clone(),
                 kinds: Vec::new(),
                 query: request.prompt.clone(),
-                at: request.at,
+                time: MemoryTimeBounds {
+                    as_of: request.at,
+                    created_from: None,
+                    created_until: None,
+                },
                 limit: candidate_limit,
             },
         },
     )?;
-    let MemoryResponse::Recall { records } = response else {
-        return Err("memory recall returned the wrong response kind".into());
+    let MemoryResponse::Search { records } = response else {
+        return Err("memory search returned the wrong response kind".into());
     };
     let lexical_saturated = records.len() >= candidate_limit as usize;
     let recalled: BTreeMap<String, MemoryRecord> = records
@@ -383,24 +388,30 @@ fn memory_is_current(
     record: &MemoryRecord,
     at: u64,
 ) -> Result<bool, String> {
-    if record.valid_from.is_some_and(|valid_from| at < valid_from)
-        || record
-            .valid_until
-            .is_some_and(|valid_until| at >= valid_until)
-    {
-        return Ok(false);
-    }
     let response = invoke_memory(
         core,
         host,
-        MemoryCommand::GetFreshness {
-            id: record.id.clone(),
+        MemoryCommand::Query {
+            query: MemoryStructuredQuery {
+                scopes: vec![record.scope.clone()],
+                kinds: vec![record.kind],
+                ids: vec![record.id.clone()],
+                source_service: None,
+                source_resource: None,
+                time: MemoryTimeBounds {
+                    as_of: at,
+                    created_from: None,
+                    created_until: None,
+                },
+                order: MemoryQueryOrder::NewestFirst,
+                limit: 1,
+            },
         },
     )?;
-    let MemoryResponse::Freshness { state } = response else {
-        return Err("memory freshness returned the wrong response kind".into());
+    let MemoryResponse::Query { records } = response else {
+        return Err("memory query returned the wrong response kind".into());
     };
-    Ok(state.is_some_and(|state| state.freshness == MemoryFreshness::Current))
+    Ok(records.iter().any(|candidate| candidate.id == record.id))
 }
 
 fn get_memory(

@@ -12,10 +12,10 @@ use phenix_sdk::{
     CodeEntityFacet, CodeEntityFacetRevisions, CodeEntityRevision, DocumentProvenance,
     HelperInvocationCommand, HelperInvocationInterface, HelperInvocationResponse, LanguageCommand,
     LanguageDocumentIdentity, LanguageResponse, LogicalCodeEntity, MemoryCanonicalReference,
-    MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind, MemoryRecallQuery,
-    MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope, MemorySourceReference,
-    ProviderEpoch, helper_invocation_service, memory_resolve_callable, memory_service,
-    memory_validate_callable,
+    MemoryCommand, MemoryDependencyRevision, MemoryFreshness, MemoryKind, MemoryQueryOrder,
+    MemoryRecallQuery, MemoryRecord, MemoryResponse, MemoryRevisionCursor, MemoryScope,
+    MemorySourceReference, MemoryStructuredQuery, MemoryTimeBounds, ProviderEpoch,
+    helper_invocation_service, memory_resolve_callable, memory_service, memory_validate_callable,
 };
 use std::{
     collections::BTreeMap,
@@ -423,7 +423,34 @@ fn revision_change_invalidates_only_dependent_current_memory() {
     assert_eq!(
         current,
         MemoryResponse::Recall {
-            records: vec![stable]
+            records: vec![stable.clone()]
+        }
+    );
+
+    let direct_current = invoke(
+        &mut kernel,
+        MemoryCommand::Query {
+            query: MemoryStructuredQuery {
+                scopes: vec![scope()],
+                kinds: vec![MemoryKind::Fact],
+                ids: vec![changed.id.clone(), stable.id.clone()],
+                source_service: None,
+                source_resource: None,
+                time: MemoryTimeBounds {
+                    as_of: 25,
+                    created_from: None,
+                    created_until: None,
+                },
+                order: MemoryQueryOrder::NewestFirst,
+                limit: 10,
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        direct_current,
+        MemoryResponse::Query {
+            records: vec![stable.clone()]
         }
     );
 
@@ -443,6 +470,33 @@ fn revision_change_invalidates_only_dependent_current_memory() {
     assert_eq!(
         historical,
         MemoryResponse::Recall {
+            records: vec![changed.clone()]
+        }
+    );
+
+    let direct_historical = invoke(
+        &mut kernel,
+        MemoryCommand::Query {
+            query: MemoryStructuredQuery {
+                scopes: vec![scope()],
+                kinds: vec![MemoryKind::Fact],
+                ids: vec![changed.id.clone()],
+                source_service: Some(ServiceId::parse("fixture.history@1").unwrap()),
+                source_resource: Some("turn/changed".into()),
+                time: MemoryTimeBounds {
+                    as_of: 15,
+                    created_from: None,
+                    created_until: None,
+                },
+                order: MemoryQueryOrder::NewestFirst,
+                limit: 10,
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        direct_historical,
+        MemoryResponse::Query {
             records: vec![changed]
         }
     );

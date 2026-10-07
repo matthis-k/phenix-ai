@@ -263,6 +263,7 @@ fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
         "code.query",
         "memory.record",
         "memory.associate",
+        "memory.query",
         "memory.recall",
     ] {
         assert!(
