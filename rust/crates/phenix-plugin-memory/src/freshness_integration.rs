@@ -423,7 +423,7 @@ fn revision_change_invalidates_only_dependent_current_memory() {
     assert_eq!(
         current,
         MemoryResponse::Recall {
-            records: vec![stable]
+            records: vec![stable.clone()]
         }
     );
 
