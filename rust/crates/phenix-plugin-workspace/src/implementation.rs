@@ -1335,7 +1335,9 @@ mod tests {
                     return Err("fixture marker stat denied".into());
                 }
                 EnvironmentCommand::Stat { path } => EnvironmentResponse::Metadata {
-                    kind: path.ends_with("AGENTS.md").then_some(EnvironmentFileKind::File),
+                    kind: path
+                        .ends_with("AGENTS.md")
+                        .then_some(EnvironmentFileKind::File),
                 },
                 EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
                     content: if path.ends_with("input.txt") {
