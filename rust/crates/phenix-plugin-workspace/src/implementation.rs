@@ -834,7 +834,10 @@ fn discover_project_files(
 }
 
 fn validate_project_discovery_name(value: &str) -> Result<(), String> {
-    if value.contains(['/', '\\', '\0', ':']) {
+    if value
+        .chars()
+        .any(|character| matches!(character, '/' | '\\' | '\0' | ':'))
+    {
         return Err(format!(
             "project discovery names must be portable single path components: {value}"
         ));
