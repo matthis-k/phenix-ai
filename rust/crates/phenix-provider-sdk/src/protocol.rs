@@ -2257,6 +2257,37 @@ mod tests {
     }
 
     #[test]
+    fn every_supported_model_tool_schema_has_an_object_root() {
+        let schemas = vec![
+            PhenixSchema::Any,
+            PhenixSchema::Never,
+            PhenixSchema::Unit,
+            PhenixSchema::Bool,
+            PhenixSchema::I64,
+            PhenixSchema::U64,
+            PhenixSchema::F64,
+            PhenixSchema::String,
+            PhenixSchema::Bytes,
+            PhenixSchema::Option(Box::new(PhenixSchema::String)),
+            PhenixSchema::Array {
+                item: Box::new(PhenixSchema::String),
+                len: 1,
+            },
+            PhenixSchema::List(Box::new(PhenixSchema::String)),
+            PhenixSchema::Map(Box::new(PhenixSchema::String)),
+            PhenixSchema::Table(BTreeMap::new()),
+            PhenixSchema::Variant(BTreeMap::from([(
+                Key::parse("none").unwrap(),
+                PhenixSchema::Unit,
+            )])),
+        ];
+        for schema in schemas {
+            let json = model_tool_json_schema(&schema).unwrap();
+            assert_eq!(json["type"], "object", "non-object root for {schema:?}");
+        }
+    }
+
+    #[test]
     fn provider_protocols_encode_unit_tool_inputs_as_empty_objects() {
         let endpoint = Endpoint::parse("https://example.com/v1").unwrap();
         let request = request_with_unit_tool();
