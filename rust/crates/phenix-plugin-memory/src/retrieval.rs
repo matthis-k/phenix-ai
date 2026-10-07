@@ -1,39 +1,98 @@
 use crate::error::{MemoryError, MemoryResult};
-use phenix_sdk::{MemoryRecallQuery, MemoryRecord};
+use phenix_sdk::{
+    MemoryQueryOrder, MemoryRecallQuery, MemoryRecord, MemorySearchQuery, MemoryStructuredQuery,
+    MemoryTimeBounds,
+};
 use std::collections::BTreeSet;
 
 pub(crate) fn recall(
     records: Vec<MemoryRecord>,
     query: &MemoryRecallQuery,
 ) -> MemoryResult<Vec<MemoryRecord>> {
-    if query.scopes.is_empty() {
-        return Err(MemoryError::Invalid(
-            "recall requires at least one scope".into(),
-        ));
-    }
-    if !(1..=100).contains(&query.limit) {
-        return Err(MemoryError::Invalid(
-            "recall limit must be between 1 and 100".into(),
-        ));
-    }
+    validate_scope_limit("recall", &query.scopes, query.limit)?;
+    lexical_search(
+        records,
+        &query.scopes,
+        &query.kinds,
+        &query.query,
+        query.at,
+        None,
+        query.limit,
+    )
+}
 
-    let superseded = records
-        .iter()
-        .filter(|record| supersession_effective_at(record, query.at))
-        .flat_map(|record| record.supersedes.iter().cloned())
-        .collect::<BTreeSet<_>>();
-    let eligible_records = records
+pub(crate) fn search(
+    records: Vec<MemoryRecord>,
+    query: &MemorySearchQuery,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    validate_scope_limit("search", &query.scopes, query.limit)?;
+    validate_time_bounds(&query.time)?;
+    lexical_search(
+        records,
+        &query.scopes,
+        &query.kinds,
+        &query.query,
+        query.time.as_of,
+        Some(&query.time),
+        query.limit,
+    )
+}
+
+pub(crate) fn query(
+    records: Vec<MemoryRecord>,
+    query: &MemoryStructuredQuery,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    validate_scope_limit("query", &query.scopes, query.limit)?;
+    validate_time_bounds(&query.time)?;
+
+    let superseded = superseded_ids(&records, query.time.as_of);
+    let mut records = records
         .into_iter()
-        .filter(|record| eligible(record, query, &superseded))
+        .filter(|record| {
+            eligible(
+                record,
+                &query.scopes,
+                &query.kinds,
+                query.time.as_of,
+                &superseded,
+            ) && within_created_bounds(record, &query.time)
+                && (query.ids.is_empty() || query.ids.contains(&record.id))
+                && matches_source(record, query.source_service.as_ref(), query.source_resource.as_deref())
+        })
         .collect::<Vec<_>>();
 
-    let search = LexicalCandidateSearch;
-    let mut candidates = search
-        .search(&eligible_records, query)
+    records.sort_by(|left, right| match query.order {
+        MemoryQueryOrder::NewestFirst => right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id)),
+        MemoryQueryOrder::OldestFirst => left
+            .created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id)),
+    });
+    records.truncate(query.limit as usize);
+    Ok(records)
+}
+
+fn lexical_search(
+    records: Vec<MemoryRecord>,
+    scopes: &[phenix_sdk::MemoryScope],
+    kinds: &[phenix_sdk::MemoryKind],
+    query: &str,
+    at: u64,
+    time: Option<&MemoryTimeBounds>,
+    limit: u32,
+) -> MemoryResult<Vec<MemoryRecord>> {
+    let superseded = superseded_ids(&records, at);
+    let normalized = query.trim().to_lowercase();
+    let terms = normalized.split_whitespace().collect::<Vec<_>>();
+    let mut candidates = records
         .into_iter()
-        .filter_map(|hit| {
-            let record = eligible_records.get(hit.index)?;
-            eligible(record, query, &superseded).then(|| (hit.score, record.clone()))
+        .filter(|record| eligible(record, scopes, kinds, at, &superseded))
+        .filter(|record| time.is_none_or(|time| within_created_bounds(record, time)))
+        .filter_map(|record| {
+            recall_score(&record, &normalized, &terms).map(|score| (score, record))
         })
         .collect::<Vec<_>>();
 
@@ -43,45 +102,81 @@ pub(crate) fn recall(
             .then_with(|| right.created_at.cmp(&left.created_at))
             .then_with(|| left.id.cmp(&right.id))
     });
-    candidates.truncate(query.limit as usize);
+    candidates.truncate(limit as usize);
     Ok(candidates.into_iter().map(|(_, record)| record).collect())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SearchHit {
-    index: usize,
-    score: u32,
-}
-
-trait CandidateSearch {
-    fn search(&self, records: &[MemoryRecord], query: &MemoryRecallQuery) -> Vec<SearchHit>;
-}
-
-struct LexicalCandidateSearch;
-
-impl CandidateSearch for LexicalCandidateSearch {
-    fn search(&self, records: &[MemoryRecord], query: &MemoryRecallQuery) -> Vec<SearchHit> {
-        let normalized = query.query.trim().to_lowercase();
-        let terms = normalized.split_whitespace().collect::<Vec<_>>();
-        records
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| {
-                recall_score(record, &normalized, &terms).map(|score| SearchHit { index, score })
-            })
-            .collect()
+fn validate_scope_limit(
+    operation: &str,
+    scopes: &[phenix_sdk::MemoryScope],
+    limit: u32,
+) -> MemoryResult<()> {
+    if scopes.is_empty() {
+        return Err(MemoryError::Invalid(format!(
+            "{operation} requires at least one scope"
+        )));
     }
+    if !(1..=100).contains(&limit) {
+        return Err(MemoryError::Invalid(format!(
+            "{operation} limit must be between 1 and 100"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_time_bounds(time: &MemoryTimeBounds) -> MemoryResult<()> {
+    if let Some(from) = time.created_from
+        && let Some(until) = time.created_until
+        && from >= until
+    {
+        return Err(MemoryError::Invalid(
+            "created_from must be earlier than created_until".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn superseded_ids(records: &[MemoryRecord], at: u64) -> BTreeSet<String> {
+    records
+        .iter()
+        .filter(|record| supersession_effective_at(record, at))
+        .flat_map(|record| record.supersedes.iter().cloned())
+        .collect()
 }
 
 fn eligible(
     record: &MemoryRecord,
-    query: &MemoryRecallQuery,
+    scopes: &[phenix_sdk::MemoryScope],
+    kinds: &[phenix_sdk::MemoryKind],
+    at: u64,
     superseded: &BTreeSet<String>,
 ) -> bool {
-    query.scopes.contains(&record.scope)
-        && (query.kinds.is_empty() || query.kinds.contains(&record.kind))
-        && visible_at(record, query.at)
+    scopes.contains(&record.scope)
+        && (kinds.is_empty() || kinds.contains(&record.kind))
+        && visible_at(record, at)
         && !superseded.contains(&record.id)
+}
+
+fn within_created_bounds(record: &MemoryRecord, time: &MemoryTimeBounds) -> bool {
+    time.created_from
+        .is_none_or(|from| record.created_at >= from)
+        && time
+            .created_until
+            .is_none_or(|until| record.created_at < until)
+}
+
+fn matches_source(
+    record: &MemoryRecord,
+    service: Option<&phenix_core::ServiceId>,
+    resource: Option<&str>,
+) -> bool {
+    if service.is_none() && resource.is_none() {
+        return true;
+    }
+    record.source_refs.iter().any(|source| {
+        service.is_none_or(|service| &source.service == service)
+            && resource.is_none_or(|resource| source.resource == resource)
+    })
 }
 
 fn visible_at(record: &MemoryRecord, at: u64) -> bool {
@@ -130,7 +225,9 @@ fn lexical_score(content: &str, query: &str, terms: &[&str]) -> Option<u32> {
 mod tests {
     use super::*;
     use phenix_core::{ServiceId, SessionId};
-    use phenix_sdk::{MemoryKind, MemoryScope, MemorySourceReference};
+    use phenix_sdk::{
+        MemoryKind, MemoryScope, MemorySourceReference, MemoryTimeBounds,
+    };
 
     fn record(id: &str, content: &str, created_at: u64) -> MemoryRecord {
         MemoryRecord {
@@ -151,6 +248,14 @@ mod tests {
             valid_from: None,
             valid_until: None,
             created_at,
+        }
+    }
+
+    fn time(as_of: u64) -> MemoryTimeBounds {
+        MemoryTimeBounds {
+            as_of,
+            created_from: None,
+            created_until: None,
         }
     }
 
@@ -269,5 +374,48 @@ mod tests {
         .unwrap();
 
         assert_eq!(results, vec![target]);
+    }
+
+    #[test]
+    fn structured_query_filters_exact_source_without_semantic_scoring() {
+        let target = record("target", "content without selector words", 10);
+        let other = record("other", "target target target", 20);
+        let results = query(
+            vec![other, target.clone()],
+            &MemoryStructuredQuery {
+                scopes: vec![target.scope.clone()],
+                kinds: Vec::new(),
+                ids: Vec::new(),
+                source_service: Some(ServiceId::parse("fixture.history@1").unwrap()),
+                source_resource: Some("turn/target".into()),
+                time: time(30),
+                order: MemoryQueryOrder::NewestFirst,
+                limit: 10,
+            },
+        )
+        .unwrap();
+        assert_eq!(results, vec![target]);
+    }
+
+    #[test]
+    fn search_respects_created_time_bounds_before_ranking() {
+        let old = record("old", "durable state", 10);
+        let recent = record("recent", "durable state", 20);
+        let results = search(
+            vec![old, recent.clone()],
+            &MemorySearchQuery {
+                scopes: vec![recent.scope.clone()],
+                kinds: Vec::new(),
+                query: "durable state".into(),
+                time: MemoryTimeBounds {
+                    as_of: 30,
+                    created_from: Some(15),
+                    created_until: Some(25),
+                },
+                limit: 10,
+            },
+        )
+        .unwrap();
+        assert_eq!(results, vec![recent]);
     }
 }
