@@ -79,7 +79,7 @@ pub struct ExecutionContextProjection {
 }
 
 impl ExecutionContextProjection {
-    /// Return whether the projection contains context the user explicitly supplied.
+    /// Whether the projection contains context the user explicitly supplied.
     ///
     /// Recovery treats only user-requested exact resources as explicit context. Automatic
     /// baseline context such as mandatory skills and discovered project instructions does not
