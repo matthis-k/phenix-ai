@@ -192,18 +192,27 @@ If a source cannot be resolved durably, the memory service must either retain an
 
 ## Recall
 
-Recall is budgeted progressive disclosure.
+Memory storage and retrieval are separate concerns. Durable memory records are canonical memory state. Lexical, semantic, graph, and reranking data are rebuildable indexes over those records.
 
-A query supplies or derives:
+The service exposes two read modes:
+
+| Mode | Purpose | Ranking |
+| --- | --- | --- |
+| structured query | Exact access by scope, kind, id, source, time, and ordering | None |
+| search/recall | Discovery from text plus scope and time constraints | Exact and lexical first; optional semantic candidates and reranking |
+
+Structured query must remain useful when every optional search index is absent. It must not depend on embedding similarity to answer an exact id, source, time, or chronological query.
+
+Search is budgeted progressive disclosure. A search supplies or derives:
 
 - requester and scope;
-- query text or structural selectors;
+- query text;
 - memory kinds where constrained;
 - temporal bounds where constrained;
 - target context budget;
 - required exact references where applicable.
 
-Default retrieval should combine:
+Default search should combine:
 
 1. scope and authority filtering;
 2. exact identifiers and explicit links;
@@ -215,7 +224,30 @@ Default retrieval should combine:
 
 The result should contain compact nodes first and expose child/source references for further expansion. Retrieval must not eagerly inject every matching raw record.
 
-Semantic similarity alone is never the authority or validity filter.
+Semantic similarity never decides authority, scope, freshness, or validity.
+
+### Time ownership
+
+The runtime owns the current clock. Agent-facing memory tools do not require the model to manufacture a Unix timestamp for ordinary reads or writes.
+
+`memory.record` receives semantic memory data and the runtime assigns `created_at`. Semantic validity such as `valid_from` may still be supplied as a date because it describes the remembered fact rather than the storage operation.
+
+Current reads omit a time filter. Agent-facing reads may express relative or historical intent with forms such as:
+
+```text
+max_age: "30d"
+as_of: "2026-10-01"
+created_from: "2026-09-01"
+created_until: "2026-10-01"
+```
+
+The application boundary parses these forms and resolves them against the runtime clock. Internal memory contracts may use normalized timestamps after that boundary.
+
+### Reference-backed freshness
+
+`source_refs` and `supporting_dependencies` apply before both structured query and ranked search. A supplied reference remains part of freshness tracking whether it names a code location, file range, retained quote, tool result, session history range, artifact, or another durable resource.
+
+A source revision change marks dependent derived memory for validation according to the freshness contract. Search indexes must not make an invalidated record current again. Historical reads may still return the record for times before the observed change.
 
 ## Compaction
 
