@@ -1725,7 +1725,17 @@ fn run_attempt_with_retry_route(
             ModelDispatchFailure,
         >(&ModelDispatchCommand::InvokePrepared { prepared })
     {
-        Ok(response) => response,
+        Ok(response) => {
+            trace_execution_stage(
+                context,
+                &attribution.execution_id,
+                trace_session_id.clone(),
+                "model_dispatch",
+                "completed",
+                None,
+            );
+            response
+        },
         Err(CallError::Domain(failure)) => {
             trace_execution_stage(
                 context,
@@ -1856,6 +1866,14 @@ fn run_attempt_with_retry_route(
         }
     };
     let ModelDispatchResponse::Inference { response, .. } = dispatched else {
+        trace_execution_stage(
+            context,
+            &attribution.execution_id,
+            trace_session_id.clone(),
+            "model_dispatch",
+            "failed",
+            Some("model dispatch returned readiness after invoke".into()),
+        );
         record_routing_evidence(context, &decision, false, None);
         settle_after_dispatch(
             context,
