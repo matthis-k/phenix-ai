@@ -2,9 +2,7 @@ use phenix_domain::PhenixSchema;
 use phenix_model_adapter::ModelAdapterError;
 use serde_json::{Map, Value, json};
 
-pub(crate) fn model_tool_json_schema(
-    schema: &PhenixSchema,
-) -> Result<Value, ModelAdapterError> {
+pub(crate) fn model_tool_json_schema(schema: &PhenixSchema) -> Result<Value, ModelAdapterError> {
     match schema {
         PhenixSchema::Unit => Ok(json!({
             "type": "object",
