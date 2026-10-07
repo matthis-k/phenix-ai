@@ -1507,8 +1507,14 @@ mod tests {
         let encoded = codex_request(&endpoint, &request).unwrap();
         let body: Value = serde_json::from_slice(&encoded.body).unwrap();
         assert_eq!(body["tools"][0]["parameters"]["type"], "object");
-        assert_eq!(body["tools"][0]["parameters"]["properties"], serde_json::json!({}));
-        assert_eq!(body["tools"][0]["parameters"]["required"], serde_json::json!([]));
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"],
+            serde_json::json!({})
+        );
+        assert_eq!(
+            body["tools"][0]["parameters"]["required"],
+            serde_json::json!([])
+        );
 
         let response = ProviderResponse {
             status: 200,
