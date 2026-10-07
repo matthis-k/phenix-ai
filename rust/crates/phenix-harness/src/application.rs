@@ -62,11 +62,13 @@ use phenix_provider_sdk::{
     provider_models_service,
 };
 use phenix_sdk::{
-    CodeQuery, CodeQueryResult, ContextCommand, ContextInjectionLifetime,
-    ContextInjectionRequester, ContextResourceKind, ContextResponse, ContextScope,
-    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
-    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
-    ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse, MemoryCommand,
+    AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
+    ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
+    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
+    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
+    ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
+    LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
+    MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
     MemoryInterface, MemoryRecallQuery, MemoryRecord, MemoryResponse, ModelCommand, ModelResponse,
     ModelTarget, OptionCommand, OptionContext, OptionKey, OptionResponse, OptionScope,
     OptionSubjectId, OptionValue, OptionValueSource, RepositoryContextSource, RootBudgetLedger,
@@ -110,6 +112,8 @@ const APPLICATION_WORKSPACE_DISCOVERY_TOOL_SERVICE: &str =
 const APPLICATION_CODE_QUERY_TOOL_SERVICE: &str = "phenix.application-agent-tools.code-query@1";
 const APPLICATION_MEMORY_RECORD_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-record@1";
+const APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE: &str =
+    "phenix.application-agent-tools.memory-associate@1";
 const APPLICATION_MEMORY_RECALL_TOOL_SERVICE: &str =
     "phenix.application-agent-tools.memory-recall@1";
 const RUNTIME_INSPECTION_READ_PERMISSION: &str = "kernel.persistence.read";
@@ -187,7 +191,14 @@ struct ApplicationWorkspaceGitToolInterface;
 struct ApplicationWorkspaceDiscoveryToolInterface;
 struct ApplicationCodeQueryToolInterface;
 struct ApplicationMemoryRecordToolInterface;
+struct ApplicationMemoryAssociateToolInterface;
 struct ApplicationMemoryRecallToolInterface;
+
+#[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
+struct ApplicationMemoryAssociateRequest {
+    memory_id: String,
+    anchor: ContextAnchor,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, phenix_sdk::PhenixValue)]
 struct ApplicationMemoryRecallResponse {
@@ -273,6 +284,17 @@ impl ComponentInterface for ApplicationMemoryRecordToolInterface {
 
     fn schema() -> InterfaceSchema {
         InterfaceSchema::of::<MemoryRecord, MemoryRecord>()
+    }
+}
+
+impl ComponentInterface for ApplicationMemoryAssociateToolInterface {
+    fn interface_id() -> InterfaceId {
+        InterfaceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE)
+            .expect("static memory associate tool interface id is valid")
+    }
+
+    fn schema() -> InterfaceSchema {
+        InterfaceSchema::of::<ApplicationMemoryAssociateRequest, MemoryAssociationState>()
     }
 }
 
@@ -414,6 +436,12 @@ pub(crate) fn application_memory_tool_triggers() -> Vec<ComponentEntryTrigger> {
             ApplicationMemoryRecordToolInterface::interface_id(),
             "memory.record",
             "Persist one typed memory record in the configured memory provider. Use durable source references for remembered claims.",
+            application_memory_authority(),
+        ),
+        application_agent_tool_trigger(
+            ApplicationMemoryAssociateToolInterface::interface_id(),
+            "memory.associate",
+            "Link an existing durable memory to an explicit workspace, repository, project, task, session, or resource anchor so it can participate in automatic contextual recall. The memory must already contain exact durable source references.",
             application_memory_authority(),
         ),
         application_agent_tool_trigger(
@@ -3416,6 +3444,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required: false,
                 authority: application_memory_authority(),
             },
+            ComponentImport {
+                interface: MemoryContextInterface::interface_id(),
+                schema: MemoryContextInterface::schema(),
+                required: false,
+                authority: application_memory_authority(),
+            },
         ],
         exports: vec![
             ComponentExport {
@@ -3467,6 +3501,12 @@ pub(crate) fn application_agent_tool_component_manifest(
                 required_authority: Authority::default(),
             },
             ComponentExport {
+                interface: ApplicationMemoryAssociateToolInterface::interface_id(),
+                schema: ApplicationMemoryAssociateToolInterface::schema(),
+                priority: 100,
+                required_authority: Authority::default(),
+            },
+            ComponentExport {
                 interface: ApplicationMemoryRecallToolInterface::interface_id(),
                 schema: ApplicationMemoryRecallToolInterface::schema(),
                 priority: 100,
@@ -3508,6 +3548,7 @@ struct ApplicationAgentToolSdk<'host, 'runtime> {
     sessions: SdkClient<'host, 'runtime, SessionInterface>,
     language: SdkClient<'host, 'runtime, LanguageInterface>,
     memory: SdkClient<'host, 'runtime, MemoryInterface>,
+    memory_context: SdkClient<'host, 'runtime, MemoryContextInterface>,
 }
 
 type ApplicationAgentToolContext<'host, 'runtime> =
@@ -3524,6 +3565,7 @@ fn application_agent_tool_context<'host, 'runtime>(
             sessions: SdkClient::new(host, application_agent_tool_component_id()),
             language: SdkClient::new(host, application_agent_tool_component_id()),
             memory: SdkClient::new(host, application_agent_tool_component_id()),
+            memory_context: SdkClient::new(host, application_agent_tool_component_id()),
         },
         (),
         (),
@@ -3729,6 +3771,68 @@ impl SharedPluginInvocation for ApplicationAgentToolInvocation {
             return context
                 .kernel
                 .encode_value(&record)
+                .map_err(|error| error.to_string());
+        }
+        if service.as_str() == APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE {
+            let request = context
+                .kernel
+                .decode_projected::<ApplicationMemoryAssociateRequest>(
+                    &ApplicationMemoryAssociateToolInterface::interface_id(),
+                    input,
+                )
+                .map_err(|error| error.to_string())?;
+            let response = context
+                .sdk
+                .memory
+                .invoke_projected::<MemoryCommand, MemoryResponse>(&MemoryCommand::Get {
+                    id: request.memory_id.clone(),
+                })
+                .map_err(|error| error.to_string())?;
+            let MemoryResponse::Memory {
+                record: Some(record),
+            } = response
+            else {
+                return Err(format!("unknown memory: {}", request.memory_id));
+            };
+            if record.source_refs.is_empty() {
+                return Err("explicit memory association requires exact source references".into());
+            }
+            let anchor_bytes =
+                serde_json::to_vec(&request.anchor).map_err(|error| error.to_string())?;
+            let anchor_identity = Sha256::digest(anchor_bytes);
+            let event_id = format!(
+                "explicit-link:{}:{}",
+                record.id,
+                anchor_identity
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            );
+            let response = context
+                .sdk
+                .memory_context
+                .invoke_projected::<MemoryContextCommand, MemoryContextResponse>(
+                    &MemoryContextCommand::Observe {
+                        observation: MemoryAssociationObservation {
+                            event_id: event_id.clone(),
+                            request_id: event_id,
+                            source: AssociationObservationSource::ExplicitLink,
+                            association: MemoryContextAssociation {
+                                memory_id: record.id,
+                                anchor: request.anchor,
+                                source_refs: record.source_refs,
+                                observed_at: record.created_at,
+                            },
+                        },
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            let MemoryContextResponse::Observed { state, .. } = response else {
+                return Err("memory context service returned a non-observation response".into());
+            };
+            return context
+                .kernel
+                .encode_value(&state)
                 .map_err(|error| error.to_string());
         }
         if service.as_str() == APPLICATION_MEMORY_RECALL_TOOL_SERVICE {
@@ -7136,6 +7240,185 @@ mod tests {
             assert!(memory.effective_authority().permits(capability));
         }
         assert!(!memory.effective_authority().permits(&shell));
+
+        let memory_context = graph
+            .import_handle(
+                &application_agent_tool_component_id(),
+                &MemoryContextInterface::interface_id(),
+            )
+            .unwrap()
+            .expect("application memory association binds the memory context provider");
+        assert_eq!(
+            memory_context.owning_plugin(),
+            &PluginId::parse("phenix.memory").unwrap()
+        );
+        for capability in [&schema, &read, &write] {
+            assert!(memory_context.effective_authority().permits(capability));
+        }
+        assert!(!memory_context.effective_authority().permits(&shell));
+    }
+
+    #[test]
+    fn explicit_memory_association_uses_exact_record_provenance() {
+        let mut harness = crate::PhenixRuntimeBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+
+        let source = phenix_sdk::MemorySourceReference {
+            service: ServiceId::parse("fixture.history@1").unwrap(),
+            resource: "turn/1".into(),
+            start: None,
+            end: None,
+        };
+        let record = MemoryRecord {
+            id: "memory-associated".into(),
+            kind: phenix_sdk::MemoryKind::Fact,
+            scope: phenix_sdk::MemoryScope::Workspace {
+                workspace_id: "phenix".into(),
+            },
+            content: "remember the phenix workspace".into(),
+            source_refs: vec![source.clone()],
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 10,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Record {
+            record: record.clone(),
+        }))
+        .unwrap();
+        harness
+            .invoke(
+                &phenix_sdk::memory_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+
+        let anchor = ContextAnchor::Project {
+            key: "phenix".into(),
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&ApplicationMemoryAssociateRequest {
+            memory_id: record.id.clone(),
+            anchor: anchor.clone(),
+        }))
+        .unwrap();
+        let output = harness
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let state = MemoryAssociationState::try_from(Project(&value)).unwrap();
+        assert_eq!(state.association.memory_id, record.id);
+        assert_eq!(state.association.anchor, anchor);
+        assert_eq!(state.association.source_refs, vec![source]);
+        assert_eq!(state.observation_count, 1);
+
+        let replay = harness
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
+            )
+            .unwrap();
+        let replay: PhenixValue = serde_json::from_slice(&replay).unwrap();
+        let replay = MemoryAssociationState::try_from(Project(&replay)).unwrap();
+        assert_eq!(replay.observation_count, 1);
+
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryContextCommand::GetAssociation {
+            memory_id: "memory-associated".into(),
+            anchor: ContextAnchor::Project {
+                key: "phenix".into(),
+            },
+        }))
+        .unwrap();
+        let output = harness
+            .invoke(
+                &phenix_sdk::memory_context_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+        let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+        let response = MemoryContextResponse::try_from(Project(&value)).unwrap();
+        assert!(matches!(
+            response,
+            MemoryContextResponse::Association { state: Some(_) }
+        ));
+    }
+
+    #[test]
+    fn explicit_memory_association_rejects_unprovenanced_record() {
+        let mut harness = crate::PhenixRuntimeBuilder::with_default_suite()
+            .unwrap()
+            .build()
+            .unwrap();
+        harness.activate().unwrap();
+
+        let record = MemoryRecord {
+            id: "memory-unprovenanced".into(),
+            kind: phenix_sdk::MemoryKind::Fact,
+            scope: phenix_sdk::MemoryScope::Workspace {
+                workspace_id: "phenix".into(),
+            },
+            content: "unprovenanced memory".into(),
+            source_refs: Vec::new(),
+            supporting_dependencies: Vec::new(),
+            supersedes: Vec::new(),
+            valid_from: None,
+            valid_until: None,
+            created_at: 11,
+        };
+        let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Record {
+            record: record.clone(),
+        }))
+        .unwrap();
+        harness
+            .invoke(
+                &phenix_sdk::memory_service(),
+                &input,
+                &application_memory_authority(),
+                None,
+            )
+            .unwrap();
+
+        let input = serde_json::to_vec(&PhenixValue::from(&ApplicationMemoryAssociateRequest {
+            memory_id: record.id,
+            anchor: ContextAnchor::Project {
+                key: "phenix".into(),
+            },
+        }))
+        .unwrap();
+        let error = harness
+            .kernel_mut()
+            .invoke_component(
+                &application_agent_tool_component_id(),
+                &ServiceId::parse(APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE).unwrap(),
+                &input,
+                &application_memory_authority(),
+                &PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN).unwrap(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("explicit memory association requires exact source references"),
+            "unexpected association error: {error}"
+        );
     }
 
     #[test]
@@ -10677,7 +10960,7 @@ mod tests {
             .unwrap()
         };
         let tools = surface.tools.clone();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 11);
         assert_eq!(
             tools
                 .iter()
@@ -10686,6 +10969,7 @@ mod tests {
             vec![
                 "bash",
                 "code.query",
+                "memory.associate",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
@@ -10714,7 +10998,7 @@ mod tests {
                 continuation: Vec::new(),
             },
         );
-        assert_eq!(report.tools.len(), 10);
+        assert_eq!(report.tools.len(), 11);
         assert_eq!(
             report
                 .tools
@@ -10724,6 +11008,7 @@ mod tests {
             vec![
                 "bash",
                 "code.query",
+                "memory.associate",
                 "memory.recall",
                 "memory.record",
                 "phenix.inspect",
