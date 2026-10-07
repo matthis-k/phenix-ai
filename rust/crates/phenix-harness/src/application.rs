@@ -493,8 +493,13 @@ fn parse_application_memory_datetime(value: &str) -> Result<u64, String> {
         .ok_or_else(|| "memory date must use YYYY-MM-DD".to_owned())?
         .parse::<u64>()
         .map_err(|_| "memory date must use YYYY-MM-DD".to_owned())?;
-    if date_parts.next().is_some() || year < 1970 || !(1..=12).contains(&month) {
-        return Err("memory date must be a valid UTC date on or after 1970-01-01".into());
+    if date_parts.next().is_some()
+        || !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+    {
+        return Err(
+            "memory date must be a valid UTC date from 1970-01-01 through 9999-12-31".into(),
+        );
     }
     let max_day = application_memory_days_in_month(year, month);
     if day == 0 || day > max_day {
@@ -7463,6 +7468,7 @@ mod tests {
             2 * 24 * 60 * 60
         );
         assert!(parse_application_memory_datetime("2026-02-30").is_err());
+        assert!(parse_application_memory_datetime("9999999999-01-01").is_err());
         assert!(parse_application_memory_duration("1 month").is_err());
     }
 
