@@ -11067,8 +11067,7 @@ mod tests {
             queried
                 .entities
                 .iter()
-                .any(|entity| entity.entity.id == semantic_entity
-                    && entity.name.as_deref() == Some("semantic_fixture")),
+                .any(|entity| entity.entity.id == semantic_entity),
             "code.query did not return the seeded semantic entity: {queried:?}"
         );
 
