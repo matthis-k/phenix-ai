@@ -22,6 +22,90 @@ An external application consuming a Phenix-hosted capability through an authoriz
 
 Basic and Full are packaged reference selections built *on top* of that substrate, not requirements for running it. The only constraint is that each selected component's **declared required imports** must be satisfiable by the chosen graph.
 
+## Canonical four-tier distribution model
+
+The project distributes **four independent composition tiers**, with only the first mandatory for
+a component graph hosted by Phenix:
+
+| Tier | Package type | Purpose | Requires earlier tier at runtime? |
+| --- | --- | --- | --- |
+| **1. Kernel** | Minimal runtime | Contracts/interfaces, plugin graph resolution, invocation, authority, lifecycle, generic persistence primitives | No |
+| **2. Harness contracts** | Standalone contract-definition library, optionally a resource-only discovery/catalog plugin | Common interfaces for agent execution, model/tool calls, session history, memory, context preparation, compaction, expansion, retrieval and maintenance; **no provider implementations or assembled graph** | No executable harness plugin; contract definitions link against kernel interface types |
+| **3. Basic agent** | One simple agent-loop provider plus a Basic *reference profile* selecting naive provider plugins | Working first-party conventional agent loop; deterministic compaction and other cheap default mechanisms as needed | Uses kernel and selected contracts; provider plugins independently replaceable |
+| **4. Full harness** | Declarative overlay/profile over Basic and independently packaged advanced providers | More capable implementations, optional features, replacements and Layers | Same kernel and contracts; effective provider graph is resolved after overlay application |
+
+**Contract definitions are not themselves executable implementations.** Do not make the common-contract
+catalog a compulsory runtime Plugin or process, or make its absence invalidate a graph whose providers
+already declare compatible interfaces. In Rust it may be a dedicated `phenix-harness-contracts`
+crate (or a cohesive module within `phenix-sdk`). An optional resource-only plugin may publish
+descriptors for discovery and documentation; this is metadata, not a separate dependency resolver.
+
+Do **not** confuse `phenix-plugin-basic-agent` (one replaceable implementation of an agent loop)
+with `phenix.agent.basic` (a *profile selecting* the basic loop and other independent defaults).
+The profile must not be mandatory to reuse any Basic provider. Neither the Basic loop nor Full
+gets privileged kernel registration, runtime service identity, or special-case tool admission.
+
+### No predefined graph in the contracts tier
+
+The contracts tier does not prescribe an agent topology. A component author can provide only
+`memory.retrieve`, only `context.compact`, a novel `agent.execute` implementation, or
+completely different user-defined interfaces. A module needs only its own declared imports,
+which may be satisfied by any compatible providers or adapters.
+
+Contract identifiers and semantics are independently versioned. The common catalog is a
+**recommended interoperability vocabulary**, not a closed set of required interfaces. Plugins
+may define new contracts without waiting for first-party catalog or kernel changes.
+
+### Basic: naive implementations are separate replaceable providers
+
+The Basic **loop** should be intentionally simple: prepare context; invoke model; execute tools;
+append history; repeat until termination. The Basic **profile** selects cheap, deterministic
+first-party providers only for contracts its default agent requires. Examples:
+
+- Basic context preparation/compaction uses bounded source-preserving trimming/checkpointing
+  rather than model-backed summarization.
+- Basic memory, if included, is an optional simple durable record/query provider; it is not a
+  dependency of the naive loop unless the loop actually needs the corresponding contract.
+- Basic tool/model implementations are independent of the loop and can be replaced without
+  replacing it.
+- Non-applicable optional contracts do not need stub implementations just to complete the profile.
+
+Even when multiple Basic providers ship from one build package, each exports a logically independent
+capability and its selection is represented by the graph.
+
+### Full: composition overlay, not a second architecture
+
+`Full = Resolve(Basic defaults + Full additions + explicit replacements/disables + Layers)`
+
+An overlay may replace or remove any inherited provider, including the Basic agent loop,
+while retaining other Basic providers. An inherited default is not a hard plugin dependency.
+Resolve profile defaults and overrides **before** enforcing concrete provider package closure;
+after substitution, only actual selected implementation dependencies and required contract
+imports are mandatory. A disabled Basic provider must not be started just because its profile
+was an ancestor.
+
+Full may offer state-of-the-art memory, compaction, retrieval, routing, planning, and observability
+as first-party choices; no particular model-based algorithm should become kernel semantics.
+Layer/decorator behavior is explicit, distinct from replacement, and subject to generation-pinned
+one-shot continuation.
+
+### Reusability acceptance fixtures
+
+1. Kernel-only graph runs without loading the contracts catalog, Basic or Full.
+2. A third-party plugin declares its own novel contract and runs through the kernel.
+3. A standalone contracts consumer selects an arbitrary implementation, including an adapter,
+   with no default graph or required agent loop.
+4. A Basic loop executes against third-party model, context and tool providers with no Basic
+   provider package besides the loop.
+5. A third-party loop can reuse just the Basic deterministic compactor or Full memory retrieval.
+6. Full retains its loop while completely *removing* native memory/context implementations and
+   replacing them through compatible foreign providers.
+7. A Full overlay may replace the loop while preserving chosen first-party memory/context.
+8. The resolver's inspection reports the effective provider selections, inheritance and overrides,
+   and tests prove inactive/disabled defaults have no startup side effects.
+9. Common contracts are versioned and provider-neutral, and adapters must fulfill their target
+   guarantees rather than relying on schema-only compatibility.
+
 ## Executive decision
 
 The kernel runs a graph of contracts and capability providers. **It does not contain an agent.**
