@@ -825,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_binding_only_wins_when_eligible() {
+    fn unavailable_explicit_binding_never_falls_back() {
         let read = capability("fs.read");
         let network = capability("network.read");
         let caller = Authority::new([read.clone()]);
@@ -836,7 +836,7 @@ mod tests {
         unauthorized.exports[0].required_authority = Authority::new([network]);
         let policy = ProviderCompositionPolicy::new()
             .with_explicit_binding(interface("phenix.demo@1"), component("z-unauthorized"));
-        let graph = ResolvedComponentGraph::compile_with_provider_policy(
+        let error = ResolvedComponentGraph::compile_with_provider_policy(
             vec![
                 plugin_manifest("plugin-consumer", caller.clone()),
                 plugin_manifest("plugin-a-authorized", broad.clone()),
@@ -846,16 +846,16 @@ mod tests {
             &caller,
             &policy,
         )
-        .unwrap();
+        .err()
+        .expect("unavailable explicit provider must not silently fall back");
 
-        assert_eq!(
-            graph
-                .import_handle(&component("consumer"), &interface("phenix.demo@1"))
-                .unwrap()
-                .unwrap()
-                .exporter(),
-            &component("a-authorized")
-        );
+        assert!(matches!(
+            error,
+            ComponentGraphError::UnavailableExplicitProvider { component: id, interface: contract, provider }
+                if id == component("consumer")
+                    && contract == interface("phenix.demo@1")
+                    && provider == component("z-unauthorized")
+        ));
     }
 
     #[test]
