@@ -94,6 +94,7 @@
           "phenix-plugin-debug"
           "phenix-plugin-environment-local"
           "phenix-plugin-frontend"
+          "phenix-plugin-interactive-ui"
           "phenix-plugin-hooks"
           "phenix-plugin-invocation-defaults"
         ];

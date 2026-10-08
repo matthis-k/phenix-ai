@@ -16,6 +16,7 @@ const MAX_NODES: usize = 128;
 const MAX_DEPTH: usize = 12;
 const MAX_TEXT_BYTES: usize = 4096;
 const MAX_DOCUMENT_BYTES: usize = 65536;
+const MAX_DOCUMENT_KEYS: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, phenix_sdk_macros::PhenixValue)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -146,6 +147,11 @@ impl UiStore {
                 if previous != expected_revision {
                     return Err("UI document revision conflict".into());
                 }
+                if previous.is_none()
+                    && self.documents.len() + self.tombstones.len() >= MAX_DOCUMENT_KEYS
+                {
+                    return Err("UI document key limit reached".into());
+                }
                 let next = match previous {
                     None => 1,
                     Some(previous) => previous.checked_add(1)
@@ -269,13 +275,13 @@ pub fn validate_document(document: &UiDocument) -> Result<(), String> {
             return Err("empty UI layout".into());
         }
     }
-    fn visit<'a>(id: &'a str, index: &BTreeMap<&str, &UiNode>,
-        visited: &mut BTreeSet<&'a str>, depth: usize) -> Result<(), String>
+    fn visit(id: &str, index: &BTreeMap<&str, &UiNode>,
+        visited: &mut BTreeSet<String>, depth: usize) -> Result<(), String>
     {
         if depth > MAX_DEPTH {
             return Err("UI layout nesting exceeds limit".into());
         }
-        if !visited.insert(id) {
+        if !visited.insert(id.to_owned()) {
             return Err("UI layout shares a node or contains a cycle".into());
         }
         let node = index.get(id).ok_or("unknown UI child node")?;
