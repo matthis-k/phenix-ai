@@ -18,7 +18,7 @@ use phenix_plugin_catalog::{
     basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
     common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
     execution_manifest, expand_profile_defaults, frontend_manifest,
-    full_product_configuration_manifest, hook_manifest, job_manifest, language_manifest,
+    full_product_configuration_manifest, hook_manifest, interactive_ui_manifest, job_manifest, language_manifest,
     local_environment_manifest, memory_manifest, model_routing_manifest, openai_codex_manifest,
     options_manifest, planning_manifest, providers_manifest, repository_worker_manifest,
     sdk_manifest, session_manifest, session_tree_manifest, step_runner_manifest,
@@ -502,6 +502,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (step_runner_manifest(authority.clone()), true),
         (job_manifest(), true),
         (frontend_manifest(authority.clone()), true),
+        (interactive_ui_manifest(), false),
         (hook_manifest(authority.clone()), true),
         (debug_manifest(authority.clone()), true),
         (options_manifest(), true),
@@ -1197,6 +1198,7 @@ mod tests {
             "openai-api",
             "openai-codex",
             "phenix.workspace",
+            "phenix.interactive-ui",
         ] {
             assert!(enabled.contains(required), "full product missed {required}");
         }

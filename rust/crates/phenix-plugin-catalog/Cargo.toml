@@ -25,6 +25,7 @@ phenix-plugin-execution = { path = "../phenix-plugin-execution" }
 phenix-plugin-environment-local = { path = "../phenix-plugin-environment-local" }
 phenix-plugin-efficiency-evaluation = { path = "../phenix-plugin-efficiency-evaluation" }
 phenix-plugin-frontend = { path = "../phenix-plugin-frontend" }
+phenix-plugin-interactive-ui = { path = "../phenix-plugin-interactive-ui" }
 phenix-plugin-hooks = { path = "../phenix-plugin-hooks" }
 phenix-plugin-jobs = { path = "../phenix-plugin-jobs" }
 phenix-plugin-language = { path = "../phenix-plugin-language" }

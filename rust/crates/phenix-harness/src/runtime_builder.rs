@@ -26,6 +26,7 @@ use phenix_plugin_catalog::{
     execution_factory, execution_manifest, expand_profile_defaults,
     first_party_durable_schema_registrations, frontend_component_manifest, frontend_factory,
     frontend_manifest, full_product_configuration_manifest, helper_invocation_component_manifest,
+    interactive_ui_component_manifest, interactive_ui_factory, interactive_ui_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     local_environment_component_manifest, local_environment_factory, local_environment_manifest,
@@ -165,6 +166,7 @@ impl PhenixRuntimeBuilder {
         builder.add_embedded(step_runner_manifest(authority.clone()), step_runner_factory)?;
         builder.add_embedded(job_manifest(), job_factory)?;
         builder.add_embedded(frontend_manifest(authority.clone()), frontend_factory)?;
+        builder.add_embedded(interactive_ui_manifest(), interactive_ui_factory)?;
         builder.add_embedded(debug_manifest(authority.clone()), debug_factory)?;
         builder.add_embedded(options_manifest(), options_factory)?;
         builder.add_embedded(
@@ -195,6 +197,7 @@ impl PhenixRuntimeBuilder {
             helper_invocation_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
+            interactive_ui_component_manifest(),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),
             invocation_defaults::invocation_defaults_component_manifest(authority.clone()),
@@ -250,6 +253,7 @@ impl PhenixRuntimeBuilder {
             step_runner_manifest(authority.clone()),
             job_manifest(),
             frontend_manifest(authority.clone()),
+            interactive_ui_manifest(),
             hook_manifest(authority.clone()),
             debug_manifest(authority.clone()),
             options_manifest(),
@@ -401,6 +405,7 @@ impl PhenixRuntimeBuilder {
             frontend_manifest(authority.clone()),
             frontend_factory,
         )?;
+        builder.add_selected(&enabled, interactive_ui_manifest(), interactive_ui_factory)?;
         builder.add_selected(&enabled, hook_manifest(authority.clone()), hook_factory)?;
         builder.add_selected(&enabled, debug_manifest(authority.clone()), debug_factory)?;
         builder.add_selected(&enabled, options_manifest(), options_factory)?;
@@ -436,6 +441,7 @@ impl PhenixRuntimeBuilder {
             helper_invocation_component_manifest(authority.clone()),
             job_component_manifest(),
             frontend_component_manifest(authority.clone()),
+            interactive_ui_component_manifest(),
             hook_component_manifest(authority.clone()),
             debug_component_manifest(authority.clone()),
             options_component_manifest(),

@@ -32,6 +32,7 @@ members = [
   "crates/phenix-plugin-environment-local",
   "crates/phenix-plugin-efficiency-evaluation",
   "crates/phenix-plugin-frontend",
+  "crates/phenix-plugin-interactive-ui",
   "crates/phenix-plugin-hooks",
   "crates/phenix-plugin-jobs",
   "crates/phenix-plugin-invocation-defaults",
