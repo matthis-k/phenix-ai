@@ -1,6 +1,6 @@
 # Composable agent runtime: kernel, Basic, Full and external integrations
 
-status: proposed
+status: partial
 audit_revision: 65c0ea6c8805fadb283719ee831096ae6cf27261
 scope:
   - contract ownership and substitution
