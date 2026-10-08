@@ -1,6 +1,6 @@
 # Frontend service providers
 
-status: implemented
+status: partial
 
 ## Purpose
 
@@ -51,7 +51,7 @@ A provider name may exist on several frontends. Execution-scoped routing still f
 
 Workspace-owned conductor integrations are different. They inspect the live provider catalog, select an eligible connection from advertised capabilities, then address that connection directly. They do not fabricate a root execution merely to reach a frontend service.
 
-The conductor releases a root route when the root becomes terminal. Disconnect releases all routes owned by that connection.
+The caller that owns a root releases its binding using the same connection ID. A different connection ID cannot release the root. Release also revokes its pending execution-scoped requests. Disconnect removes the provider set, owned routes, and pending requests. Terminal executions and finished ancestors cannot start new frontend calls, and their late replies are rejected even if a route has not yet been released.
 
 ## Requests
 
@@ -132,7 +132,7 @@ A descriptor has a stable provider ID and a set of capability strings.
 }
 ```
 
-Provider IDs route calls. Capabilities let conductor-owned integrations decide whether a live provider satisfies their contract. Capability advertisement does not alter execution authority or callable delegation. Method names and JSON payloads remain provider-specific, so new frontend services do not require a new transport envelope.
+Provider IDs route calls. Capabilities let conductor-owned integrations decide whether a live provider satisfies their contract. `CheckExecutionCapabilities` reads only the active execution's root owner, never another connection's advertisement. `BeginExecutionCallWithRequirements` repeats the check at call admission and rejects missing requirements. Pending replies are rechecked against live execution ownership. The check is a preflight filter, not an authorization token. Capability advertisement does not alter execution authority or callable delegation. Method names and JSON payloads remain provider-specific, so new frontend services do not require a new transport envelope.
 
 The source connection identity is process-local routing state. It is not part of the descriptor sent by the frontend and is never durable.
 
@@ -146,8 +146,10 @@ The conductor rejects duplicate provider IDs in one advertisement. It rejects re
 
 A remote error is data returned by the frontend service. Transport and lifecycle errors remain conductor-side failures.
 
-## Scope
+## Completion boundary
 
-This slice provides generic bidirectional request, response, notification, registration, capability inspection, direct provider addressing, and execution routing contracts. Concrete services build on it.
+The embedded plugin implements typed routing and capability checks with kernel-backed lifecycle tests. The application-to-frontend transport bridge is not yet connected to this plugin: a root's authenticated frontend identity is not yet supplied by the application when it starts an execution, and the returned `FrontendServiceRequest` is not yet delivered through the live frontend envelope. The `connection_id` fields are currently explicit arguments and must be tied to trusted transport identity before using this service to authorize model-facing tools.
+
+UI model-tool gating, typed document services, action admission, and reconnect replay remain separate work. A successful unit test for this plugin does not establish a working frontend integration.
 
 LSP integration is outside this slice. The interface does not expose arbitrary frontend IPC to executions. Conductor-owned code chooses when a frontend service is used and which provider method it calls.
