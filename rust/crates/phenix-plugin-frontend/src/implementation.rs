@@ -43,6 +43,7 @@ pub fn frontend_service() -> ServiceId {
 #[derive(Clone, Debug)]
 struct PendingCall {
     connection_id: String,
+    descriptor: FrontendProviderDescriptor,
 }
 
 #[derive(Default)]
@@ -128,11 +129,15 @@ fn handle(
                     return Err("duplicate frontend provider id in advertisement".into());
                 }
             }
-            context
-                .plugin
-                .state
-                .providers
-                .insert(connection_id, indexed);
+            let state = &mut context.plugin.state;
+            // An in-flight reply is only valid while its advertised contract
+            // remains unchanged. A renderer withdrawal cannot complete a call
+            // from its previous capability epoch.
+            state.pending.retain(|_, pending| {
+                pending.connection_id != connection_id
+                    || indexed.get(&pending.descriptor.id) == Some(&pending.descriptor)
+            });
+            state.providers.insert(connection_id, indexed);
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::Disconnect { connection_id } => {
@@ -263,15 +268,14 @@ fn begin_call(
     validate_id("frontend connection id", &connection_id)?;
     validate_id("frontend provider id", &provider)?;
     validate_id("frontend method", &method)?;
-    if !state
+    let descriptor = state
         .providers
         .get(&connection_id)
-        .is_some_and(|providers| providers.contains_key(&provider))
-    {
-        return Err(format!(
-            "frontend connection {connection_id} does not advertise provider {provider}"
-        ));
-    }
+        .and_then(|providers| providers.get(&provider))
+        .cloned()
+        .ok_or_else(|| {
+            format!("frontend connection {connection_id} does not advertise provider {provider}")
+        })?;
     let correlation_id = state.next_correlation_id;
     state.next_correlation_id = state
         .next_correlation_id
@@ -281,6 +285,7 @@ fn begin_call(
         correlation_id,
         PendingCall {
             connection_id: connection_id.clone(),
+            descriptor,
         },
     );
     Ok(FrontendResponse::Request {
