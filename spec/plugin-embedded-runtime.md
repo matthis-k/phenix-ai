@@ -2,6 +2,12 @@
 
 status: implemented
 
+## Current baseline and planned replacement
+
+This is the **current statically linked Rust factory model**. A separately designed target, [native plugin ABI and guest runtimes](native-plugin-abi-and-guest-runtimes.md), replaces it as the default bootstrap with an independently compiled native shared-library ABI. The existing prohibition on Rust dynamic libraries applies to the current baseline, not to the proposed explicit C-compatible native ABI.
+
+Configuration/instance restart and loading changed executable bytes are distinct. The current embedded model supports the former; the new loader must prove the latter without relinking. Do not interpret this spec's `status: implemented` as implementation of the new loader.
+
 ## Purpose
 
 Run trusted Rust plugins inside the normal Phenix process without IPC or a dynamic Rust ABI.
