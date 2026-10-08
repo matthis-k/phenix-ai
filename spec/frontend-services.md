@@ -8,6 +8,8 @@ Some capabilities live in a frontend process rather than the conductor. Examples
 
 This interface is process-local. It does not change Phenix session identity, configuration revisions, callable ownership, or execution authority.
 
+The plugin's typed commands, capability checks, and lifecycle checks are implemented. The wire envelopes shown below define the intended application/transport behavior; the server does not yet connect them to this plugin. In particular, live frontend connection identity is not yet bound to root execution ownership. See the completion boundary before treating a wire example as a working end-to-end path.
+
 ## Lifecycle
 
 A frontend advertises its current providers with the connection-level `set_frontend_service_providers` envelope. The envelope replaces the provider set for that connection. It is connection control, not a conductor `Command`.
