@@ -2,6 +2,12 @@
 
 status: implemented
 
+## Relation to the native ABI proposal
+
+The statement below that Rust dynamic libraries are unsupported describes the **current implementation**, not a permanent ban on an explicitly versioned native ABI. See [native plugin ABI and guest runtimes](native-plugin-abi-and-guest-runtimes.md). A future native shared-library loader is a *trusted in-process* execution mechanism. This process bridge remains separately useful for OS isolation and crash containment, including for untrusted guest runtimes.
+
+A process runtime adapter may itself be distributed as a native adapter plugin after the native bootstrap exists. That does not make the guest process a native-ABI implementer or add process-specific composition logic to Core.
+
 ## Purpose
 
 Run executable plugin implementations in a separate process when they need independent distribution or enforceable isolation, while preserving the same logical Plugin API used by embedded implementations.
