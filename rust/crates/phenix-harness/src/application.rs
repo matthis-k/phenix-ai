@@ -64,19 +64,19 @@ use phenix_provider_sdk::{
 use phenix_sdk::{
     AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
-    ContextScope, ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand,
-    ExecutionInspectionInterface, ExecutionInspectionResponse, ExecutionResourceCommand,
-    ExecutionResourceResponse, ExecutionResponse, LanguageCommand, LanguageInterface,
-    LanguageResponse, MemoryAssociationObservation, MemoryAssociationState, MemoryCommand,
-    MemoryContextAssociation, MemoryContextCommand, MemoryContextInterface, MemoryContextResponse,
-    MemoryDependencyRevision, MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecord,
-    MemoryResponse, MemoryScope, MemorySearchQuery, MemorySourceReference, MemoryStructuredQuery,
-    MemoryTimeBounds, ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext,
-    OptionKey, OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
+    ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
+    ExecutionInspectionResponse, ExecutionResourceCommand, ExecutionResourceResponse,
+    ExecutionResponse, LanguageCommand, LanguageInterface, LanguageResponse,
+    MemoryAssociationObservation, MemoryAssociationState, MemoryCommand, MemoryContextAssociation,
+    MemoryContextCommand, MemoryContextInterface, MemoryContextResponse, MemoryDependencyRevision,
+    MemoryInterface, MemoryKind, MemoryQueryOrder, MemoryRecord, MemoryResponse, MemoryScope,
+    MemorySearchQuery, MemorySourceReference, MemoryStructuredQuery, MemoryTimeBounds,
+    ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext, OptionKey,
+    OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
     RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
-    WorkspaceEntryKind, WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse,
-    context_service, execution_resource_service, execution_service, model_routing_service,
-    options_service, workspace_context_id,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, context_service,
+    execution_resource_service, execution_service, model_routing_service, options_service,
+    workspace_context_id,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -1547,54 +1547,148 @@ impl ApplicationWorker {
         }
     }
 
+    fn resolve_integer_option_on(
+        &self,
+        root: &RootExecutionHandle,
+        session_id: &SessionId,
+        key: &str,
+    ) -> Result<i64, ApplicationError> {
+        let response = self.invoke_option_command_on(
+            root,
+            OptionCommand::Resolve {
+                key: OptionKey::parse(key).map_err(|error| ApplicationError::InvalidInput {
+                    message: error.to_owned(),
+                })?,
+                context: OptionContext {
+                    session: Some(
+                        OptionSubjectId::parse(session_id.as_str().to_owned()).map_err(
+                            |error| ApplicationError::InvalidInput {
+                                message: error.to_owned(),
+                            },
+                        )?,
+                    ),
+                    agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                        |error| ApplicationError::InvalidInput {
+                            message: error.to_owned(),
+                        },
+                    )?),
+                },
+            },
+        )?;
+        let OptionResponse::Value { option } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} returned a non-value response"),
+            });
+        };
+        match option.value {
+            OptionValue::Integer(value) => Ok(value),
+            other => Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} must be integer, got {other:?}"),
+            }),
+        }
+    }
+
+    fn resolve_string_list_option_on(
+        &self,
+        root: &RootExecutionHandle,
+        session_id: &SessionId,
+        key: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let response = self.invoke_option_command_on(
+            root,
+            OptionCommand::Resolve {
+                key: OptionKey::parse(key).map_err(|error| ApplicationError::InvalidInput {
+                    message: error.to_owned(),
+                })?,
+                context: OptionContext {
+                    session: Some(
+                        OptionSubjectId::parse(session_id.as_str().to_owned()).map_err(
+                            |error| ApplicationError::InvalidInput {
+                                message: error.to_owned(),
+                            },
+                        )?,
+                    ),
+                    agent: Some(OptionSubjectId::parse(DEFAULT_APPLICATION_AGENT).map_err(
+                        |error| ApplicationError::InvalidInput {
+                            message: error.to_owned(),
+                        },
+                    )?),
+                },
+            },
+        )?;
+        let OptionResponse::Value { option } = response else {
+            return Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} returned a non-value response"),
+            });
+        };
+        match option.value {
+            OptionValue::StringList(value) => Ok(value),
+            other => Err(ApplicationError::InvalidResponse {
+                message: format!("option {key} must be a string list, got {other:?}"),
+            }),
+        }
+    }
+
     fn workspace_context_sources_on(
         &self,
         root: &RootExecutionHandle,
+        session: &SessionInfo,
+        root_markers: Vec<String>,
+        fallback_filenames: Vec<String>,
+        max_bytes: usize,
     ) -> Result<Vec<RepositoryContextSource>, ApplicationError> {
-        let WorkspaceResponse::List { entries } = self.invoke_workspace_command_on(
+        if max_bytes == 0 {
+            return Ok(Vec::new());
+        }
+
+        let response = self.invoke_workspace_command_on(
             root,
-            WorkspaceCommand::List {
-                path: None,
-                recursive: true,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: session.working_directory.clone(),
+                root_markers,
+                file_names: ["AGENTS.override.md", "AGENTS.md"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain(fallback_filenames)
+                    .collect(),
             },
-        )?
-        else {
+        )?;
+        let WorkspaceResponse::ProjectFiles { files, .. } = response else {
             return Err(ApplicationError::InvalidResponse {
-                message: "workspace list returned a non-list response".into(),
+                message: "workspace project discovery returned an unexpected response".into(),
             });
         };
-        let mut paths = entries
-            .into_iter()
-            .filter(|entry| entry.kind == WorkspaceEntryKind::File)
-            .map(|entry| entry.path)
-            .filter(|path| {
-                matches!(
-                    path.rsplit('/').next().unwrap_or(path.as_str()),
-                    "AGENTS.md" | "AGENTS.override.md" | "CONTRIBUTING.md" | "DEVELOPMENT.md"
-                )
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        paths.dedup();
 
-        paths
-            .into_iter()
-            .map(|path| {
-                let WorkspaceResponse::Read { content, .. } = self.invoke_workspace_command_on(
-                    root,
-                    WorkspaceCommand::Read { path: path.clone() },
-                )?
-                else {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: format!("workspace read returned a non-read response for {path}"),
-                    });
-                };
-                Ok(RepositoryContextSource {
-                    path,
-                    content: content.into_bytes().into(),
-                })
-            })
-            .collect()
+        let mut remaining = max_bytes;
+        let mut sources = Vec::new();
+        for file in files {
+            if remaining == 0 {
+                break;
+            }
+            if file.content.trim().is_empty() {
+                continue;
+            }
+
+            let mut content = file.content;
+            if content.len() > remaining {
+                let mut end = remaining;
+                while end > 0 && !content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                content.truncate(end);
+                remaining = 0;
+            } else {
+                remaining -= content.len();
+            }
+            if content.trim().is_empty() {
+                continue;
+            }
+            sources.push(RepositoryContextSource {
+                path: file.path,
+                content: content.into_bytes().into(),
+            });
+        }
+        Ok(sources)
     }
 
     fn prepare_execution_context_on(
@@ -1610,34 +1704,67 @@ impl ApplicationWorker {
             return Ok(());
         }
 
+        let max_bytes = self.resolve_integer_option_on(
+            root,
+            &session.session_id,
+            "context.project_doc_max_bytes",
+        )?;
+        let max_bytes = usize::try_from(max_bytes).map_err(|_| ApplicationError::InvalidInput {
+            message: "context.project_doc_max_bytes must be non-negative".into(),
+        })?;
+        let root_markers = self.resolve_string_list_option_on(
+            root,
+            &session.session_id,
+            "context.project_root_markers",
+        )?;
+        let fallback_filenames = self.resolve_string_list_option_on(
+            root,
+            &session.session_id,
+            "context.project_doc_fallback_filenames",
+        )?;
         let workspace_id = workspace_context_id(&session.working_directory);
-        let sources = self.workspace_context_sources_on(root)?;
-        let mut descriptors = if sources.is_empty() {
-            Vec::new()
-        } else {
-            match self.invoke_context_command_on(
-                root,
-                ContextCommand::DiscoverRepository {
-                    workspace_id,
-                    sources,
-                },
-            )? {
-                ContextResponse::Discovered { descriptors } => descriptors,
-                _ => {
-                    return Err(ApplicationError::InvalidResponse {
-                        message: "repository context discovery returned an unexpected response"
-                            .into(),
-                    });
-                }
+        let sources = self.workspace_context_sources_on(
+            root,
+            session,
+            root_markers,
+            fallback_filenames,
+            max_bytes,
+        )?;
+        let source_order = sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| (source.path.clone(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut descriptors = match self.invoke_context_command_on(
+            root,
+            ContextCommand::DiscoverProjectInstructions {
+                workspace_id,
+                sources,
+            },
+        )? {
+            ContextResponse::Discovered { descriptors } => descriptors,
+            _ => {
+                return Err(ApplicationError::InvalidResponse {
+                    message: "repository context discovery returned an unexpected response".into(),
+                });
             }
         };
 
-        descriptors.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
+        descriptors.sort_by(|left, right| {
+            source_order
+                .get(&left.source)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .cmp(
+                    &source_order
+                        .get(&right.source)
+                        .copied()
+                        .unwrap_or(usize::MAX),
+                )
+                .then_with(|| left.resource_id.cmp(&right.resource_id))
+        });
         for descriptor in descriptors {
-            let mandatory_project_instruction = descriptor.kind
-                == ContextResourceKind::ProjectInstruction
-                && descriptor.scope == ContextScope::Workspace;
-            if !mandatory_project_instruction {
+            if descriptor.kind != ContextResourceKind::ProjectInstruction {
                 continue;
             }
             let response = self.invoke_context_command_on(
@@ -1648,7 +1775,7 @@ impl ApplicationWorker {
                     revision: descriptor.revision,
                     requester: ContextInjectionRequester::ContextPolicy,
                     lifetime: ContextInjectionLifetime::Execution,
-                    reason: "auto-load workspace project instruction".into(),
+                    reason: "auto-load applicable project instruction".into(),
                 },
             )?;
             if !matches!(response, ContextResponse::Loaded { .. }) {
@@ -7425,9 +7552,9 @@ mod tests {
         DurableSchemaRegistration, InvocationOutcome, LocalPersistence, ModelFeatureGenerationId,
         ModelId, ModelInferenceFailure, ModelToolTurn, PluginArtifactInput, PluginBuildSource,
         PluginBuildStep, PluginRuntimeAdapter, PluginRuntimeCandidate, ReferenceId,
-        ReferenceOwnerId, ResourceNamespace, SessionId, SkillCommand, SkillDefinition, SkillId,
-        SkillResponse, TransactionOp, Type, ValueAddress, plugin_runtime_adapter_service,
-        skill_service,
+        ReferenceOwnerId, ResourceNamespace, RuntimeTraceBuffer, RuntimeTraceEvent, SessionId,
+        SkillCommand, SkillDefinition, SkillId, SkillResponse, TransactionOp, Type, ValueAddress,
+        plugin_runtime_adapter_service, skill_service,
     };
     use phenix_plugin_catalog::{
         ModelInferenceRequest, ModelInferenceResponse, model_inference_service,
@@ -7435,7 +7562,7 @@ mod tests {
     };
     use phenix_sdk::{
         CapacityKnowledge, CodeEntityFacetRevisions, CodeEntityRevision, CodeQueryAnchor,
-        CodeQueryBudget, CodeQueryProjection, CodeQuerySelection, ContextControl,
+        CodeQueryBudget, CodeQueryProjection, CodeQuerySelection, ContextControl, ContextScope,
         DocumentProvenance, EffectiveModelFeatures, ExecutionRecord, LanguageDocumentIdentity,
         LogicalCodeEntity, MemoryKind, MemoryScope, MemorySourceReference, ModelLimits,
         ProviderEpoch,
@@ -10094,6 +10221,447 @@ mod tests {
         assert!(policy.build_authority().permits(&read));
         assert!(policy.build_authority().permits(&shell));
         assert!(!policy.build_authority().permits(&write));
+    }
+
+    #[test]
+    fn non_repository_context_discovery_uses_only_the_working_directory() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-context-non-repository-{}-{nonce}",
+            std::process::id()
+        ));
+        let cwd = root.join("nested");
+        fs::create_dir_all(cwd.join("deeper")).unwrap();
+        fs::write(root.join("AGENTS.md"), "parent rules must not leak").unwrap();
+        fs::write(cwd.join("AGENTS.md"), "cwd rules").unwrap();
+        fs::write(
+            cwd.join("deeper/AGENTS.md"),
+            "descendant rules must not leak",
+        )
+        .unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = root.clone();
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                title: Some("non repository context".into()),
+            },
+        )
+        .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+
+        let sources = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                Vec::new(),
+                32 * 1024,
+            )
+            .unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| {
+                    (
+                        source.path.clone(),
+                        String::from_utf8_lossy(source.content.as_ref()).into_owned(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("AGENTS.md".to_owned(), "cwd rules".to_owned())]
+        );
+
+        let disabled = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                vec!["../invalid-fallback".into()],
+                0,
+            )
+            .unwrap();
+        assert!(disabled.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_instruction_fallbacks_follow_default_precedence() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-context-fallbacks-{}-{nonce}",
+            std::process::id()
+        ));
+        let cwd = root.join("nested");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(root.join("CLAUDE.md"), "root fallback").unwrap();
+        fs::write(cwd.join("CLAUDE.md"), "nested fallback").unwrap();
+        fs::write(cwd.join("AGENTS.md"), "nested standard").unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = root.clone();
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                title: Some("project instruction fallback".into()),
+            },
+        )
+        .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+
+        let sources = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                vec!["CLAUDE.md".into()],
+                32 * 1024,
+            )
+            .unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| source.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CLAUDE.md", "nested/AGENTS.md"]
+        );
+
+        let response = worker
+            .invoke_option_command_on(
+                &root_handle,
+                OptionCommand::Set {
+                    key: OptionKey::parse("context.project_doc_fallback_filenames").unwrap(),
+                    scope: OptionScope::Global,
+                    value: OptionValue::StringList(vec!["CLAUDE.md".into()]),
+                },
+            )
+            .unwrap();
+        assert!(matches!(response, OptionResponse::Updated { .. }));
+
+        let execution_id = worker.allocate_root_execution_on(&root_handle).unwrap();
+        worker
+            .prepare_execution_context_on(&root_handle, &session, &execution_id)
+            .unwrap();
+        let projected = worker
+            .invoke_context_command_on(
+                &root_handle,
+                ContextCommand::Project {
+                    execution_id: execution_id.clone(),
+                },
+            )
+            .unwrap();
+        let ContextResponse::Projection { projection } = projected else {
+            panic!("context project returned an unexpected response");
+        };
+        assert_eq!(
+            projection
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.resource.descriptor.kind == ContextResourceKind::ProjectInstruction
+                })
+                .map(|entry| entry.resource.descriptor.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CLAUDE.md", "nested/AGENTS.md"]
+        );
+        worker
+            .finish_root_execution_on(&root_handle, &execution_id, true)
+            .unwrap();
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_instruction_budget_is_shared_root_to_leaf() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-context-budget-{}-{nonce}",
+            std::process::id()
+        ));
+        let cwd = root.join("nested");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(root.join("AGENTS.md"), "12345678").unwrap();
+        fs::write(cwd.join("AGENTS.md"), "abcdefgh").unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = root.clone();
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                title: Some("project instruction budget".into()),
+            },
+        )
+        .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+
+        let sources = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                Vec::new(),
+                12,
+            )
+            .unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| {
+                    (
+                        source.path.clone(),
+                        String::from_utf8_lossy(source.content.as_ref()).into_owned(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("AGENTS.md".to_owned(), "12345678".to_owned()),
+                ("nested/AGENTS.md".to_owned(), "abcd".to_owned()),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn empty_non_repository_discovery_is_visible_in_runtime_trace() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "phenix-context-empty-workspace-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&workspace).unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = workspace.clone();
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
+        let mut harness = builder.build().unwrap();
+        let traces = Arc::new(RuntimeTraceBuffer::default());
+        harness.kernel_mut().set_runtime_trace_sink(traces.clone());
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: workspace.to_string_lossy().into_owned(),
+                title: Some("empty workspace context".into()),
+            },
+        )
+        .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+        let execution_id = worker.allocate_root_execution_on(&root_handle).unwrap();
+
+        worker
+            .prepare_execution_context_on(&root_handle, &session, &execution_id)
+            .unwrap();
+
+        let workspace_id = workspace_context_id(&session.working_directory);
+        assert!(traces.snapshot().iter().any(|event| matches!(
+            event,
+            RuntimeTraceEvent::PolicyStage {
+                policy,
+                stage,
+                outcome,
+                subject: Some(subject),
+                reason: Some(reason),
+                ..
+            } if policy == "phenix.context"
+                && stage == "repository_discovery"
+                && outcome == "completed"
+                && subject == &workspace_id
+                && reason == "resources=0"
+        )));
+
+        worker
+            .finish_root_execution_on(&root_handle, &execution_id, true)
+            .unwrap();
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn repository_context_discovery_uses_root_to_cwd_with_override_precedence() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "phenix-context-repository-{}-{nonce}",
+            std::process::id()
+        ));
+        let cwd = root.join("nested");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(cwd.join("deeper")).unwrap();
+        fs::create_dir_all(root.join("sibling")).unwrap();
+        fs::write(root.join("AGENTS.md"), "root fallback").unwrap();
+        fs::write(root.join("AGENTS.override.md"), "root override").unwrap();
+        fs::write(cwd.join("AGENTS.md"), "nested fallback").unwrap();
+        fs::write(cwd.join("AGENTS.override.md"), "nested override").unwrap();
+        fs::write(cwd.join("deeper/AGENTS.md"), "descendant must not load").unwrap();
+        fs::write(root.join("sibling/AGENTS.md"), "sibling must not load").unwrap();
+        fs::write(root.join("CONTRIBUTING.md"), "root project document").unwrap();
+
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let workspace_root = root.clone();
+        assert!(
+            builder.replace_embedded_factory(workspace_manifest().id, move || {
+                workspace_factory_for(workspace_root.clone())
+            },)
+        );
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let mut worker = ApplicationWorker::new(harness).unwrap();
+        let session = invoke_operation::<CreateSession>(
+            &mut worker,
+            SessionCreateInput {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                title: Some("repository context".into()),
+            },
+        )
+        .unwrap();
+        let authority = worker
+            .application_root_authority(&session.session_id)
+            .unwrap();
+        let root_handle = {
+            let harness = worker.harness.lock();
+            harness.root_execution_handle(&authority)
+        };
+
+        let sources = worker
+            .workspace_context_sources_on(
+                &root_handle,
+                &session,
+                vec![".git".into()],
+                Vec::new(),
+                32 * 1024,
+            )
+            .unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| source.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["AGENTS.override.md", "nested/AGENTS.override.md"]
+        );
+
+        let execution_id = worker.allocate_root_execution_on(&root_handle).unwrap();
+        worker
+            .prepare_execution_context_on(&root_handle, &session, &execution_id)
+            .unwrap();
+        let projected = worker
+            .invoke_context_command_on(
+                &root_handle,
+                ContextCommand::Project {
+                    execution_id: execution_id.clone(),
+                },
+            )
+            .unwrap();
+        let ContextResponse::Projection { projection } = projected else {
+            panic!("context project returned an unexpected response");
+        };
+        let instructions = projection
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.resource.descriptor.kind == ContextResourceKind::ProjectInstruction
+            })
+            .map(|entry| {
+                (
+                    entry.resource.descriptor.source.as_str(),
+                    entry.resource.descriptor.scope.clone(),
+                    String::from_utf8_lossy(entry.resource.content.as_ref()).into_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            instructions,
+            vec![
+                (
+                    "AGENTS.override.md",
+                    ContextScope::Workspace,
+                    "root override".into(),
+                ),
+                (
+                    "nested/AGENTS.override.md",
+                    ContextScope::PathPrefix("nested".into()),
+                    "nested override".into(),
+                ),
+            ]
+        );
+        worker
+            .finish_root_execution_on(&root_handle, &execution_id, true)
+            .unwrap();
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

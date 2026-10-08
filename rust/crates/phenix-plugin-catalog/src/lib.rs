@@ -187,10 +187,10 @@ pub use phenix_plugin_step_runner::{
 pub use phenix_plugin_workspace::{
     WORKSPACE_SERVICE, WorkspaceCapabilities, WorkspaceCommand, WorkspaceCommitReceipt,
     WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileVersion,
-    WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch, WorkspaceVersionConflict,
-    WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile, workspace_component_id,
-    workspace_component_manifest, workspace_factory, workspace_factory_for, workspace_manifest,
-    workspace_service,
+    WorkspaceInterface, WorkspaceProjectFile, WorkspaceResponse, WorkspaceSearchMatch,
+    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
+    workspace_component_id, workspace_component_manifest, workspace_factory, workspace_factory_for,
+    workspace_manifest, workspace_service,
 };
 pub use phenix_sdk::{
     CONTEXT_SERVICE, CallableRecord, ContextCommand, ContextDescriptor, ContextInterface,

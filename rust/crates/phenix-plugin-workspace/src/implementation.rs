@@ -7,8 +7,9 @@ use phenix_sdk::{
     EnvironmentCommand, EnvironmentFileKind, EnvironmentInterface, EnvironmentResponse,
     ProcessStreamRecovery, WORKSPACE_SERVICE, WorkspaceCapabilities, WorkspaceCommand,
     WorkspaceCommitReceipt, WorkspaceCommittedFile, WorkspaceEntry, WorkspaceEntryKind,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, WorkspaceSearchMatch,
-    WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity, WorkspaceWrittenFile,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceProjectFile, WorkspaceResponse,
+    WorkspaceSearchMatch, WorkspaceVersionConflict, WorkspaceWrite, WorkspaceWriteAtomicity,
+    WorkspaceWrittenFile,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -226,6 +227,11 @@ fn handle(
             case_sensitive,
         } => search(context, needle, path, case_sensitive),
         WorkspaceCommand::List { path, recursive } => list(context, path, recursive),
+        WorkspaceCommand::DiscoverProjectFiles {
+            working_directory,
+            root_markers,
+            file_names,
+        } => discover_project_files(context, working_directory, root_markers, file_names),
         WorkspaceCommand::ReadBytes { path } => read_bytes(context, path),
         WorkspaceCommand::WriteBytes {
             path,
@@ -693,6 +699,162 @@ fn write_resolved_bytes(
             "write {path}: environment returned unexpected response {other:?}"
         )),
     }
+}
+
+fn discover_project_files(
+    context: &WorkspaceContext<'_, '_, '_>,
+    working_directory: String,
+    root_markers: Vec<String>,
+    file_names: Vec<String>,
+) -> Result<WorkspaceResponse, String> {
+    require(context, WORKSPACE_READ)?;
+    if file_names.is_empty() {
+        return Err("project discovery requires at least one file name".into());
+    }
+    for value in root_markers.iter().chain(file_names.iter()) {
+        validate_project_discovery_name(value)?;
+    }
+
+    let working_directory = PathBuf::from(working_directory);
+    let working_directory = if working_directory.is_absolute() {
+        working_directory
+    } else {
+        context.plugin.state.join(working_directory)
+    };
+
+    let mut project_root = None;
+    if !root_markers.is_empty() {
+        for directory in working_directory.ancestors() {
+            let mut matched = false;
+            for marker in &root_markers {
+                let candidate = directory.join(marker);
+                match environment(
+                    context,
+                    EnvironmentCommand::Stat {
+                        path: environment_path(&candidate),
+                    },
+                ) {
+                    Ok(EnvironmentResponse::Metadata { kind: Some(_) }) => {
+                        matched = true;
+                        break;
+                    }
+                    Ok(EnvironmentResponse::Metadata { kind: None }) | Err(_) => {}
+                    Ok(other) => {
+                        return Err(format!(
+                            "project discovery stat {} returned unexpected response {other:?}",
+                            candidate.display()
+                        ));
+                    }
+                }
+            }
+            if matched {
+                project_root = Some(directory.to_path_buf());
+                break;
+            }
+        }
+    }
+    let project_root = project_root.unwrap_or_else(|| working_directory.clone());
+
+    let relative = working_directory.strip_prefix(&project_root).map_err(|_| {
+        "project discovery working directory is not beneath the discovered root".to_owned()
+    })?;
+    let mut directories = vec![project_root.clone()];
+    let mut current = project_root.clone();
+    for component in relative.components() {
+        match component {
+            Component::Normal(value) => {
+                current.push(value);
+                directories.push(current.clone());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(
+                    "project discovery working directory contains invalid components".into(),
+                );
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    for directory in directories {
+        for file_name in &file_names {
+            let candidate = directory.join(file_name);
+            match environment(
+                context,
+                EnvironmentCommand::Stat {
+                    path: environment_path(&candidate),
+                },
+            )? {
+                EnvironmentResponse::Metadata {
+                    kind: Some(EnvironmentFileKind::File),
+                } => {}
+                EnvironmentResponse::Metadata { .. } => continue,
+                other => {
+                    return Err(format!(
+                        "project discovery stat {} returned unexpected response {other:?}",
+                        candidate.display()
+                    ));
+                }
+            }
+
+            let response = environment(
+                context,
+                EnvironmentCommand::ReadFile {
+                    path: environment_path(&candidate),
+                },
+            )?;
+            let EnvironmentResponse::File { content } = response else {
+                return Err(format!(
+                    "project discovery read {} returned unexpected response {response:?}",
+                    candidate.display()
+                ));
+            };
+            let Some(content) = content else {
+                continue;
+            };
+            let content = String::from_utf8_lossy(&content).into_owned();
+            let relative = candidate.strip_prefix(&project_root).map_err(|_| {
+                format!(
+                    "project discovery result escaped root: {}",
+                    candidate.display()
+                )
+            })?;
+            files.push(WorkspaceProjectFile {
+                path: relative.to_string_lossy().into_owned(),
+                content,
+            });
+            break;
+        }
+    }
+
+    Ok(WorkspaceResponse::ProjectFiles {
+        root: environment_path(&project_root),
+        files,
+    })
+}
+
+fn validate_project_discovery_name(value: &str) -> Result<(), String> {
+    if value
+        .chars()
+        .any(|character| matches!(character, '/' | '\\' | '\0' | ':'))
+    {
+        return Err(format!(
+            "project discovery names must be portable single path components: {value}"
+        ));
+    }
+
+    let mut components = Path::new(value).components();
+    let Some(Component::Normal(_)) = components.next() else {
+        return Err(format!(
+            "project discovery names must be portable single path components: {value}"
+        ));
+    };
+    if components.next().is_some() {
+        return Err(format!(
+            "project discovery names must be portable single path components: {value}"
+        ));
+    }
+    Ok(())
 }
 
 fn list(
@@ -1178,10 +1340,22 @@ mod tests {
                         pty: false,
                     },
                 },
+                EnvironmentCommand::Stat { path } if path.ends_with(".git") => {
+                    return Err("fixture marker stat denied".into());
+                }
+                EnvironmentCommand::Stat { path } => EnvironmentResponse::Metadata {
+                    kind: path
+                        .ends_with("AGENTS.md")
+                        .then_some(EnvironmentFileKind::File),
+                },
                 EnvironmentCommand::ReadFile { path } => EnvironmentResponse::File {
-                    content: path
-                        .ends_with("input.txt")
-                        .then(|| b"virtual-content".to_vec()),
+                    content: if path.ends_with("input.txt") {
+                        Some(b"virtual-content".to_vec())
+                    } else if path.ends_with("AGENTS.md") {
+                        Some(b"fixture project rules".to_vec())
+                    } else {
+                        None
+                    },
                 },
                 EnvironmentCommand::WriteFile { .. } => EnvironmentResponse::Written,
                 EnvironmentCommand::ReadContentReference { reference } => {
@@ -1343,6 +1517,248 @@ mod tests {
                 serde_json::from_slice(&output).map_err(|error| error.to_string())?;
             WorkspaceResponse::try_from(Project(&output)).map_err(|error| error.to_string())
         }
+    }
+
+    #[test]
+    fn project_file_discovery_ignores_failed_root_marker_probes() {
+        let workspace = workspace_manifest();
+        let workspace_id = workspace.id.clone();
+        let environment = fixture_environment_manifest();
+        let environment_id = environment.id.clone();
+        let resolved = ResolvedGeneration::resolve(
+            [workspace.clone(), environment.clone()],
+            [
+                workspace_component_manifest(),
+                fixture_environment_component_manifest(),
+            ],
+            [],
+            &workspace.maximum_authority,
+        )
+        .unwrap();
+        let mut kernel = Kernel::new(KernelConfig::new([workspace, environment]).unwrap());
+        kernel.activate_resolved_generation(&resolved).unwrap();
+
+        let virtual_root = PathBuf::from("/phenix-fixture-environment-only/project");
+        let workspace_root = virtual_root.clone();
+        kernel
+            .register_embedded_factory(workspace_id, move || {
+                workspace_factory_for(workspace_root.clone())
+            })
+            .unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&commands);
+        kernel
+            .register_embedded_factory(environment_id, move || {
+                Box::new(FixtureEnvironment {
+                    commands: Arc::clone(&recorded),
+                })
+            })
+            .unwrap();
+        kernel.activate_all().unwrap();
+
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: virtual_root.to_string_lossy().into_owned(),
+                root_markers: vec![".git".into()],
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: virtual_root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "fixture project rules".into(),
+                }],
+            }
+        );
+        assert!(commands.lock().unwrap().iter().any(|command| matches!(
+            command,
+            EnvironmentCommand::Stat { path } if path.ends_with(".git")
+        )));
+    }
+
+    #[test]
+    fn project_file_discovery_walks_ancestors_and_only_reads_the_cwd_chain() {
+        let outer = temp_workspace("project-discovery");
+        let repository = outer.join("repo");
+        let cwd = repository.join("src/deep");
+        fs::create_dir_all(repository.join(".git")).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(repository.join("sibling")).unwrap();
+        fs::create_dir_all(cwd.join("descendant")).unwrap();
+        fs::write(repository.join("AGENTS.md"), "root").unwrap();
+        fs::write(repository.join("src/AGENTS.override.md"), "src").unwrap();
+        fs::write(repository.join("sibling/AGENTS.md"), "sibling").unwrap();
+        fs::write(cwd.join("descendant/AGENTS.md"), "descendant").unwrap();
+
+        let mut kernel = kernel(cwd.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                root_markers: vec![".git".into()],
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: repository.to_string_lossy().into_owned(),
+                files: vec![
+                    WorkspaceProjectFile {
+                        path: "AGENTS.md".into(),
+                        content: "root".into(),
+                    },
+                    WorkspaceProjectFile {
+                        path: "src/AGENTS.override.md".into(),
+                        content: "src".into(),
+                    },
+                ],
+            }
+        );
+
+        let _ = fs::remove_dir_all(outer);
+    }
+
+    #[test]
+    fn project_file_discovery_empty_markers_stays_at_cwd() {
+        let outer = temp_workspace("project-discovery-cwd-only");
+        let repository = outer.join("repo");
+        let cwd = repository.join("src");
+        fs::create_dir_all(repository.join(".git")).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(repository.join("AGENTS.md"), "root").unwrap();
+        fs::write(cwd.join("AGENTS.md"), "cwd").unwrap();
+
+        let mut kernel = kernel(cwd.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: cwd.to_string_lossy().into_owned(),
+                root_markers: Vec::new(),
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: cwd.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "cwd".into(),
+                }],
+            }
+        );
+
+        let _ = fs::remove_dir_all(outer);
+    }
+
+    #[test]
+    fn project_file_discovery_skips_non_file_override() {
+        let root = temp_workspace("project-discovery-non-file-override");
+        fs::create_dir_all(root.join("AGENTS.override.md")).unwrap();
+        fs::write(root.join("AGENTS.md"), "project rules").unwrap();
+
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: root.to_string_lossy().into_owned(),
+                root_markers: Vec::new(),
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "project rules".into(),
+                }],
+            }
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_file_discovery_uses_lossy_utf8() {
+        let root = temp_workspace("project-discovery-lossy-utf8");
+        fs::write(root.join("AGENTS.md"), b"project\xff rules").unwrap();
+
+        let mut kernel = kernel(root.clone());
+        let response = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: root.to_string_lossy().into_owned(),
+                root_markers: Vec::new(),
+                file_names: vec!["AGENTS.override.md".into(), "AGENTS.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            response,
+            WorkspaceResponse::ProjectFiles {
+                root: root.to_string_lossy().into_owned(),
+                files: vec![WorkspaceProjectFile {
+                    path: "AGENTS.md".into(),
+                    content: "project\u{FFFD} rules".into(),
+                }],
+            }
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_file_discovery_rejects_path_fallback_names() {
+        let root = temp_workspace("project-discovery-invalid-name");
+        let mut kernel = kernel(root.clone());
+        let error = invoke(
+            &mut kernel,
+            WorkspaceCommand::DiscoverProjectFiles {
+                working_directory: root.to_string_lossy().into_owned(),
+                root_markers: vec![".git".into()],
+                file_names: vec!["../CLAUDE.md".into()],
+            },
+            &authority(&[WORKSPACE_READ]),
+        )
+        .unwrap_err();
+        assert!(error.contains("single path components"));
+
+        for invalid in [r"nested\\CLAUDE.md", "C:CLAUDE.md"] {
+            let error = invoke(
+                &mut kernel,
+                WorkspaceCommand::DiscoverProjectFiles {
+                    working_directory: root.to_string_lossy().into_owned(),
+                    root_markers: vec![".git".into()],
+                    file_names: vec![invalid.into()],
+                },
+                &authority(&[WORKSPACE_READ]),
+            )
+            .unwrap_err();
+            assert!(error.contains("single path components"));
+        }
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

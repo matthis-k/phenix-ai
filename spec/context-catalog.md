@@ -151,7 +151,25 @@ Skill resources inherit the loaded skill's exact revision and authority checks. 
 
 Scoped agent instructions remain mandatory content because they constrain execution behavior.
 
-General project documents are discoverable context. Discovery records path, scope, content identity, description metadata, and estimated cost. Loading records the exact revision consumed by the execution.
+Startup instruction discovery is path-based and bounded. The default project-root marker is `.git`. Discovery walks ancestors from the session working directory to the nearest configured project-root marker. If no marker is found, only the working directory is considered. An empty marker list also selects working-directory-only behavior.
+
+For each directory from project root to working directory, discovery selects at most one instruction file in precedence order:
+
+1. `AGENTS.override.md`;
+2. `AGENTS.md`;
+3. configured fallback filenames, in configured order.
+
+Selected files are loaded root-to-leaf so deeper instructions are later and more specific. Siblings and descendants below the working directory are not scanned. The default shared project-instruction budget is 32768 bytes. The budget is consumed root-to-leaf; the final file is truncated when it exceeds the remaining budget and later files are omitted.
+
+The default options are:
+
+```text
+context.project_root_markers = [".git"]
+context.project_doc_fallback_filenames = []
+context.project_doc_max_bytes = 32768
+```
+
+General project documents such as `CONTRIBUTING.md` and `DEVELOPMENT.md` remain discoverable context through explicit project-context discovery. They are not part of the default mandatory startup instruction scan. Discovery records path, scope, content identity, description metadata, and estimated cost. Loading records the exact revision consumed by the execution.
 
 A changed file produces a new resource revision. Existing injections retain the old immutable content identity.
 

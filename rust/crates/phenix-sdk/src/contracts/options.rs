@@ -198,6 +198,7 @@ pub enum OptionValue {
     Bool(bool),
     Integer(i64),
     String(String),
+    StringList(Vec<String>),
 }
 
 #[derive(

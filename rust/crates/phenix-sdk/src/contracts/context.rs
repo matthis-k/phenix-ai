@@ -159,6 +159,10 @@ pub enum ContextCommand {
         workspace_id: String,
         sources: Vec<RepositoryContextSource>,
     },
+    DiscoverProjectInstructions {
+        workspace_id: String,
+        sources: Vec<RepositoryContextSource>,
+    },
     LoadCodeQuery {
         request: ContextCodeQueryRequest,
     },
