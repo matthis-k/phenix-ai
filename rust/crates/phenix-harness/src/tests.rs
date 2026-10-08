@@ -663,6 +663,51 @@ fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
     }
 }
 
+// Exact model-tool sets catch accidental exposure, not only missing tools.
+// All cases share the existing in-process builder; no subprocess or model call.
+#[test]
+fn model_tool_exposure_matches_selected_contracts() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::memory_component_id;
+    use phenix_sdk::MemoryInterface;
+
+    let memory_tools = [
+        "memory.associate",
+        "memory.query",
+        "memory.recall",
+        "memory.record",
+    ];
+    for (name, select_memory, disable_memory, expected) in [
+        ("adapter only", false, false, &[][..]),
+        ("adapter and memory", true, false, &memory_tools[..]),
+        ("memory contract disabled", true, true, &[][..]),
+    ] {
+        let mut plugins = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+        if select_memory {
+            plugins.insert("phenix.memory".to_owned());
+        }
+        let mut builder = PhenixRuntimeBuilder::with_selected_suite(&plugins).unwrap();
+        if disable_memory {
+            builder.disable_provider(MemoryInterface::interface_id(), memory_component_id());
+        }
+        let runtime = builder.build().unwrap();
+        let generation = runtime.resolved_generation();
+        let exposed = generation
+            .entry_triggers()
+            .iter()
+            .filter(|trigger| {
+                application::application_tool_trigger_available(generation, trigger).unwrap()
+            })
+            .map(|trigger| match &trigger.trigger {
+                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
+                    callable_id.as_str()
+                }
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(exposed, expected.iter().copied().collect(), "{name}");
+    }
+}
+
 #[test]
 fn partial_foreign_memory_hides_association_without_memory_context() {
     use phenix_core::{ComponentId, ComponentInterface, EntryTriggerKind};
