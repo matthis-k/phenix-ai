@@ -52,6 +52,7 @@ const ADVANCED_AGENT_DEFAULTS: &[&str] = &[
 ];
 
 const FULL_PRODUCT_DEFAULTS: &[&str] = &[
+    BASIC_PRODUCT_CONFIGURATION,
     ADVANCED_AGENT_CONFIGURATION,
     "phenix.providers",
     "openai-codex",
@@ -192,9 +193,18 @@ mod tests {
             assert!(basic.contains(&required), "basic product missed {required}");
         }
         let full = profile_defaults(FULL_PRODUCT_CONFIGURATION).unwrap();
+        assert!(full.contains(&BASIC_PRODUCT_CONFIGURATION));
         assert!(full.contains(&ADVANCED_AGENT_CONFIGURATION));
         assert!(full.contains(&"phenix.providers"));
         assert!(full.contains(&"openai-codex"));
+
+        let expanded = expand_profile_defaults(
+            &BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]),
+            &BTreeSet::new(),
+        );
+        assert!(expanded.contains(BASIC_PRODUCT_CONFIGURATION));
+        assert!(expanded.contains(BASIC_AGENT_CONFIGURATION));
+        assert!(expanded.contains(ADVANCED_AGENT_CONFIGURATION));
     }
 
     #[test]
