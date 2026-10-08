@@ -1329,4 +1329,43 @@ mod tests {
         assert!(parse_cli(["--profile".into()]).is_err());
         assert!(parse_cli(["--profile=".into()]).is_err());
     }
+    #[test]
+    fn full_profile_can_disable_inherited_defaults_without_reinsertion() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.full",
+                "plugins": {"disable": ["phenix.debug"]}
+            }"#,
+        )
+        .unwrap();
+        let cli = Cli::default();
+        let enabled =
+            resolve_configured_first_party_plugins(&cli, &config, None).unwrap().unwrap();
+        assert!(enabled.contains("phenix.product.full"));
+        assert!(enabled.contains("phenix.agent.basic"));
+        assert!(enabled.contains("phenix.memory"));
+        assert!(!enabled.contains("phenix.debug"));
+
+        let disabled = effective_disabled_plugins(&cli, &config);
+        let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &disabled)
+            .expect("an inherited optional default must be removable");
+        assert!(!builder.manifests.iter().any(|plugin| plugin.id.as_str() == "phenix.debug"));
+    }
+
+    #[test]
+    fn explicit_cli_enable_overrides_disabled_profile_default() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.full",
+                "plugins": {"disable": ["phenix.debug"]}
+            }"#,
+        )
+        .unwrap();
+        let cli = parse_cli(["--enable-plugin=phenix.debug".into()]).unwrap();
+        let enabled =
+            resolve_configured_first_party_plugins(&cli, &config, None).unwrap().unwrap();
+        assert!(enabled.contains("phenix.debug"));
+        assert!(!effective_disabled_plugins(&cli, &config).contains("phenix.debug"));
+    }
+
 }
