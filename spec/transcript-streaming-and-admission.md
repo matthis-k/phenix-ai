@@ -1,6 +1,6 @@
 # Transcript event requirements for rich clients
 
-status: proposed
+status: partial
 consumers: phenix-ai.nvim transcript redesign
 
 ## Why
