@@ -41,11 +41,16 @@ pub fn frontend_service() -> ServiceId {
 }
 
 #[derive(Clone, Debug)]
+struct ExecutionBinding {
+    root: String,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
 struct PendingCall {
     connection_id: String,
     descriptor: FrontendProviderDescriptor,
-    execution_root: Option<String>,
-    execution_id: Option<String>,
+    execution: Option<ExecutionBinding>,
 }
 
 #[derive(Default)]
@@ -187,15 +192,17 @@ fn handle(
             connection_id,
         } => {
             let state = &mut context.plugin.state;
-            if let Some(owner) = state.root_routes.get(&execution_id) {
-                if owner != &connection_id {
-                    return Err("frontend root release came from the wrong connection".into());
-                }
+            if state
+                .root_routes
+                .get(&execution_id)
+                .is_some_and(|owner| owner != &connection_id)
+            {
+                return Err("frontend root release came from the wrong connection".into());
             }
             state.root_routes.remove(&execution_id);
             state
                 .pending
-                .retain(|_, call| call.execution_root.as_deref() != Some(&execution_id));
+                .retain(|_, call| call.execution.as_ref().is_none_or(|binding| binding.root != execution_id));
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::BeginExecutionCall {
@@ -221,8 +228,10 @@ fn handle(
                 method,
                 params,
                 &BTreeSet::new(),
-                Some(root),
-                Some(execution_id),
+                Some(ExecutionBinding {
+                    root,
+                    id: execution_id,
+                }),
             )
         }
         FrontendCommand::CheckExecutionCapabilities {
@@ -287,7 +296,6 @@ fn handle(
             params,
             &BTreeSet::new(),
             None,
-            None,
         ),
         FrontendCommand::CompleteCall {
             connection_id,
@@ -304,8 +312,8 @@ fn handle(
             if pending.connection_id != connection_id {
                 return Err("frontend response came from the wrong connection".into());
             }
-            if let Some(execution_id) = pending.execution_id.as_deref() {
-                let active_owner = execution_root(context, execution_id).is_ok_and(|root| {
+            if let Some(binding) = &pending.execution {
+                let active_owner = execution_root(context, &binding.id).is_ok_and(|root| {
                     context.plugin.state.root_routes.get(&root) == Some(&connection_id)
                 });
                 if !active_owner {
@@ -346,8 +354,7 @@ fn begin_call(
     method: String,
     params: PhenixValue,
     required_capabilities: &BTreeSet<String>,
-    execution_root: Option<String>,
-    execution_id: Option<String>,
+    execution: Option<ExecutionBinding>,
 ) -> Result<FrontendResponse, String> {
     validate_id("frontend connection id", &connection_id)?;
     validate_id("frontend provider id", &provider)?;
@@ -375,8 +382,7 @@ fn begin_call(
         PendingCall {
             connection_id: connection_id.clone(),
             descriptor,
-            execution_root,
-            execution_id,
+            execution,
         },
     );
     Ok(FrontendResponse::Request {
