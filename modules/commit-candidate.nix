@@ -42,6 +42,13 @@
             candidate["$path"]=1
           done
 
+          # Preserve pre-existing untracked paths. New files created by normalization
+          # must be explicitly staged in a new candidate, not left behind silently.
+          declare -A untracked_before=()
+          while IFS= read -r -d "" path; do
+            untracked_before["$path"]=1
+          done < <(git ls-files --others --exclude-standard -z)
+
           if command -v maintenance >/dev/null 2>&1; then
             maintenance fix
           elif command -v nix >/dev/null 2>&1; then
@@ -61,6 +68,14 @@
               exit 1
             fi
           done < <(git diff --name-only -z)
+
+          while IFS= read -r -d "" path; do
+            if [[ ! -v untracked_before["$path"] ]]; then
+              echo "prepare-commit: normalization created an unstaged file: $path" >&2
+              echo "Review the file and stage it explicitly before retrying." >&2
+              exit 1
+            fi
+          done < <(git ls-files --others --exclude-standard -z)
 
           git add -A -- "''${candidate_paths[@]}"
           git diff --cached --check
@@ -110,6 +125,9 @@
           if [[ "''${FIX_UNRELATED:-}" == 1 ]]; then
             printf 'unexpected\n' > unrelated.txt
           fi
+          if [[ "''${FIX_NEW_UNTRACKED:-}" == 1 ]]; then
+            printf 'unexpected\n' > generated.txt
+          fi
           STUB
             chmod +x "$directory/bin/maintenance"
             printf '%s\n' "$directory"
@@ -138,6 +156,19 @@
           fi
           [[ "$(git -C "$unrelated" rev-list --count HEAD)" == 1 ]]
           [[ "$(git -C "$unrelated" show HEAD:unrelated.txt)" == unchanged ]]
+
+          generated="$(make_fixture generated)"
+          printf 'candidate\n' > "$generated/selected.txt"
+          git -C "$generated" add selected.txt
+          if (
+            cd "$generated"
+            FIX_NEW_UNTRACKED=1 PATH="$generated/bin:$PATH" phenix-prepare-commit "must not commit"
+          ); then
+            echo "prepare-commit fixture: generated unstaged file was accepted" >&2
+            exit 1
+          fi
+          [[ "$(git -C "$generated" rev-list --count HEAD)" == 1 ]]
+          [[ -f "$generated/generated.txt" ]]
 
           unstaged="$(make_fixture unstaged)"
           printf 'candidate\n' > "$unstaged/selected.txt"
