@@ -182,8 +182,16 @@ fn handle(
                 .insert(execution_id, connection_id);
             Ok(FrontendResponse::Updated)
         }
-        FrontendCommand::ReleaseRoot { execution_id } => {
+        FrontendCommand::ReleaseRoot {
+            execution_id,
+            connection_id,
+        } => {
             let state = &mut context.plugin.state;
+            if let Some(owner) = state.root_routes.get(&execution_id) {
+                if owner != &connection_id {
+                    return Err("frontend root release came from the wrong connection".into());
+                }
+            }
             state.root_routes.remove(&execution_id);
             state
                 .pending
@@ -1062,10 +1070,20 @@ mod tests {
         let execution_id = correlation(pending_execution);
         let direct_id = correlation(pending_direct);
 
+        let wrong_owner = invoke(
+            &mut kernel,
+            FrontendCommand::ReleaseRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-b".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(wrong_owner.contains("wrong connection"), "{wrong_owner}");
         invoke(
             &mut kernel,
             FrontendCommand::ReleaseRoot {
                 execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
             },
         )
         .unwrap();
