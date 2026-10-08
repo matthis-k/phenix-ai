@@ -231,6 +231,26 @@ fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
 }
 
 #[test]
+fn excluding_the_default_tool_adapter_does_not_reinstall_it() {
+    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("Basic profile defaults must be removable");
+    assert!(!builder.manifests.iter().any(|manifest| {
+        manifest.id.as_str() == "phenix.application-agent-tools"
+    }));
+
+    let error = builder
+        .build()
+        .err()
+        .expect("the Basic loop's required tool import must be unsatisfied");
+    assert!(
+        error.to_string().contains("unresolved required import"),
+        "resolver must report the missing contract instead of reviving a default: {error}"
+    );
+}
+
+#[test]
 fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
     use phenix_sdk::{MemoryCommand, MemoryResponse};
 
