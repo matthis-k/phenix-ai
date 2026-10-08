@@ -331,7 +331,9 @@ fn execution_root(
         // Routing is scoped to a live execution, not just a retained root
         // binding. Reject completed descendants and completed ancestors.
         if !matches!(execution.state, ExecutionState::Active) {
-            return Err(format!("frontend call requires an active execution: {current}"));
+            return Err(format!(
+                "frontend call requires an active execution: {current}"
+            ));
         }
         match execution.parent_execution {
             Some(parent) => current = parent,
