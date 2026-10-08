@@ -499,6 +499,79 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_root_binding_must_not_steal_existing_frontend_owner() {
+        let mut kernel = kernel();
+        execution(&mut kernel, "root", None);
+        for connection in ["frontend-a", "frontend-b"] {
+            invoke(
+                &mut kernel,
+                FrontendCommand::SetProviders {
+                    connection_id: connection.into(),
+                    providers: vec![FrontendProviderDescriptor {
+                        id: "document".into(),
+                        capabilities: BTreeSet::from(["render.v1".into()]),
+                    }],
+                },
+            )
+            .unwrap();
+        }
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+        let error = invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-b".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("already has a frontend route"), "{error}");
+
+        let response = invoke(
+            &mut kernel,
+            FrontendCommand::BeginExecutionCall {
+                execution_id: "root".into(),
+                provider: "document".into(),
+                method: "render".into(),
+                params: serde_json::json!({}).into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            FrontendResponse::Request { request } if request.connection_id == "frontend-a"
+        ));
+
+        invoke(
+            &mut kernel,
+            FrontendCommand::Disconnect {
+                connection_id: "frontend-b".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::BeginExecutionCall {
+                    execution_id: "root".into(),
+                    provider: "document".into(),
+                    method: "render".into(),
+                    params: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap(),
+            FrontendResponse::Request { request } if request.connection_id == "frontend-a"
+        ));
+    }
+
+    #[test]
     fn disconnect_removes_provider_catalog_routes_and_pending_calls_without_durable_restore() {
         let mut kernel = kernel();
         execution(&mut kernel, "root", None);
