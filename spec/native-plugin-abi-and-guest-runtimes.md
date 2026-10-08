@@ -13,13 +13,13 @@ depends_on:
 
 Phenix has one canonical Plugin model and one canonical graph resolver. The kernel bootstrap understands a single native shared-library ABI. A native library can provide ordinary contracts or provide a *Guest Runtime* contract that executes plugins compiled for another language or artifact format.
 
-The latter is a **native plugin**, not a built-in JS/Wasm/Python case in Core. Its guest is a separate logical Plugin with its own identity, contribution descriptors, authority, artifact revision, lifecycle and generation membership.
+The latter is a **native plugin**, not a built-in Lua/Wasm/JavaScript case in Core. Its guest is a separate logical Plugin with its own identity, contribution descriptors, authority, artifact revision, lifecycle and generation membership.
 
 The kernel process remains running while plugin artifacts are rebuilt. Rebuilding or loading an artifact stages a candidate generation. A caller explicitly selects a resident candidate for trial execution or promotes it as the default. Artifact reload, generation selection and physical library unloading are different operations.
 
 The Rust crate named `phenix-harness` is not the native loader. Product composition belongs to portable configuration, with Nix as one deployment frontend.
 
-This document describes the target architecture. **No native ABI loader, JS adapter or dynamic-library hot replacement is implemented by this specification.** Existing `embedded` and process-backed behavior remains authoritative until migrated and tested.
+This document describes the target architecture. **No native ABI loader, Lua adapter or dynamic-library hot replacement is implemented by this specification.** Existing `embedded` and process-backed behavior remains authoritative until migrated and tested.
 
 ## Existing implementation and the mismatch
 
@@ -31,18 +31,19 @@ This document describes the target architecture. **No native ABI loader, JS adap
 | `rust/crates/phenix-harness/src/runtime_builder.rs` and `phenix-plugin-catalog` | Product code enumerates and links first-party factories into a Rust executable. | Discover artifact manifests, load chosen native libraries and resolve contributions generically. No first-party factory catalog in the final product executable. |
 | `modules/package-sets.nix` and `modules/plugin-packaging.nix` | Embedded plugin packages include metadata naming a Rust crate while the product executable already links its code. | Packages must contain loadable artifacts and inspectable manifests; Nix chooses installed artifacts but never resolves provider bindings or graph semantics. |
 | `spec/selectable-generations.md` | Multiple resident generations and explicit selection are already specified/implemented. | Reuse this machinery. The native ABI and guest adapters must participate in it; do not add a separate hot-reload state machine. |
+| `rust/crates/phenix-binding-lua` and Phenix.nvim | Existing Lua bindings act as an ACP *client* for the Neovim frontend, not a Phenix guest-runtime adapter. | Keep that client role. Add a separate native `adapter-lua` plugin that hosts Lua guest modules as Phenix plugins. Both may reuse canonical contract/binding generation, not share a Neovim Lua interpreter or plugin lifecycle. |
 | `spec/plugin-contributions.md` and Stage B in `spec/microkernel-composition-roadmap.md` | Canonical contribution descriptors are being made portable and inspectable. | Native and guest metadata must normalize into those same descriptors before activation, without runtime-specific contribution registries. |
 
 ### Terminology corrections
 
 - **Native ABI** means the binary boundary between the kernel's loader and a native plugin. It is not the Rust trait ABI or a dynamically shared copy of `phenix-sdk`.
 - **Native plugin** means a shared-library artifact that implements the native ABI. It may implement application contracts or the Guest Runtime contract.
-- **Guest plugin** means a distinct logical plugin, hosted by a runtime adapter. JavaScript code uses JS bindings to its adapter; it does **not** implement the native ABI itself.
+- **Guest plugin** means a distinct logical plugin, hosted by a runtime adapter. Lua code uses Lua bindings to its adapter; it does **not** implement the native ABI itself.
 - **Runtime adapter** means a normal plugin that provides `phenix.guest-runtime@1` for a named guest artifact format. It cannot directly change Core's graph, authority or generation choice.
 - **Plugin reload** means staging a replacement artifact and generation. **Selection** chooses the resident generation for a root execution. **Promotion** changes the default for *new* roots. **Unload** means retiring instances. **Physical code unload** means releasing native executable mappings and requires additional safety conditions.
 - **Bootstrap** is intrinsically implemented by the kernel's native loader. Calling that loader a plugin without a lower-level loader would create a circular definition.
 
-These distinctions correct earlier vague descriptions such as "the kernel loads Wasm plugins", "JS plugins share the native ABI", "a shared Rust library guarantees compatibility", and "reload automatically updates the active graph". None of those statements expresses the intended boundary.
+These distinctions correct earlier vague descriptions such as "the kernel loads Wasm plugins", "Lua plugins share the native ABI", "a shared Rust library guarantees compatibility", and "reload automatically updates the active graph". None of those statements expresses the intended boundary.
 
 ## Target execution paths
 
@@ -50,16 +51,16 @@ These distinctions correct earlier vague descriptions such as "the kernel loads 
 Kernel/Core
   +-- intrinsic native ABI loader
         +-- native provider: memory.so
-        +-- native plugin: adapter-js.so
-        |     provides Guest Runtime "js.module@1"
-        |     +-- guest: memory.js   [PluginId acme.memory]
-        |     +-- guest: tools.js    [PluginId acme.tools]
+        +-- native plugin: adapter-lua.so
+        |     provides Guest Runtime "lua.module@1"
+        |     +-- guest: memory.lua  [PluginId acme.memory]
+        |     +-- guest: tools.lua   [PluginId acme.tools]
         +-- native plugin: adapter-wasm.so
               provides Guest Runtime "wasm.component@1"
               +-- guest: model.wasm  [PluginId acme.model]
 ~~~
 
-The JS and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. All three guest plugins register ordinary canonical contributions, not services owned by a generic `adapter-js` proxy.
+The Lua and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. All three guest plugins register ordinary canonical contributions, not services owned by a generic `adapter-lua` proxy.
 
 The kernel selects a runtime provider from the guest's declared runtime requirement. Runtime-provider dependencies must be acyclic and terminate at the intrinsic native loader. A runtime adapter hosted by another adapter is permitted if its chain is finite and validated before activation.
 
@@ -96,18 +97,18 @@ The adapter implements:
 
 The kernel still owns provider selection, graph construction, permission grants, durable namespaces, entrypoint routing and root generation selection. An adapter cannot register additional providers during `start` or claim services for every guest under its own identity.
 
-Adapter authority and guest authority are intersected independently. A JS guest may invoke only its resolved imports through the guest host binding; adapter host privileges never flow automatically to guests. An in-process native JS adapter is trusted native code and cannot promise OS sandbox isolation for itself.
+Adapter authority and guest authority are intersected independently. A Lua guest may invoke only its resolved imports through the guest host binding; adapter host privileges never flow automatically to guests. An in-process native Lua adapter is trusted native code and cannot promise OS sandbox isolation for itself.
 
 ### Illustrative cross-language package pair
 
 The native adapter package contributes a normal plugin plus a runtime provider:
 
 ~~~toml
-# adapter-js/plugin.toml, proposed portable manifest syntax
-id = "phenix.adapter.js"
+# adapter-lua/plugin.toml, proposed portable manifest syntax
+id = "phenix.adapter.lua"
 runtime = "native.abi@1"
-artifact = "adapter-js.so"
-provides_runtime = "js.module@1"
+artifact = "adapter-lua.so"
+provides_runtime = "lua.module@1"
 ~~~
 
 The guest package requires that runtime and independently provides a service:
@@ -115,30 +116,39 @@ The guest package requires that runtime and independently provides a service:
 ~~~toml
 # my-memory/plugin.toml
 id = "acme.memory"
-runtime = "js.module@1"
-artifact = "memory.js"
+runtime = "lua.module@1"
+artifact = "memory.lua"
 provides = ["example.memory@1"]
 ~~~
 
 The guest author can use language-specific bindings such as:
 
-~~~javascript
-// memory.js, illustrative JS SDK, not an existing API
-import { plugin } from "@phenix/sdk";
+~~~lua
+-- memory.lua, illustrative guest-side Lua API, not an existing implementation
+local phenix = require("phenix.guest")
 
-export default plugin({
-  id: "acme.memory",
-  provides: {
-    "example.memory@1": {
-      recall(query, host) {
-        return host.import("example.store@1").search(query);
-      }
-    }
-  }
-});
+return phenix.plugin({
+  id = "acme.memory",
+  provides = {
+    ["example.memory@1"] = {
+      recall = function(query, host)
+        return host:invoke("example.store@1", "search", { query = query })
+      end,
+    },
+  },
+})
 ~~~
 
-Those files illustrate the boundary, not a second source of registration authority. The versioned manifest fixes guest contract declarations before `memory.js` executes. The JS adapter must validate that JS exports match the pinned declarations.
+Those files illustrate the boundary, not a second source of registration authority. The versioned manifest fixes guest contract declarations before `memory.lua` executes. The Lua adapter must validate that the module's exports match the pinned declarations.
+
+### Neovim frontend compatibility and Lua runtime boundary
+
+Phenix.nvim is the primary frontend for the first conformance slice, making Lua a better initial guest-runtime example than JavaScript. **The editor's Lua client and a Lua guest hosted by the kernel are separate runtimes:** the current `phenix-binding-lua` crate supplies client-side ACP bindings, while `adapter-lua.so` would independently host one or more Lua guest plugin instances. A Lua module in Neovim is not automatically a plugin in the kernel's graph.
+
+The adapter should initially specify and test a concrete Lua language/version compatibility target, preferably compatible with the existing Lua 5.1 binding ecosystem. LuaJIT support, if chosen, must be tested rather than assumed. The ABI must not expose Lua state pointers or assume that the editor and server share an address space.
+
+Prove an editor-independent invoke/import/event round trip first. Then add a narrow Phenix.nvim ACP smoke test: keep the editor connected while staging Lua guest revision B, invoke B from a deliberately selected new root, and confirm the preexisting root remains pinned to A. The frontend must never rebuild or restart the kernel to observe the new generation.
+
 
 ### Adapter chains
 
@@ -176,9 +186,9 @@ This is an **independent design PR**. Runtime implementation must follow the exi
 | N0 | This design and current-vs-target mismatch audit | Independent of #726-#731; specification only |
 | N1 | `phenix-plugin-abi` C header, Rust SDK trampolines and ABI conformance fixtures | Can begin independently; avoid #728 SDK macro/contract files until Stage B stabilizes |
 | N2 | Generic native artifact loader, manifest discovery, adapter bootstrapping and validation | #728 normalized descriptor contract; Core runtime/loader files, not #726 workflow graph internals |
-| N3 | Native `adapter-js` with one independently declared JS guest | N1+N2; new adapter/example packages only |
+| N3 | Native `adapter-lua` with one independently declared Lua guest, plus frontend-independent conformance | N1+N2; new adapter/example packages only |
 | N4 | Side-by-side revision loading, stage/test/select/promote and safe retirement via existing resident generations | N2 and `spec/selectable-generations.md`; add tests without a second reconciliation API |
-| N5 | Optional native `adapter-wasm` and process guest bindings; package/frontend parity | N2+N3 conformance pattern; independent adapters |
+| N5 | Optional native `adapter-wasm`, `adapter-js` and process guest bindings; package/frontend parity | N2+N3 conformance pattern; independent adapters |
 | N6 | Retire embedded factory catalogs and Rust `phenix-harness` product composition after all first-party providers and frontends migrate | N2-N4 plus parity with Basic/Full and non-agent compositions; coordinate with #733 cleanup inventory |
 
 N2 and N4 may require shared Core runtime edits. Land N2 first or isolate owners before parallel work. N3 can progress separately from #726 agent-loop work because guest execution uses ordinary service contracts. #729/#730 graph kinds are not prerequisites for the first service-call-through-adapter proof, but adapters must adopt their canonical schema if those contracts change before merge.
@@ -189,8 +199,8 @@ A passing build does not establish migration completion.
 
 1. Kernel-only binary starts with no product plugins; independent native library supplies an ordinary contract without relinking Core.
 2. C-compatible ABI fixture is compiled separately from the runtime and completes negotiation, lifecycle, typed invocation and cleanup. Wrong major version, table size, contract declaration or ownership rule fails safely.
-3. Native JS adapter is itself loaded as a normal plugin. A guest JS plugin implements a service, imports another service, emits an event, and returns a typed result through two boundaries, with no JS branch in Core.
-4. Two distinct JS guests hosted by the same adapter preserve separate `PluginId`, authority, artifact revision, contributions and durable ownership.
+3. Native Lua adapter is itself loaded as a normal plugin. A guest Lua plugin implements a service, imports another service, emits an event, and returns a typed result through two boundaries, with no Lua branch in Core.
+4. Two distinct Lua guests hosted by the same adapter preserve separate `PluginId`, authority, artifact revision, contributions and durable ownership.
 5. Missing adapter, adapter-cycle, forged guest declaration, undeclared provider, unauthorized host callback and incompatible contract all fail before graph commit or the unauthorized operation.
 6. Kernel remains live across native artifact B staging; A is still default, trial B uses explicit root selection, promotion changes new roots only, and old in-flight calls remain pinned.
 7. An adapter implementation reload stages its dependent guests in B; retirement never invalidates callbacks or plugin instances belonging to A.
