@@ -577,6 +577,115 @@ mod tests {
     }
 
     #[test]
+    fn provider_replacement_revokes_stale_pending_calls_without_affecting_identical_contracts() {
+        let mut kernel = kernel();
+        execution(&mut kernel, "root", None);
+        let advertise = |kernel: &mut Kernel, capabilities: BTreeSet<String>| {
+            invoke(
+                kernel,
+                FrontendCommand::SetProviders {
+                    connection_id: "frontend-a".into(),
+                    providers: vec![FrontendProviderDescriptor {
+                        id: "document".into(),
+                        capabilities,
+                    }],
+                },
+            )
+            .unwrap();
+        };
+        advertise(&mut kernel, BTreeSet::from(["document.v1".into()]));
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+
+        let begin = |kernel: &mut Kernel| {
+            let response = invoke(
+                kernel,
+                FrontendCommand::BeginExecutionCall {
+                    execution_id: "root".into(),
+                    provider: "document".into(),
+                    method: "present".into(),
+                    params: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap();
+            let FrontendResponse::Request { request } = response else {
+                panic!("expected pending frontend call");
+            };
+            request.correlation_id
+        };
+        let first = begin(&mut kernel);
+        advertise(&mut kernel, BTreeSet::from(["document.v1".into()]));
+        assert!(matches!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: first,
+                    result: serde_json::json!({"ok": true}).into(),
+                },
+            )
+            .unwrap(),
+            FrontendResponse::Result { .. }
+        ));
+
+        let second = begin(&mut kernel);
+        advertise(&mut kernel, BTreeSet::from(["document.v2".into()]));
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: second,
+                    result: serde_json::json!({"ok": true}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("unknown frontend correlation")
+        );
+
+        let third = begin(&mut kernel);
+        invoke(
+            &mut kernel,
+            FrontendCommand::SetProviders {
+                connection_id: "frontend-a".into(),
+                providers: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::CompleteCall {
+                    connection_id: "frontend-a".into(),
+                    correlation_id: third,
+                    result: serde_json::json!({"ok": true}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("unknown frontend correlation")
+        );
+        assert!(
+            invoke(
+                &mut kernel,
+                FrontendCommand::BeginExecutionCall {
+                    execution_id: "root".into(),
+                    provider: "document".into(),
+                    method: "present".into(),
+                    params: serde_json::json!({}).into(),
+                },
+            )
+            .unwrap_err()
+            .contains("does not advertise")
+        );
+    }
+
+    #[test]
     fn disconnect_removes_provider_catalog_routes_and_pending_calls_without_durable_restore() {
         let mut kernel = kernel();
         execution(&mut kernel, "root", None);
