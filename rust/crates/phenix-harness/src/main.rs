@@ -534,9 +534,11 @@ fn resolve_configured_first_party_plugins(
         .as_deref()
         .or(config.profile.as_deref())
         .or(environment_selection);
-    let mut selection = Cli::default();
-    selection.enable_plugins = config.plugins.enable.clone();
-    selection.disable_plugins = config.plugins.disable.clone();
+    let mut selection = Cli {
+        enable_plugins: config.plugins.enable.clone(),
+        disable_plugins: config.plugins.disable.clone(),
+        ..Cli::default()
+    };
     for id in &cli.enable_plugins {
         selection.disable_plugins.remove(id);
         selection.enable_plugins.insert(id.clone());
