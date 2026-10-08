@@ -840,3 +840,137 @@ fn first_party_state_plugins_require_only_persistence_authority() {
         assert!(!authority.permits(&capability("fs.write")));
     }
 }
+
+fn provider_contract_fixture() -> (PhenixRuntimeBuilder, phenix_core::InterfaceId) {
+    use phenix_core::{
+        ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
+    };
+
+    let interface = InterfaceId::parse("fixture.memory@1").unwrap();
+    let mut builder = PhenixRuntimeBuilder::new();
+    for id in ["fixture.consumer", "fixture.alpha", "fixture.beta"] {
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: plugin(id),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                || Box::new(Echo(b"contract")),
+            )
+            .unwrap();
+    }
+
+    for (id, owner) in [
+        ("fixture.alpha.component", "fixture.alpha"),
+        ("fixture.beta.component", "fixture.beta"),
+    ] {
+        builder.add_component(ComponentManifest {
+            listeners: Vec::new(),
+            id: ComponentId::parse(id).unwrap(),
+            owner: plugin(owner),
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: interface.clone(),
+                schema: Default::default(),
+                priority: 0,
+                required_authority: Authority::default(),
+            }],
+            maximum_authority: Authority::default(),
+        });
+    }
+
+    builder.add_component(ComponentManifest {
+        listeners: Vec::new(),
+        id: ComponentId::parse("fixture.consumer.component").unwrap(),
+        owner: plugin("fixture.consumer"),
+        imports: vec![ComponentImport {
+            interface: interface.clone(),
+            schema: Default::default(),
+            required: true,
+            authority: Authority::default(),
+        }],
+        exports: Vec::new(),
+        maximum_authority: Authority::default(),
+    });
+    (builder, interface)
+}
+
+fn selected_fixture_provider(
+    runtime: &PhenixRuntime,
+    interface: &phenix_core::InterfaceId,
+) -> phenix_core::ComponentId {
+    use phenix_core::ComponentId;
+
+    runtime
+        .component_graph()
+        .import_handle(
+            &ComponentId::parse("fixture.consumer.component").unwrap(),
+            interface,
+        )
+        .unwrap()
+        .unwrap()
+        .exporter()
+        .clone()
+}
+
+#[test]
+fn product_builder_exposes_provider_selection_without_nix() {
+    use phenix_core::{ComponentId, ProviderCompositionPolicy};
+
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    let beta = ComponentId::parse("fixture.beta.component").unwrap();
+
+    let (default_builder, interface) = provider_contract_fixture();
+    let default = default_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&default, &interface), alpha);
+
+    let (mut selected_builder, _) = provider_contract_fixture();
+    selected_builder.bind_provider(interface.clone(), beta.clone());
+    let selected = selected_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&selected, &interface), beta);
+    assert_ne!(default.generation(), selected.generation());
+
+    let (mut disabled_builder, _) = provider_contract_fixture();
+    disabled_builder.disable_provider(interface.clone(), alpha);
+    let disabled = disabled_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&disabled, &interface), beta);
+
+    let (mut policy_builder, _) = provider_contract_fixture();
+    policy_builder.set_provider_policy(
+        ProviderCompositionPolicy::new().with_explicit_binding(interface.clone(), beta.clone()),
+    );
+    let policy_selected = policy_builder.build().unwrap();
+    assert_eq!(
+        selected_fixture_provider(&policy_selected, &interface),
+        beta
+    );
+    assert_eq!(
+        selected.generation(),
+        policy_selected.generation(),
+        "equivalent provider composition must have the same generation identity"
+    );
+}
+
+#[test]
+fn product_builder_rejects_binding_a_missing_provider() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    builder.bind_provider(
+        interface,
+        ComponentId::parse("fixture.missing.component").unwrap(),
+    );
+
+    assert!(
+        matches!(
+            builder.build(),
+            Err(PhenixRuntimeBuildError::Resolution(_))
+        ),
+        "invalid provider selection must fail during Phenix resolution"
+    );
+}
