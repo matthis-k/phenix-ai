@@ -123,6 +123,12 @@ in
     if [[ "''${FIX_NEW_UNTRACKED:-}" == 1 ]]; then
       printf 'unexpected\n' > generated.txt
     fi
+    if [[ "''${FIX_CHANGE_UNTRACKED:-}" == 1 ]]; then
+      printf 'rewritten\n' > scratch.nix
+    fi
+    if [[ "''${FIX_REMOVE_UNTRACKED:-}" == 1 ]]; then
+      rm scratch.nix
+    fi
     STUB
           chmod +x "$directory/bin/maintenance"
           printf '%s\n' "$directory"
@@ -164,6 +170,32 @@ in
         fi
         [[ "$(git -C "$generated" rev-list --count HEAD)" == 1 ]]
         [[ -f "$generated/generated.txt" ]]
+
+        preexisting="$(make_fixture preexisting)"
+        printf 'candidate\n' > "$preexisting/selected.txt"
+        git -C "$preexisting" add selected.txt
+        printf 'original scratch\n' > "$preexisting/scratch.nix"
+        if (
+          cd "$preexisting"
+          FIX_CHANGE_UNTRACKED=1 PATH="$preexisting/bin:$PATH" bash "$fixture_root/candidate" "must not commit"
+        ); then
+          echo "prepare-commit fixture: editing pre-existing untracked content was accepted" >&2
+          exit 1
+        fi
+        [[ "$(git -C "$preexisting" rev-list --count HEAD)" == 1 ]]
+
+        removed="$(make_fixture removed)"
+        printf 'candidate\n' > "$removed/selected.txt"
+        git -C "$removed" add selected.txt
+        printf 'original scratch\n' > "$removed/scratch.nix"
+        if (
+          cd "$removed"
+          FIX_REMOVE_UNTRACKED=1 PATH="$removed/bin:$PATH" bash "$fixture_root/candidate" "must not commit"
+        ); then
+          echo "prepare-commit fixture: deleting pre-existing untracked content was accepted" >&2
+          exit 1
+        fi
+        [[ "$(git -C "$removed" rev-list --count HEAD)" == 1 ]]
 
         unstaged="$(make_fixture unstaged)"
         printf 'candidate\n' > "$unstaged/selected.txt"
