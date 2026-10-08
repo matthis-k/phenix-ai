@@ -200,9 +200,11 @@ fn handle(
                 return Err("frontend root release came from the wrong connection".into());
             }
             state.root_routes.remove(&execution_id);
-            state
-                .pending
-                .retain(|_, call| call.execution.as_ref().is_none_or(|binding| binding.root != execution_id));
+            state.pending.retain(|_, call| {
+                call.execution
+                    .as_ref()
+                    .is_none_or(|binding| binding.root != execution_id)
+            });
             Ok(FrontendResponse::Updated)
         }
         FrontendCommand::BeginExecutionCall {
@@ -279,8 +281,10 @@ fn handle(
                 method,
                 params,
                 &required_capabilities,
-                Some(root),
-                Some(execution_id),
+                Some(ExecutionBinding {
+                    root,
+                    id: execution_id,
+                }),
             )
         }
         FrontendCommand::BeginDirectCall {
