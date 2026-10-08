@@ -249,6 +249,10 @@ impl UiStore {
     }
 }
 impl PluginInstance for UiStore {
+    fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+        Ok(())
+    }
+
     fn invoke(
         &mut self,
         service: &ServiceId,
