@@ -121,11 +121,11 @@ artifact = "memory.lua"
 provides = ["example.memory@1"]
 ~~~
 
-The guest author can use language-specific bindings such as:
+The guest author can use an adapter-provided Lua SDK under the same top-level module name as the client, but with a different runtime implementation:
 
 ~~~lua
 -- memory.lua, illustrative guest-side Lua API, not an existing implementation
-local phenix = require("phenix.guest")
+local phenix = require("phenix")
 
 return phenix.plugin({
   id = "acme.memory",
@@ -150,13 +150,39 @@ The adapter should initially specify and test a concrete Lua language/version co
 Prove an editor-independent invoke/import/event round trip first. Then add a narrow Phenix.nvim ACP smoke test: keep the editor connected while staging Lua guest revision B, invoke B from a deliberately selected new root, and confirm the preexisting root remains pinned to A. The frontend must never rebuild or restart the kernel to observe the new generation.
 
 
+### Bidirectional Rust and Lua integration
+
+There are two complementary call directions. Both present an ergonomic Lua-facing Phenix API while retaining distinct execution and authority boundaries.
+
+~~~text
+Phenix Core (Rust)
+  -> Native ABI -> adapter-lua.so -> Lua plugin callback
+  <- Native ABI <- adapter-lua.so <- Lua plugin result
+
+Lua guest code
+  -> require("phenix") guest SDK -> adapter-lua.so
+  -> authorized PluginHost import -> Phenix Core (Rust)
+
+Neovim Lua code
+  -> require("phenix") client SDK -> ACP client binding
+  -> ACP transport -> Phenix application / Core
+~~~
+
+- **Rust -> Lua:** A selected Phenix service, event or graph node invokes a Lua function hosted by the native Lua adapter. The adapter translates arguments, cancellation and results.
+- **Lua guest -> Rust:** Inside the hosted Lua plugin, `require("phenix")` provides contract invocation, event publication, and permitted host capabilities. Those calls return through the adapter into ordinary generation-pinned Core dispatch.
+- **Neovim Lua -> Rust:** The existing `require("phenix")` client module keeps its ACP/application operations. The editor is an independent process/client, not the runtime hosting guest plugin callbacks.
+
+The top-level import name can be **the same in both Lua environments** because they are separate module loading contexts. Shared public contract shapes should come from generated descriptors. The guest SDK has `phenix.plugin(...)` and a scoped host API, while the client SDK has `phenix.connect(...)` and negotiated application operations. They are related APIs, not interchangeable transport mechanisms. Never attempt to auto-detect a missing guest host and silently connect through ACP, or allow a client to impersonate a privileged plugin host.
+
+The first integration test must exercise both directions in a single invocation: invoke a Lua-provided service from Rust, have its handler call a second imported Rust service through the Lua guest SDK, and propagate the typed result, generation and effective authority back to the original caller.
+
 ### Preserve the Neovim Lua client module
 
 The existing **client-facing** `phenix-binding-lua` crate exports a native Lua module via `#[mlua::lua_module(name = "phenix")]`. Its public import remains `require("phenix")`; existing `phenix.connect(...)`, `phenix.application`, `phenix.tools`, descriptor and callback behavior remain supported. This is an independently loadable Lua client library for Neovim or any compatible Lua 5.1/LuaJIT host. It must not depend on loading `adapter-lua.so` into the editor.
 
-The proposed `adapter-lua.so` is a **server-side native Phenix plugin** that hosts separately packaged Lua guest plugins. A Lua guest may use an adapter-provided module such as `require("phenix.guest")`. That guest module is not the existing editor client module and must not spawn ACP or depend on `vim.*`.
+The proposed `adapter-lua.so` is a **server-side native Phenix plugin** that hosts separately packaged Lua guest plugins. A Lua guest should also be able to use `require("phenix")` as its primary authoring library, but its module comes from the guest adapter. The existing editor client library remains a separate module implementation. The two environments must not share a Lua state, native module instance, ACP connection or runtime lifetime; guest calls go through an attenuated `PluginHost`, not through Neovim or client ACP.
 
-The public Neovim API should remain ergonomic, e.g.:
+The public Neovim API should remain ergonomic and client-oriented, e.g.:
 
 ~~~lua
 local phenix = require("phenix")
@@ -174,7 +200,7 @@ After Stage N4, the Lua client should expose typed, capability-negotiated operat
 Acceptance includes:
 - A Neovim session retains its existing `require("phenix")`, ACP connection, requests, event delivery and callback behavior through a Lua guest reload.
 - The same `require("phenix")` module works from a non-Neovim Lua 5.1/LuaJIT fixture without `vim` globals.
-- The server-side Lua guest module can implement and invoke canonical services without pulling `phenix-client-acp` into its guest runtime.
+- The server-side `require("phenix")` guest module can implement and invoke canonical services without pulling `phenix-client-acp` into its guest runtime.
 - A candidate can be selected via negotiated Lua client operations without an editor/kernel restart or accidentally changing existing root generation bindings.
 
 ### Adapter chains
