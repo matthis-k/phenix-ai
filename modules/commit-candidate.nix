@@ -31,7 +31,7 @@
             exit 1
           fi
 
-          mapfile -d '' candidate_paths < <(git diff --cached --name-only -z)
+          mapfile -d "" candidate_paths < <(git diff --cached --name-only -z)
           if (( ''${#candidate_paths[@]} == 0 )); then
             echo "prepare-commit: stage the candidate diff before committing" >&2
             exit 1
@@ -54,7 +54,7 @@
 
           # Formatters may operate on the whole repository. Refuse to silently include
           # unrelated edits or leave out-of-candidate changes behind after the commit.
-          while IFS= read -r -d '' path; do
+          while IFS= read -r -d "" path; do
             if [[ ! -v candidate["$path"] ]]; then
               echo "prepare-commit: normalization changed an unstaged path: $path" >&2
               echo "Review the change and stage it explicitly before retrying." >&2
