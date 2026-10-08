@@ -245,10 +245,9 @@ fn excluding_the_default_tool_adapter_does_not_reinstall_it() {
             .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
     );
 
-    let error = builder
-        .build()
-        .err()
-        .expect("the Basic loop's required tool import must be unsatisfied");
+    let Err(error) = builder.build() else {
+        panic!("the Basic loop's required tool import must be unsatisfied");
+    };
     assert!(
         error.to_string().contains("unresolved required import"),
         "resolver must report the missing contract instead of reviving a default: {error}"
@@ -1163,10 +1162,9 @@ fn later_provider_exclusion_rejects_an_explicit_binding() {
     let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
     builder.bind_provider(interface.clone(), alpha.clone());
     builder.disable_provider(interface, alpha);
-    let error = builder
-        .build()
-        .err()
-        .expect("binding an excluded provider must fail");
+    let Err(error) = builder.build() else {
+        panic!("binding an excluded provider must fail");
+    };
     assert!(
         error.to_string().contains("explicitly requires provider"),
         "unexpected policy failure: {error}"
