@@ -60,9 +60,9 @@ Kernel/Core
               +-- guest: model.wasm  [PluginId acme.model]
 ~~~
 
-The Lua and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. All three guest plugins register ordinary canonical contributions, not services owned by a generic `adapter-lua` proxy.
+The Lua and Wasm adapters use the same native plugin ABI as `memory.so`. Their hosted guests use adapter-specific bindings. Every native or guest plugin registers its own canonical contributions, not services owned by a generic `adapter-lua` proxy.
 
-The kernel selects a runtime provider from the guest's declared runtime requirement. Runtime-provider dependencies must be acyclic and terminate at the intrinsic native loader. A runtime adapter hosted by another adapter is permitted if its chain is finite and validated before activation.
+The kernel selects a runtime provider from the guest's declared runtime requirement. Every executable Guest Runtime provider is a native ABI plugin loaded directly by the intrinsic loader. Guest artifacts cannot themselves provide the executable runtime adapter that bootstraps another guest format. This restriction keeps bootstrap dependency depth finite and avoids a second host-translation lifecycle. Runtime-provider selection and all ordinary plugin dependencies must still be validated for cycles before activation.
 
 ## Native ABI bootstrap contract
 
@@ -203,9 +203,9 @@ Acceptance includes:
 - The server-side `require("phenix")` guest module can implement and invoke canonical services without pulling `phenix-client-acp` into its guest runtime.
 - A candidate can be selected via negotiated Lua client operations without an editor/kernel restart or accidentally changing existing root generation bindings.
 
-### Adapter chains
+### Adapter dependency rules
 
-An adapter can itself be hosted as a guest of another runtime adapter, provided it implements the canonical Guest Runtime contract through its host's bindings. That is an optional capability; initial conformance needs only a native adapter loading a guest. Resolving a runtime adapter through itself or through a dependency cycle is always an error.
+Executable Guest Runtime adapters are native ABI plugins. An adapter may depend on another ordinary native plugin service through a resolved, attenuated import, but the adapter's own execution never depends on a guest interpreter. Guest plugins may implement services that other guests import; they cannot become executable runtime providers in this design. Cyclic adapter or service dependencies fail during candidate validation. Supporting nested interpreter-hosted runtime adapters would require a separate design and conformance gate.
 
 ## Reload, residency and promotion
 
