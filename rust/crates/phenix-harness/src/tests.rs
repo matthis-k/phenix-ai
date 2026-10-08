@@ -207,6 +207,89 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
 }
 
 #[test]
+fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
+    let selected = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .expect("application tools are an independently selectable plugin");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(ids.contains("phenix.application-agent-tools"));
+    assert!(ids.contains("phenix.sessions"));
+    assert!(!ids.contains("phenix.agent-loop"));
+    let runtime = builder.build().expect("tools should resolve without an agent loop");
+    assert!(
+        !runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop")
+    );
+}
+
+#[test]
+fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
+    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::AgentLoopInterface;
+
+    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("the agent profile should not force the Basic loop implementation");
+
+    assert!(builder.manifests.iter().any(|manifest| {
+        manifest.id.as_str() == "phenix.application-agent-tools"
+    }));
+    assert!(!builder.manifests.iter().any(|manifest| {
+        manifest.id.as_str() == "phenix.agent-loop"
+    }));
+
+    let owner = plugin("fixture.foreign-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"foreign-agent")),
+        )
+        .unwrap();
+
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.foreign-agent.component").unwrap();
+    component.owner = owner;
+    component.imports.clear();
+    let component_id = component.id.clone();
+    builder.add_component(component);
+    builder.bind_provider(AgentLoopInterface::interface_id(), component_id.clone());
+
+    let mut runtime = builder
+        .build()
+        .expect("foreign terminal loop may replace Basic without removing tools");
+    assert!(runtime.resolved_generation().components().iter().any(|component| {
+        component.id == component_id
+    }));
+    runtime.activate().expect("foreign agent graph should activate");
+    assert_eq!(
+        runtime
+            .invoke(
+                &agent_loop_service(),
+                b"fixture",
+                &default_suite_authority(),
+                None,
+            )
+            .unwrap(),
+        b"foreign-agent"
+    );
+}
+
+#[test]
 fn product_configurations_resolve_providers_and_frontend_sdk() {
     for root in [BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION] {
         let builder =
