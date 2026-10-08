@@ -376,6 +376,34 @@ contract semantics.
 10. Graph changes through a live API produce generation-pinned reconciliation just
     like a subsequent run from the corresponding declarative configuration.
 
+### Native profile defaults and replaceability (implemented slice)
+
+`phenix-agent-configurations` now declares Basic, Advanced, Basic Product and
+Full Product as *profiles* with separately inspectable default plugin lists.
+Their resource-only profile identity manifests have **no concrete plugin
+dependencies**. Phenix expands profile inheritance at product selection time,
+then closes over true implementation dependencies.
+
+- Full inherits Advanced, which inherits Basic, without copying or permanently
+  requiring a particular Basic implementation.
+- CLI `--disable-plugin` or portable `plugins.disable` removes an inherited
+  *default* before concrete package selection. The plugin is not started as a
+  fallback merely because an ancestor profile included it.
+- A selected implementation's genuine hard dependencies remain mandatory.
+  Disabling one of those is an explicit resolution error, not a silent override.
+- A contract compatible foreign provider can be added after expanding defaults;
+  the Full profile does not imply mandatory native memory. The new fixture
+  verifies resolution and package omission, not an external memory backend's
+  runtime behavior.
+- An alternative agent loop must still satisfy consumer contracts and the
+  application launch/agent tool wiring is currently coupled to the first-party
+  loop by plugin ID. This remains a separate remediation.
+
+The current composition API is intentionally not a second kernel graph solver:
+profile expansion only adds *candidate plugin IDs*; actual import/export
+compatibility, provider bindings, authority and graph generations are validated
+by the canonical Core resolver.
+
 ## Implementation status of this PR
 
 - **Implemented:** Shared SDK-owned agent execution contract, with Basic compatibility exports.
@@ -383,8 +411,9 @@ contract semantics.
 - **Implemented:** `PhenixRuntimeBuilder::set_provider_policy`, `bind_provider` and `disable_provider` delegate resolution to that canonical path. The builder does not evaluate Nix or implement a separate provider solver.
 - **Implemented:** Native `--config` JSON composition frontend (profile, plugin choices, provider bindings and Layer policies), `--profile`, `--provider-policy`, `--bind-provider`, and `--disable-provider`; Nix `configFile` passes the same file path through unchanged.
 - **Implemented:** Explicit provider selection fails when the nominated provider is unavailable or ineligible, rather than silently routing to another component.
-- **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity of equivalent policies, and failure on invalid provider bindings.
-- **Not yet implemented:** General profile overrides that eliminate hard implementation dependencies, complete CLI/UI lifecycle management, unified plugin settings, artifact installation, or end-to-end external adapter substitution.
+- **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity, invalid bindings, Full/Advanced profile default exclusions, native-vs-foreign memory contract substitution (resolver fixture only), and CLI precedence.
+- **Implemented in this PR:** Basic/Full reference profile defaults are expanded in Phenix before checking concrete manifest dependencies. Overridden optional defaults are not included as runtime plugins; true implementation dependencies still fail when missing.
+- **Not yet implemented:** Full arbitrary plugin replacement through portable package catalogs, complete CLI/UI lifecycle management, unified plugin settings, artifact installation, or end-to-end external adapter substitution.
 - **Verification:** The added tests require Rust CI execution; source-level presence alone is not a passing test result.
 
 ## Executive decision
@@ -410,12 +439,12 @@ Neither forwarding nor replacement grants additional authority.
 | --- | --- | --- |
 | Kernel provider resolution | clean | `composition/component.rs`, `composition/provider_resolution.rs`: compatible imports/exports, explicit policy, pinned generations |
 | Layer and terminal separation | clean | `spec/plugin-service-layering.md` and runtime dispatch: distinct semantics |
-| Basic-to-Full ancestry | clean | `phenix-agent-configurations/src/lib.rs` directly includes Basic in Advanced |
+| Basic-to-Full ancestry | remediated in this PR | `phenix-agent-configurations/src/lib.rs` now declares inheritable **profile defaults** instead of hard concrete plugin-manifest dependencies; the Phenix suite builder expands defaults before validating real dependencies. |
 | Third-party provider replaceability | clean foundation | `phenix-core/src/third_party_component_regression.rs`, `phenix-plugin-basic-agent/src/component_regression.rs` |
 | Agent contract ownership | finding | `AgentLoopInterface` and wire types lived in the Basic implementation crate. Extract into `phenix-sdk` without changing wire identity. |
 | Application launch coupling | finding | `phenix-harness/src/application.rs` invokes `phenix.agent-loop@1` using a concrete Basic-era request. Contract types are now SDK-owned, but the application should ultimately use configurable capability bindings rather than hard-coded agent implementations. |
 | Harness/plugin wiring | finding | `runtime_builder.rs` conditionally installs application agent-tool adapter and triggers when a specific Basic loop plugin is selected. Derive this from required capabilities, not plugin identity. |
-| Composition override surface | partially remediated in this PR | Core already supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` now exposes policy, strict binding and exclusion, and forwards policy through full `ResolvedGeneration` resolution. A basic portable JSON/CLI frontend is added; full profile inheritance overrides and inactive package exclusion remain outstanding. |
+| Composition override surface | partially remediated in this PR | Core supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` exposes policy, strict binding, and exclusion. Profile defaults are expanded by Phenix, with explicit exclusion before hard dependency closure; a basic portable JSON/CLI frontend is added. Dynamic package management, full independent components, and capability-based application wiring remain outstanding. |
 | Standalone memory | finding | `phenix.memory` has a required helper-invocation import even for storage/query-only use. Separate the helper-dependent mechanisms. |
 | Standalone context | finding | `phenix.context` requires Phenix execution/resource providers, preventing simple external turn-preparation usage without those services. Expose a provider-neutral preparation boundary. |
 | Basic context compaction | finding | No independent deterministic Basic compaction provider; Full's compaction contract is exported by `phenix.memory`. |
