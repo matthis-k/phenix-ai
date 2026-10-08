@@ -405,17 +405,16 @@ impl ResolvedComponentGraph {
                 // In particular, never silently route to a different provider
                 // when the selected component is absent, incompatible, disabled
                 // or cannot satisfy the import's authority.
-                if let Some(expected) = explicit {
-                    if !eligible
+                if let Some(expected) = explicit
+                    && !eligible
                         .iter()
                         .any(|candidate| &candidate.component.id == expected)
-                    {
-                        return Err(ComponentGraphError::UnavailableExplicitProvider {
-                            component: manifest.id.clone(),
-                            interface: import.interface.clone(),
-                            provider: expected.clone(),
-                        });
-                    }
+                {
+                    return Err(ComponentGraphError::UnavailableExplicitProvider {
+                        component: manifest.id.clone(),
+                        interface: import.interface.clone(),
+                        provider: expected.clone(),
+                    });
                 }
 
                 eligible.sort_by(|left, right| {
