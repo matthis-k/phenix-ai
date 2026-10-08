@@ -2,11 +2,12 @@
 
 use crate::{PhenixRuntime, application, default_suite_authority};
 use phenix_core::{
-    Authority, ComponentEntryTrigger, ComponentManifest, ComponentProcessArgument,
+    Authority, ComponentEntryTrigger, ComponentId, ComponentManifest, ComponentProcessArgument,
     ConfigContribution, DurableSchemaRegistration, GenerationResolutionError, GraphReconciler,
+    InterfaceId,
     Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
-    ResolvedGenerationActivationError, ServiceId,
+    PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
+    ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
     AGENT_LOOP_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
@@ -111,6 +112,7 @@ pub struct PhenixRuntimeBuilder {
     durable_schemas: Vec<DurableSchemaRegistration>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    provider_policy: ProviderCompositionPolicy,
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
@@ -532,6 +534,29 @@ impl PhenixRuntimeBuilder {
         self.layer_policies.insert(service, layers);
     }
 
+    /// Set the provider-selection policy for this Phenix runtime.
+    ///
+    /// This is independent of whether configuration came from Nix, a file, a
+    /// frontend or direct embedding. Resolution remains kernel-owned.
+    pub fn set_provider_policy(&mut self, policy: ProviderCompositionPolicy) {
+        self.provider_policy = policy;
+    }
+
+    /// Select a provider implementation for a contract in this runtime.
+    ///
+    /// The provider must still be available, compatible and authorized when
+    /// the graph generation is resolved.
+    pub fn bind_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
+        self.provider_policy = std::mem::take(&mut self.provider_policy)
+            .with_explicit_binding(interface, provider);
+    }
+
+    /// Exclude one provider from selection for an interface.
+    pub fn disable_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
+        self.provider_policy = std::mem::take(&mut self.provider_policy)
+            .with_disabled_provider(interface, provider);
+    }
+
     pub fn add_embedded<F>(
         &mut self,
         manifest: PluginManifest,
@@ -588,7 +613,7 @@ impl PhenixRuntimeBuilder {
             .iter()
             .any(|manifest| manifest.id == debug_id);
         let resolved =
-            ResolvedGeneration::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
+            ResolvedGeneration::resolve_with_composition_policies(
                 self.manifests.clone(),
                 self.components,
                 self.durable_schemas,
@@ -596,6 +621,7 @@ impl PhenixRuntimeBuilder {
                 self.process_arguments,
                 self.contributions,
                 self.layer_policies,
+                self.provider_policy,
                 &self.component_authority,
             )?;
         let mut kernel = create_kernel(&resolved)?;
