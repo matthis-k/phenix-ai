@@ -1353,6 +1353,22 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
             .iter()
             .any(|manifest| { manifest.id == external_id })
     );
+    let callables = resolved
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .filter_map(|entry| match &entry.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => {
+                Some(callable_id.as_str())
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    for required in ["memory.record", "memory.query", "memory.recall"] {
+        assert!(
+            callables.contains(required),
+            "foreign memory provider must expose {required} through contract resolution"
+        );
+    }
 }
 
 #[test]
