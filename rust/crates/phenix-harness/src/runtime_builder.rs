@@ -9,9 +9,9 @@ use phenix_core::{
     ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    adapter_acp_factory, adapter_acp_manifest,
-    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
+    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
+    artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
     basic_context_manifest, basic_model_component_manifest, basic_model_factory,
     basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,

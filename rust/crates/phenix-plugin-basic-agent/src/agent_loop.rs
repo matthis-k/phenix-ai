@@ -2,8 +2,8 @@ use phenix_core::{
     Authority, Bytes, CallableId, ComponentExport, ComponentId, ComponentImport,
     ComponentInterface, ComponentManifest, ModelToolCall, ModelToolDescriptor, ModelToolTurn,
     PermissionId, PluginContext, PluginExecution, PluginHost, PluginId, PluginInstance,
-    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole,
-    SessionId, SharedPluginInvocation, ValueCodec,
+    PluginManifest, SdkClient, ServiceContribution, ServiceId, ServiceRole, SessionId,
+    SharedPluginInvocation, ValueCodec,
 };
 use phenix_sdk::{
     AGENT_DIAGNOSTIC_EVENT_VERSION, AgentDiagnosticEvent, DefaultInvocationCommand,

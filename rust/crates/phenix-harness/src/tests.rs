@@ -220,7 +220,9 @@ fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
     assert!(ids.contains("phenix.application-agent-tools"));
     assert!(ids.contains("phenix.sessions"));
     assert!(!ids.contains("phenix.agent-loop"));
-    let runtime = builder.build().expect("tools should resolve without an agent loop");
+    let runtime = builder
+        .build()
+        .expect("tools should resolve without an agent loop");
     assert!(
         !runtime
             .kernel()
@@ -236,9 +238,12 @@ fn excluding_the_default_tool_adapter_does_not_reinstall_it() {
     let excluded = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
     let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
         .expect("Basic profile defaults must be removable");
-    assert!(!builder.manifests.iter().any(|manifest| {
-        manifest.id.as_str() == "phenix.application-agent-tools"
-    }));
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
+    );
 
     let error = builder
         .build()
@@ -267,7 +272,9 @@ fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
     assert!(!ids.contains("phenix.step-runner"));
 
     let mut runtime = builder.build().expect("memory imports are optional");
-    runtime.activate().expect("standalone memory should activate");
+    runtime
+        .activate()
+        .expect("standalone memory should activate");
     let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Get {
         id: "not-recorded".to_owned(),
     }))
@@ -284,21 +291,25 @@ fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
 fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
     use phenix_core::{Bytes, ComponentId, ComponentInterface};
     use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
-    use phenix_sdk::{
-        AgentLoopCommand, AgentLoopInterface, AgentLoopResponse, AgentLoopUsage,
-    };
+    use phenix_sdk::{AgentLoopCommand, AgentLoopInterface, AgentLoopResponse, AgentLoopUsage};
 
     let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
     let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
     let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
         .expect("the agent profile should not force the Basic loop implementation");
 
-    assert!(builder.manifests.iter().any(|manifest| {
-        manifest.id.as_str() == "phenix.application-agent-tools"
-    }));
-    assert!(!builder.manifests.iter().any(|manifest| {
-        manifest.id.as_str() == "phenix.agent-loop"
-    }));
+    assert!(
+        builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
+    );
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.agent-loop" })
+    );
 
     let reply = AgentLoopResponse::Completed {
         output: Bytes::new(b"foreign-agent".to_vec()),
@@ -332,10 +343,16 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
     let mut runtime = builder
         .build()
         .expect("foreign terminal loop may replace Basic without removing tools");
-    assert!(runtime.resolved_generation().components().iter().any(|component| {
-        component.id == component_id
-    }));
-    runtime.activate().expect("foreign agent graph should activate");
+    assert!(
+        runtime
+            .resolved_generation()
+            .components()
+            .iter()
+            .any(|component| { component.id == component_id })
+    );
+    runtime
+        .activate()
+        .expect("foreign agent graph should activate");
 
     let command = AgentLoopCommand::Run {
         execution_id: "fixture-foreign-run".to_owned(),
