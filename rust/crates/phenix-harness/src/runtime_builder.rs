@@ -3,12 +3,11 @@
 use crate::{PhenixRuntime, application, default_suite_authority};
 use phenix_core::{
     Authority, ComponentEntryTrigger, ComponentId, ComponentInterface, ComponentManifest,
-    ComponentProcessArgument,
-    ConfigContribution, DurableSchemaRegistration, GenerationResolutionError, GraphReconciler,
-    InterfaceCompatibility,
-    InterfaceId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
-    ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
+    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration,
+    GenerationResolutionError, GraphReconciler, InterfaceCompatibility, InterfaceId, Kernel,
+    KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId, PluginInstance,
+    PluginManifest, ProviderCompositionPolicy, ResolvedGeneration, ResolvedGenerationActivation,
+    ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
     adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
@@ -567,9 +566,11 @@ impl PhenixRuntimeBuilder {
     /// The final assembled component set, rather than an implementation plugin
     /// ID, determines whether a tool contract is available to the application.
     fn add_late_application_tool_triggers(&mut self) {
-        if !self.components.iter().any(|component| {
-            component.owner.as_str() == application::APPLICATION_AGENT_TOOL_PLUGIN
-        }) {
+        if !self
+            .components
+            .iter()
+            .any(|component| component.owner.as_str() == application::APPLICATION_AGENT_TOOL_PLUGIN)
+        {
             return;
         }
         if self.has_compatible_export::<WorkspaceInterface>() {
@@ -587,7 +588,8 @@ impl PhenixRuntimeBuilder {
         let interface = I::interface_id();
         let schema = I::schema();
         self.components.iter().any(|component| {
-            self.provider_policy.provider_enabled(&interface, &component.id)
+            self.provider_policy
+                .provider_enabled(&interface, &component.id)
                 && component.exports.iter().any(|export| {
                     export.interface == interface
                         && !matches!(
