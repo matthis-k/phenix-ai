@@ -548,7 +548,11 @@ fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
         &default_suite_authority(),
     )
     .expect_err("a prompt cannot start without a selected agent provider");
-    assert!(error.to_string().contains("no resolved agent execution provider"));
+    assert!(
+        error
+            .to_string()
+            .contains("no resolved agent execution provider")
+    );
 }
 
 #[test]
@@ -1627,7 +1631,9 @@ fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory
         );
     }
 
-    resolved.activate().expect("foreign memory terminal activates");
+    resolved
+        .activate()
+        .expect("foreign memory terminal activates");
     let command = MemoryCommand::Get {
         id: "foreign-record".to_owned(),
     };
