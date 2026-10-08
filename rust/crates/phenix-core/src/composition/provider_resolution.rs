@@ -117,13 +117,17 @@ impl ProviderCompositionPolicy {
         self
     }
 
-    pub(crate) fn explicit_binding(&self, interface: &InterfaceId) -> Option<&ComponentId> {
+    /// Explicit component binding for an interface in this composition policy.
+    #[must_use]
+    pub fn explicit_binding(&self, interface: &InterfaceId) -> Option<&ComponentId> {
         self.interfaces
             .get(interface)
             .and_then(|policy| policy.explicit.as_ref())
     }
 
-    pub(crate) fn provider_enabled(&self, interface: &InterfaceId, provider: &ComponentId) -> bool {
+    /// Whether a component is eligible under this policy's exclusion list.
+    #[must_use]
+    pub fn provider_enabled(&self, interface: &InterfaceId, provider: &ComponentId) -> bool {
         !self
             .interfaces
             .get(interface)
