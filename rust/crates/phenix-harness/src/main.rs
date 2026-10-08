@@ -874,6 +874,61 @@ mod tests {
     }
 
     #[test]
+    fn portable_plugin_packages_support_cli_paths_and_validate_inputs() {
+        let cli = parse_cli([
+            "--plugin-package".to_owned(),
+            "plugins/first".to_owned(),
+            "--plugin-package=plugins/second".to_owned(),
+            "--profile=phenix.product.basic".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.plugin_packages,
+            vec![
+                PathBuf::from("plugins/first"),
+                PathBuf::from("plugins/second")
+            ]
+        );
+        assert!(cli.plugin_arguments.is_empty());
+        assert!(parse_cli(["--plugin-package".to_owned()]).is_err());
+        assert!(parse_cli(["--plugin-package=".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn portable_plugin_roots_are_resolved_from_the_config_file_directory() {
+        let directory = env::temp_dir().join(format!(
+            "phenix-plugin-package-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let config_path = directory.join("composition.json");
+        fs::write(
+            &config_path,
+            r#"{"plugin_packages":["plugins/first","/opt/phenix/plugins/second"]}"#,
+        )
+        .unwrap();
+        let config = load_portable_configuration(Some(&config_path)).unwrap();
+        assert_eq!(
+            config.plugin_packages,
+            vec![
+                directory.join("plugins/first"),
+                PathBuf::from("/opt/phenix/plugins/second")
+            ]
+        );
+
+        fs::write(&config_path, r#"{"plugin_packages":[""]}"#).unwrap();
+        assert!(
+            load_portable_configuration(Some(&config_path)).is_err(),
+            "empty package roots must fail before plugin loading"
+        );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
     fn cli_plugin_flags_are_parsed_without_reaching_plugins() {
         let cli = parse_cli([
             "--enable-plugin".into(),
