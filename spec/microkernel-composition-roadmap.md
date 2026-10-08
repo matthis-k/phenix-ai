@@ -60,9 +60,10 @@ The execution-runtime packaging boundary is separate from contribution kinds and
 - **N2 native loader and metadata normalization:** depends on #728's contribution envelope and uses the existing Core resolver. Coordinate runtime edit ownership with #726.
 - **N3 guest adapter proof:** a native Lua runtime adapter loads a Lua guest exporting one canonical service, invoking an imported service and preserving authority, identity and generation. Follow with a narrow Phenix.nvim ACP smoke test without restarting the kernel.
 - **N4 reload/select proof:** use resident-generation staging and explicit promotion from `spec/selectable-generations.md`. Loading a new artifact must not silently switch the default graph.
-- **N5 migration:** remove embedded factory/catalog and Rust product-composition ownership only after N2-N4 and product parity; coordinate with #733's cleanup inventory.
+- **N5 optional adapters:** add native Wasm, JavaScript or process-backed Guest Runtime adapters only after the Lua adapter proves the generic contract. Each executable adapter is a native ABI plugin; guest interpreters do not bootstrap runtime providers.
+- **N6 legacy migration:** remove the embedded factory/catalog and Rust product-composition ownership only after N2-N4 and Basic/Full plus non-agent product parity; coordinate with #733's cleanup inventory.
 
-The design PR is not an implementation gate by itself. N1-N5 require runnable proofs and no second provider resolver, plugin registry or generation lifecycle.
+The design PR is not an implementation gate by itself. N1-N6 require runnable proofs and no second provider resolver, plugin registry or generation lifecycle.
 
 ## Required end-to-end proofs
 
