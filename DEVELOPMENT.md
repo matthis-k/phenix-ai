@@ -90,6 +90,21 @@ The development shell installs the shared maintenance pre-commit integration. It
 
 Compiler errors, lint findings that require judgment, test failures, runtime failures, and Nix build failures are never auto-repaired.
 
+## Normalize and commit a candidate
+
+Stage only the files intended for one commit, then run:
+
+```sh
+git add -- path/to/changed-file
+scripts/prepare-commit.sh "Describe the change"
+```
+
+The command runs `maintenance fix` (using the Nix maintenance app outside the development shell), checks the resulting diff, stages only the original candidate paths, and creates one commit with normal Git hooks enabled. It refuses unstaged tracked changes and formatter edits outside the candidate, so it cannot accidentally commit unrelated work. Review and explicitly stage any additional paths before retrying. Ordinary `git commit` still runs the existing pre-commit normalization hook.
+
+The pull-request workflows do not write to source branches. The `Source` check rejects formatting and static-analysis failures. For API-only clients that cannot execute Git hooks, run the **Maintenance autofix** workflow manually on the branch to download `maintenance-fixes.patch`, then apply and commit the changes from a checkout. The workflow does not commit or push the patch. Updating the CI generator dependency or lockfile is a separate, intentional change.
+
+Protect `main` with the required `Source` check. Local hooks and the prepare-commit script are convenience and correctness aids, not server-side enforcement; a GitHub API commit can bypass both. Any previously required `autofix` status is preserved as a read-only whitespace check while branch rules are migrated.
+
 ## Stitch
 
 Inspect the repository workspace graph with:
