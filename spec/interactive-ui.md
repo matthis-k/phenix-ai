@@ -135,6 +135,12 @@ Product:
 - the same prompt in a frontend without the capability uses ordinary text without exposing UI tools;
 - model, client, provider, and runtime test doubles assert tool projection rather than relying on UI screenshots alone.
 
+## Current implementation
+
+The first plugin package provides a typed display-only document service. Documents use a normalized tree of stable node references. The service validates layout and content, requires the previous revision for updates, and preserves a revision tombstone after dismissal.
+
+The store is process-local and caps document identities at 512. It also caps a document at 512 display lines. The Full product selects the plugin by default, and portable configuration may exclude it. There are no model tools yet. The document service currently accepts explicit session IDs. The application must bind callers to the authenticated execution and session before exposing model tools. The transport bridge, durable replay, controls, and action handling remain unimplemented. The Neovim renderer must adapt its preliminary nested format to the typed contract.
+
 ## Implementation sequence
 
 1. Add the standalone plugin, its typed contract, manifest, package, and full-product composition.

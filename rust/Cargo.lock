@@ -1868,6 +1868,7 @@ dependencies = [
  "phenix-plugin-environment-local",
  "phenix-plugin-execution",
  "phenix-plugin-frontend",
+ "phenix-plugin-interactive-ui",
  "phenix-plugin-hooks",
  "phenix-plugin-jobs",
  "phenix-plugin-language",
@@ -1974,6 +1975,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "phenix-plugin-interactive-ui"
+version = "0.1.0"
+dependencies = [
+ "phenix-core",
+ "phenix-sdk",
+ "phenix-sdk-macros",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

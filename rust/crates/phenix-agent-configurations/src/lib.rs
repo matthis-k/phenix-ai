@@ -57,6 +57,7 @@ const FULL_PRODUCT_DEFAULTS: &[&str] = &[
     ADVANCED_AGENT_CONFIGURATION,
     "phenix.providers",
     "openai-codex",
+    "phenix.interactive-ui",
 ];
 
 /// Named first-party profile inheritance and default selections.
@@ -199,6 +200,8 @@ mod tests {
         assert!(full.contains(&ADVANCED_AGENT_CONFIGURATION));
         assert!(full.contains(&"phenix.providers"));
         assert!(full.contains(&"openai-codex"));
+        assert!(full.contains(&"phenix.interactive-ui"));
+        assert!(!basic.contains(&"phenix.interactive-ui"));
 
         let expanded = expand_profile_defaults(
             &BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]),
