@@ -180,11 +180,72 @@ phenix --disable-provider phenix.context@1=phenix.context.native
 bindings from the file; disabled provider entries accumulate. Resolution, conflict
 checking and generation identities are owned by `PhenixRuntimeBuilder` and Core.
 
-The current file deliberately describes **provider bindings/exclusions only**;
-portable profile inheritance, plugin package installation, Layer policies in
-this same file, validation/plan/apply commands, and merged user configuration
-remain follow-up tasks. Nix may generate the same JSON content and pass its path
-to the executable, with identical semantics.
+The legacy `--provider-policy` file intentionally describes **provider
+bindings/exclusions only**. For profiles, plugin selection and Layers, use the
+portable `--config` document described below. Full profile overlays,
+package installation, and interactive plan/apply remain separate follow-ups.
+
+### Implemented portable composition JSON and CLI (initial scope)
+
+This PR also supports one **Nix-independent composition document** via
+`phenix --config ./composition.json`, or `PHENIX_CONFIG_FILE` when deployed
+through a wrapper. The current supported JSON sections are:
+
+~~~json
+{
+  "profile": "phenix.product.full",
+  "plugins": {
+    "enable": ["phenix.debug"],
+    "disable": []
+  },
+  "providers": {
+    "bind": {"phenix.memory@1": "acme.memory.component"},
+    "disable": {"phenix.context@1": ["phenix.context.native"]}
+  },
+  "layers": [
+    {"service": "phenix.memory@1", "plugin": "phenix.telemetry", "priority": 10}
+  ]
+}
+~~~
+
+The service, plugin, component and interface identifiers in this example are
+illustrative; **all referenced runtime providers must actually be packaged and
+eligible**, or the resolver reports an error. Optional Layer fields are
+`required` (default false) and `enabled` (default true). Unexpected fields
+and malformed identities are rejected.
+
+Equivalent basic native CLI choices are available:
+
+~~~shell
+phenix --config composition.json --profile phenix.product.basic
+phenix --enable-plugin phenix.debug --disable-plugin phenix.planning
+phenix --bind-provider phenix.memory@1=acme.memory.component
+phenix --disable-provider phenix.context@1=phenix.context.native
+~~~
+
+The precedence for currently supported choices is deployment defaults
+(`PHENIX_ENABLED_PLUGINS` / `PHENIX_LAYER_POLICY`), then the portable
+file, then explicit CLI flags. A selected profile changes the base plugin
+selection. File Layer declarations for a given service override the deployment
+default list for that service. The existing provider-only
+`--provider-policy` file is accepted for backward compatibility and applied
+after the unified file, before CLI binding flags.
+
+An explicit provider binding is **strict**, not a preference: if that
+component is missing, disabled, structurally incompatible or unauthorized,
+graph resolution now reports `UnavailableExplicitProvider` instead of
+silently falling back to a different provider.
+
+The Nix `mkPhenix` wrapper accepts `configFile = ./composition.json;` and
+forwards the path via `PHENIX_CONFIG_FILE` without parsing or resolving any
+provider rules itself. The same file also works through
+`phenix --config ./composition.json` on a non-Nix system.
+
+**Not yet implemented:** A fully general profiles/overlays schema (including
+replacement of concrete package dependencies), package installation, automatic
+standard-location config discovery, unified plugin settings in this file,
+interactive `plan/apply` management commands, and exact full-layer CLI editing.
+These are follow-up work, not covered by this initial JSON frontend.
 
 ### Portable configuration example (illustrative proposed syntax)
 
@@ -320,9 +381,10 @@ contract semantics.
 - **Implemented:** Shared SDK-owned agent execution contract, with Basic compatibility exports.
 - **Implemented:** Core's complete resolver path now accepts explicit provider policy alongside Layer policies, durable schemas, process arguments, entry triggers and contributions.
 - **Implemented:** `PhenixRuntimeBuilder::set_provider_policy`, `bind_provider` and `disable_provider` delegate resolution to that canonical path. The builder does not evaluate Nix or implement a separate provider solver.
-- **Implemented:** Minimal native CLI and JSON provider-selection frontend with `--provider-policy`, `--bind-provider`, and `--disable-provider`.
+- **Implemented:** Native `--config` JSON composition frontend (profile, plugin choices, provider bindings and Layer policies), `--profile`, `--provider-policy`, `--bind-provider`, and `--disable-provider`; Nix `configFile` passes the same file path through unchanged.
+- **Implemented:** Explicit provider selection fails when the nominated provider is unavailable or ineligible, rather than silently routing to another component.
 - **Regression source added:** Default provider selection, explicit binding, provider disablement, semantic generation identity of equivalent policies, and failure on invalid provider bindings.
-- **Not yet implemented:** Full portable profile/configuration loading, complete CLI/UI management, Basic/Full policy overlays, stripping inactive default plugin implementations from package closure, or end-to-end external adapter substitution.
+- **Not yet implemented:** General profile overrides that eliminate hard implementation dependencies, complete CLI/UI lifecycle management, unified plugin settings, artifact installation, or end-to-end external adapter substitution.
 - **Verification:** The added tests require Rust CI execution; source-level presence alone is not a passing test result.
 
 ## Executive decision
@@ -353,7 +415,7 @@ Neither forwarding nor replacement grants additional authority.
 | Agent contract ownership | finding | `AgentLoopInterface` and wire types lived in the Basic implementation crate. Extract into `phenix-sdk` without changing wire identity. |
 | Application launch coupling | finding | `phenix-harness/src/application.rs` invokes `phenix.agent-loop@1` using a concrete Basic-era request. Contract types are now SDK-owned, but the application should ultimately use configurable capability bindings rather than hard-coded agent implementations. |
 | Harness/plugin wiring | finding | `runtime_builder.rs` conditionally installs application agent-tool adapter and triggers when a specific Basic loop plugin is selected. Derive this from required capabilities, not plugin identity. |
-| Composition override surface | partially remediated in this PR | Core already supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` now exposes policy, explicit binding and exclusion, and forwards policy through full `ResolvedGeneration` resolution. Portable file/CLI/frontend lowering, profile overrides and removal of inactive default packages remain outstanding. |
+| Composition override surface | partially remediated in this PR | Core already supports `ProviderCompositionPolicy`; `PhenixRuntimeBuilder` now exposes policy, strict binding and exclusion, and forwards policy through full `ResolvedGeneration` resolution. A basic portable JSON/CLI frontend is added; full profile inheritance overrides and inactive package exclusion remain outstanding. |
 | Standalone memory | finding | `phenix.memory` has a required helper-invocation import even for storage/query-only use. Separate the helper-dependent mechanisms. |
 | Standalone context | finding | `phenix.context` requires Phenix execution/resource providers, preventing simple external turn-preparation usage without those services. Expose a provider-neutral preparation boundary. |
 | Basic context compaction | finding | No independent deterministic Basic compaction provider; Full's compaction contract is exported by `phenix.memory`. |
