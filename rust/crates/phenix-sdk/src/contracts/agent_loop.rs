@@ -184,7 +184,6 @@ pub fn agent_loop_control_service() -> ServiceId {
         .expect("static agent loop control service id is valid")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,9 +191,18 @@ mod tests {
     #[test]
     fn agent_execution_contract_identity_does_not_name_an_implementation() {
         assert_eq!(AgentLoopInterface::interface_id().as_str(), AGENT_LOOP_SERVICE);
-        assert_eq!(AgentLoopControlInterface::interface_id().as_str(), AGENT_LOOP_CONTROL_SERVICE);
-        assert_eq!(AgentToolExecutionInterface::interface_id().as_str(), AGENT_TOOL_EXECUTION_SERVICE);
-        assert_eq!(AgentLoopProgressInterface::interface_id().as_str(), AGENT_LOOP_PROGRESS_SERVICE);
+        assert_eq!(
+            AgentLoopControlInterface::interface_id().as_str(),
+            AGENT_LOOP_CONTROL_SERVICE
+        );
+        assert_eq!(
+            AgentToolExecutionInterface::interface_id().as_str(),
+            AGENT_TOOL_EXECUTION_SERVICE
+        );
+        assert_eq!(
+            AgentLoopProgressInterface::interface_id().as_str(),
+            AGENT_LOOP_PROGRESS_SERVICE
+        );
     }
 
     #[test]
@@ -211,7 +219,8 @@ mod tests {
         assert_eq!(json["operation"], "run");
         assert_eq!(json["execution_id"], "execution-1");
         assert_eq!(json["tools"], serde_json::json!([]));
-        let decoded: AgentLoopCommand = serde_json::from_value(json).expect("deserialize agent request");
+        let decoded: AgentLoopCommand =
+            serde_json::from_value(json).expect("deserialize agent request");
         assert_eq!(decoded, request);
     }
 }
