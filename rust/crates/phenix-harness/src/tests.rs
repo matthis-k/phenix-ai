@@ -971,3 +971,31 @@ fn product_builder_rejects_binding_a_missing_provider() {
         "invalid provider selection must fail during Phenix resolution"
     );
 }
+
+#[test]
+fn later_provider_binding_reenables_earlier_exclusion() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    builder.disable_provider(interface.clone(), alpha.clone());
+    builder.bind_provider(interface.clone(), alpha.clone());
+
+    let runtime = builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&runtime, &interface), alpha);
+}
+
+#[test]
+fn later_provider_exclusion_rejects_an_explicit_binding() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    builder.bind_provider(interface.clone(), alpha.clone());
+    builder.disable_provider(interface, alpha);
+    let error = builder.build().err().expect("binding an excluded provider must fail");
+    assert!(
+        error.to_string().contains("explicitly requires provider"),
+        "unexpected policy failure: {error}"
+    );
+}
