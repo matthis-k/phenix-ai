@@ -283,12 +283,9 @@ pub fn providers_manifest() -> PluginManifest {
         id: PluginId::parse(PROVIDERS_PLUGIN).expect("static provider bundle id is valid"),
         version: 1,
         execution: PluginExecution::ResourceOnly,
-        dependencies: COMMON_PROVIDERS
-            .into_iter()
-            .map(|provider| {
-                PluginId::parse(provider.id()).expect("common provider plugin id is valid")
-            })
-            .collect(),
+        // This bundle expresses product defaults, not mandatory dependencies.
+        // The Phenix product selection frontend expands the common providers.
+        dependencies: Vec::new(),
         services: Vec::new(),
         resource_namespaces: Vec::new(),
         maximum_authority: Authority::default(),
@@ -349,17 +346,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_bundle_depends_on_every_common_provider() {
-        let expected = COMMON_PROVIDERS
-            .into_iter()
-            .map(|provider| provider.id().to_owned())
-            .collect::<BTreeSet<_>>();
-        let actual = providers_manifest()
-            .dependencies
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(actual, expected);
+    fn provider_bundle_is_replaceable_and_does_not_hard_depend_on_defaults() {
+        assert!(providers_manifest().dependencies.is_empty());
+        assert!(!COMMON_PROVIDERS.is_empty());
     }
 
     #[test]

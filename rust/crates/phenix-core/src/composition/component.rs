@@ -35,6 +35,12 @@ pub enum ComponentGraphError {
         component: ComponentId,
         interface: InterfaceId,
     },
+    /// An explicit provider binding is mandatory, not a best-effort preference.
+    UnavailableExplicitProvider {
+        component: ComponentId,
+        interface: InterfaceId,
+        provider: ComponentId,
+    },
     IncompatibleRequiredImport {
         component: ComponentId,
         interface: InterfaceId,
@@ -87,6 +93,14 @@ impl Display for ComponentGraphError {
             } => write!(
                 f,
                 "component {component} has unresolved required import {interface}"
+            ),
+            Self::UnavailableExplicitProvider {
+                component,
+                interface,
+                provider,
+            } => write!(
+                f,
+                "component {component} explicitly requires provider {provider} for {interface}, but it is absent, incompatible, disabled, or insufficiently authorized"
             ),
             Self::IncompatibleRequiredImport {
                 component,
@@ -385,6 +399,22 @@ impl ResolvedComponentGraph {
                             }
                         }
                     }
+                }
+
+                // An explicit binding is a contract requirement, not a hint.
+                // In particular, never silently route to a different provider
+                // when the selected component is absent, incompatible, disabled
+                // or cannot satisfy the import's authority.
+                if let Some(expected) = explicit
+                    && !eligible
+                        .iter()
+                        .any(|candidate| &candidate.component.id == expected)
+                {
+                    return Err(ComponentGraphError::UnavailableExplicitProvider {
+                        component: manifest.id.clone(),
+                        interface: import.interface.clone(),
+                        provider: expected.clone(),
+                    });
                 }
 
                 eligible.sort_by(|left, right| {
@@ -795,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_binding_only_wins_when_eligible() {
+    fn unavailable_explicit_binding_never_falls_back() {
         let read = capability("fs.read");
         let network = capability("network.read");
         let caller = Authority::new([read.clone()]);
@@ -806,7 +836,7 @@ mod tests {
         unauthorized.exports[0].required_authority = Authority::new([network]);
         let policy = ProviderCompositionPolicy::new()
             .with_explicit_binding(interface("phenix.demo@1"), component("z-unauthorized"));
-        let graph = ResolvedComponentGraph::compile_with_provider_policy(
+        let error = ResolvedComponentGraph::compile_with_provider_policy(
             vec![
                 plugin_manifest("plugin-consumer", caller.clone()),
                 plugin_manifest("plugin-a-authorized", broad.clone()),
@@ -816,16 +846,15 @@ mod tests {
             &caller,
             &policy,
         )
-        .unwrap();
+        .expect_err("unavailable explicit provider must not silently fall back");
 
-        assert_eq!(
-            graph
-                .import_handle(&component("consumer"), &interface("phenix.demo@1"))
-                .unwrap()
-                .unwrap()
-                .exporter(),
-            &component("a-authorized")
-        );
+        assert!(matches!(
+            error,
+            ComponentGraphError::UnavailableExplicitProvider { component: id, interface: contract, provider }
+                if id == component("consumer")
+                    && contract == interface("phenix.demo@1")
+                    && provider == component("z-unauthorized")
+        ));
     }
 
     #[test]

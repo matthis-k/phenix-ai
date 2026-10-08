@@ -142,6 +142,17 @@ impl PluginInstance for FixedResponse {
 }
 
 #[test]
+fn bare_kernel_runtime_requires_no_agent_or_first_party_profiles() {
+    let runtime = PhenixRuntimeBuilder::new()
+        .build()
+        .expect("kernel must resolve without any selected product or agent");
+
+    assert_eq!(runtime.kernel().config().manifests().count(), 0);
+    assert!(runtime.resolved_generation().components().is_empty());
+    assert!(runtime.resolved_generation().entry_triggers().is_empty());
+}
+
+#[test]
 fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
     let basic = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         BASIC_AGENT_CONFIGURATION.to_owned(),
@@ -207,6 +218,382 @@ fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
 }
 
 #[test]
+fn application_tool_adapter_can_run_without_the_basic_agent_loop() {
+    let selected = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .expect("application tools are an independently selectable plugin");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(ids.contains("phenix.application-agent-tools"));
+    assert!(ids.contains("phenix.sessions"));
+    assert!(!ids.contains("phenix.agent-loop"));
+    let runtime = builder
+        .build()
+        .expect("tools should resolve without an agent loop");
+    assert!(
+        !runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop")
+    );
+}
+
+#[test]
+fn excluding_the_default_tool_adapter_does_not_reinstall_it() {
+    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("Basic profile defaults must be removable");
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
+    );
+
+    let Err(error) = builder.build() else {
+        panic!("the Basic loop's required tool import must be unsatisfied");
+    };
+    assert!(
+        error.to_string().contains("unresolved required import"),
+        "resolver must report the missing contract instead of reviving a default: {error}"
+    );
+}
+
+#[test]
+fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
+    use phenix_sdk::{MemoryCommand, MemoryResponse};
+
+    let selected = BTreeSet::from(["phenix.memory".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .expect("memory may be selected without an agent loop");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(ids.contains("phenix.memory"));
+    assert!(!ids.contains("phenix.agent-loop"));
+    assert!(!ids.contains("phenix.step-runner"));
+
+    let mut runtime = builder.build().expect("memory imports are optional");
+    runtime
+        .activate()
+        .expect("standalone memory should activate");
+    let input = serde_json::to_vec(&PhenixValue::from(&MemoryCommand::Get {
+        id: "not-recorded".to_owned(),
+    }))
+    .unwrap();
+    let response = runtime
+        .invoke(&memory_service(), &input, &default_suite_authority(), None)
+        .unwrap();
+    let value: PhenixValue = serde_json::from_slice(&response).unwrap();
+    let decoded = MemoryResponse::try_from(Project(&value)).unwrap();
+    assert_eq!(decoded, MemoryResponse::Memory { record: None });
+}
+
+#[test]
+fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
+    use phenix_core::{Bytes, ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::{AgentLoopCommand, AgentLoopInterface, AgentLoopResponse, AgentLoopUsage};
+
+    let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("the agent profile should not force the Basic loop implementation");
+
+    assert!(
+        builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.application-agent-tools" })
+    );
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| { manifest.id.as_str() == "phenix.agent-loop" })
+    );
+
+    let reply = AgentLoopResponse::Completed {
+        output: Bytes::new(b"foreign-agent".to_vec()),
+        usage: AgentLoopUsage {
+            model_calls: 0,
+            tool_calls: 0,
+        },
+    };
+    let wire_reply = serde_json::to_vec(&PhenixValue::from(&reply)).unwrap();
+    let owner = plugin("fixture.foreign-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                100,
+                default_suite_authority(),
+            ),
+            move || Box::new(FixedResponse(wire_reply.clone())),
+        )
+        .unwrap();
+
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.foreign-agent.component").unwrap();
+    component.owner = owner;
+    component.imports.clear();
+    let component_id = component.id.clone();
+    builder.add_component(component);
+    builder.bind_provider(AgentLoopInterface::interface_id(), component_id.clone());
+
+    let mut runtime = builder
+        .build()
+        .expect("foreign terminal loop may replace Basic without removing tools");
+    assert!(
+        runtime
+            .resolved_generation()
+            .components()
+            .iter()
+            .any(|component| { component.id == component_id })
+    );
+    runtime
+        .activate()
+        .expect("foreign agent graph should activate");
+
+    let command = AgentLoopCommand::Run {
+        execution_id: "fixture-foreign-run".to_owned(),
+        session_id: None,
+        parent_attempt_id: None,
+        callable_id: None,
+        input: Bytes::new(b"fixture".to_vec()),
+        tools: Vec::new(),
+    };
+    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = runtime
+        .invoke(
+            &agent_loop_service(),
+            &input,
+            &default_suite_authority(),
+            None,
+        )
+        .unwrap();
+    let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let decoded = AgentLoopResponse::try_from(Project(&value)).unwrap();
+    assert_eq!(decoded, reply);
+}
+
+#[test]
+fn pinned_application_binding_selects_foreign_agent_over_native_service_priority() {
+    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    let owner = plugin("fixture.low-priority-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"bound-foreign-agent")),
+        )
+        .unwrap();
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.low-priority-agent.component").unwrap();
+    component.owner = owner.clone();
+    component.imports.clear();
+    component.exports[0].required_authority =
+        Authority::new([capability("kernel.persistence.read")]);
+    let id = component.id.clone();
+    builder.add_component(component);
+    builder.bind_provider(AgentLoopInterface::interface_id(), id);
+
+    let mut runtime = builder
+        .build()
+        .expect("both loop implementations may coexist");
+    let Err(denied) = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &Authority::default(),
+    ) else {
+        panic!("explicit agent binding must not bypass contract export authority");
+    };
+    assert!(
+        denied
+            .to_string()
+            .contains("requires unavailable authority")
+    );
+    let explicit = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the selected generation has an authorized bound terminal");
+    assert_eq!(explicit, Some(owner));
+    runtime.activate().unwrap();
+    let output = runtime
+        .invoke(
+            &agent_loop_service(),
+            b"fixture",
+            &default_suite_authority(),
+            explicit.as_ref(),
+        )
+        .expect("explicit binding selects the foreign terminal despite lower priority");
+    assert_eq!(output, b"bound-foreign-agent");
+}
+
+#[test]
+fn default_application_agent_route_uses_the_resolved_contract() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::agent_loop_component_id;
+
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .unwrap();
+
+    let selected = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the Basic product resolves its agent contract");
+    assert_eq!(selected, Some(plugin("phenix.agent-loop")));
+
+    let binding = runtime
+        .resolved_generation()
+        .component_graph()
+        .import_handle(
+            &phenix_core::ComponentId::parse("phenix.application-agent-tools").unwrap(),
+            &phenix_sdk::AgentLoopInterface::interface_id(),
+        )
+        .unwrap()
+        .expect("application agent import must be resolved");
+    assert_eq!(binding.exporter(), &agent_loop_component_id());
+}
+
+#[test]
+fn application_agent_route_obeys_contract_priority_not_service_priority() {
+    use phenix_core::{ComponentId, ComponentInterface, ProviderCompositionPolicy};
+    use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    let owner = plugin("fixture.preferred-contract-agent");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                agent_loop_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"preferred-contract-agent")),
+        )
+        .unwrap();
+    let mut component = agent_loop_component_manifest(default_suite_authority());
+    component.id = ComponentId::parse("fixture.preferred-contract-agent.component").unwrap();
+    component.owner = owner.clone();
+    component.imports.clear();
+    let id = component.id.clone();
+    builder.add_component(component);
+    builder.set_provider_policy(ProviderCompositionPolicy::new().with_priority(
+        AgentLoopInterface::interface_id(),
+        id.clone(),
+        100,
+    ));
+
+    let mut runtime = builder.build().unwrap();
+    let selected = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect("the application must follow the resolved contract priority");
+    assert_eq!(selected, Some(owner));
+    runtime.activate().unwrap();
+    let result = runtime
+        .invoke(
+            &agent_loop_service(),
+            b"fixture",
+            &default_suite_authority(),
+            selected.as_ref(),
+        )
+        .expect("selected contract provider must win despite lower service priority");
+    assert_eq!(result, b"preferred-contract-agent");
+}
+
+#[test]
+fn application_prompt_does_not_use_installed_agent_service_when_contract_disabled() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::agent_loop_component_id;
+    use phenix_sdk::AgentLoopInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_AGENT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    builder.disable_provider(
+        AgentLoopInterface::interface_id(),
+        agent_loop_component_id(),
+    );
+    let runtime = builder
+        .build()
+        .expect("application agent import is optional until a prompt starts");
+
+    assert!(
+        runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.agent-loop"),
+        "native service remains installed to exercise the no-fallback rule"
+    );
+    let error = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect_err("disabled agent contract must deny the prompt");
+    assert!(
+        error
+            .to_string()
+            .contains("no resolved agent execution provider")
+    );
+}
+
+#[test]
+fn application_prompt_rejects_missing_agent_contract_instead_of_falling_back() {
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .expect("the tool adapter must run without any agent");
+
+    let error = application::bound_application_agent_plugin(
+        runtime.resolved_generation(),
+        &default_suite_authority(),
+    )
+    .expect_err("a prompt cannot start without a selected agent provider");
+    assert!(
+        error
+            .to_string()
+            .contains("no resolved agent execution provider")
+    );
+}
+
+#[test]
 fn product_configurations_resolve_providers_and_frontend_sdk() {
     for root in [BASIC_PRODUCT_CONFIGURATION, FULL_PRODUCT_CONFIGURATION] {
         let builder =
@@ -240,13 +627,16 @@ fn product_configurations_resolve_providers_and_frontend_sdk() {
 
 #[test]
 fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
-    let builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         FULL_PRODUCT_CONFIGURATION.to_owned(),
     ]))
-    .unwrap();
+    .unwrap()
+    .build()
+    .expect("Full resolves its tool triggers through selected component exports");
 
-    let callables = builder
-        .entry_triggers
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
         .iter()
         .map(|trigger| match &trigger.trigger {
             phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
@@ -269,6 +659,194 @@ fn full_product_exposes_model_entry_triggers_from_its_resolved_composition() {
         assert!(
             callables.contains(required),
             "full product missed {required}"
+        );
+    }
+}
+
+// Exact model-tool sets catch accidental exposure, not only missing tools.
+// All cases share the existing in-process builder; no subprocess or model call.
+#[test]
+fn model_tool_exposure_matches_selected_contracts() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::memory_component_id;
+    use phenix_sdk::MemoryInterface;
+
+    let memory_tools = [
+        "memory.associate",
+        "memory.query",
+        "memory.recall",
+        "memory.record",
+    ];
+    for (name, select_memory, disable_memory, expected) in [
+        ("adapter only", false, false, &[][..]),
+        ("adapter and memory", true, false, &memory_tools[..]),
+        ("memory contract disabled", true, true, &[][..]),
+    ] {
+        let mut plugins = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+        if select_memory {
+            plugins.insert("phenix.memory".to_owned());
+        }
+        let mut builder = PhenixRuntimeBuilder::with_selected_suite(&plugins).unwrap();
+        if disable_memory {
+            builder.disable_provider(MemoryInterface::interface_id(), memory_component_id());
+        }
+        let runtime = builder.build().unwrap();
+        let generation = runtime.resolved_generation();
+        let exposed = generation
+            .entry_triggers()
+            .iter()
+            .filter(|trigger| {
+                application::application_tool_trigger_available(generation, trigger).unwrap()
+            })
+            .map(|trigger| match &trigger.trigger {
+                phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(exposed, expected.iter().copied().collect(), "{name}");
+    }
+}
+
+#[test]
+fn partial_foreign_memory_hides_association_without_memory_context() {
+    use phenix_core::{ComponentId, ComponentInterface, EntryTriggerKind};
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::MemoryInterface;
+
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+    ]))
+    .unwrap();
+    let owner = plugin("fixture.partial-memory");
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                memory_service(),
+                100,
+                default_suite_authority(),
+            ),
+            || Box::new(Echo(b"partial-memory")),
+        )
+        .unwrap();
+    let mut component = memory_component_manifest();
+    component.owner = owner;
+    component.id = ComponentId::parse("fixture.partial-memory.component").unwrap();
+    component.imports.clear();
+    component
+        .exports
+        .retain(|export| export.interface == MemoryInterface::interface_id());
+    builder.add_component(component);
+
+    let runtime = builder
+        .build()
+        .expect("a foreign memory store need not implement memory association");
+    let generation = runtime.resolved_generation();
+    let trigger = |id: &str| {
+        generation
+            .entry_triggers()
+            .iter()
+            .find(|trigger| {
+                matches!(
+                    &trigger.trigger,
+                    EntryTriggerKind::ToolCall { callable_id, .. }
+                        if callable_id.as_str() == id
+                )
+            })
+            .expect("a compatible memory provider registers candidate tools")
+    };
+    for available in ["memory.record", "memory.query", "memory.recall"] {
+        assert!(
+            application::application_tool_trigger_available(generation, trigger(available))
+                .unwrap(),
+            "resolvable foreign memory capability must expose {available}"
+        );
+    }
+    assert!(
+        !application::application_tool_trigger_available(generation, trigger("memory.associate"))
+            .unwrap(),
+        "memory.associate requires memory-context as well as memory storage"
+    );
+}
+
+#[test]
+fn application_tool_triggers_require_resolved_provider_contracts() {
+    let selected = BTreeSet::from(["phenix.application-agent-tools".to_owned()]);
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .unwrap()
+        .build()
+        .expect("the application adapter can exist without optional tool providers");
+
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .map(|trigger| match &trigger.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+        })
+        .collect::<BTreeSet<_>>();
+
+    for absent in ["bash", "workspace.read", "code.query", "memory.record"] {
+        assert!(
+            !callables.contains(absent),
+            "unresolved optional provider must not publish {absent}"
+        );
+    }
+
+    let selected = BTreeSet::from(["phenix.memory".to_owned()]);
+    let runtime = PhenixRuntimeBuilder::with_selected_suite(&selected)
+        .unwrap()
+        .build()
+        .expect("standalone memory may resolve without the application adapter");
+    assert!(
+        runtime.resolved_generation().entry_triggers().is_empty(),
+        "memory storage must not implicitly add application entry points"
+    );
+}
+
+#[test]
+fn disabled_memory_contract_is_not_advertised_as_an_application_tool() {
+    use phenix_core::ComponentInterface;
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::MemoryInterface;
+
+    let selected = BTreeSet::from([
+        "phenix.application-agent-tools".to_owned(),
+        "phenix.memory".to_owned(),
+    ]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
+    builder.disable_provider(
+        MemoryInterface::interface_id(),
+        memory_component_manifest().id,
+    );
+    let runtime = builder
+        .build()
+        .expect("the application memory import is optional");
+
+    assert!(
+        runtime
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.memory"),
+        "the implementation remains installed but its contract is disabled"
+    );
+    let callables = runtime
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .map(|trigger| match &trigger.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+        })
+        .collect::<BTreeSet<_>>();
+    for absent in [
+        "memory.record",
+        "memory.associate",
+        "memory.query",
+        "memory.recall",
+    ] {
+        assert!(
+            !callables.contains(absent),
+            "disabled optional memory contract must not advertise {absent}"
         );
     }
 }
@@ -839,4 +1417,342 @@ fn first_party_state_plugins_require_only_persistence_authority() {
         assert!(authority.permits(&capability("kernel.persistence.write")));
         assert!(!authority.permits(&capability("fs.write")));
     }
+}
+
+fn provider_contract_fixture() -> (PhenixRuntimeBuilder, phenix_core::InterfaceId) {
+    use phenix_core::{
+        ComponentExport, ComponentId, ComponentImport, ComponentManifest, InterfaceId,
+    };
+
+    let interface = InterfaceId::parse("fixture.memory@1").unwrap();
+    let mut builder = PhenixRuntimeBuilder::new();
+    for id in ["fixture.consumer", "fixture.alpha", "fixture.beta"] {
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: plugin(id),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: Vec::new(),
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: Authority::default(),
+                },
+                || Box::new(Echo(b"contract")),
+            )
+            .unwrap();
+    }
+
+    for (id, owner) in [
+        ("fixture.alpha.component", "fixture.alpha"),
+        ("fixture.beta.component", "fixture.beta"),
+    ] {
+        builder.add_component(ComponentManifest {
+            listeners: Vec::new(),
+            id: ComponentId::parse(id).unwrap(),
+            owner: plugin(owner),
+            imports: Vec::new(),
+            exports: vec![ComponentExport {
+                interface: interface.clone(),
+                schema: Default::default(),
+                priority: 0,
+                required_authority: Authority::default(),
+            }],
+            maximum_authority: Authority::default(),
+        });
+    }
+
+    builder.add_component(ComponentManifest {
+        listeners: Vec::new(),
+        id: ComponentId::parse("fixture.consumer.component").unwrap(),
+        owner: plugin("fixture.consumer"),
+        imports: vec![ComponentImport {
+            interface: interface.clone(),
+            schema: Default::default(),
+            required: true,
+            authority: Authority::default(),
+        }],
+        exports: Vec::new(),
+        maximum_authority: Authority::default(),
+    });
+    (builder, interface)
+}
+
+fn selected_fixture_provider(
+    runtime: &PhenixRuntime,
+    interface: &phenix_core::InterfaceId,
+) -> phenix_core::ComponentId {
+    use phenix_core::ComponentId;
+
+    runtime
+        .component_graph()
+        .import_handle(
+            &ComponentId::parse("fixture.consumer.component").unwrap(),
+            interface,
+        )
+        .unwrap()
+        .unwrap()
+        .exporter()
+        .clone()
+}
+
+#[test]
+fn product_builder_exposes_provider_selection_without_nix() {
+    use phenix_core::{ComponentId, ProviderCompositionPolicy};
+
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    let beta = ComponentId::parse("fixture.beta.component").unwrap();
+
+    let (default_builder, interface) = provider_contract_fixture();
+    let default = default_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&default, &interface), alpha);
+
+    let (mut selected_builder, _) = provider_contract_fixture();
+    selected_builder.bind_provider(interface.clone(), beta.clone());
+    let selected = selected_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&selected, &interface), beta);
+    assert_ne!(default.generation(), selected.generation());
+
+    let (mut disabled_builder, _) = provider_contract_fixture();
+    disabled_builder.disable_provider(interface.clone(), alpha);
+    let disabled = disabled_builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&disabled, &interface), beta);
+
+    let (mut policy_builder, _) = provider_contract_fixture();
+    policy_builder.set_provider_policy(
+        ProviderCompositionPolicy::new().with_explicit_binding(interface.clone(), beta.clone()),
+    );
+    let policy_selected = policy_builder.build().unwrap();
+    assert_eq!(
+        selected_fixture_provider(&policy_selected, &interface),
+        beta
+    );
+    assert_eq!(
+        selected.generation(),
+        policy_selected.generation(),
+        "equivalent provider composition must have the same generation identity"
+    );
+}
+
+#[test]
+fn product_builder_rejects_binding_a_missing_provider() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    builder.bind_provider(
+        interface,
+        ComponentId::parse("fixture.missing.component").unwrap(),
+    );
+
+    assert!(
+        matches!(builder.build(), Err(PhenixRuntimeBuildError::Resolution(_))),
+        "invalid provider selection must fail during Phenix resolution"
+    );
+}
+
+#[test]
+fn later_provider_binding_reenables_earlier_exclusion() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    builder.disable_provider(interface.clone(), alpha.clone());
+    builder.bind_provider(interface.clone(), alpha.clone());
+
+    let runtime = builder.build().unwrap();
+    assert_eq!(selected_fixture_provider(&runtime, &interface), alpha);
+}
+
+#[test]
+fn later_provider_exclusion_rejects_an_explicit_binding() {
+    use phenix_core::ComponentId;
+
+    let (mut builder, interface) = provider_contract_fixture();
+    let alpha = ComponentId::parse("fixture.alpha.component").unwrap();
+    builder.bind_provider(interface.clone(), alpha.clone());
+    builder.disable_provider(interface, alpha);
+    let Err(error) = builder.build() else {
+        panic!("binding an excluded provider must fail");
+    };
+    assert!(
+        error.to_string().contains("explicitly requires provider"),
+        "unexpected policy failure: {error}"
+    );
+}
+
+#[test]
+fn advanced_profile_can_remove_an_inherited_default_before_activation() {
+    let profile = BTreeSet::from([ADVANCED_AGENT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.debug".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&profile, &excluded)
+        .expect("profile defaults can be overridden without removing their profile");
+    let ids = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(ids.contains(ADVANCED_AGENT_CONFIGURATION));
+    assert!(ids.contains(BASIC_AGENT_CONFIGURATION));
+    assert!(ids.contains("phenix.agent-loop"));
+    assert!(
+        !ids.contains("phenix.debug"),
+        "excluded default must not activate"
+    );
+
+    let resolved = builder
+        .build()
+        .expect("optional debug default may be omitted");
+    assert!(
+        !resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| manifest.id.as_str() == "phenix.debug")
+    );
+}
+
+#[test]
+fn full_profile_exclusions_are_not_hard_manifest_dependencies() {
+    let profile = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.debug".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&profile, &excluded)
+        .expect("full profile should permit overriding an inherited debug default");
+    let selected = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(selected.contains(FULL_PRODUCT_CONFIGURATION));
+    assert!(selected.contains("phenix.product.basic"));
+    assert!(selected.contains(ADVANCED_AGENT_CONFIGURATION));
+    assert!(selected.contains(BASIC_AGENT_CONFIGURATION));
+    assert!(!selected.contains("phenix.debug"));
+}
+
+#[test]
+fn full_profile_can_substitute_a_contract_provider_without_loading_native_memory() {
+    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_plugin_catalog::memory_component_manifest;
+    use phenix_sdk::{MemoryCommand, MemoryInterface, MemoryResponse};
+
+    let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["phenix.memory".to_owned()]);
+    let mut builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("native memory is a Full default, not a compulsory profile dependency");
+
+    assert!(
+        !builder
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == "phenix.memory")
+    );
+
+    let owner = plugin("fixture.external-memory");
+    let reply = MemoryResponse::Memory { record: None };
+    let wire_reply = serde_json::to_vec(&PhenixValue::from(&reply)).unwrap();
+    builder
+        .add_embedded(
+            service_manifest(
+                owner.as_str(),
+                memory_service(),
+                -100,
+                default_suite_authority(),
+            ),
+            move || Box::new(FixedResponse(wire_reply.clone())),
+        )
+        .unwrap();
+
+    // A stand-in third-party contract implementation: it advertises compatible
+    // exports without the native memory plugin's helper invocation dependency.
+    // This tests composition, not the semantic quality of a real memory backend.
+    let mut external = memory_component_manifest();
+    external.id = ComponentId::parse("fixture.external-memory.component").unwrap();
+    external.owner = owner;
+    external.imports.clear();
+    let external_id = external.id.clone();
+    builder.add_component(external);
+    builder.bind_provider(MemoryInterface::interface_id(), external_id.clone());
+
+    let mut resolved = builder
+        .build()
+        .expect("Full may resolve against a foreign memory provider");
+    assert!(
+        !resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| { manifest.id.as_str() == "phenix.memory" })
+    );
+    assert!(
+        resolved
+            .kernel()
+            .config()
+            .manifests()
+            .any(|manifest| { manifest.id.as_str() == "fixture.external-memory" })
+    );
+    assert!(
+        resolved
+            .resolved_generation()
+            .components()
+            .iter()
+            .any(|manifest| { manifest.id == external_id })
+    );
+    let callables = resolved
+        .resolved_generation()
+        .entry_triggers()
+        .iter()
+        .map(|entry| match &entry.trigger {
+            phenix_core::EntryTriggerKind::ToolCall { callable_id, .. } => callable_id.as_str(),
+        })
+        .collect::<BTreeSet<_>>();
+    for required in ["memory.record", "memory.query", "memory.recall"] {
+        assert!(
+            callables.contains(required),
+            "foreign memory provider must expose {required} through contract resolution"
+        );
+    }
+
+    resolved
+        .activate()
+        .expect("foreign memory terminal activates");
+    let command = MemoryCommand::Get {
+        id: "foreign-record".to_owned(),
+    };
+    let encoded = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = resolved
+        .invoke(
+            &memory_service(),
+            &encoded,
+            &default_suite_authority(),
+            Some(&plugin("fixture.external-memory")),
+        )
+        .expect("the foreign terminal accepts a typed memory request");
+    let wire: PhenixValue = serde_json::from_slice(&output).unwrap();
+    assert_eq!(MemoryResponse::try_from(Project(&wire)).unwrap(), reply);
+}
+
+#[test]
+fn full_profile_can_omit_one_common_model_provider() {
+    use phenix_plugin_catalog::COMMON_PROVIDERS;
+
+    let available = COMMON_PROVIDERS
+        .into_iter()
+        .map(|provider| provider.id())
+        .collect::<BTreeSet<_>>();
+    assert!(available.contains("open-router"));
+
+    let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let excluded = BTreeSet::from(["open-router".to_owned()]);
+    let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &excluded)
+        .expect("common provider defaults must be independently replaceable");
+    let active = builder
+        .manifests
+        .iter()
+        .map(|manifest| manifest.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(active.contains(FULL_PRODUCT_CONFIGURATION));
+    assert!(active.contains("phenix.providers"));
+    assert!(active.contains("openai-api"));
+    assert!(!active.contains("open-router"));
+    assert!(builder.build().is_ok());
 }

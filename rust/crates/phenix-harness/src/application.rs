@@ -46,14 +46,9 @@ use phenix_core::{
     SharedPluginInvocation, SnapshotPolicy, StructuredLogReader, ValueCodec, ValueId, ValuePath,
 };
 use phenix_plugin_catalog::{
-    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
-    AgentLoopFailure, AgentLoopProgress, AgentLoopProgressInterface, AgentLoopProgressRecord,
-    AgentLoopProgressResponse, AgentLoopResponse, AgentToolExecutionInterface,
-    AgentToolExecutionRequest, AgentToolExecutionResponse, ExecutionReviewCommand,
-    ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN, SessionCommand, SessionInterface,
-    SessionJournalDraft, SessionJournalEntry, SessionLifecycle, SessionRecord, SessionResponse,
-    SessionTransition, agent_loop_control_service, agent_loop_progress_authority,
-    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service,
+    ExecutionReviewCommand, ExecutionReviewResponse, OptionStartupPrecedence, SDK_PLUGIN,
+    SessionCommand, SessionInterface, SessionJournalDraft, SessionJournalEntry, SessionLifecycle,
+    SessionRecord, SessionResponse, SessionTransition, agent_loop_progress_authority,
     execution_review_service, sdk_contribution, session_service, workspace_service,
 };
 use phenix_provider_sdk::{
@@ -62,6 +57,10 @@ use phenix_provider_sdk::{
     provider_models_service,
 };
 use phenix_sdk::{
+    AgentLoopCommand, AgentLoopControlInterface, AgentLoopControlRequest, AgentLoopControlResponse,
+    AgentLoopFailure, AgentLoopInterface, AgentLoopProgress, AgentLoopProgressInterface,
+    AgentLoopProgressRecord, AgentLoopProgressResponse, AgentLoopResponse,
+    AgentToolExecutionInterface, AgentToolExecutionRequest, AgentToolExecutionResponse,
     AssociationObservationSource, CodeQuery, CodeQueryResult, ContextAnchor, ContextCommand,
     ContextInjectionLifetime, ContextInjectionRequester, ContextResourceKind, ContextResponse,
     ExecutionAuthority, ExecutionCommand, ExecutionInspectionCommand, ExecutionInspectionInterface,
@@ -74,7 +73,8 @@ use phenix_sdk::{
     ModelCommand, ModelResponse, ModelTarget, OptionCommand, OptionContext, OptionKey,
     OptionResponse, OptionScope, OptionSubjectId, OptionValue, OptionValueSource,
     RepositoryContextSource, RootBudgetLedger, RootBudgetLimits, RoutingProfile, WorkspaceCommand,
-    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, context_service,
+    WorkspaceFileVersion, WorkspaceInterface, WorkspaceResponse, agent_loop_control_service,
+    agent_loop_progress_service, agent_loop_service, agent_tool_execution_service, context_service,
     execution_resource_service, execution_service, model_routing_service, options_service,
     workspace_context_id,
 };
@@ -98,7 +98,7 @@ pub const APPLICATION_EVENT_CAPACITY: usize = 256;
 const APPLICATION_EXECUTION_CAPACITY: usize = 64;
 pub const SESSION_PROJECTION_VALUE: &str = "phenix.application.sessions@1";
 const DEFAULT_APPLICATION_AGENT: &str = "agent.coordinator";
-const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
+pub const APPLICATION_AGENT_TOOL_PLUGIN: &str = "phenix.application-agent-tools";
 const APPLICATION_AGENT_TOOL_COMPONENT: &str = "phenix.application-agent-tools";
 const APPLICATION_SHELL_TOOL_SERVICE: &str = "phenix.application-agent-tools.shell@1";
 const APPLICATION_WORKSPACE_READ_TOOL_SERVICE: &str =
@@ -3740,7 +3740,7 @@ impl ApplicationAgentToolRegistry {
 }
 
 #[must_use]
-pub(crate) fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginManifest {
+pub fn application_agent_tool_manifest(maximum_authority: Authority) -> PluginManifest {
     PluginManifest {
         id: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
@@ -3789,6 +3789,14 @@ pub(crate) fn application_agent_tool_component_manifest(
         owner: PluginId::parse(APPLICATION_AGENT_TOOL_PLUGIN)
             .expect("static application agent tool plugin id is valid"),
         imports: vec![
+            // An application prompt consumes the selected agent contract from
+            // its pinned graph. The tool adapter can still run standalone.
+            ComponentImport {
+                interface: AgentLoopInterface::interface_id(),
+                schema: AgentLoopInterface::schema(),
+                required: false,
+                authority: maximum_authority.clone(),
+            },
             ComponentImport {
                 interface: WorkspaceInterface::interface_id(),
                 schema: WorkspaceInterface::schema(),
@@ -4758,13 +4766,22 @@ fn start_prompt(
                     })
             });
         match resolved.and_then(|resolved| {
-            application_model_tool_surface(service, &request.session_id, resolved, root.authority())
+            let binding = bound_application_agent_plugin(resolved, root.authority())?;
+            let surface = application_model_tool_surface(
+                service,
+                &request.session_id,
+                resolved,
+                root.authority(),
+            )?;
+            Ok((surface, binding))
         }) {
-            Ok(surface) => Ok((surface, harness.application_agent_tools().clone())),
+            Ok((surface, binding)) => {
+                Ok((surface, harness.application_agent_tools().clone(), binding))
+            }
             Err(error) => Err(error),
         }
     };
-    let (tool_surface, adapter) = match tool_surface {
+    let (tool_surface, adapter, agent_binding) = match tool_surface {
         Ok(value) => value,
         Err(error) => {
             invocation.respond(Err(error));
@@ -4827,6 +4844,7 @@ fn start_prompt(
                 AgentExecutionContext {
                     session_id: execution_session,
                     execution_id: runtime_execution_id,
+                    agent_binding,
                     input: model_input,
                     tools,
                     runtime_entry_triggers,
@@ -4985,7 +5003,9 @@ fn finish_prompt(
         execution.prompt.respond(Err(error));
         return;
     }
-    if execution.cancellation.load(Ordering::Acquire) {
+    if execution.cancellation.load(Ordering::Acquire)
+        || matches!(&completion.result, Err(ApplicationError::Cancelled))
+    {
         let _ = worker.finish_root_execution_on(root, &completion.execution_id, false);
         let _ = worker.append_execution_change_on(
             root,
@@ -5191,6 +5211,7 @@ fn model_input_from_content(content: &[Content]) -> Result<Bytes, ApplicationErr
 struct AgentExecutionContext {
     session_id: SessionId,
     execution_id: String,
+    agent_binding: Option<PluginId>,
     input: Bytes,
     tools: Vec<ModelToolDescriptor>,
     runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
@@ -5210,6 +5231,7 @@ fn run_agent_execution(
     let AgentExecutionContext {
         session_id,
         execution_id,
+        agent_binding,
         input,
         tools,
         runtime_entry_triggers,
@@ -5266,7 +5288,7 @@ fn run_agent_execution(
             }
         })?;
         let output = root
-            .invoke(&agent_loop_service(), &encoded, None)
+            .invoke(&agent_loop_service(), &encoded, agent_binding.as_ref())
             .map_err(|error| ApplicationError::Failed {
                 message: error.to_string(),
             })?;
@@ -5473,9 +5495,122 @@ fn normalize_model_tool_table(
     Ok(PhenixValue::Table(normalized))
 }
 
+/// Choose the agent-loop provider resolved for the application's import in
+/// the prompt's pinned generation, including default and priority selection.
+///
+/// The application does not resolve a new provider after obtaining its root.
+/// The service bridge is still required until contract-only invocation exists.
+pub(crate) fn bound_application_agent_plugin(
+    resolved: &phenix_core::ResolvedGeneration,
+    caller_authority: &Authority,
+) -> Result<Option<PluginId>, ApplicationError> {
+    let interface = AgentLoopInterface::interface_id();
+    let binding = resolved
+        .component_graph()
+        .import_handle(&application_agent_tool_component_id(), &interface)
+        .map_err(|error| ApplicationError::Failed {
+            message: format!("cannot resolve application agent import: {error}"),
+        })?
+        .ok_or_else(|| ApplicationError::Failed {
+            message: "application has no resolved agent execution provider".to_owned(),
+        })?;
+    let target = binding.exporter();
+    let component = resolved
+        .components()
+        .iter()
+        .find(|component| &component.id == target)
+        .ok_or_else(|| ApplicationError::Failed {
+            message: format!("resolved agent provider {target} is not installed"),
+        })?;
+    let export = component
+        .exports
+        .iter()
+        .find(|export| {
+            export.interface == interface
+                && matches!(
+                    AgentLoopInterface::schema().accepts_provider(&export.schema),
+                    phenix_core::InterfaceCompatibility::Exact
+                        | phenix_core::InterfaceCompatibility::Compatible
+                )
+        })
+        .ok_or_else(|| ApplicationError::Failed {
+            message: format!("resolved agent provider {target} has no compatible agent contract"),
+        })?;
+    let owner = resolved
+        .plugins()
+        .iter()
+        .find(|plugin| plugin.id == component.owner)
+        .ok_or_else(|| ApplicationError::Failed {
+            message: format!("resolved agent provider {target} has no installed plugin owner"),
+        })?;
+    if !caller_authority.permits_all(&export.required_authority)
+        || !binding
+            .effective_authority()
+            .permits_all(&export.required_authority)
+    {
+        return Err(ApplicationError::Failed {
+            message: format!("resolved agent provider {target} requires unavailable authority"),
+        });
+    }
+    if !owner.services.iter().any(|service| {
+        service.service == agent_loop_service() && matches!(service.role, ServiceRole::Terminal)
+    }) {
+        return Err(ApplicationError::Failed {
+            message: format!(
+                "resolved agent provider {target} has no terminal agent execution service"
+            ),
+        });
+    }
+    Ok(Some(binding.owning_plugin().clone()))
+}
+
 struct ApplicationModelToolSurface {
     tools: Vec<ModelToolDescriptor>,
     runtime_entry_triggers: BTreeMap<CallableId, ComponentEntryTrigger>,
+}
+
+/// A declared application tool is available only when its required imports
+/// resolved in the same generation as the prompt. In particular, an external
+/// memory provider need not implement memory-context association.
+pub(crate) fn application_tool_trigger_available(
+    resolved: &phenix_core::ResolvedGeneration,
+    trigger: &ComponentEntryTrigger,
+) -> Result<bool, ApplicationError> {
+    if trigger.component != application_agent_tool_component_id() {
+        return Ok(true);
+    }
+
+    let dependencies = match trigger.interface.as_str() {
+        APPLICATION_SHELL_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_READ_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_SEARCH_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_WRITE_TOOL_SERVICE
+        | APPLICATION_WORKSPACE_GIT_TOOL_SERVICE => vec![WorkspaceInterface::interface_id()],
+        APPLICATION_CODE_QUERY_TOOL_SERVICE => vec![LanguageInterface::interface_id()],
+        APPLICATION_MEMORY_RECORD_TOOL_SERVICE
+        | APPLICATION_MEMORY_QUERY_TOOL_SERVICE
+        | APPLICATION_MEMORY_RECALL_TOOL_SERVICE => vec![MemoryInterface::interface_id()],
+        APPLICATION_MEMORY_ASSOCIATE_TOOL_SERVICE => vec![
+            MemoryInterface::interface_id(),
+            MemoryContextInterface::interface_id(),
+        ],
+        _ => Vec::new(),
+    };
+    for interface in dependencies {
+        let binding = resolved
+            .component_graph()
+            .import_handle(&trigger.component, &interface)
+            .map_err(|error| ApplicationError::Failed {
+                message: format!(
+                    "cannot resolve model tool {} dependency {interface}: {error}",
+                    trigger.interface
+                ),
+            })?;
+        if binding.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn application_model_tool_surface(
@@ -5488,7 +5623,9 @@ fn application_model_tool_surface(
     let mut graph_tools = Vec::new();
 
     for trigger in resolved.entry_triggers() {
-        if !authority.permits_all(&trigger.required_authority) {
+        if !authority.permits_all(&trigger.required_authority)
+            || !application_tool_trigger_available(resolved, trigger)?
+        {
             continue;
         }
         let EntryTriggerKind::ToolCall {
@@ -10877,6 +11014,222 @@ mod tests {
             events.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    /// Verify the terminal agent contract through the application dispatch,
+    /// including a provider-initiated cancellation with no caller Cancel request.
+    struct ForeignContractAgent;
+
+    impl PluginInstance for ForeignContractAgent {
+        fn start(&mut self, _host: &PluginHost<'_>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn invoke(
+            &mut self,
+            _service: &ServiceId,
+            input: &[u8],
+            _host: &PluginHost<'_>,
+        ) -> Result<Vec<u8>, String> {
+            let value: PhenixValue =
+                serde_json::from_slice(input).map_err(|error| error.to_string())?;
+            let command = AgentLoopCommand::try_from(Project(&value))
+                .map_err(|error| format!("{error:?}"))?;
+            let AgentLoopCommand::Run {
+                session_id: Some(_),
+                input,
+                ..
+            } = command
+            else {
+                return Err("application must send a session-qualified run".into());
+            };
+            let complete = input
+                .as_ref()
+                .windows(b"foreign completion marker".len())
+                .any(|part| part == b"foreign completion marker");
+            let usage = phenix_sdk::AgentLoopUsage {
+                model_calls: 0,
+                tool_calls: 0,
+            };
+            let response = if complete {
+                AgentLoopResponse::Completed {
+                    output: Bytes::new(b"foreign-agent-output".to_vec()),
+                    usage,
+                }
+            } else {
+                AgentLoopResponse::Cancelled { usage }
+            };
+            serde_json::to_vec(&PhenixValue::from(&response)).map_err(|error| error.to_string())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreign_agent_completion_and_self_cancellation_are_projected() {
+        let mut builder = crate::PhenixRuntimeBuilder::with_default_suite().unwrap();
+        let owner = PluginId::parse("fixture.self-cancelling-agent").unwrap();
+        builder
+            .add_embedded(
+                PluginManifest {
+                    id: owner.clone(),
+                    version: 1,
+                    execution: PluginExecution::Embedded,
+                    dependencies: Vec::new(),
+                    services: vec![ServiceContribution {
+                        role: ServiceRole::Terminal,
+                        service: agent_loop_service(),
+                        priority: -100,
+                        required_authority: Authority::default(),
+                    }],
+                    resource_namespaces: Vec::new(),
+                    maximum_authority: default_suite_authority(),
+                },
+                || Box::new(ForeignContractAgent),
+            )
+            .unwrap();
+        let mut component =
+            phenix_plugin_catalog::agent_loop_component_manifest(default_suite_authority());
+        component.id = ComponentId::parse("fixture.self-cancelling-agent.component").unwrap();
+        component.owner = owner;
+        component.imports.clear();
+        let selected = component.id.clone();
+        builder.add_component(component);
+        builder.bind_provider(AgentLoopInterface::interface_id(), selected);
+
+        let mut harness = builder.build().unwrap();
+        harness.activate().unwrap();
+        let worker = ApplicationWorker::new(harness).unwrap();
+        let (sdk, generation) = {
+            let harness = worker.harness.lock();
+            (
+                harness
+                    .resolved_generation()
+                    .resolve_sdk_contributions([sdk_contribution()])
+                    .unwrap(),
+                ReferenceGenerationId::from(harness.generation()),
+            )
+        };
+        let (callbacks, _callback_receiver) = ClientCallableCallbacks::bounded(1);
+        let service = SdkApplicationService::new(
+            &sdk,
+            worker.projection().store(),
+            SharedCallableRegistry::default(),
+            PluginRuntimeId::parse("fixture.self-cancelling-runtime").unwrap(),
+            generation,
+            callbacks,
+            ClientReferenceIdentity::new(
+                ClientConnectionId::parse("fixture-self-cancelling-client").unwrap(),
+                ReferenceGenerationId::parse("fixture-self-cancelling-generation").unwrap(),
+            ),
+        )
+        .unwrap();
+        let (transport, receiver) = ChannelTransport::new(APPLICATION_INVOCATION_CAPACITY);
+        let worker_task = tokio::spawn(serve_application_worker_with_execution_capacity(
+            worker,
+            service,
+            transport.clone(),
+            receiver,
+            2,
+        ));
+        let created = invoke_transport_operation::<CreateSession>(
+            &transport,
+            SessionCreateInput {
+                working_directory: "/workspace".into(),
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..2 {
+            let prompt = tokio::time::timeout(
+                Duration::from_secs(5),
+                invoke_transport_operation::<Prompt>(
+                    &transport,
+                    PromptInput {
+                        session_id: created.session_id.clone(),
+                        content: vec![Content::Text {
+                            text: "cancel without a caller Cancel request".into(),
+                        }],
+                    },
+                ),
+            )
+            .await
+            .expect("foreign agent must return promptly")
+            .expect("provider-reported cancellation is not a prompt failure");
+            assert_eq!(prompt.stop_reason, StopReason::Cancelled);
+        }
+
+        let completed = tokio::time::timeout(
+            Duration::from_secs(5),
+            invoke_transport_operation::<Prompt>(
+                &transport,
+                PromptInput {
+                    session_id: created.session_id.clone(),
+                    content: vec![Content::Text {
+                        text: "foreign completion marker".into(),
+                    }],
+                },
+            ),
+        )
+        .await
+        .expect("foreign agent completion must return promptly")
+        .expect("selected foreign provider must complete the prompt");
+        assert_eq!(completed.stop_reason, StopReason::EndTurn);
+
+        let resumed = invoke_transport_operation::<ResumeSession>(
+            &transport,
+            SessionResumeInput {
+                session_id: created.session_id,
+                after_sequence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::TextDelta { text, .. } if text == "foreign-agent-output"
+            )
+        }));
+        assert!(resumed.updates.iter().any(|entry| {
+            matches!(
+                &entry.update,
+                SessionChange::Execution {
+                    execution_id,
+                    update: ExecutionChange::State { state: ExecutionState::Completed },
+                } if execution_id == &completed.execution_id
+            )
+        }));
+        let cancelled = resumed
+            .updates
+            .iter()
+            .filter(|update| {
+                matches!(
+                    &update.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::State {
+                            state: ExecutionState::Cancelled,
+                        },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(cancelled, 2, "both foreign cancellations must be persisted");
+        assert!(!resumed.updates.iter().any(|update| {
+            matches!(
+                &update.update,
+                SessionChange::Execution {
+                    update: ExecutionChange::State {
+                        state: ExecutionState::Failed { .. },
+                    },
+                    ..
+                }
+            )
+        }));
+
+        drop(transport);
+        worker_task.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

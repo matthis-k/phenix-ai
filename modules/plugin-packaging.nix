@@ -57,6 +57,7 @@ let
       layerPolicies ? [ ],
       settings ? { },
       configDirectory ? null,
+      configFile ? null,
       settingsPrecedence ? "nix",
       ...
     }:
@@ -87,6 +88,7 @@ let
       && layerPolicies == [ ]
       && settings == { }
       && configDirectory == null
+      && configFile == null
       && settingsPrecedence == "nix"
     then
       base
@@ -118,6 +120,10 @@ let
                   ${pkgs.lib.optionalString (configDirectory == null && resources != [ ]) ''
                     wrapProgram "$out/bin/$program" \
                       --set PHENIX_CONFIG_DIR "$out/share/phenix"
+                  ''}
+                  ${pkgs.lib.optionalString (configFile != null) ''
+                    wrapProgram "$out/bin/$program" \
+                      --set PHENIX_CONFIG_FILE ${pkgs.lib.escapeShellArg (toString configFile)}
                   ''}
                   ${pkgs.lib.optionalString (settings != { }) ''
                     wrapProgram "$out/bin/$program" \
@@ -266,6 +272,7 @@ in
         exec ${pkgs.jq}/bin/jq -cn \
           --arg default_config "''${PHENIX_DEFAULT_CONFIG_DIR:-}" \
           --arg config "''${PHENIX_CONFIG_DIR:-}" \
+          --arg composition_file "''${PHENIX_CONFIG_FILE:-}" \
           --arg settings "''${PHENIX_NIX_SETTINGS:-}" \
           --arg settings_precedence "''${PHENIX_SETTINGS_PRECEDENCE:-}" \
           --arg plugin_packages "''${PHENIX_PLUGIN_PACKAGES:-}" \
@@ -276,6 +283,7 @@ in
             default_config: $default_config,
             config: $config,
             settings: $settings,
+            composition_file: $composition_file,
             settings_precedence: $settings_precedence,
             plugin_packages: $plugin_packages,
             enabled_plugins: $enabled_plugins,
@@ -308,6 +316,16 @@ in
       basicFixtureComposition = mkFixturePhenix {
         enabledPlugins = [ "phenix.product.basic" ];
         resources = [ harnessResources ];
+      };
+      portableCompositionFile = pkgs.writeText "phenix-composition.json" (
+        builtins.toJSON {
+          profile = "phenix.product.basic";
+          plugins.enable = [ "phenix.debug" ];
+          providers.bind."fixture.memory@1" = "fixture.memory.external";
+        }
+      );
+      portableConfigFixtureComposition = mkFixturePhenix {
+        configFile = portableCompositionFile;
       };
       settingsFixtureComposition = mkFixturePhenix {
         enabledPlugins = [ "phenix.product.full" ];
@@ -368,6 +386,13 @@ in
 
             "${basicFixtureComposition}/bin/phenix" > "$TMPDIR/basic.json"
             jq -e '.enabled_plugins == "phenix.product.basic"' "$TMPDIR/basic.json" >/dev/null
+
+            "${portableConfigFixtureComposition}/bin/phenix" > "$TMPDIR/portable.json"
+            portable_path="$(jq -r '.composition_file' "$TMPDIR/portable.json")"
+            test "$portable_path" = "${portableCompositionFile}"
+            jq -e '.profile == "phenix.product.basic"
+              and .plugins.enable == ["phenix.debug"]
+              and .providers.bind["fixture.memory@1"] == "fixture.memory.external"' "$portable_path" >/dev/null
 
             "${settingsFixtureComposition}/bin/phenix" > "$TMPDIR/settings.json"
             jq -e '

@@ -3,11 +3,12 @@
 mod runtime_config;
 
 use phenix_core::{
-    ComponentProcessArgument, Key, LayerPolicy, LocalPersistence, PhenixValue, PluginExecution,
-    PluginId, PluginManifest, ServiceId,
+    ComponentId, ComponentProcessArgument, InterfaceId, Key, LayerPolicy, LocalPersistence,
+    PhenixValue, PluginExecution, PluginId, PluginManifest, ServiceId,
 };
 use phenix_harness::{
-    PhenixRuntime, PhenixRuntimeBuilder, application::serve_configured_application,
+    PhenixRuntime, PhenixRuntimeBuilder,
+    application::{application_agent_tool_manifest, serve_configured_application},
     default_suite_authority, invocation_defaults_manifest,
 };
 use phenix_plugin_catalog::{
@@ -16,11 +17,12 @@ use phenix_plugin_catalog::{
     basic_context_manifest, basic_model_manifest, basic_product_configuration_manifest,
     basic_skills_manifest, basic_tools_manifest, benchmark_outcome_manifest, cli_manifest,
     common_provider_definitions, context_manifest, debug_manifest, efficiency_evaluation_manifest,
-    execution_manifest, frontend_manifest, full_product_configuration_manifest, hook_manifest,
-    job_manifest, language_manifest, local_environment_manifest, memory_manifest,
-    model_routing_manifest, openai_codex_manifest, options_manifest, planning_manifest,
-    providers_manifest, repository_worker_manifest, sdk_manifest, session_manifest,
-    session_tree_manifest, step_runner_manifest, workspace_manifest,
+    execution_manifest, expand_profile_defaults, frontend_manifest,
+    full_product_configuration_manifest, hook_manifest, job_manifest, language_manifest,
+    local_environment_manifest, memory_manifest, model_routing_manifest, openai_codex_manifest,
+    options_manifest, planning_manifest, providers_manifest, repository_worker_manifest,
+    sdk_manifest, session_manifest, session_tree_manifest, step_runner_manifest,
+    workspace_manifest,
 };
 use phenix_runtime::serve_jsonl;
 use serde_json::json;
@@ -56,8 +58,14 @@ struct Cli {
     help: bool,
     list_services: bool,
     mode: Mode,
+    profile: Option<String>,
     enable_plugins: BTreeSet<String>,
     disable_plugins: BTreeSet<String>,
+    config_file: Option<PathBuf>,
+    provider_policy_file: Option<PathBuf>,
+    plugin_packages: Vec<PathBuf>,
+    provider_bindings: Vec<(InterfaceId, ComponentId)>,
+    disabled_providers: Vec<(InterfaceId, ComponentId)>,
     plugin_arguments: Vec<String>,
 }
 
@@ -75,21 +83,30 @@ async fn run() -> Result<(), Box<dyn Error>> {
         print_help();
         return Ok(());
     }
+    let config_file = cli
+        .config_file
+        .clone()
+        .or_else(|| env::var_os("PHENIX_CONFIG_FILE").map(PathBuf::from));
+    let composition = load_portable_configuration(config_file.as_deref())?;
 
     let state = state_path()?;
     if let Some(parent) = state.parent() {
         fs::create_dir_all(parent)?;
     }
     let persistence = LocalPersistence::open(&state)?;
-    let mut builder = match configured_first_party_plugins(&cli)? {
-        Some(enabled) => PhenixRuntimeBuilder::with_selected_suite(&enabled)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+    let excluded_defaults = effective_disabled_plugins(&cli, &composition);
+    let mut builder = match configured_first_party_plugins(&cli, &composition)? {
+        Some(enabled) => {
+            PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &excluded_defaults)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?
+        }
         None => PhenixRuntimeBuilder::with_default_suite()?,
     };
-    for package in configured_plugin_packages()? {
+    for package in configured_plugin_packages(&cli, &composition)? {
         add_packaged_plugin(&mut builder, &package)?;
     }
-    apply_configured_layer_policy(&mut builder)?;
+    apply_configured_layer_policy(&mut builder, &composition)?;
+    apply_configured_provider_policy(&mut builder, &cli, &composition)?;
     let mut harness = builder.build_with_persistence(persistence)?;
     let process_arguments = resolve_process_arguments(
         &cli.plugin_arguments,
@@ -167,7 +184,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
+        "phenix [OPTIONS]\n\nRuns the packaged Phenix composition. The default mode is jsonl.\n\nOptions:\n  --mode MODE           Frontend mode: jsonl or acp\n  --list-services       List active plugins and services as JSON\n  --profile ID          Select a Phenix product/profile ID\n  --enable-plugin ID    Enable a bundled plugin for this process\n  --disable-plugin ID   Disable a bundled plugin for this process\n  --config FILE         Load portable Phenix composition JSON\n  --plugin-package PATH Add a packaged plugin root\n  --provider-policy FILE    Load portable provider policy JSON\n  --bind-provider A=B       Bind interface A to provider component B\n  --disable-provider A=B    Exclude provider component B for interface A\n  -h, --help            Print help\n\nLoaded plugins may declare additional long options."
     );
 }
 
@@ -190,6 +207,98 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     return Err("--mode requires acp or jsonl".into());
                 }
                 cli.mode = Mode::parse(mode)?;
+            }
+            "--profile" => {
+                let id = args
+                    .next()
+                    .ok_or_else(|| "--profile requires a plugin/profile id".to_owned())?;
+                if id.is_empty() {
+                    return Err("--profile requires a plugin/profile id".into());
+                }
+                cli.profile = Some(id);
+            }
+            _ if argument.starts_with("--profile=") => {
+                let id = argument.strip_prefix("--profile=").expect("prefix checked");
+                if id.is_empty() {
+                    return Err("--profile requires a plugin/profile id".into());
+                }
+                cli.profile = Some(id.to_owned());
+            }
+            "--config" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--config requires a file path".to_owned())?;
+                if path.is_empty() {
+                    return Err("--config requires a file path".into());
+                }
+                cli.config_file = Some(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--config=") => {
+                let path = argument.strip_prefix("--config=").expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--config requires a file path".into());
+                }
+                cli.config_file = Some(PathBuf::from(path));
+            }
+            "--plugin-package" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--plugin-package requires a package root".to_owned())?;
+                if path.is_empty() {
+                    return Err("--plugin-package requires a package root".into());
+                }
+                cli.plugin_packages.push(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--plugin-package=") => {
+                let path = argument
+                    .strip_prefix("--plugin-package=")
+                    .expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--plugin-package requires a package root".into());
+                }
+                cli.plugin_packages.push(PathBuf::from(path));
+            }
+            "--provider-policy" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--provider-policy requires a file path".to_owned())?;
+                if path.is_empty() {
+                    return Err("--provider-policy requires a file path".into());
+                }
+                cli.provider_policy_file = Some(PathBuf::from(path));
+            }
+            _ if argument.starts_with("--provider-policy=") => {
+                let path = argument
+                    .strip_prefix("--provider-policy=")
+                    .expect("prefix checked");
+                if path.is_empty() {
+                    return Err("--provider-policy requires a file path".into());
+                }
+                cli.provider_policy_file = Some(PathBuf::from(path));
+            }
+            "--bind-provider" => {
+                let binding = args
+                    .next()
+                    .ok_or_else(|| "--bind-provider requires INTERFACE=COMPONENT".to_owned())?;
+                cli.provider_bindings.push(parse_provider_pair(&binding)?);
+            }
+            _ if argument.starts_with("--bind-provider=") => {
+                let binding = argument
+                    .strip_prefix("--bind-provider=")
+                    .expect("prefix checked");
+                cli.provider_bindings.push(parse_provider_pair(binding)?);
+            }
+            "--disable-provider" => {
+                let binding = args
+                    .next()
+                    .ok_or_else(|| "--disable-provider requires INTERFACE=COMPONENT".to_owned())?;
+                cli.disabled_providers.push(parse_provider_pair(&binding)?);
+            }
+            _ if argument.starts_with("--disable-provider=") => {
+                let binding = argument
+                    .strip_prefix("--disable-provider=")
+                    .expect("prefix checked");
+                cli.disabled_providers.push(parse_provider_pair(binding)?);
             }
             "--enable-plugin" => {
                 let plugin = args
@@ -233,6 +342,17 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
     Ok(cli)
 }
 
+fn parse_provider_pair(value: &str) -> Result<(InterfaceId, ComponentId), String> {
+    let (interface, component) = value
+        .split_once('=')
+        .ok_or_else(|| "provider binding requires INTERFACE=COMPONENT".to_owned())?;
+    let interface = InterfaceId::parse(interface)
+        .map_err(|error| format!("invalid provider interface {interface}: {error}"))?;
+    let component = ComponentId::parse(component)
+        .map_err(|error| format!("invalid provider component {component}: {error}"))?;
+    Ok((interface, component))
+}
+
 #[derive(Clone, Debug)]
 struct ProcessArgumentInvocation {
     argument: ComponentProcessArgument,
@@ -249,6 +369,11 @@ fn resolve_process_arguments(
         "--mode",
         "--enable-plugin",
         "--disable-plugin",
+        "--config",
+        "--profile",
+        "--provider-policy",
+        "--bind-provider",
+        "--disable-provider",
     ];
 
     let mut declared = BTreeMap::new();
@@ -367,6 +492,7 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
         (efficiency_evaluation_manifest(), true),
         (benchmark_outcome_manifest(), false),
         (agent_loop_manifest(authority.clone()), true),
+        (application_agent_tool_manifest(authority.clone()), true),
         (language_manifest(), true),
         (memory_manifest(), true),
         (planning_manifest(), true),
@@ -394,13 +520,53 @@ fn first_party_plugins() -> Vec<(PluginManifest, bool)> {
     plugins
 }
 
-fn configured_first_party_plugins(cli: &Cli) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
+fn configured_first_party_plugins(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> Result<Option<BTreeSet<String>>, Box<dyn Error>> {
     let configured = env::var_os("PHENIX_ENABLED_PLUGINS");
     let configured = configured
         .map(OsString::into_string)
         .transpose()
         .map_err(|_| "PHENIX_ENABLED_PLUGINS must be valid UTF-8")?;
-    resolve_first_party_plugins(cli, configured.as_deref()).map_err(Into::into)
+    resolve_configured_first_party_plugins(cli, config, configured.as_deref()).map_err(Into::into)
+}
+
+fn effective_disabled_plugins(cli: &Cli, config: &PortableCompositionConfig) -> BTreeSet<String> {
+    let mut disabled = config.plugins.disable.clone();
+    for id in &cli.enable_plugins {
+        disabled.remove(id);
+    }
+    disabled.extend(cli.disable_plugins.iter().cloned());
+    disabled
+}
+
+fn resolve_configured_first_party_plugins(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+    environment_selection: Option<&str>,
+) -> Result<Option<BTreeSet<String>>, String> {
+    // Deployment environment supplies defaults; portable configuration may
+    // choose a profile. Explicit command-line plugin options win over both.
+    let base = cli
+        .profile
+        .as_deref()
+        .or(config.profile.as_deref())
+        .or(environment_selection);
+    let mut selection = Cli {
+        enable_plugins: config.plugins.enable.clone(),
+        disable_plugins: config.plugins.disable.clone(),
+        ..Cli::default()
+    };
+    for id in &cli.enable_plugins {
+        selection.disable_plugins.remove(id);
+        selection.enable_plugins.insert(id.clone());
+    }
+    for id in &cli.disable_plugins {
+        selection.enable_plugins.remove(id);
+        selection.disable_plugins.insert(id.clone());
+    }
+    resolve_first_party_plugins(&selection, base)
 }
 
 fn resolve_first_party_plugins(
@@ -435,6 +601,9 @@ fn resolve_first_party_plugins(
     for plugin in &cli.disable_plugins {
         enabled.remove(plugin);
     }
+    // Profile inheritance contributes replaceable defaults, not hard manifest
+    // dependencies. This is Phenix-native configuration, not Nix expansion.
+    enabled = expand_profile_defaults(&enabled, &cli.disable_plugins);
 
     let unknown = enabled
         .iter()
@@ -475,7 +644,104 @@ fn resolve_first_party_plugins(
     Ok(Some(enabled))
 }
 
-#[derive(serde::Deserialize)]
+/// Deployment-independent composition input. This frontend only lowers
+/// selections into the canonical Phenix runtime builder and resolver.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortableCompositionConfig {
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    plugins: PortablePluginSelection,
+    #[serde(default)]
+    plugin_packages: Vec<PathBuf>,
+    #[serde(default)]
+    providers: PortableProviderPolicy,
+    #[serde(default)]
+    layers: Vec<ConfiguredLayerPolicy>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortablePluginSelection {
+    #[serde(default)]
+    enable: BTreeSet<String>,
+    #[serde(default)]
+    disable: BTreeSet<String>,
+}
+
+fn load_portable_configuration(
+    path: Option<&Path>,
+) -> Result<PortableCompositionConfig, Box<dyn Error>> {
+    match path {
+        Some(path) => {
+            let mut config: PortableCompositionConfig =
+                serde_json::from_str(&fs::read_to_string(path)?)?;
+            let directory = path.parent().unwrap_or_else(|| Path::new("."));
+            for package in &mut config.plugin_packages {
+                if package.as_os_str().is_empty() {
+                    return Err("plugin_packages entries must not be empty".into());
+                }
+                if package.is_relative() {
+                    *package = directory.join(&*package);
+                }
+            }
+            Ok(config)
+        }
+        None => Ok(PortableCompositionConfig::default()),
+    }
+}
+
+/// One portable, intentionally minimal provider-selection document.
+///
+/// This is not an alternative graph resolver: it only lowers user decisions
+/// into the existing Phenix provider composition policy.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortableProviderPolicy {
+    #[serde(default)]
+    bind: BTreeMap<InterfaceId, ComponentId>,
+    #[serde(default)]
+    disable: BTreeMap<InterfaceId, BTreeSet<ComponentId>>,
+}
+
+fn apply_configured_provider_policy(
+    builder: &mut PhenixRuntimeBuilder,
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> Result<(), Box<dyn Error>> {
+    for (interface, provider) in &config.providers.bind {
+        builder.bind_provider(interface.clone(), provider.clone());
+    }
+    for (interface, providers) in &config.providers.disable {
+        for provider in providers {
+            builder.disable_provider(interface.clone(), provider.clone());
+        }
+    }
+    if let Some(path) = &cli.provider_policy_file {
+        let source = fs::read_to_string(path)?;
+        let configured: PortableProviderPolicy = serde_json::from_str(&source)?;
+        for (interface, provider) in configured.bind {
+            builder.bind_provider(interface, provider);
+        }
+        for (interface, providers) in configured.disable {
+            for provider in providers {
+                builder.disable_provider(interface.clone(), provider);
+            }
+        }
+    }
+    // Explicit CLI arguments override bindings in the supplied file.
+    for (interface, provider) in &cli.provider_bindings {
+        builder.bind_provider(interface.clone(), provider.clone());
+    }
+    for (interface, provider) in &cli.disabled_providers {
+        builder.disable_provider(interface.clone(), provider.clone());
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConfiguredLayerPolicy {
     service: String,
     plugin: String,
@@ -490,41 +756,73 @@ fn default_layer_enabled() -> bool {
     true
 }
 
-fn apply_configured_layer_policy(builder: &mut PhenixRuntimeBuilder) -> Result<(), Box<dyn Error>> {
-    let Some(value) = env::var_os("PHENIX_LAYER_POLICY") else {
-        return Ok(());
-    };
-    let value = value
-        .into_string()
-        .map_err(|_| "PHENIX_LAYER_POLICY must be valid UTF-8")?;
-    let configured: Vec<ConfiguredLayerPolicy> = serde_json::from_str(&value)?;
+fn apply_configured_layer_policy(
+    builder: &mut PhenixRuntimeBuilder,
+    config: &PortableCompositionConfig,
+) -> Result<(), Box<dyn Error>> {
     let mut policies = BTreeMap::<ServiceId, Vec<LayerPolicy>>::new();
-    for layer in configured {
-        let service = ServiceId::parse(layer.service)?;
-        policies.entry(service).or_default().push(LayerPolicy {
-            plugin: PluginId::parse(layer.plugin)?,
-            priority: layer.priority,
-            required: layer.required,
-            enabled: layer.enabled,
-        });
+    if let Some(value) = env::var_os("PHENIX_LAYER_POLICY") {
+        let value = value
+            .into_string()
+            .map_err(|_| "PHENIX_LAYER_POLICY must be valid UTF-8")?;
+        let configured: Vec<ConfiguredLayerPolicy> = serde_json::from_str(&value)?;
+        for layer in configured {
+            add_layer_policy(&mut policies, layer)?;
+        }
     }
+
+    // For a service explicitly configured in the portable file, its Layer
+    // list replaces the deployment-supplied default Layer list.
+    let mut file_policies = BTreeMap::<ServiceId, Vec<LayerPolicy>>::new();
+    for layer in &config.layers {
+        add_layer_policy_values(&mut file_policies, layer)?;
+    }
+    policies.extend(file_policies);
     for (service, layers) in policies {
         builder.set_layer_policy(service, layers);
     }
     Ok(())
 }
 
-fn configured_plugin_packages() -> Result<Vec<PathBuf>, Box<dyn Error>> {
-    let Some(value) = env::var_os("PHENIX_PLUGIN_PACKAGES") else {
-        return Ok(Vec::new());
-    };
-    let value = value
-        .into_string()
-        .map_err(|_| "PHENIX_PLUGIN_PACKAGES must be valid UTF-8")?;
-    if value.is_empty() {
-        return Ok(Vec::new());
+fn add_layer_policy(
+    policies: &mut BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    layer: ConfiguredLayerPolicy,
+) -> Result<(), Box<dyn Error>> {
+    add_layer_policy_values(policies, &layer)
+}
+
+fn add_layer_policy_values(
+    policies: &mut BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    layer: &ConfiguredLayerPolicy,
+) -> Result<(), Box<dyn Error>> {
+    let service = ServiceId::parse(layer.service.clone())?;
+    policies.entry(service).or_default().push(LayerPolicy {
+        plugin: PluginId::parse(layer.plugin.clone())?,
+        priority: layer.priority,
+        required: layer.required,
+        enabled: layer.enabled,
+    });
+    Ok(())
+}
+
+fn configured_plugin_packages(
+    cli: &Cli,
+    config: &PortableCompositionConfig,
+) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut packages = Vec::new();
+    if let Some(value) = env::var_os("PHENIX_PLUGIN_PACKAGES") {
+        let value = value
+            .into_string()
+            .map_err(|_| "PHENIX_PLUGIN_PACKAGES must be valid UTF-8")?;
+        if !value.is_empty() {
+            packages.extend(value.split(':').map(PathBuf::from));
+        }
     }
-    Ok(value.split(':').map(PathBuf::from).collect())
+    packages.extend(config.plugin_packages.iter().cloned());
+    packages.extend(cli.plugin_packages.iter().cloned());
+    let mut seen = BTreeSet::new();
+    packages.retain(|path| seen.insert(path.clone()));
+    Ok(packages)
 }
 
 fn add_packaged_plugin(
@@ -573,6 +871,61 @@ mod tests {
         assert_eq!(parsed[0].priority, 7);
         assert!(parsed[0].required);
         assert!(parsed[0].enabled);
+    }
+
+    #[test]
+    fn portable_plugin_packages_support_cli_paths_and_validate_inputs() {
+        let cli = parse_cli([
+            "--plugin-package".to_owned(),
+            "plugins/first".to_owned(),
+            "--plugin-package=plugins/second".to_owned(),
+            "--profile=phenix.product.basic".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.plugin_packages,
+            vec![
+                PathBuf::from("plugins/first"),
+                PathBuf::from("plugins/second")
+            ]
+        );
+        assert!(cli.plugin_arguments.is_empty());
+        assert!(parse_cli(["--plugin-package".to_owned()]).is_err());
+        assert!(parse_cli(["--plugin-package=".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn portable_plugin_roots_are_resolved_from_the_config_file_directory() {
+        let directory = env::temp_dir().join(format!(
+            "phenix-plugin-package-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let config_path = directory.join("composition.json");
+        fs::write(
+            &config_path,
+            r#"{"plugin_packages":["plugins/first","/opt/phenix/plugins/second"]}"#,
+        )
+        .unwrap();
+        let config = load_portable_configuration(Some(&config_path)).unwrap();
+        assert_eq!(
+            config.plugin_packages,
+            vec![
+                directory.join("plugins/first"),
+                PathBuf::from("/opt/phenix/plugins/second")
+            ]
+        );
+
+        fs::write(&config_path, r#"{"plugin_packages":[""]}"#).unwrap();
+        assert!(
+            load_portable_configuration(Some(&config_path)).is_err(),
+            "empty package roots must fail before plugin loading"
+        );
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
@@ -896,14 +1249,241 @@ mod tests {
     }
 
     #[test]
-    fn explicit_disable_blocks_required_dependency() {
-        let execution = execution_manifest(default_suite_authority())
+    fn disabling_a_required_contract_provider_fails_core_resolution() {
+        let tools = application_agent_tool_manifest(default_suite_authority())
             .id
             .as_str()
             .to_owned();
-        let cli = parse_cli(["--disable-plugin".into(), execution.clone()]).unwrap();
-        let error = resolve_first_party_plugins(&cli, None).unwrap_err();
-        assert!(error.contains(&execution));
-        assert!(error.contains("requires"));
+        let cli = parse_cli(["--disable-plugin".into(), tools.clone()]).unwrap();
+        let selected = resolve_first_party_plugins(&cli, None)
+            .expect("product profile defaults may be excluded before contract resolution")
+            .unwrap();
+        assert!(!selected.contains(&tools));
+        let builder =
+            PhenixRuntimeBuilder::with_selected_suite_excluding(&selected, &cli.disable_plugins)
+                .expect("no hard manifest dependency requires the application tool adapter");
+        let Err(error) = builder.build() else {
+            panic!("the Basic loop's required tool contract must remain satisfiable");
+        };
+        assert!(
+            error.to_string().contains("unresolved required import"),
+            "Core should report missing contract capability: {error}"
+        );
+    }
+
+    #[test]
+    fn provider_overrides_have_a_native_cli_independent_of_nix() {
+        let cli = parse_cli([
+            "--provider-policy".into(),
+            "providers.json".into(),
+            "--bind-provider=fixture.memory@1=fixture.external".into(),
+            "--disable-provider".into(),
+            "fixture.context@1=fixture.basic".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.provider_policy_file.as_deref(),
+            Some(Path::new("providers.json"))
+        );
+        assert_eq!(
+            cli.provider_bindings,
+            vec![(
+                InterfaceId::parse("fixture.memory@1").unwrap(),
+                ComponentId::parse("fixture.external").unwrap(),
+            )]
+        );
+        assert_eq!(
+            cli.disabled_providers,
+            vec![(
+                InterfaceId::parse("fixture.context@1").unwrap(),
+                ComponentId::parse("fixture.basic").unwrap(),
+            )]
+        );
+
+        let inline = parse_cli(["--provider-policy=providers.json".into()]).unwrap();
+        assert_eq!(cli.provider_policy_file, inline.provider_policy_file);
+    }
+
+    #[test]
+    fn portable_provider_policy_json_is_typed_and_rejects_unknown_fields() {
+        let json = r#"{
+            "bind": {"fixture.memory@1": "fixture.external"},
+            "disable": {"fixture.context@1": ["fixture.basic"]}
+        }"#;
+        let config: PortableProviderPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config
+                .bind
+                .get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            Some(&ComponentId::parse("fixture.external").unwrap())
+        );
+        assert!(
+            config
+                .disable
+                .get(&InterfaceId::parse("fixture.context@1").unwrap())
+                .unwrap()
+                .contains(&ComponentId::parse("fixture.basic").unwrap())
+        );
+        assert!(serde_json::from_str::<PortableProviderPolicy>(r#"{"typo":{}}"#).is_err());
+        assert!(
+            serde_json::from_str::<PortableProviderPolicy>(
+                r#"{"bind":{"invalid-interface":"fixture.external"}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn malformed_provider_options_fail_before_plugin_argument_dispatch() {
+        assert!(parse_cli(["--provider-policy=".into()]).is_err());
+        assert!(parse_cli(["--bind-provider".into()]).is_err());
+        assert!(parse_cli(["--bind-provider=fixture.memory@1".into()]).is_err());
+        assert!(parse_cli(["--disable-provider=fixture.memory@1=".into()]).is_err());
+        assert!(parse_cli(["--bind-provider=invalid=fixture.external".into()]).is_err());
+    }
+
+    #[test]
+    fn portable_composition_includes_profile_plugins_providers_and_layers() {
+        let source = r#"{
+            "profile": "phenix.product.basic",
+            "plugins": {
+                "enable": ["phenix.debug"],
+                "disable": ["phenix.planning"]
+            },
+            "providers": {
+                "bind": {"fixture.memory@1": "fixture.external"},
+                "disable": {"fixture.context@1": ["fixture.basic"]}
+            },
+            "layers": [{
+                "service": "fixture.memory@1",
+                "plugin": "fixture.observer",
+                "priority": 15,
+                "required": false
+            }]
+        }"#;
+        let config: PortableCompositionConfig = serde_json::from_str(source).unwrap();
+        assert_eq!(config.profile.as_deref(), Some("phenix.product.basic"));
+        assert!(config.plugins.enable.contains("phenix.debug"));
+        assert!(config.plugins.disable.contains("phenix.planning"));
+        assert_eq!(
+            config
+                .providers
+                .bind
+                .get(&InterfaceId::parse("fixture.memory@1").unwrap()),
+            Some(&ComponentId::parse("fixture.external").unwrap())
+        );
+        assert_eq!(config.layers.len(), 1);
+        assert_eq!(config.layers[0].priority, 15);
+        assert!(config.layers[0].enabled);
+        assert!(serde_json::from_str::<PortableCompositionConfig>(r#"{"typo":42}"#).is_err());
+        assert!(
+            serde_json::from_str::<PortableCompositionConfig>(
+                r#"{"plugins":{"enable":["phenix.debug"],"typo":true}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn portable_profile_selection_is_phx_owned_and_cli_options_override_file() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.basic",
+                "plugins": {
+                    "enable": ["phenix.debug"],
+                    "disable": ["phenix.options"]
+                }
+            }"#,
+        )
+        .unwrap();
+        let mut cli = Cli::default();
+        // CLI selection overrides a file exclusion, but cannot make a required
+        // dependency disappear from the selected graph.
+        cli.enable_plugins.insert("phenix.options".into());
+        cli.disable_plugins.insert("phenix.debug".into());
+        let selected =
+            resolve_configured_first_party_plugins(&cli, &config, Some("phenix.product.full"))
+                .unwrap()
+                .unwrap();
+        assert!(selected.contains("phenix.product.basic"));
+        assert!(!selected.contains("phenix.product.full"));
+        assert!(selected.contains("phenix.options"));
+        assert!(!selected.contains("phenix.debug"));
+    }
+
+    #[test]
+    fn native_config_file_flag_supports_both_forms() {
+        let positional = parse_cli(["--config".into(), "composition.json".into()]).unwrap();
+        let inline = parse_cli(["--config=composition.json".into()]).unwrap();
+        assert_eq!(positional.config_file, inline.config_file);
+        assert_eq!(
+            positional.config_file.as_deref(),
+            Some(Path::new("composition.json"))
+        );
+        assert!(parse_cli(["--config".into()]).is_err());
+        assert!(parse_cli(["--config=".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_profile_overrides_file_profile_and_environment() {
+        let config: PortableCompositionConfig =
+            serde_json::from_str(r#"{"profile":"phenix.product.basic"}"#).unwrap();
+        let cli = parse_cli(["--profile=phenix.product.full".into()]).unwrap();
+        let selected =
+            resolve_configured_first_party_plugins(&cli, &config, Some("phenix.agent.basic"))
+                .unwrap()
+                .unwrap();
+        assert!(selected.contains("phenix.product.full"));
+        assert!(selected.contains("phenix.agent.advanced"));
+        assert!(parse_cli(["--profile".into()]).is_err());
+        assert!(parse_cli(["--profile=".into()]).is_err());
+    }
+    #[test]
+    fn full_profile_can_disable_inherited_defaults_without_reinsertion() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.full",
+                "plugins": {"disable": ["phenix.debug"]}
+            }"#,
+        )
+        .unwrap();
+        let cli = Cli::default();
+        let enabled = resolve_configured_first_party_plugins(&cli, &config, None)
+            .unwrap()
+            .unwrap();
+        assert!(enabled.contains("phenix.product.full"));
+        assert!(enabled.contains("phenix.agent.basic"));
+        assert!(enabled.contains("phenix.memory"));
+        assert!(!enabled.contains("phenix.debug"));
+
+        let disabled = effective_disabled_plugins(&cli, &config);
+        let builder = PhenixRuntimeBuilder::with_selected_suite_excluding(&enabled, &disabled)
+            .expect("an inherited optional default must be removable");
+        let runtime = builder.build().expect("excluded Full default must resolve");
+        assert!(
+            !runtime
+                .kernel()
+                .config()
+                .manifests()
+                .any(|plugin| plugin.id.as_str() == "phenix.debug")
+        );
+    }
+
+    #[test]
+    fn explicit_cli_enable_overrides_disabled_profile_default() {
+        let config: PortableCompositionConfig = serde_json::from_str(
+            r#"{
+                "profile": "phenix.product.full",
+                "plugins": {"disable": ["phenix.debug"]}
+            }"#,
+        )
+        .unwrap();
+        let cli = parse_cli(["--enable-plugin=phenix.debug".into()]).unwrap();
+        let enabled = resolve_configured_first_party_plugins(&cli, &config, None)
+            .unwrap()
+            .unwrap();
+        assert!(enabled.contains("phenix.debug"));
+        assert!(!effective_disabled_plugins(&cli, &config).contains("phenix.debug"));
     }
 }

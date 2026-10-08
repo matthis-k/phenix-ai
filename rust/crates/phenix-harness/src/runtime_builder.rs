@@ -2,16 +2,17 @@
 
 use crate::{PhenixRuntime, application, default_suite_authority};
 use phenix_core::{
-    Authority, ComponentEntryTrigger, ComponentManifest, ComponentProcessArgument,
-    ConfigContribution, DurableSchemaRegistration, GenerationResolutionError, GraphReconciler,
-    Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
-    PluginInstance, PluginManifest, ResolvedGeneration, ResolvedGenerationActivation,
+    Authority, ComponentEntryTrigger, ComponentId, ComponentInterface, ComponentManifest,
+    ComponentProcessArgument, ConfigContribution, DurableSchemaRegistration,
+    GenerationResolutionError, GraphReconciler, InterfaceCompatibility, InterfaceId, Kernel,
+    KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId, PluginInstance,
+    PluginManifest, ProviderCompositionPolicy, ResolvedGeneration, ResolvedGenerationActivation,
     ResolvedGenerationActivationError, ServiceId,
 };
 use phenix_plugin_catalog::{
-    AGENT_LOOP_PLUGIN, adapter_acp_factory, adapter_acp_manifest,
-    advanced_agent_configuration_manifest, agent_loop_component_manifest, agent_loop_factory,
-    agent_loop_manifest, artifact_component_manifest, artifact_factory, artifact_manifest,
+    adapter_acp_factory, adapter_acp_manifest, advanced_agent_configuration_manifest,
+    agent_loop_component_manifest, agent_loop_factory, agent_loop_manifest,
+    artifact_component_manifest, artifact_factory, artifact_manifest,
     basic_agent_configuration_manifest, basic_context_component_manifest, basic_context_factory,
     basic_context_manifest, basic_model_component_manifest, basic_model_factory,
     basic_model_manifest, basic_product_configuration_manifest, basic_skills_component_manifest,
@@ -22,9 +23,9 @@ use phenix_plugin_catalog::{
     context_manifest, debug_component_manifest, debug_factory, debug_manifest,
     debug_runtime_trace_sink, efficiency_evaluation_component_manifest,
     efficiency_evaluation_factory, efficiency_evaluation_manifest, execution_component_manifest,
-    execution_factory, execution_manifest, first_party_durable_schema_registrations,
-    frontend_component_manifest, frontend_factory, frontend_manifest,
-    full_product_configuration_manifest, helper_invocation_component_manifest,
+    execution_factory, execution_manifest, expand_profile_defaults,
+    first_party_durable_schema_registrations, frontend_component_manifest, frontend_factory,
+    frontend_manifest, full_product_configuration_manifest, helper_invocation_component_manifest,
     hook_component_manifest, hook_factory, hook_manifest, job_component_manifest, job_factory,
     job_manifest, language_component_manifest, language_factory, language_manifest,
     local_environment_component_manifest, local_environment_factory, local_environment_manifest,
@@ -40,6 +41,7 @@ use phenix_plugin_catalog::{
     workspace_manifest,
 };
 use phenix_plugin_invocation_defaults as invocation_defaults;
+use phenix_sdk::{LanguageInterface, MemoryInterface, WorkspaceInterface};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -111,6 +113,7 @@ pub struct PhenixRuntimeBuilder {
     durable_schemas: Vec<DurableSchemaRegistration>,
     embedded_factories: BTreeMap<PluginId, EmbeddedFactory>,
     layer_policies: BTreeMap<ServiceId, Vec<LayerPolicy>>,
+    provider_policy: ProviderCompositionPolicy,
     pub(crate) components: Vec<ComponentManifest>,
     pub(crate) entry_triggers: Vec<ComponentEntryTrigger>,
     process_arguments: Vec<ComponentProcessArgument>,
@@ -203,19 +206,20 @@ impl PhenixRuntimeBuilder {
         for provider in provider_definitions {
             builder.add_component(provider.component_manifest());
         }
-        for trigger in application::application_workspace_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
-        for trigger in application::application_code_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
-        for trigger in application::application_memory_tool_triggers() {
-            builder.add_entry_trigger(trigger);
-        }
         Ok(builder)
     }
 
     pub fn with_selected_suite(enabled: &BTreeSet<String>) -> Result<Self, String> {
+        Self::with_selected_suite_excluding(enabled, &BTreeSet::new())
+    }
+
+    /// Expand named Phenix product defaults before enforcing actual hard plugin
+    /// dependencies. Explicit exclusions affect defaults, not contract resolution:
+    /// a concrete implementation that truly requires a disabled plugin still fails.
+    pub fn with_selected_suite_excluding(
+        enabled: &BTreeSet<String>,
+        excluded: &BTreeSet<String>,
+    ) -> Result<Self, String> {
         let authority = default_suite_authority();
         let provider_definitions = common_provider_definitions();
         let mut available = [
@@ -236,6 +240,7 @@ impl PhenixRuntimeBuilder {
             efficiency_evaluation_manifest(),
             benchmark_outcome_manifest(),
             agent_loop_manifest(authority.clone()),
+            application::application_agent_tool_manifest(authority.clone()),
             language_manifest(),
             memory_manifest(),
             planning_manifest(),
@@ -262,8 +267,10 @@ impl PhenixRuntimeBuilder {
             let manifest = provider.manifest();
             available.insert(manifest.id.as_str().to_owned(), manifest);
         }
+        let mut enabled = expand_profile_defaults(enabled, excluded);
         let unknown = enabled
             .iter()
+            .chain(excluded.iter())
             .filter(|id| !available.contains_key(*id))
             .cloned()
             .collect::<Vec<_>>();
@@ -274,8 +281,8 @@ impl PhenixRuntimeBuilder {
             ));
         }
 
-        // Explicit selection is exact. Only declared manifest dependencies may expand it.
-        let mut enabled = enabled.clone();
+        // Default profiles have already been expanded; only real manifest
+        // dependencies can enlarge this selection now.
         let mut pending = enabled.iter().cloned().collect::<Vec<_>>();
         let expand_dependencies = |enabled: &mut BTreeSet<String>,
                                    pending: &mut Vec<String>|
@@ -291,6 +298,11 @@ impl PhenixRuntimeBuilder {
                             "first-party plugin {plugin} depends on unavailable first-party plugin {dependency}"
                         ));
                     }
+                    if excluded.contains(&dependency) {
+                        return Err(format!(
+                            "first-party plugin {plugin} requires disabled first-party plugin {dependency}"
+                        ));
+                    }
                     if enabled.insert(dependency.clone()) {
                         pending.push(dependency);
                     }
@@ -299,23 +311,6 @@ impl PhenixRuntimeBuilder {
             Ok(())
         };
         expand_dependencies(&mut enabled, &mut pending)?;
-
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
-            let adapter = application::application_agent_tool_manifest(authority.clone());
-            for dependency in &adapter.dependencies {
-                let dependency = dependency.as_str().to_owned();
-                if !available.contains_key(&dependency) {
-                    return Err(format!(
-                        "first-party plugin {} depends on unavailable first-party plugin {dependency}",
-                        adapter.id
-                    ));
-                }
-                if enabled.insert(dependency.clone()) {
-                    pending.push(dependency);
-                }
-            }
-            expand_dependencies(&mut enabled, &mut pending)?;
-        }
 
         let mut builder = Self::new();
         builder.component_authority = authority.clone();
@@ -361,7 +356,7 @@ impl PhenixRuntimeBuilder {
             agent_loop_manifest(authority.clone()),
             agent_loop_factory,
         )?;
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
+        if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             let application_agent_tools = builder.application_agent_tools.clone();
             builder
                 .add_embedded(
@@ -461,25 +456,10 @@ impl PhenixRuntimeBuilder {
                 builder.add_component(component);
             }
         }
-        if enabled.contains(AGENT_LOOP_PLUGIN) {
+        if enabled.contains(application::APPLICATION_AGENT_TOOL_PLUGIN) {
             builder.add_component(application::application_agent_tool_component_manifest(
                 authority,
             ));
-            if enabled.contains("phenix.workspace") {
-                for trigger in application::application_workspace_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
-            if enabled.contains("phenix.language") {
-                for trigger in application::application_code_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
-            if enabled.contains("phenix.memory") {
-                for trigger in application::application_memory_tool_triggers() {
-                    builder.add_entry_trigger(trigger);
-                }
-            }
         }
         Ok(builder)
     }
@@ -532,6 +512,83 @@ impl PhenixRuntimeBuilder {
         self.layer_policies.insert(service, layers);
     }
 
+    /// Set the provider-selection policy for this Phenix runtime.
+    ///
+    /// This is independent of whether configuration came from Nix, a file, a
+    /// frontend or direct embedding. Resolution remains kernel-owned.
+    pub fn set_provider_policy(&mut self, policy: ProviderCompositionPolicy) {
+        self.provider_policy = policy;
+    }
+
+    /// Select a provider implementation for a contract in this runtime.
+    ///
+    /// The provider must still be available, compatible and authorized when
+    /// the graph generation is resolved. An explicit binding re-enables a provider
+    /// excluded by an earlier configuration layer.
+    pub fn bind_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
+        self.provider_policy = std::mem::take(&mut self.provider_policy)
+            .with_enabled_provider(interface.clone(), provider.clone())
+            .with_explicit_binding(interface, provider);
+    }
+
+    /// Exclude one provider from selection for an interface.
+    pub fn disable_provider(&mut self, interface: InterfaceId, provider: ComponentId) {
+        self.provider_policy =
+            std::mem::take(&mut self.provider_policy).with_disabled_provider(interface, provider);
+    }
+
+    /// Add application tools for providers contributed after profile selection.
+    ///
+    /// The final assembled component set, rather than an implementation plugin
+    /// ID, determines whether a tool contract is available to the application.
+    fn add_late_application_tool_triggers(&mut self) {
+        if !self
+            .components
+            .iter()
+            .any(|component| component.owner.as_str() == application::APPLICATION_AGENT_TOOL_PLUGIN)
+        {
+            return;
+        }
+        if self.has_compatible_export::<WorkspaceInterface>() {
+            self.add_missing_triggers(application::application_workspace_tool_triggers());
+        }
+        if self.has_compatible_export::<LanguageInterface>() {
+            self.add_missing_triggers(application::application_code_tool_triggers());
+        }
+        if self.has_compatible_export::<MemoryInterface>() {
+            self.add_missing_triggers(application::application_memory_tool_triggers());
+        }
+    }
+
+    fn has_compatible_export<I: ComponentInterface>(&self) -> bool {
+        let interface = I::interface_id();
+        let schema = I::schema();
+        self.components.iter().any(|component| {
+            self.provider_policy
+                .provider_enabled(&interface, &component.id)
+                && component.exports.iter().any(|export| {
+                    export.interface == interface
+                        && !matches!(
+                            schema.accepts_provider(&export.schema),
+                            InterfaceCompatibility::Incompatible(_)
+                        )
+                        && component
+                            .maximum_authority
+                            .permits_all(&export.required_authority)
+                })
+        })
+    }
+
+    fn add_missing_triggers(&mut self, triggers: Vec<ComponentEntryTrigger>) {
+        for trigger in triggers {
+            if !self.entry_triggers.iter().any(|existing| {
+                existing.component == trigger.component && existing.interface == trigger.interface
+            }) {
+                self.entry_triggers.push(trigger);
+            }
+        }
+    }
+
     pub fn add_embedded<F>(
         &mut self,
         manifest: PluginManifest,
@@ -578,26 +635,27 @@ impl PhenixRuntimeBuilder {
     }
 
     pub(crate) fn build_using(
-        self,
+        mut self,
         create_kernel: impl FnOnce(&ResolvedGeneration) -> Result<Kernel, PhenixRuntimeBuildError>,
     ) -> Result<PhenixRuntime, PhenixRuntimeBuildError> {
+        self.add_late_application_tool_triggers();
         let application_agent_tools = self.application_agent_tools.clone();
         let debug_id = debug_manifest(self.component_authority.clone()).id;
         let debug_enabled = self
             .manifests
             .iter()
             .any(|manifest| manifest.id == debug_id);
-        let resolved =
-            ResolvedGeneration::resolve_with_durable_schemas_layer_policies_entry_triggers_and_process_arguments(
-                self.manifests.clone(),
-                self.components,
-                self.durable_schemas,
-                self.entry_triggers,
-                self.process_arguments,
-                self.contributions,
-                self.layer_policies,
-                &self.component_authority,
-            )?;
+        let resolved = ResolvedGeneration::resolve_with_composition_policies(
+            self.manifests.clone(),
+            self.components,
+            self.durable_schemas,
+            self.entry_triggers,
+            self.process_arguments,
+            self.contributions,
+            self.layer_policies,
+            self.provider_policy,
+            &self.component_authority,
+        )?;
         let mut kernel = create_kernel(&resolved)?;
         if debug_enabled {
             kernel.set_runtime_trace_sink(debug_runtime_trace_sink());
