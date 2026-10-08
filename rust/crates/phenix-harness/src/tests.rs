@@ -153,6 +153,84 @@ fn bare_kernel_runtime_requires_no_agent_or_first_party_profiles() {
 }
 
 #[test]
+fn interactive_ui_is_full_only_replaceable_and_callable_without_a_model() {
+    use phenix_plugin_catalog::{
+        INTERACTIVE_UI_PLUGIN, UiDocument, UiDocumentCommand, UiDocumentResponse, UiNode,
+        interactive_ui_service,
+    };
+
+    let selected = BTreeSet::from([FULL_PRODUCT_CONFIGURATION.to_owned()]);
+    let full = PhenixRuntimeBuilder::with_selected_suite(&selected).unwrap();
+    assert!(
+        full.manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == INTERACTIVE_UI_PLUGIN)
+    );
+
+    let basic = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        BASIC_PRODUCT_CONFIGURATION.to_owned(),
+    ]))
+    .unwrap();
+    assert!(
+        !basic
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == INTERACTIVE_UI_PLUGIN)
+    );
+
+    let excluded = PhenixRuntimeBuilder::with_selected_suite_excluding(
+        &selected,
+        &BTreeSet::from([INTERACTIVE_UI_PLUGIN.to_owned()]),
+    )
+    .unwrap();
+    assert!(
+        !excluded
+            .manifests
+            .iter()
+            .any(|manifest| manifest.id.as_str() == INTERACTIVE_UI_PLUGIN)
+    );
+    excluded.build().unwrap();
+
+    // A contract-only composition does not need an agent, model or frontend.
+    let mut runtime = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
+        INTERACTIVE_UI_PLUGIN.to_owned(),
+    ]))
+    .unwrap()
+    .build()
+    .unwrap();
+    runtime.activate().unwrap();
+    let document = UiDocument {
+        version: 1,
+        session_id: "session-a".into(),
+        document_id: "doc-1".into(),
+        revision: 1,
+        root: "title".into(),
+        nodes: vec![UiNode::Text {
+            id: "title".into(),
+            text: "Running".into(),
+        }],
+    };
+    let command = UiDocumentCommand::Put {
+        document,
+        expected_revision: None,
+    };
+    let result = runtime
+        .kernel_mut()
+        .invoke(
+            &interactive_ui_service(),
+            &serde_json::to_vec(&PhenixValue::from(&command)).unwrap(),
+            &Authority::default(),
+            None,
+        )
+        .unwrap();
+    let value: PhenixValue = serde_json::from_slice(&result).unwrap();
+    assert_eq!(
+        UiDocumentResponse::try_from(Project(&value)).unwrap(),
+        UiDocumentResponse::Stored { revision: 1 }
+    );
+}
+
+#[test]
 fn advanced_agent_configuration_extends_basic_through_dependency_resolution() {
     let basic = PhenixRuntimeBuilder::with_selected_suite(&BTreeSet::from([
         BASIC_AGENT_CONFIGURATION.to_owned(),
