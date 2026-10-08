@@ -386,6 +386,9 @@ then closes over true implementation dependencies.
 
 - Full inherits Advanced, which inherits Basic, without copying or permanently
   requiring a particular Basic implementation.
+- The `phenix.providers` bundle is likewise a reference **default provider set**,
+  not an unavoidable dependency on every model vendor. Individual provider
+  packages can be disabled and replaced independently.
 - CLI `--disable-plugin` or portable `plugins.disable` removes an inherited
   *default* before concrete package selection. The plugin is not started as a
   fallback merely because an ancestor profile included it.
