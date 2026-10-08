@@ -4759,7 +4759,7 @@ fn start_prompt(
                     })
             });
         match resolved.and_then(|resolved| {
-            let binding = bound_application_agent_plugin(resolved)?;
+            let binding = bound_application_agent_plugin(resolved, root.authority())?;
             let surface =
                 application_model_tool_surface(service, &request.session_id, resolved, root.authority())?;
             Ok((surface, binding))
@@ -5491,6 +5491,7 @@ fn normalize_model_tool_table(
 /// when the product declares no explicit agent-loop binding.
 pub(crate) fn bound_application_agent_plugin(
     resolved: &phenix_core::ResolvedGeneration,
+    caller_authority: &Authority,
 ) -> Result<Option<PluginId>, ApplicationError> {
     let interface = AgentLoopInterface::interface_id();
     let policy = resolved.provider_policy();
@@ -5509,27 +5510,39 @@ pub(crate) fn bound_application_agent_plugin(
         .ok_or_else(|| ApplicationError::Failed {
             message: format!("explicit agent provider {target} is not installed"),
         })?;
-    let compatible = component.exports.iter().any(|export| {
-        export.interface == interface
-            && matches!(
-                AgentLoopInterface::schema().accepts_provider(&export.schema),
-                phenix_core::InterfaceCompatibility::Exact
-                    | phenix_core::InterfaceCompatibility::Compatible
-            )
-    });
-    if !compatible {
-        return Err(ApplicationError::Failed {
+    let export = component
+        .exports
+        .iter()
+        .find(|export| {
+            export.interface == interface
+                && matches!(
+                    AgentLoopInterface::schema().accepts_provider(&export.schema),
+                    phenix_core::InterfaceCompatibility::Exact
+                        | phenix_core::InterfaceCompatibility::Compatible
+                )
+        })
+        .ok_or_else(|| ApplicationError::Failed {
             message: format!("explicit agent provider {target} has no compatible agent contract"),
+        })?;
+    let owner = resolved
+        .plugins()
+        .iter()
+        .find(|plugin| plugin.id == component.owner)
+        .ok_or_else(|| ApplicationError::Failed {
+            message: format!("explicit agent provider {target} has no installed plugin owner"),
+        })?;
+    if !caller_authority.permits_all(&export.required_authority)
+        || !component.maximum_authority.permits_all(&export.required_authority)
+        || !owner.maximum_authority.permits_all(&export.required_authority)
+    {
+        return Err(ApplicationError::Failed {
+            message: format!("explicit agent provider {target} requires unavailable authority"),
         });
     }
-    let terminal = resolved.plugins().iter().any(|plugin| {
-        plugin.id == component.owner
-            && plugin.services.iter().any(|service| {
-                service.service == agent_loop_service()
-                    && matches!(service.role, ServiceRole::Terminal)
-            })
-    });
-    if !terminal {
+    if !owner.services.iter().any(|service| {
+        service.service == agent_loop_service()
+            && matches!(service.role, ServiceRole::Terminal)
+    }) {
         return Err(ApplicationError::Failed {
             message: format!(
                 "explicit agent provider {target} has no terminal agent execution service"
