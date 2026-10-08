@@ -206,6 +206,54 @@ fn handle(
                 provider,
                 method,
                 params,
+                &BTreeSet::new(),
+            )
+        }
+        FrontendCommand::CheckExecutionCapabilities {
+            execution_id,
+            provider,
+            required_capabilities,
+        } => {
+            validate_id("frontend provider id", &provider)?;
+            validate_capabilities(&required_capabilities)?;
+            let root = execution_root(context, &execution_id)?;
+            let supported = context
+                .plugin
+                .state
+                .root_routes
+                .get(&root)
+                .and_then(|connection| context.plugin.state.providers.get(connection))
+                .and_then(|providers| providers.get(&provider))
+                .is_some_and(|descriptor| {
+                    required_capabilities.is_subset(&descriptor.capabilities)
+                });
+            Ok(FrontendResponse::CapabilityCheck { supported })
+        }
+        FrontendCommand::BeginExecutionCallWithRequirements {
+            execution_id,
+            provider,
+            method,
+            params,
+            required_capabilities,
+        } => {
+            validate_capabilities(&required_capabilities)?;
+            let root = execution_root(context, &execution_id)?;
+            let connection_id = context
+                .plugin
+                .state
+                .root_routes
+                .get(&root)
+                .cloned()
+                .ok_or_else(|| {
+                    format!("execution has no live frontend root route: {execution_id}")
+                })?;
+            begin_call(
+                context.plugin.state,
+                connection_id,
+                provider,
+                method,
+                params,
+                &required_capabilities,
             )
         }
         FrontendCommand::BeginDirectCall {
@@ -219,6 +267,7 @@ fn handle(
             provider,
             method,
             params,
+            &BTreeSet::new(),
         ),
         FrontendCommand::CompleteCall {
             connection_id,
@@ -264,6 +313,7 @@ fn begin_call(
     provider: String,
     method: String,
     params: PhenixValue,
+    required_capabilities: &BTreeSet<String>,
 ) -> Result<FrontendResponse, String> {
     validate_id("frontend connection id", &connection_id)?;
     validate_id("frontend provider id", &provider)?;
@@ -276,6 +326,11 @@ fn begin_call(
         .ok_or_else(|| {
             format!("frontend connection {connection_id} does not advertise provider {provider}")
         })?;
+    if !required_capabilities.is_subset(&descriptor.capabilities) {
+        return Err(format!(
+            "frontend provider {provider} lacks required capabilities on connection {connection_id}"
+        ));
+    }
     let correlation_id = state.next_correlation_id;
     state.next_correlation_id = state
         .next_correlation_id
@@ -344,8 +399,11 @@ fn execution_root(
 
 fn validate_provider(provider: &FrontendProviderDescriptor) -> Result<(), String> {
     validate_id("frontend provider id", &provider.id)?;
-    if provider
-        .capabilities
+    validate_capabilities(&provider.capabilities)
+}
+
+fn validate_capabilities(capabilities: &BTreeSet<String>) -> Result<(), String> {
+    if capabilities
         .iter()
         .any(|capability| capability.trim().is_empty())
     {
