@@ -11042,9 +11042,10 @@ mod tests {
             } = command else {
                 return Err("application must send a session-qualified run".into());
             };
-            let complete = input.as_ref().windows(b"foreign completion marker".len()).any(|part| {
-                part == b"foreign completion marker"
-            });
+            let complete = input
+                .as_ref()
+                .windows(b"foreign completion marker".len())
+                .any(|part| part == b"foreign completion marker");
             let usage = phenix_sdk::AgentLoopUsage {
                 model_calls: 0,
                 tool_calls: 0,
@@ -11199,17 +11200,21 @@ mod tests {
                 } if execution_id == &completed.execution_id
             )
         }));
-        let cancelled = resumed.updates.iter().filter(|update| {
-            matches!(
-                &update.update,
-                SessionChange::Execution {
-                    update: ExecutionChange::State {
-                        state: ExecutionState::Cancelled,
-                    },
-                    ..
-                }
-            )
-        }).count();
+        let cancelled = resumed
+            .updates
+            .iter()
+            .filter(|update| {
+                matches!(
+                    &update.update,
+                    SessionChange::Execution {
+                        update: ExecutionChange::State {
+                            state: ExecutionState::Cancelled,
+                        },
+                        ..
+                    }
+                )
+            })
+            .count();
         assert_eq!(cancelled, 2, "both foreign cancellations must be persisted");
         assert!(!resumed.updates.iter().any(|update| {
             matches!(
