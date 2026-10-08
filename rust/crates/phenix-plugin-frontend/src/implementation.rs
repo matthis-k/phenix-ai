@@ -328,6 +328,11 @@ fn execution_root(
         }
         let execution = execution_lookup(context, &current)?
             .ok_or_else(|| format!("unknown execution: {current}"))?;
+        // Routing is scoped to a live execution, not just a retained root
+        // binding. Reject completed descendants and completed ancestors.
+        if !matches!(execution.state, ExecutionState::Active) {
+            return Err(format!("frontend call requires an active execution: {current}"));
+        }
         match execution.parent_execution {
             Some(parent) => current = parent,
             None => return Ok(current),
@@ -501,6 +506,78 @@ mod tests {
             .unwrap(),
             FrontendResponse::Result { .. }
         ));
+    }
+
+    #[test]
+    fn terminal_executions_cannot_use_retained_frontend_routes() {
+        let mut kernel = kernel();
+        execution(&mut kernel, "root", None);
+        execution(&mut kernel, "child", Some("root"));
+        invoke(
+            &mut kernel,
+            FrontendCommand::SetProviders {
+                connection_id: "frontend-a".into(),
+                providers: vec![FrontendProviderDescriptor {
+                    id: "document".into(),
+                    capabilities: BTreeSet::from(["document.v1".into()]),
+                }],
+            },
+        )
+        .unwrap();
+        invoke(
+            &mut kernel,
+            FrontendCommand::BindRoot {
+                execution_id: "root".into(),
+                connection_id: "frontend-a".into(),
+            },
+        )
+        .unwrap();
+
+        let call = |kernel: &mut Kernel, execution_id: &str| {
+            invoke(
+                kernel,
+                FrontendCommand::BeginExecutionCall {
+                    execution_id: execution_id.into(),
+                    provider: "document".into(),
+                    method: "present".into(),
+                    params: serde_json::json!({}).into(),
+                },
+            )
+        };
+        assert!(matches!(
+            call(&mut kernel, "child").unwrap(),
+            FrontendResponse::Request { .. }
+        ));
+
+        let finish = |kernel: &mut Kernel, execution_id: &str| {
+            kernel
+                .invoke(
+                    &execution_service(),
+                    &serde_json::to_vec(&PhenixValue::from(&ExecutionCommand::FinishExecution {
+                        id: execution_id.into(),
+                        success: true,
+                    }))
+                    .unwrap(),
+                    &suite_authority(),
+                    None,
+                )
+                .unwrap();
+        };
+        finish(&mut kernel, "child");
+        assert!(
+            call(&mut kernel, "child")
+                .unwrap_err()
+                .contains("active execution: child"),
+            "a finished child must not issue frontend requests"
+        );
+
+        finish(&mut kernel, "root");
+        assert!(
+            call(&mut kernel, "root")
+                .unwrap_err()
+                .contains("active execution: root"),
+            "a retained root binding must not authorize a finished execution"
+        );
     }
 
     #[test]
