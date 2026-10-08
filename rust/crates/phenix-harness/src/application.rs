@@ -11148,7 +11148,7 @@ mod tests {
         .unwrap();
         let cancelled = resumed.updates.iter().filter(|update| {
             matches!(
-                update.update,
+                &update.update,
                 SessionChange::Execution {
                     update: ExecutionChange::State {
                         state: ExecutionState::Cancelled,
@@ -11160,7 +11160,7 @@ mod tests {
         assert_eq!(cancelled, 2, "both foreign cancellations must be persisted");
         assert!(!resumed.updates.iter().any(|update| {
             matches!(
-                update.update,
+                &update.update,
                 SessionChange::Execution {
                     update: ExecutionChange::State {
                         state: ExecutionState::Failed { .. },
