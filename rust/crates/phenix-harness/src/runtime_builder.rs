@@ -4,8 +4,7 @@ use crate::{PhenixRuntime, application, default_suite_authority};
 use phenix_core::{
     Authority, ComponentEntryTrigger, ComponentId, ComponentManifest, ComponentProcessArgument,
     ConfigContribution, DurableSchemaRegistration, GenerationResolutionError, GraphReconciler,
-    InterfaceId,
-    Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
+    InterfaceId, Kernel, KernelError, LayerPolicy, PersistenceBackend, PluginExecution, PluginId,
     PluginInstance, PluginManifest, ProviderCompositionPolicy, ResolvedGeneration,
     ResolvedGenerationActivation, ResolvedGenerationActivationError, ServiceId,
 };
