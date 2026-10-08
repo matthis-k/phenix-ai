@@ -310,7 +310,9 @@ fn handle(
                 });
                 if !active_owner {
                     context.plugin.state.pending.remove(&correlation_id);
-                    return Err("execution-scoped frontend call is no longer active or owned".into());
+                    return Err(
+                        "execution-scoped frontend call is no longer active or owned".into(),
+                    );
                 }
             }
             context.plugin.state.pending.remove(&correlation_id);
@@ -906,7 +908,11 @@ mod tests {
             check(&mut kernel).unwrap(),
             FrontendResponse::CapabilityCheck { supported: false }
         );
-        assert!(begin(&mut kernel).unwrap_err().contains("no live frontend root route"));
+        assert!(
+            begin(&mut kernel)
+                .unwrap_err()
+                .contains("no live frontend root route")
+        );
     }
 
     #[test]
