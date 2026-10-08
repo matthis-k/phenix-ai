@@ -262,9 +262,11 @@ fn standalone_memory_answers_queries_without_an_agent_or_helper_provider() {
 
 #[test]
 fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
-    use phenix_core::{ComponentId, ComponentInterface};
+    use phenix_core::{Bytes, ComponentId, ComponentInterface};
     use phenix_plugin_catalog::{agent_loop_component_manifest, agent_loop_service};
-    use phenix_sdk::AgentLoopInterface;
+    use phenix_sdk::{
+        AgentLoopCommand, AgentLoopInterface, AgentLoopResponse, AgentLoopUsage,
+    };
 
     let selected = BTreeSet::from([BASIC_AGENT_CONFIGURATION.to_owned()]);
     let excluded = BTreeSet::from(["phenix.agent-loop".to_owned()]);
@@ -278,6 +280,14 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
         manifest.id.as_str() == "phenix.agent-loop"
     }));
 
+    let reply = AgentLoopResponse::Completed {
+        output: Bytes::new(b"foreign-agent".to_vec()),
+        usage: AgentLoopUsage {
+            model_calls: 0,
+            tool_calls: 0,
+        },
+    };
+    let wire_reply = serde_json::to_vec(&PhenixValue::from(&reply)).unwrap();
     let owner = plugin("fixture.foreign-agent");
     builder
         .add_embedded(
@@ -287,7 +297,7 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
                 100,
                 default_suite_authority(),
             ),
-            || Box::new(Echo(b"foreign-agent")),
+            move || Box::new(FixedResponse(wire_reply.clone())),
         )
         .unwrap();
 
@@ -306,17 +316,27 @@ fn basic_profile_can_run_a_foreign_agent_loop_with_first_party_tools() {
         component.id == component_id
     }));
     runtime.activate().expect("foreign agent graph should activate");
-    assert_eq!(
-        runtime
-            .invoke(
-                &agent_loop_service(),
-                b"fixture",
-                &default_suite_authority(),
-                None,
-            )
-            .unwrap(),
-        b"foreign-agent"
-    );
+
+    let command = AgentLoopCommand::Run {
+        execution_id: "fixture-foreign-run".to_owned(),
+        session_id: None,
+        parent_attempt_id: None,
+        callable_id: None,
+        input: Bytes::new(b"fixture".to_vec()),
+        tools: Vec::new(),
+    };
+    let input = serde_json::to_vec(&PhenixValue::from(&command)).unwrap();
+    let output = runtime
+        .invoke(
+            &agent_loop_service(),
+            &input,
+            &default_suite_authority(),
+            None,
+        )
+        .unwrap();
+    let value: PhenixValue = serde_json::from_slice(&output).unwrap();
+    let decoded = AgentLoopResponse::try_from(Project(&value)).unwrap();
+    assert_eq!(decoded, reply);
 }
 
 #[test]
